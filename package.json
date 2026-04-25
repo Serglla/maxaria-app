@@ -1,0 +1,26 @@
+{
+  "name": "maxaria-app",
+  "version": "0.1.0",
+  "description": "Catálogo Maxaria con login y precios por nivel de cliente",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "seed": "node scripts/seed.js",
+    "create-admin": "node scripts/create-admin.js",
+    "import-prices": "node scripts/import-prices.js",
+    "export-prices": "node scripts/export-prices.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^12.2.0",
+    "cookie-parser": "^1.4.6",
+    "express": "^4.21.0",
+    "express-session": "^1.18.0",
+    "helmet": "^7.1.0",
+    "xlsx": "^0.18.5"
+  }
+}

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Maxaria · Catálogo</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body class="catalog-page">
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-brand">
+        <strong>Maxaria</strong>
+        <span class="topbar-sub" id="user-info">…</span>
+      </div>
+
+      <div class="topbar-search">
+        <input
+          type="search"
+          id="search"
+          placeholder="Buscar producto..."
+          autocomplete="off"
+        />
+      </div>
+
+      <div class="topbar-actions">
+        <button id="cart-btn" class="btn btn-ghost" type="button">
+          Carrito <span id="cart-count" class="badge">0</span>
+        </button>
+        <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
+      </div>
+    </div>
+  </header>
+
+  <aside class="sidebar" id="sidebar">
+    <h2 class="sidebar-title">Categorías</h2>
+    <ul class="cat-list" id="cat-list">
+      <li><button class="cat-btn active" data-cat="all">Todas</button></li>
+    </ul>
+  </aside>
+
+  <main class="catalog">
+    <div class="catalog-info">
+      <span id="result-count">Cargando productos…</span>
+    </div>
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty" hidden>No se encontraron productos.</div>
+  </main>
+
+  <!-- Drawer carrito -->
+  <aside class="drawer" id="cart-drawer" hidden>
+    <header class="drawer-head">
+      <h3>Tu pedido</h3>
+      <button class="btn btn-ghost" id="cart-close" type="button">Cerrar</button>
+    </header>
+    <div class="drawer-body" id="cart-body">
+      <p class="muted">Tu carrito está vacío.</p>
+    </div>
+    <footer class="drawer-foot">
+      <div class="cart-total">
+        Total: <strong id="cart-total">$0</strong>
+      </div>
+      <button class="btn btn-primary" id="cart-send" type="button" disabled>
+        Enviar pedido por WhatsApp
+      </button>
+    </footer>
+  </aside>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

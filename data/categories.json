@@ -1,0 +1,142 @@
+[
+  {
+    "id": 0,
+    "name": "OFERTAS",
+    "icon": "https://yourfiles.cloud/uploads/66affec9e5d055c9bc4da347709da8d1/SALE%20%281%29.png"
+  },
+  {
+    "id": 1,
+    "name": "VERANO",
+    "icon": "https://yourfiles.cloud/uploads/a312bf4fde3e17324e3e2287bb3213d4/Maxaria%20Sol.png"
+  },
+  {
+    "id": 2,
+    "name": "ANALGESICOS",
+    "icon": "https://yourfiles.cloud/uploads/66affec9e5d055c9bc4da347709da8d1/Dise%C3%B1o%20sin%20t%C3%ADtulo%20%281%29.png"
+  },
+  {
+    "id": 3,
+    "name": "BAZAR",
+    "icon": "https://yourfiles.cloud/uploads/6225f775d7d9b06418f84c23822e351f/SALE%20%286%29.png"
+  },
+  {
+    "id": 4,
+    "name": "BEBES",
+    "icon": "https://yourfiles.cloud/uploads/66affec9e5d055c9bc4da347709da8d1/SALE%20%283%29.png"
+  },
+  {
+    "id": 5,
+    "name": "BICICLETERIA",
+    "icon": "https://yourfiles.cloud/uploads/66affec9e5d055c9bc4da347709da8d1/SALE%20%284%29.png"
+  },
+  {
+    "id": 6,
+    "name": "CREMAS",
+    "icon": "https://yourfiles.cloud/uploads/66affec9e5d055c9bc4da347709da8d1/SALE%20%285%29.png"
+  },
+  {
+    "id": 7,
+    "name": "CUIDADO PERSONAL",
+    "icon": "https://yourfiles.cloud/uploads/030dddf82c1446f87f89cae70cebc3d2/SALE%20%2818%29.png"
+  },
+  {
+    "id": 8,
+    "name": "DESCARTABLES",
+    "icon": "https://yourfiles.cloud/uploads/028cbf4a84af5dcb247f4eab9a92c02d/Maxaria%20descartables.png"
+  },
+  {
+    "id": 9,
+    "name": "DESODORANTES",
+    "icon": "https://yourfiles.cloud/uploads/6225f775d7d9b06418f84c23822e351f/SALE%20%287%29.png"
+  },
+  {
+    "id": 10,
+    "name": "ELECTRICIDAD",
+    "icon": "https://yourfiles.cloud/uploads/6225f775d7d9b06418f84c23822e351f/SALE%20%288%29.png"
+  },
+  {
+    "id": 11,
+    "name": "ENCENDEDORES",
+    "icon": "https://yourfiles.cloud/uploads/6225f775d7d9b06418f84c23822e351f/SALE%20%289%29.png"
+  },
+  {
+    "id": 12,
+    "name": "FILOS Y ESPUMAS",
+    "icon": "https://yourfiles.cloud/uploads/6225f775d7d9b06418f84c23822e351f/SALE%20%2810%29.png"
+  },
+  {
+    "id": 13,
+    "name": "GOLOSINAS",
+    "icon": "https://yourfiles.cloud/uploads/081cbc937d4926c4280b46a6e136320f/Maxaria%20Golo.png"
+  },
+  {
+    "id": 14,
+    "name": "HERRAMIENTAS",
+    "icon": "https://yourfiles.cloud/uploads/b2bda2abb7d9b5327c728c0a775cffda/Maxaria%20Herram.png"
+  },
+  {
+    "id": 15,
+    "name": "INSECT/REPEL",
+    "icon": "https://yourfiles.cloud/uploads/6225f775d7d9b06418f84c23822e351f/SALE%20%2811%29.png"
+  },
+  {
+    "id": 16,
+    "name": "JABONES",
+    "icon": "https://yourfiles.cloud/uploads/589b46cae0aae5833852fe5bdaed3dfb/SALE%20%2812%29.png"
+  },
+  {
+    "id": 17,
+    "name": "JUGUETERIA",
+    "icon": "https://yourfiles.cloud/uploads/589b46cae0aae5833852fe5bdaed3dfb/SALE%20%2813%29.png"
+  },
+  {
+    "id": 18,
+    "name": "LIBRERIA",
+    "icon": "https://yourfiles.cloud/uploads/589b46cae0aae5833852fe5bdaed3dfb/SALE%20%2814%29.png"
+  },
+  {
+    "id": 19,
+    "name": "LIMPIEZA",
+    "icon": "https://yourfiles.cloud/uploads/215249676b4d1951ccc4f40379a97171/SALE%20%2824%29.png"
+  },
+  {
+    "id": 20,
+    "name": "MUNDIAL",
+    "icon": "https://yourfiles.cloud/uploads/589b46cae0aae5833852fe5bdaed3dfb/SALE%20%2815%29.png"
+  },
+  {
+    "id": 21,
+    "name": "PASTA DENTAL",
+    "icon": "https://yourfiles.cloud/uploads/589b46cae0aae5833852fe5bdaed3dfb/SALE%20%2816%29.png"
+  },
+  {
+    "id": 22,
+    "name": "PEGAMENTOS",
+    "icon": "https://yourfiles.cloud/uploads/589b46cae0aae5833852fe5bdaed3dfb/SALE%20%2817%29.png"
+  },
+  {
+    "id": 23,
+    "name": "PERFUMERIA",
+    "icon": "https://yourfiles.cloud/uploads/030dddf82c1446f87f89cae70cebc3d2/SALE%20%2818%29.png"
+  },
+  {
+    "id": 24,
+    "name": "PILAS",
+    "icon": "https://yourfiles.cloud/uploads/030dddf82c1446f87f89cae70cebc3d2/SALE%20%2819%29.png"
+  },
+  {
+    "id": 25,
+    "name": "REGALERIA",
+    "icon": "https://yourfiles.cloud/uploads/030dddf82c1446f87f89cae70cebc3d2/SALE%20%2820%29.png"
+  },
+  {
+    "id": 26,
+    "name": "SH/AC",
+    "icon": "https://yourfiles.cloud/uploads/030dddf82c1446f87f89cae70cebc3d2/SALE%20%2822%29.png"
+  },
+  {
+    "id": 27,
+    "name": "VARIOS",
+    "icon": "https://yourfiles.cloud/uploads/589b46cae0aae5833852fe5bdaed3dfb/SALE%20%2815%29.png"
+  }
+]

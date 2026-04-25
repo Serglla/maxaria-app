@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Maxaria · Iniciar sesión</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="login-brand">
+      <h1>Maxaria</h1>
+      <p>Catálogo mayorista y minorista</p>
+    </div>
+
+    <form id="login-form" class="login-form" autocomplete="on" novalidate>
+      <label>
+        <span>Usuario</span>
+        <input type="text" name="username" required autocomplete="username" />
+      </label>
+      <label>
+        <span>Contraseña</span>
+        <input type="password" name="password" required autocomplete="current-password" />
+      </label>
+
+      <button type="submit" class="btn btn-primary" id="login-btn">Ingresar</button>
+
+      <p id="login-error" class="login-error" hidden></p>
+    </form>
+
+    <p class="login-help">
+      ¿No tenés usuario? Pedile uno al administrador.
+    </p>
+  </main>
+
+  <script>
+    const form = document.getElementById("login-form");
+    const btn = document.getElementById("login-btn");
+    const err = document.getElementById("login-error");
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      err.hidden = true;
+      btn.disabled = true;
+      btn.textContent = "Ingresando...";
+
+      const data = Object.fromEntries(new FormData(form).entries());
+      try {
+        const res = await fetch("/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          err.textContent = body.error || "No se pudo iniciar sesión";
+          err.hidden = false;
+          return;
+        }
+        location.href = "/catalogo";
+      } catch (e) {
+        err.textContent = "Error de conexión";
+        err.hidden = false;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Ingresar";
+      }
+    });
+  </script>
+</body>
+</html>
