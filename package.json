@@ -4,7 +4,7 @@
   "description": "Catálogo Maxaria con login y precios por nivel de cliente",
   "main": "server.js",
   "scripts": {
-    "start": "node scripts/seed.js && node server.js",
+    "start": "node scripts/boot.js",
     "start:plain": "node server.js",
     "dev": "node --watch server.js",
     "seed": "node scripts/seed.js",
@@ -12,9 +12,7 @@
     "import-prices": "node scripts/import-prices.js",
     "export-prices": "node scripts/export-prices.js"
   },
-  "engines": {
-    "node": ">=18"
-  },
+  "engines": { "node": ">=18" },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.2.0",

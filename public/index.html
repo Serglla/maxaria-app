@@ -25,6 +25,7 @@
       </div>
 
       <div class="topbar-actions">
+        <button id="orders-btn" class="btn btn-ghost" type="button">Mis pedidos</button>
         <button id="cart-btn" class="btn btn-ghost" type="button">
           Carrito <span id="cart-count" class="badge">0</span>
         </button>
@@ -48,6 +49,17 @@
     <div id="empty" class="empty" hidden>No se encontraron productos.</div>
   </main>
 
+  <!-- Drawer historial de pedidos -->
+  <aside class="drawer drawer-wide" id="orders-drawer" hidden>
+    <header class="drawer-head">
+      <h3 id="orders-title">Mis pedidos</h3>
+      <button class="btn btn-ghost" id="orders-close" type="button">Cerrar</button>
+    </header>
+    <div class="drawer-body" id="orders-body">
+      <p class="muted">Cargando…</p>
+    </div>
+  </aside>
+
   <!-- Drawer carrito -->
   <aside class="drawer" id="cart-drawer" hidden>
     <header class="drawer-head">
@@ -61,8 +73,12 @@
       <div class="cart-total">
         Total: <strong id="cart-total">$0</strong>
       </div>
+      <div class="cart-notes-wrap">
+        <label for="cart-notes">Nota para el pedido <span class="muted">(opcional)</span></label>
+        <textarea id="cart-notes" rows="2" placeholder="Ej: entregar el martes, color especial…"></textarea>
+      </div>
       <button class="btn btn-primary" id="cart-send" type="button" disabled>
-        Enviar pedido por WhatsApp
+        Enviar pedido por WhatsApp 📲
       </button>
     </footer>
   </aside>

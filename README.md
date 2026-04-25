@@ -168,8 +168,38 @@ maxaria_app/
 
 ---
 
-## Próximos hitos
+## Hitos
 
-- **Hito 2**: guardar pedidos en la DB cuando el cliente envía el WhatsApp + historial por cliente.
-- **Hito 3**: panel admin web (productos, precios, usuarios, pedidos) con subida de Excel.
-- **Hito 4**: imágenes optimizadas (webp + lazy + tamaños) y filtros avanzados.
+### Hito 1 — listo
+Login, catálogo con precios por nivel, carrito, envío del pedido por WhatsApp,
+seed/import desde Excel.
+
+### Hito 2 — listo
+Cuando el cliente arma el carrito y aprieta **Enviar por WhatsApp**, el pedido
+se guarda primero en la base (con número, fecha, ítems y total) y recién
+después se abre WhatsApp. Si el navegador bloquea el popup, aparece un modal
+con un botón para abrirlo manualmente; el pedido ya quedó guardado.
+
+- Botón **Mis pedidos** en el catálogo: cada cliente ve su historial.
+- El admin ve todos los pedidos (con nombre del cliente).
+- Click en un pedido para ver el detalle (productos, cantidades, total, nota).
+- Botón **Reenviar por WhatsApp** desde el detalle.
+- Estados disponibles: `pendiente · enviado · preparando · entregado · cancelado`.
+  Solo el admin puede cambiarlos (selector dentro del detalle).
+
+Endpoints involucrados:
+
+| Método | Ruta | Para qué |
+|---|---|---|
+| `POST` | `/api/orders` | Guarda el pedido (cliente logueado) |
+| `GET`  | `/api/orders` | Lista (cliente: solo los suyos / admin: todos) |
+| `GET`  | `/api/orders/:id` | Detalle con ítems |
+| `PATCH`| `/api/orders/:id` | Cambiar estado (solo admin) |
+
+### Hito 3 — pendiente
+Panel admin web `/admin`: subir Excel desde el navegador, editar precios,
+ver pedidos, crear/editar usuarios, gráficos básicos.
+
+### Hito 4 — pendiente
+Filtros (rango de precio, stock alto), búsqueda más inteligente, imágenes
+optimizadas (webp + lazy + tamaños), atajos de teclado.
