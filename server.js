@@ -102,6 +102,9 @@ class SqliteStore extends session.Store {
 // ----- App -----
 const app = express();
 app.disable("x-powered-by");
+// Confiar en el proxy del hosting (Railway/Render/Fly) para que las cookies
+// secure funcionen correctamente cuando el TLS lo termina el proxy.
+app.set("trust proxy", 1);
 app.use(
   helmet({
     contentSecurityPolicy: false, // simplificamos por ahora
