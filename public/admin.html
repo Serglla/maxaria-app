@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Maxaria · Admin</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body class="admin-page">
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-brand">
+        <strong>Maxaria · Admin</strong>
+        <span class="topbar-sub" id="user-info">…</span>
+      </div>
+      <nav class="admin-tabs">
+        <button class="tab-btn active" data-tab="productos" type="button">Productos</button>
+        <button class="tab-btn" data-tab="pedidos" type="button">Pedidos</button>
+        <button class="tab-btn" data-tab="usuarios" type="button" disabled title="Próximamente">Usuarios</button>
+        <button class="tab-btn" data-tab="graficos" type="button" disabled title="Próximamente">Gráficos</button>
+        <button class="tab-btn" data-tab="config" type="button">Configuración</button>
+      </nav>
+      <div class="topbar-actions">
+        <a class="btn btn-ghost" href="/catalogo">Catálogo</a>
+        <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="admin-main">
+
+    <!-- ===== TAB PRODUCTOS ===== -->
+    <section class="tab-panel" id="tab-productos">
+      <div class="admin-toolbar">
+        <input type="search" id="prod-search" class="admin-search" placeholder="Buscar por código o nombre..." autocomplete="off" />
+        <label class="admin-filter">
+          Stock:
+          <select id="filter-stock" class="admin-select">
+            <option value="all">Todos</option>
+            <option value="in">Solo con stock</option>
+            <option value="out">Solo sin stock</option>
+          </select>
+        </label>
+        <label class="admin-filter">
+          <input type="checkbox" id="filter-inactive" /> Solo inactivos
+        </label>
+        <span class="admin-spacer"></span>
+        <span id="prod-count" class="muted">…</span>
+        <label class="btn btn-primary admin-upload">
+          📥 Subir Excel
+          <input type="file" id="excel-file" accept=".xlsx,.xls" hidden />
+        </label>
+      </div>
+
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="prod-table">
+          <thead>
+            <tr>
+              <th>Código</th>
+              <th>Nombre</th>
+              <th>Categoría</th>
+              <th class="num">Stock</th>
+              <th class="num">Costo</th>
+              <th class="num">Minorista</th>
+              <th class="num">Revendedor</th>
+              <th class="num">Mayorista</th>
+              <th class="num">VIP</th>
+              <th class="num">Público</th>
+              <th>Activo</th>
+            </tr>
+          </thead>
+          <tbody id="prod-tbody"><tr><td colspan="11" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="admin-pager">
+        <button class="btn" id="page-prev" type="button">← Anterior</button>
+        <span id="page-info" class="muted">Página 1</span>
+        <button class="btn" id="page-next" type="button">Siguiente →</button>
+      </div>
+    </section>
+
+    <!-- ===== TAB CONFIG ===== -->
+    <section class="tab-panel" id="tab-config" hidden>
+      <div class="config-card">
+        <h3>WhatsApp para recibir pedidos</h3>
+        <p class="muted">
+          Este es el número al que se abre WhatsApp cuando un cliente envía
+          su pedido. Formato internacional sin <strong>+</strong> ni espacios
+          (ej: <code>5493442000000</code>).
+        </p>
+        <div class="config-row">
+          <input type="tel" id="cfg-whatsapp" class="config-input" placeholder="5493442000000" autocomplete="off" />
+          <button class="btn btn-primary" id="cfg-whatsapp-save" type="button">Guardar</button>
+          <span id="cfg-whatsapp-msg" class="config-msg"></span>
+        </div>
+        <p class="muted" id="cfg-whatsapp-current"></p>
+      </div>
+    </section>
+
+    <!-- ===== TAB PEDIDOS ===== -->
+    <section class="tab-panel" id="tab-pedidos" hidden>
+      <div class="admin-toolbar">
+        <input type="search" id="orders-search" class="admin-search" placeholder="Buscar por # o cliente..." autocomplete="off" />
+        <span class="admin-spacer"></span>
+        <span id="orders-count" class="muted">…</span>
+      </div>
+      <div id="orders-list" class="admin-orders-list">
+        <p class="muted">Cargando…</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Modal de feedback de import -->
+  <div class="admin-modal" id="import-modal" hidden>
+    <div class="admin-modal-box">
+      <h3 id="import-title">Importando Excel…</h3>
+      <div id="import-body" class="admin-modal-body"></div>
+      <div class="admin-modal-foot">
+        <button class="btn btn-primary" id="import-close" type="button" hidden>Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mini-toast -->
+  <div id="toast" class="admin-toast" hidden></div>
+
+  <script src="/js/admin.js"></script>
+</body>
+</html>

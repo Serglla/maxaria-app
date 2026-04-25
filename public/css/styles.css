@@ -547,3 +547,291 @@ button { font: inherit; cursor: pointer; }
   .topbar-brand .topbar-sub { display: none; }
   .drawer { width: 100vw; }
 }
+
+/* ============================================================
+   ADMIN PANEL
+   ============================================================ */
+.admin-page { min-height: 100vh; background: #f5f6f8; }
+.admin-page .topbar-inner { gap: 24px; }
+
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  justify-content: center;
+}
+.tab-btn {
+  background: transparent;
+  color: #c7d2fe;
+  border: 0;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.tab-btn:hover:not(:disabled) { background: rgba(255,255,255,.1); color: #fff; }
+.tab-btn.active {
+  background: #fbbf24;
+  color: #111827;
+  font-weight: 700;
+}
+.tab-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+.admin-main {
+  padding: 16px 20px 60px;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+.admin-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.admin-search {
+  flex: 1;
+  min-width: 240px;
+  max-width: 380px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 14px;
+}
+.admin-search:focus { outline: 2px solid #2563eb33; border-color: #2563eb; }
+.admin-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #374151;
+  cursor: pointer;
+  user-select: none;
+}
+.admin-select {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.admin-select:focus { outline: 2px solid #2563eb33; border-color: #2563eb; }
+.admin-spacer { flex: 1; }
+.admin-upload {
+  position: relative;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-table-wrap {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: auto;
+  max-height: calc(100vh - 240px);
+}
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 1200px;
+}
+.admin-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f3f4f6;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+  padding: 8px 10px;
+  font-weight: 600;
+  color: #374151;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  white-space: nowrap;
+}
+.admin-table thead th.num { text-align: right; }
+.admin-table tbody td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #f3f4f6;
+  vertical-align: middle;
+}
+.admin-table tbody tr:hover { background: #fafbfc; }
+.admin-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin-table .row-oos { background: #fff7ed; }
+.admin-table .row-oos:hover { background: #ffedd5; }
+.admin-table .row-inactive { opacity: .55; }
+
+.cell-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #6b7280; white-space: nowrap; }
+.cell-cat { font-size: 12px; white-space: nowrap; }
+.cell-input {
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  color: #1f2937;
+  width: 100%;
+  transition: border-color .12s, background .12s;
+}
+.cell-input:hover { border-color: #e5e7eb; }
+.cell-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+.cell-num { text-align: right; max-width: 100px; }
+.cell-price { font-weight: 600; color: #1e3a8a; }
+.cell-name { min-width: 240px; }
+.cell-input.saving { border-color: #fbbf24; background: #fffbeb; }
+.cell-input.saved { border-color: #10b981; background: #ecfdf5; }
+.cell-input.error { border-color: #dc2626; background: #fef2f2; }
+
+.cell-toggle { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; }
+.cell-toggle input { opacity: 0; width: 0; height: 0; }
+.cell-toggle span {
+  position: absolute; inset: 0;
+  background: #d1d5db; border-radius: 999px;
+  transition: background .15s;
+}
+.cell-toggle span::before {
+  content: "";
+  position: absolute;
+  height: 16px; width: 16px;
+  left: 2px; top: 2px;
+  background: #fff; border-radius: 50%;
+  transition: transform .15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,.2);
+}
+.cell-toggle input:checked + span { background: #10b981; }
+.cell-toggle input:checked + span::before { transform: translateX(16px); }
+
+.admin-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 14px;
+  font-size: 13px;
+}
+.admin-pager .btn { padding: 6px 14px; font-size: 13px; }
+.admin-pager .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Modal de import */
+.admin-modal {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1100;
+}
+.admin-modal[hidden] { display: none; }
+.admin-modal-box {
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px 26px;
+  max-width: 480px;
+  width: calc(100% - 32px);
+  box-shadow: 0 20px 50px rgba(0,0,0,.25);
+}
+.admin-modal-box h3 { margin: 0 0 12px; font-size: 18px; color: #111827; }
+.admin-modal-body { color: #374151; font-size: 14px; }
+.admin-modal-body p { margin: 0 0 8px; }
+.admin-modal-body .err { color: #dc2626; font-weight: 600; }
+.admin-modal-foot { margin-top: 16px; text-align: right; }
+.import-stats { margin: 8px 0 12px; padding-left: 18px; }
+.import-stats li { margin-bottom: 4px; }
+
+/* Toast */
+.admin-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: #fff;
+  background: #10b981;
+  box-shadow: 0 6px 20px rgba(0,0,0,.18);
+  z-index: 1200;
+}
+.admin-toast.err { background: #dc2626; }
+.admin-toast[hidden] { display: none; }
+
+/* Tab Configuración */
+.config-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 22px 24px;
+  max-width: 620px;
+}
+.config-card h3 { margin: 0 0 8px; font-size: 16px; color: #111827; }
+.config-card p { margin: 0 0 14px; font-size: 14px; color: #374151; }
+.config-card code {
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #1e3a8a;
+}
+.config-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.config-input {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 15px;
+  flex: 1;
+  min-width: 200px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .5px;
+}
+.config-input:focus { outline: 2px solid #2563eb33; border-color: #2563eb; }
+.config-msg {
+  font-size: 13px;
+  font-weight: 600;
+}
+.config-msg.ok  { color: #10b981; }
+.config-msg.err { color: #dc2626; }
+#cfg-whatsapp-current { font-size: 13px; }
+#cfg-whatsapp-current .err { color: #dc2626; font-weight: 600; }
+
+/* Pedidos en admin */
+.admin-orders-list { display: flex; flex-direction: column; gap: 10px; }
+.admin-orders-list .order-card { margin-bottom: 0; }
+.admin-orders-list .order-items-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+.admin-orders-list .order-items-table th,
+.admin-orders-list .order-items-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #f3f4f6;
+}
+.admin-orders-list .order-items-table th { text-align: left; font-weight: 600; color: #6b7280; font-size: 12px; }
+.admin-orders-list .order-items-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin-orders-list .order-status-select {
+  border: 1px solid #d1d5db; border-radius: 6px;
+  padding: 4px 8px; font: inherit; font-size: 13px; background: #fff;
+}
+
+@media (max-width: 720px) {
+  .admin-tabs { order: 3; flex: 1 0 100%; justify-content: flex-start; overflow-x: auto; }
+  .admin-page .topbar-inner { flex-wrap: wrap; height: auto; padding: 10px 16px; }
+  .admin-table { min-width: 900px; font-size: 12px; }
+}

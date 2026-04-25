@@ -9,6 +9,9 @@ const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
 const Database = require("better-sqlite3");
 const bcrypt = require("bcryptjs");
+const multer = require("multer");
+const { readExcelBuffer } = require("./scripts/excel_helper");
+const { importPrices } = require("./scripts/import-prices");
 
 const ENV_PATH = path.join(__dirname, ".env");
 if (fs.existsSync(ENV_PATH)) {
@@ -37,6 +40,33 @@ if (!fs.existsSync(DB_PATH)) {
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
+
+// Migracion: tabla settings para config runtime editable desde el admin.
+// Se crea en bases existentes la primera vez que arranca el server.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS settings (" +
+  "  key TEXT PRIMARY KEY," +
+  "  value TEXT," +
+  "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ")"
+);
+
+function getSetting(key, fallback) {
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+  if (row && row.value != null) return row.value;
+  return fallback === undefined ? null : fallback;
+}
+function setSetting(key, value) {
+  db.prepare(
+    "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now')) " +
+    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+  ).run(key, value == null ? null : String(value));
+}
+
+// Bootstrap: si nunca hubo config de WhatsApp en la base pero hay env, migrar.
+if (getSetting("whatsapp_number") == null && WHATSAPP_NUMBER) {
+  setSetting("whatsapp_number", WHATSAPP_NUMBER);
+}
 
 class SqliteStore extends session.Store {
   constructor(database) {
@@ -122,6 +152,24 @@ function requireLogin(req, res, next) {
   next();
 }
 
+function requireAdmin(req, res, next) {
+  if (!req.session || !req.session.userId) {
+    if (req.path.startsWith("/api/")) return res.status(401).json({ error: "No autenticado" });
+    return res.redirect("/login");
+  }
+  if (req.session.level !== 99) {
+    if (req.path.startsWith("/api/")) return res.status(403).json({ error: "Solo admin" });
+    return res.status(403).send("Acceso restringido. Solo el administrador puede entrar a /admin.");
+  }
+  next();
+}
+
+// Upload de Excel en memoria (no se escribe a disco). Limite 10MB.
+const excelUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+
 app.get("/login", (req, res) => {
   if (req.session && req.session.userId) return res.redirect("/catalogo");
   res.sendFile(path.join(__dirname, "public", "login.html"));
@@ -157,10 +205,12 @@ app.get("/catalogo", requireLogin, (req, res) => {
 });
 
 app.get("/api/me", requireLogin, (req, res) => {
+  const wa = getSetting("whatsapp_number", WHATSAPP_NUMBER || null);
   res.json({
     id: req.session.userId, username: req.session.username,
     fullName: req.session.fullName, level: req.session.level,
-    levelName: levelName(req.session.level), whatsapp: WHATSAPP_NUMBER || null,
+    levelName: levelName(req.session.level),
+    whatsapp: wa ? String(wa).replace(/[^0-9]/g, "") : null,
   });
 });
 
@@ -275,6 +325,94 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
   const r = db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
   if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
   res.json({ ok: true, id: id, status: status });
+});
+
+// ===== Panel admin =====
+app.get("/admin", requireAdmin, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "admin.html"));
+});
+
+// Lista completa de productos (admin ve TODOS, incluso sin stock o inactivos)
+app.get("/api/admin/products", requireAdmin, (req, res) => {
+  const sql =
+    "SELECT p.id, p.code, p.category_id, c.name AS category_name, p.name," +
+    "       p.cost, p.price_minorista, p.price_revendedor, p.price_mayorista," +
+    "       p.price_vip, p.price_publico, p.stock, p.active, p.image_url" +
+    "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
+    "  ORDER BY c.sort_order, c.name, p.name";
+  res.json(db.prepare(sql).all());
+});
+
+// Editar campos puntuales de un producto
+app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const allowed = [
+    "name", "cost", "price_minorista", "price_revendedor",
+    "price_mayorista", "price_vip", "price_publico", "stock", "active",
+  ];
+  const sets = [];
+  const vals = [];
+  for (const k of allowed) {
+    if (k in (req.body || {})) {
+      sets.push(k + " = ?");
+      // Numericos: parsear; texto: trim. active: 0/1.
+      let v = req.body[k];
+      if (k === "name") v = String(v || "").trim().slice(0, 200);
+      else if (k === "active") v = v ? 1 : 0;
+      else { v = Number(v); if (!isFinite(v)) v = 0; v = Math.round(v); }
+      vals.push(v);
+    }
+  }
+  if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
+  sets.push("updated_at = datetime('now')");
+  vals.push(id);
+  const r = db.prepare("UPDATE products SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+  if (!r.changes) return res.status(404).json({ error: "Producto no encontrado" });
+  res.json({ ok: true, id: id });
+});
+
+// Settings runtime (por ahora solo whatsapp_number)
+app.get("/api/admin/settings", requireAdmin, (req, res) => {
+  res.json({
+    whatsapp_number: getSetting("whatsapp_number", WHATSAPP_NUMBER || ""),
+  });
+});
+
+app.patch("/api/admin/settings", requireAdmin, (req, res) => {
+  const body = req.body || {};
+  if ("whatsapp_number" in body) {
+    const raw = String(body.whatsapp_number || "").replace(/[^0-9]/g, "");
+    if (raw && (raw.length < 8 || raw.length > 15)) {
+      return res.status(400).json({ error: "Numero invalido (8 a 15 digitos)" });
+    }
+    setSetting("whatsapp_number", raw);
+  }
+  res.json({
+    ok: true,
+    whatsapp_number: getSetting("whatsapp_number", ""),
+  });
+});
+
+// Subir Excel y reimportar precios + stock (NO destructivo: preserva users y orders)
+app.post("/api/admin/import-excel", requireAdmin, excelUpload.single("file"), (req, res) => {
+  if (!req.file || !req.file.buffer || !req.file.buffer.length) {
+    return res.status(400).json({ error: "No llego ningun archivo" });
+  }
+  let items;
+  try {
+    items = readExcelBuffer(req.file.buffer);
+  } catch (e) {
+    return res.status(400).json({ error: "Excel invalido: " + e.message });
+  }
+  if (!items.length) return res.status(400).json({ error: "El Excel no tiene filas validas" });
+  try {
+    const stats = importPrices(items, db);
+    res.json({ ok: true, filas: items.length, stats: stats });
+  } catch (e) {
+    console.error("import-excel error:", e);
+    res.status(500).json({ error: "Error importando: " + e.message });
+  }
 });
 
 app.get("/healthz", (req, res) => res.json({ ok: true, ts: Date.now() }));

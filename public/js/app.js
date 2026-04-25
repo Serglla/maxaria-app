@@ -25,6 +25,7 @@
     ordersClose: document.getElementById("orders-close"),
     ordersBody: document.getElementById("orders-body"),
     ordersTitle: document.getElementById("orders-title"),
+    adminLink: document.getElementById("admin-link"),
   };
 
   const state = {
@@ -65,6 +66,9 @@
     els.userInfo.textContent = (u.fullName || u.username) + " - " + u.levelName;
     if (els.ordersBtn) {
       els.ordersBtn.textContent = u.level === 99 ? "Todos los pedidos" : "Mis pedidos";
+    }
+    if (els.adminLink) {
+      els.adminLink.hidden = u.level !== 99;
     }
   }
 

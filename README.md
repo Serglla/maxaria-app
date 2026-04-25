@@ -196,9 +196,42 @@ Endpoints involucrados:
 | `GET`  | `/api/orders/:id` | Detalle con ítems |
 | `PATCH`| `/api/orders/:id` | Cambiar estado (solo admin) |
 
-### Hito 3 — pendiente
-Panel admin web `/admin`: subir Excel desde el navegador, editar precios,
-ver pedidos, crear/editar usuarios, gráficos básicos.
+### Hito 3 — en progreso
+
+**Etapa A (lista):** panel admin web en `/admin`, accesible solo para usuarios
+con nivel 99. El admin del catálogo ahora ve un botón **Admin** arriba a la
+derecha que linkea ahí.
+
+- **Tab Productos**: tabla con TODOS los productos (visibles y ocultos).
+  Búsqueda por código/nombre/categoría, filtros (solo sin stock / solo
+  inactivos), paginación de 50 por página. Cada celda de stock, costo,
+  precios y nombre es **editable inline** — al perder foco se guarda
+  automáticamente (border amarillo = guardando, verde = guardado, rojo = error).
+  Toggle de Activo/Inactivo en la última columna.
+- **Tab Pedidos**: la misma vista que ya existía en el catálogo, ahora
+  desde el panel. Búsqueda por número o cliente.
+- Botón **📥 Subir Excel**: file picker, sube el `.xlsx` al servidor, corre
+  el equivalente a `npm run import-prices` (no destructivo: preserva
+  usuarios y pedidos), muestra el resumen de actualizados/nuevos/sin stock.
+
+Endpoints nuevos:
+
+| Método | Ruta | Para qué |
+|---|---|---|
+| `GET`   | `/admin` | Sirve el HTML del panel (solo level 99) |
+| `GET`   | `/api/admin/products` | Lista completa de productos |
+| `PATCH` | `/api/admin/products/:id` | Editar campos puntuales |
+| `POST`  | `/api/admin/import-excel` | Upload + import del Excel |
+
+Nueva dependencia: `multer` (manejo de uploads multipart). Después del pull:
+
+```
+npm install
+```
+
+**Etapas pendientes:**
+- B: gestión de usuarios (crear / editar / reset password / desactivar).
+- C: gráficos básicos.
 
 ### Hito 4 — pendiente
 Filtros (rango de precio, stock alto), búsqueda más inteligente, imágenes

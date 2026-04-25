@@ -67,6 +67,15 @@ function resolveExcelPath(explicit) {
 
 function readExcel(filePath) {
   const wb = XLSX.readFile(filePath, { cellDates: false });
+  return parseWorkbook(wb);
+}
+
+function readExcelBuffer(buffer) {
+  const wb = XLSX.read(buffer, { type: "buffer", cellDates: false });
+  return parseWorkbook(wb);
+}
+
+function parseWorkbook(wb) {
   const sheetName = wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, blankrows: false });
@@ -136,4 +145,4 @@ function writeExcel(filePath, products) {
   XLSX.writeFile(wb, filePath);
 }
 
-module.exports = { readExcel, writeExcel, resolveExcelPath, COL };
+module.exports = { readExcel, readExcelBuffer, writeExcel, resolveExcelPath, COL };
