@@ -46,7 +46,7 @@ const NODE_ENV = process.env.NODE_ENV || "development";
 const WHATSAPP_NUMBER = (process.env.WHATSAPP_NUMBER || "").replace(/[^0-9]/g, "");
 
 // ----- DB -----
-const DB_PATH = path.join(__dirname, "data", "maxaria.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "maxaria.db");
 if (!fs.existsSync(DB_PATH)) {
   console.error(
     "ERROR: no existe la base", DB_PATH,

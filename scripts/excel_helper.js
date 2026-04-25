@@ -1,7 +1,7 @@
 /**
  * Helper para leer y escribir el Excel de precios de Maxaria.
  *
- * Mapeo de columnas (acordado con el usuario):
+ * Mapeo de columnas:
  *   1  Codigo Interno     -> code
  *   2  Nombre del Articulo-> name
  *   3  Stock              -> stock (si <=0, no se muestra)
@@ -14,6 +14,8 @@
  *   10 L3                 -> DESCARTAR
  *   11 LESP               -> price_revendedor
  */
+const fs = require("fs");
+const path = require("path");
 const XLSX = require("xlsx");
 
 const COL = {
@@ -26,7 +28,6 @@ const COL = {
   price_vip: "L0",
   price_mayorista: "L1",
   price_minorista: "L2",
-  // L3 se ignora
   price_revendedor: "LESP",
 };
 
@@ -42,15 +43,35 @@ function trimStr(v) {
   return String(v).trim();
 }
 
+/**
+ * Resuelve la ruta del Excel buscando en varios lugares, en este orden:
+ *   1. argumento explicito
+ *   2. variable de entorno EXCEL_PATH
+ *   3. <proyecto>/data/precios_maxaria.xlsx   (lo que se despliega)
+ *   4. ../precios_maxaria.xlsx                (modo dev en Windows local)
+ * Retorna null si no encuentra nada.
+ */
+function resolveExcelPath(explicit) {
+  const ROOT = path.join(__dirname, "..");
+  const candidatos = [
+    explicit ? path.resolve(explicit) : null,
+    process.env.EXCEL_PATH ? path.resolve(process.env.EXCEL_PATH) : null,
+    path.join(ROOT, "data", "precios_maxaria.xlsx"),
+    path.join(ROOT, "..", "precios_maxaria.xlsx"),
+  ].filter(Boolean);
+  for (const p of candidatos) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
 function readExcel(filePath) {
   const wb = XLSX.readFile(filePath, { cellDates: false });
   const sheetName = wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
-  // header:1 -> array de arrays. Tomamos los headers de la primera fila no vacia.
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, blankrows: false });
-  if (!rows.length) throw new Error("Excel vacío");
+  if (!rows.length) throw new Error("Excel vacio");
 
-  // Localizar fila de headers
   let headerIdx = 0;
   for (let i = 0; i < Math.min(5, rows.length); i++) {
     if (rows[i] && rows[i][0] && String(rows[i][0]).toLowerCase().includes("código")) {
@@ -72,12 +93,11 @@ function readExcel(filePath) {
     if (!r) continue;
     const code = trimStr(r[idxOf.code]);
     const name = trimStr(r[idxOf.name]);
-    if (!code || !name) continue; // saltea filas vacias / huerfanas
+    if (!code || !name) continue;
     out.push({
-      code,
-      name,
+      code, name,
       stock: toInt(r[idxOf.stock]),
-      category: trimStr(r[idxOf.category]) || "Sin categoría",
+      category: trimStr(r[idxOf.category]) || "Sin categoria",
       cost: toInt(r[idxOf.cost]),
       price_publico: toInt(r[idxOf.price_publico]),
       price_vip: toInt(r[idxOf.price_vip]),
@@ -90,38 +110,22 @@ function readExcel(filePath) {
 }
 
 function writeExcel(filePath, products) {
-  // Generamos el Excel respetando los mismos headers del original
   const headers = [
-    "Código Interno",
-    "Nombre del Artículo",
-    "Stock",
-    "Categoría",
-    "Precio de costo",
-    "Principal",
-    "L0",   // VIP
-    "L1",   // Mayorista
-    "L2",   // Minorista
-    "L3",   // Sin uso (lo dejamos en 0)
-    "LESP", // Revendedor
+    "Código Interno","Nombre del Artículo","Stock","Categoría",
+    "Precio de costo","Principal","L0","L1","L2","L3","LESP",
   ];
   const rows = [headers];
   for (const p of products) {
     rows.push([
-      p.code || "",
-      p.name || "",
-      Number(p.stock) || 0,
-      p.category || "",
-      Number(p.cost) || 0,
-      Number(p.price_publico) || 0,
-      Number(p.price_vip) || 0,
-      Number(p.price_mayorista) || 0,
-      Number(p.price_minorista) || 0,
-      0,
+      p.code || "", p.name || "",
+      Number(p.stock) || 0, p.category || "",
+      Number(p.cost) || 0, Number(p.price_publico) || 0,
+      Number(p.price_vip) || 0, Number(p.price_mayorista) || 0,
+      Number(p.price_minorista) || 0, 0,
       Number(p.price_revendedor) || 0,
     ]);
   }
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  // Anchos minimamente decentes
   ws["!cols"] = [
     { wch: 12 }, { wch: 38 }, { wch: 8 }, { wch: 18 },
     { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
@@ -132,4 +136,4 @@ function writeExcel(filePath, products) {
   XLSX.writeFile(wb, filePath);
 }
 
-module.exports = { readExcel, writeExcel, COL };
+module.exports = { readExcel, writeExcel, resolveExcelPath, COL };

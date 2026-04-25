@@ -1,69 +1,146 @@
 # Maxaria · Catálogo con login y precios por nivel
 
-Aplicación web para catálogo de productos con:
-
-- Login por usuario y contraseña (cuentas creadas por el admin).
-- 4 niveles de precio por cliente: minorista, revendedor, mayorista y VIP.
-- Carrito que arma el pedido y lo envía por WhatsApp.
-- Base local SQLite (sin servidor de DB aparte).
-
-> Esto es **Hito 1**. Faltan: panel admin web, historial de pedidos en DB, imágenes optimizadas y filtros avanzados (Hitos 2–4).
+App web para catálogo de productos con login, 4 niveles de precio (minorista,
+revendedor, mayorista, VIP) y carrito que envía el pedido por WhatsApp.
+Los precios se administran desde un Excel.
 
 ---
 
 ## Requisitos
 
-- Node.js 18 o superior. (Probado con 22.)
-- En Windows, la primera vez que se instala `better-sqlite3` puede pedir build tools. Si no los tenés, alcanza con `npm install --build-from-source=false` o instalar `windows-build-tools` con admin.
+- Node.js 18 o superior (probado con 22 y 24).
 
 ---
 
-## Primer arranque
+## Arranque local (en tu PC)
 
-Desde la carpeta `maxaria_app`:
-
-```bash
-# 1. Instalar dependencias
+```
+cd D:\Maxaria\WEB\maxaria_app
 npm install
-
-# 2. Copiar el ejemplo de configuración
 copy .env.example .env
-# (luego abrí .env y cambiá SESSION_SECRET y WHATSAPP_NUMBER)
+```
 
-# 3. Crear la base y cargar los 509 productos + usuarios demo
-npm run seed
+Editá `.env` y completá `SESSION_SECRET` y `WHATSAPP_NUMBER`.
 
-# 4. Levantar el server
+Copiá tu Excel a `data\precios_maxaria.xlsx` (dentro del proyecto):
+
+```
+copy ..\precios_maxaria.xlsx data\precios_maxaria.xlsx
+```
+
+> Si preferís dejar el Excel afuera del proyecto durante el desarrollo,
+> el seed también lo busca en `D:\Maxaria\WEB\precios_maxaria.xlsx` por compatibilidad.
+
+Después:
+
+```
+npm run seed     (solo la primera vez o si cambia el schema)
 npm start
 ```
 
-Abrí `http://localhost:3000` en el navegador.
+Abrí `http://localhost:3000`.
+
+### Usuarios demo
+
+| Usuario | Contraseña | Nivel |
+|---|---|---|
+| admin | admin1234 | Administrador |
+| minorista | minorista1234 | Minorista |
+| revendedor | revendedor1234 | Revendedor |
+| mayorista | mayorista1234 | Mayorista |
+| vip | vip1234 | VIP |
+
+Cambiarlas con:
+
+```
+node scripts/create-admin.js admin nuevaclave 99
+```
 
 ---
 
-## Usuarios demo (cambiar antes de mostrar a clientes)
+## Comandos disponibles
 
-| Usuario      | Contraseña       | Nivel        |
-|--------------|------------------|--------------|
-| admin        | admin1234        | Administrador |
-| minorista    | minorista1234    | Minorista     |
-| revendedor   | revendedor1234   | Revendedor    |
-| mayorista    | mayorista1234    | Mayorista     |
-| vip          | vip1234          | VIP           |
+| Comando | Para qué sirve |
+|---|---|
+| `npm start` | Levanta el server (con auto-seed si no hay base) |
+| `npm run seed` | Borra y recrea la base desde el Excel (limpia todo) |
+| `npm run import-prices` | Actualiza precios y stock desde el Excel sin perder usuarios ni pedidos |
+| `npm run export-prices` | Genera un Excel con la base actual |
+| `npm run create-admin <user> <pass> [nivel]` | Crear o resetear un usuario |
 
-Cada uno ve los precios correspondientes a su nivel.
+> Antes de correr `seed` o `import-prices`, parar el server (Ctrl+C) para
+> que no tenga la base bloqueada.
 
-### Cambiar / crear contraseñas
+---
 
-```bash
-# Reset de la contraseña del admin:
-node scripts/create-admin.js admin nuevaClave 99
+## Mapeo de columnas del Excel
 
-# Crear un cliente revendedor nuevo:
-node scripts/create-admin.js juanperez sucontraseña 2 "Juan Pérez"
+El Excel debe tener estas columnas exactas en la primera fila:
+
+| Columna en Excel | Uso en la app |
+|---|---|
+| Código Interno | código (clave única) |
+| Nombre del Artículo | nombre |
+| Stock | stock (oculto si ≤ 0) |
+| Categoría | categoría (texto) |
+| Precio de costo | costo (interno, no se muestra) |
+| Principal | precio público (informativo) |
+| L0 | precio VIP |
+| L1 | precio Mayorista |
+| L2 | precio Minorista |
+| L3 | (descartado) |
+| LESP | precio Revendedor |
+
+---
+
+## Despliegue en Render / Railway / Fly.io
+
+La app está pensada para correr en un container Linux con un disco
+persistente para la base SQLite.
+
+### Render
+
+1. **Repo en GitHub** con todo el contenido de `maxaria_app/`, incluyendo
+   `data/precios_maxaria.xlsx`. (No subir `data/maxaria.db` ni `.env`.)
+2. **New Web Service** -> conectar el repo.
+3. **Build Command**: `npm install`
+4. **Start Command**: `npm start`  (corre `boot.js`, hace seed si no hay base)
+5. **Environment variables**:
+   - `SESSION_SECRET` = una clave larga y aleatoria
+   - `WHATSAPP_NUMBER` = tu número (ej `5493442000000`)
+   - `NODE_ENV` = `production`
+   - `DB_PATH` = `/var/data/maxaria.db`  (donde se va a montar el disco)
+6. **Disk** (para que la base sobreviva los reinicios):
+   - Mount path: `/var/data`
+   - Size: 1 GB (alcanza muchísimo)
+7. Deploy. La primera vez va a hacer seed automáticamente y crear los
+   usuarios demo.
+
+### Railway
+
+Similar, salvo que:
+- El disco persistente se llama "Volume". Montalo en `/data`.
+- `DB_PATH` = `/data/maxaria.db`
+- El resto igual.
+
+### Fly.io
+
+- `fly volumes create maxaria_data --size 1` y montar en `/data` desde el `fly.toml`.
+- En `[env]` setear `DB_PATH = "/data/maxaria.db"`.
+- Resto igual.
+
+### Actualizar precios en producción
+
+Dos opciones:
+
+**A. Subir un Excel nuevo y redesplegar.**
+Reemplazás `data/precios_maxaria.xlsx`, hacés commit y push. El deploy va
+a tener el archivo nuevo. Después entrás a la consola del hosting y corrés:
+```
+npm run import-prices
 ```
 
-Niveles válidos: `1` minorista, `2` revendedor, `3` mayorista, `4` vip, `99` admin.
+**B. Más adelante (Hito 3):** botón "subir Excel" en el panel admin web.
 
 ---
 
@@ -73,38 +150,26 @@ Niveles válidos: `1` minorista, `2` revendedor, `3` mayorista, `4` vip, `99` ad
 maxaria_app/
   server.js              # Express + auth + API
   scripts/
-    schema.sql           # Tablas (categories, products, users, orders, ...)
-    seed.js              # Crea base, carga productos y usuarios demo
-    create-admin.js      # Crear/resetear usuarios desde la terminal
+    boot.js              # Auto-seed + start (entry point para hosting)
+    schema.sql           # Tablas
+    seed.js              # Carga inicial desde Excel
+    import-prices.js     # Actualizar precios sin perder datos
+    export-prices.js     # Exportar base a Excel
+    excel_helper.js      # Lectura/escritura de Excel
+    create-admin.js      # Crear/resetear usuarios
   public/
-    login.html           # Pantalla de login
-    index.html           # Catálogo (tras login)
-    css/styles.css
-    js/app.js            # Lógica del catálogo + carrito
+    login.html  index.html  css/  js/
   data/
-    products.json        # 509 productos extraídos del HTML original
-    categories.json      # 28 categorías
-    maxaria.db           # SQLite (se crea con `npm run seed`, no se commitea)
+    precios_maxaria.xlsx  # tu Excel (lo subís vos)
+    maxaria.db            # SQLite (creada por seed, ignorada en git)
+    products.json         # imágenes legacy del HTML
+    categories.json       # legacy
 ```
 
 ---
 
-## Reglas de precios iniciales
+## Próximos hitos
 
-El seed calcula los precios así, sobre el precio base extraído del HTML actual:
-
-- Minorista: precio base
-- Revendedor: −10 %
-- Mayorista: −20 %
-- VIP: −25 %
-
-Para cambiarlos producto por producto vamos a hacer el panel admin web (Hito 3).
-Mientras tanto se pueden editar a mano con cualquier visor de SQLite (DB Browser for SQLite).
-
----
-
-## Próximos pasos
-
-- **Hito 2**: guardar pedidos en la DB (tabla `orders`) cuando el cliente envía el WhatsApp; historial por cliente.
-- **Hito 3**: panel admin web para productos, precios, usuarios y pedidos. Importar precios desde CSV.
-- **Hito 4**: imágenes optimizadas (webp + lazy + tamaños), búsqueda con filtros (rango de precio, stock, etc.).
+- **Hito 2**: guardar pedidos en la DB cuando el cliente envía el WhatsApp + historial por cliente.
+- **Hito 3**: panel admin web (productos, precios, usuarios, pedidos) con subida de Excel.
+- **Hito 4**: imágenes optimizadas (webp + lazy + tamaños) y filtros avanzados.
