@@ -42,6 +42,19 @@
     cfgWhatsappMsg: document.getElementById("cfg-whatsapp-msg"),
     cfgWhatsappCurrent: document.getElementById("cfg-whatsapp-current"),
 
+    // Usuarios
+    userSearch: document.getElementById("user-search"),
+    userCount: document.getElementById("user-count"),
+    userTbody: document.getElementById("user-tbody"),
+    userCreateBtn: document.getElementById("user-create-btn"),
+    userCreateModal: document.getElementById("user-create-modal"),
+    userCreateForm: document.getElementById("user-create-form"),
+    userCreateMsg: document.getElementById("user-create-msg"),
+    userResetModal: document.getElementById("user-reset-modal"),
+    userResetForm: document.getElementById("user-reset-form"),
+    userResetTarget: document.getElementById("user-reset-target"),
+    userResetMsg: document.getElementById("user-reset-msg"),
+
     toast: document.getElementById("toast"),
   };
 
@@ -53,6 +66,13 @@
     orders: [],
     ordersLoaded: false,
     settingsLoaded: false,
+    users: [],
+    usersLoaded: false,
+    resetTargetId: null,
+  };
+
+  const LEVEL_NAMES = {
+    1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP", 99: "Administrador",
   };
 
   // ---------- helpers ----------
@@ -120,7 +140,186 @@
       els.panels.forEach((p) => { p.hidden = p.id !== "tab-" + tab; });
       if (tab === "pedidos" && !state.ordersLoaded) loadOrders();
       if (tab === "config" && !state.settingsLoaded) loadSettings();
+      if (tab === "usuarios" && !state.usersLoaded) loadUsers();
     });
+  });
+
+  // ---------- Usuarios ----------
+  async function loadUsers() {
+    try {
+      els.userTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+      state.users = await api("/api/admin/users");
+      state.usersLoaded = true;
+      renderUsers();
+    } catch (e) {
+      els.userTbody.innerHTML = '<tr><td colspan="8" class="muted">Error cargando usuarios</td></tr>';
+    }
+  }
+
+  function renderUsers() {
+    const q = els.userSearch.value.trim().toLowerCase();
+    let list = state.users;
+    if (q) {
+      list = list.filter((u) =>
+        (u.username || "").toLowerCase().includes(q) ||
+        (u.full_name || "").toLowerCase().includes(q) ||
+        (u.email || "").toLowerCase().includes(q)
+      );
+    }
+    els.userCount.textContent = list.length + (list.length === 1 ? " usuario" : " usuarios");
+    if (!list.length) {
+      els.userTbody.innerHTML = '<tr><td colspan="8" class="muted">Sin resultados</td></tr>';
+      return;
+    }
+    els.userTbody.innerHTML = list.map(userRowHtml).join("");
+  }
+
+  function userRowHtml(u) {
+    const isMe = state.me && state.me.id === u.id;
+    const levelOpts = Object.entries(LEVEL_NAMES).map(([v, n]) =>
+      '<option value="' + v + '"' + (Number(v) === u.level ? " selected" : "") + '>' + n + '</option>'
+    ).join("");
+    const lastLogin = u.last_login_at ? formatDate(u.last_login_at) : "—";
+    return '<tr data-id="' + u.id + '"' + (u.active ? '' : ' class="row-inactive"') + '>' +
+      '<td class="cell-code">' + escapeHtml(u.username) + (isMe ? ' <span class="muted">(vos)</span>' : '') + '</td>' +
+      '<td><input class="cell-input" data-field="full_name" value="' + escapeHtml(u.full_name || "") + '" /></td>' +
+      '<td>' +
+        '<select class="cell-input cell-level" data-field="level"' + (isMe ? ' title="No podés bajarte de admin a vos mismo"' : '') + '>' + levelOpts + '</select>' +
+      '</td>' +
+      '<td><input class="cell-input" data-field="phone" value="' + escapeHtml(u.phone || "") + '" /></td>' +
+      '<td><input class="cell-input" data-field="email" type="email" value="' + escapeHtml(u.email || "") + '" /></td>' +
+      '<td><label class="cell-toggle"' + (isMe ? ' title="No podés desactivarte a vos mismo"' : '') + '>' +
+        '<input type="checkbox" data-field="active"' + (u.active ? " checked" : "") + (isMe ? " disabled" : "") + ' /><span></span></label></td>' +
+      '<td class="muted small-cell">' + lastLogin + '</td>' +
+      '<td><button class="btn btn-small btn-reset" data-act="reset" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button">Reset pass</button></td>' +
+    '</tr>';
+  }
+
+  // Auto-save al cambiar nombre/nivel/teléfono/email/active
+  els.userTbody.addEventListener("change", async (e) => {
+    const inp = e.target.closest("[data-field]");
+    if (!inp) return;
+    const tr = inp.closest("tr");
+    if (!tr) return;
+    const id = Number(tr.dataset.id);
+    const field = inp.dataset.field;
+    let value;
+    if (inp.type === "checkbox") value = inp.checked ? 1 : 0;
+    else if (field === "level") value = Number(inp.value);
+    else value = inp.value;
+
+    inp.classList.add("saving");
+    try {
+      const out = await api("/api/admin/users/" + id, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: value }),
+      });
+      const idx = state.users.findIndex((x) => x.id === id);
+      if (idx >= 0) state.users[idx] = out.user;
+      inp.classList.remove("saving");
+      inp.classList.add("saved");
+      setTimeout(() => inp.classList.remove("saved"), 1200);
+      // Si toggleamos active, refrescar la fila para reflejar la clase row-inactive
+      if (field === "active") {
+        tr.classList.toggle("row-inactive", !out.user.active);
+      }
+    } catch (err) {
+      inp.classList.remove("saving");
+      inp.classList.add("error");
+      // Revertir el valor visual al estado original
+      const orig = state.users.find((x) => x.id === id);
+      if (orig) {
+        if (inp.type === "checkbox") inp.checked = !!orig.active;
+        else if (field === "level") inp.value = String(orig.level);
+        else inp.value = orig[field] || "";
+      }
+      showToast("Error: " + err.message, "err");
+      setTimeout(() => inp.classList.remove("error"), 2000);
+    }
+  });
+
+  // Click en "Reset pass" → abrir modal
+  els.userTbody.addEventListener("click", (e) => {
+    const btn = e.target.closest('[data-act="reset"]');
+    if (!btn) return;
+    state.resetTargetId = Number(btn.dataset.id);
+    els.userResetTarget.textContent = "Para el usuario: " + btn.dataset.username;
+    els.userResetMsg.textContent = "";
+    els.userResetForm.reset();
+    els.userResetModal.hidden = false;
+    setTimeout(() => els.userResetForm.querySelector('[name="password"]').focus(), 50);
+  });
+
+  els.userSearch.addEventListener("input", debounce(renderUsers, 150));
+
+  // Crear usuario
+  els.userCreateBtn.addEventListener("click", () => {
+    els.userCreateForm.reset();
+    els.userCreateMsg.textContent = "";
+    els.userCreateModal.hidden = false;
+    setTimeout(() => els.userCreateForm.querySelector('[name="username"]').focus(), 50);
+  });
+
+  els.userCreateForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(els.userCreateForm);
+    const body = {
+      username: fd.get("username"),
+      password: fd.get("password"),
+      full_name: fd.get("full_name"),
+      level: Number(fd.get("level")),
+      phone: fd.get("phone"),
+      email: fd.get("email"),
+    };
+    els.userCreateMsg.textContent = "Creando…";
+    els.userCreateMsg.className = "config-msg";
+    try {
+      const out = await api("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      state.users.unshift(out.user);
+      renderUsers();
+      els.userCreateModal.hidden = true;
+      showToast("Usuario " + out.user.username + " creado");
+    } catch (err) {
+      els.userCreateMsg.textContent = err.message;
+      els.userCreateMsg.className = "config-msg err";
+    }
+  });
+
+  els.userResetForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!state.resetTargetId) return;
+    const fd = new FormData(els.userResetForm);
+    const password = fd.get("password");
+    els.userResetMsg.textContent = "Guardando…";
+    els.userResetMsg.className = "config-msg";
+    try {
+      await api("/api/admin/users/" + state.resetTargetId + "/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: password }),
+      });
+      els.userResetModal.hidden = true;
+      showToast("Contraseña actualizada");
+    } catch (err) {
+      els.userResetMsg.textContent = err.message;
+      els.userResetMsg.className = "config-msg err";
+    }
+  });
+
+  // Cerrar modales con [data-close] o click en overlay o Escape
+  document.querySelectorAll(".admin-modal").forEach((m) => {
+    m.addEventListener("click", (e) => {
+      if (e.target === m || e.target.matches("[data-close]")) m.hidden = true;
+    });
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    document.querySelectorAll(".admin-modal:not([hidden])").forEach((m) => { m.hidden = true; });
   });
 
   // ---------- Config ----------

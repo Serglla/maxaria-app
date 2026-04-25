@@ -17,7 +17,7 @@
       <nav class="admin-tabs">
         <button class="tab-btn active" data-tab="productos" type="button">Productos</button>
         <button class="tab-btn" data-tab="pedidos" type="button">Pedidos</button>
-        <button class="tab-btn" data-tab="usuarios" type="button" disabled title="Próximamente">Usuarios</button>
+        <button class="tab-btn" data-tab="usuarios" type="button">Usuarios</button>
         <button class="tab-btn" data-tab="graficos" type="button" disabled title="Próximamente">Gráficos</button>
         <button class="tab-btn" data-tab="config" type="button">Configuración</button>
       </nav>
@@ -81,6 +81,34 @@
       </div>
     </section>
 
+    <!-- ===== TAB USUARIOS ===== -->
+    <section class="tab-panel" id="tab-usuarios" hidden>
+      <div class="admin-toolbar">
+        <input type="search" id="user-search" class="admin-search" placeholder="Buscar por usuario o nombre..." autocomplete="off" />
+        <span class="admin-spacer"></span>
+        <span id="user-count" class="muted">…</span>
+        <button class="btn btn-primary" id="user-create-btn" type="button">+ Crear usuario</button>
+      </div>
+
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="user-table">
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Nombre</th>
+              <th>Nivel</th>
+              <th>Teléfono</th>
+              <th>Email</th>
+              <th>Activo</th>
+              <th>Último login</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="user-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- ===== TAB CONFIG ===== -->
     <section class="tab-panel" id="tab-config" hidden>
       <div class="config-card">
@@ -121,6 +149,62 @@
       <div class="admin-modal-foot">
         <button class="btn btn-primary" id="import-close" type="button" hidden>Cerrar</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal crear usuario -->
+  <div class="admin-modal" id="user-create-modal" hidden>
+    <div class="admin-modal-box">
+      <h3>Crear nuevo usuario</h3>
+      <form id="user-create-form" class="user-form">
+        <label>Usuario (login) <span class="muted">3-32 caracteres, letras/números/_-.</span>
+          <input type="text" name="username" required autocomplete="off" />
+        </label>
+        <label>Contraseña <span class="muted">mínimo 6</span>
+          <input type="text" name="password" required autocomplete="new-password" />
+        </label>
+        <label>Nombre completo
+          <input type="text" name="full_name" />
+        </label>
+        <label>Nivel
+          <select name="level" required>
+            <option value="1">Minorista</option>
+            <option value="2">Revendedor</option>
+            <option value="3">Mayorista</option>
+            <option value="4">VIP</option>
+            <option value="99">Administrador</option>
+          </select>
+        </label>
+        <label>Teléfono <span class="muted">(opcional)</span>
+          <input type="tel" name="phone" />
+        </label>
+        <label>Email <span class="muted">(opcional)</span>
+          <input type="email" name="email" />
+        </label>
+        <p id="user-create-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary">Crear</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal reset password -->
+  <div class="admin-modal" id="user-reset-modal" hidden>
+    <div class="admin-modal-box">
+      <h3>Resetear contraseña</h3>
+      <p id="user-reset-target" class="muted"></p>
+      <form id="user-reset-form" class="user-form">
+        <label>Nueva contraseña <span class="muted">mínimo 6</span>
+          <input type="text" name="password" required autocomplete="new-password" />
+        </label>
+        <p id="user-reset-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary">Resetear</button>
+        </div>
+      </form>
     </div>
   </div>
 

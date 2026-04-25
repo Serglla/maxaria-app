@@ -769,6 +769,53 @@ button { font: inherit; cursor: pointer; }
 .admin-toast.err { background: #dc2626; }
 .admin-toast[hidden] { display: none; }
 
+/* Botones chicos para acciones por fila */
+.btn-small {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.btn-reset {
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fed7aa;
+}
+.btn-reset:hover { background: #ffedd5; }
+
+.small-cell { font-size: 12px; white-space: nowrap; }
+.cell-level { max-width: 140px; }
+
+/* Form en modal */
+.user-form { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.user-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+  color: #374151;
+}
+.user-form label .muted { font-size: 11px; font-weight: 400; }
+.user-form input,
+.user-form select {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  background: #fff;
+}
+.user-form input:focus,
+.user-form select:focus {
+  outline: 2px solid #2563eb33;
+  border-color: #2563eb;
+}
+.admin-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
 /* Tab Configuración */
 .config-card {
   background: #fff;

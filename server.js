@@ -394,6 +394,114 @@ app.patch("/api/admin/settings", requireAdmin, (req, res) => {
   });
 });
 
+// ===== Usuarios =====
+const VALID_LEVELS = [1, 2, 3, 4, 99];
+
+function isValidUsername(s) {
+  return typeof s === "string" && /^[a-z0-9_.-]{3,32}$/i.test(s);
+}
+
+app.get("/api/admin/users", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, username, full_name, phone, email, level, active, created_at, last_login_at" +
+    "  FROM users ORDER BY level DESC, username"
+  ).all();
+  res.json(rows);
+});
+
+app.post("/api/admin/users", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const username = String(b.username || "").trim().toLowerCase();
+  const password = String(b.password || "");
+  const fullName = String(b.full_name || "").trim().slice(0, 120) || null;
+  const phone    = String(b.phone || "").trim().slice(0, 40) || null;
+  const email    = String(b.email || "").trim().slice(0, 120) || null;
+  const level    = Number(b.level);
+
+  if (!isValidUsername(username))
+    return res.status(400).json({ error: "Usuario inválido (3-32 caracteres, letras/números/_-.)" });
+  if (password.length < 6)
+    return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+  if (!VALID_LEVELS.includes(level))
+    return res.status(400).json({ error: "Nivel inválido. Valores: " + VALID_LEVELS.join(", ") });
+
+  const exists = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
+  if (exists) return res.status(409).json({ error: "Ese usuario ya existe" });
+
+  const hash = bcrypt.hashSync(password, 10);
+  const r = db.prepare(
+    "INSERT INTO users (username, password_hash, full_name, phone, email, level, active)" +
+    " VALUES (?, ?, ?, ?, ?, ?, 1)"
+  ).run(username, hash, fullName, phone, email, level);
+
+  const user = db.prepare(
+    "SELECT id, username, full_name, phone, email, level, active, created_at, last_login_at FROM users WHERE id = ?"
+  ).get(r.lastInsertRowid);
+  res.json({ ok: true, user: user });
+});
+
+app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID inválido" });
+  const target = db.prepare("SELECT id, level FROM users WHERE id = ?").get(id);
+  if (!target) return res.status(404).json({ error: "Usuario no encontrado" });
+
+  const b = req.body || {};
+  const sets = [];
+  const vals = [];
+
+  if ("full_name" in b) {
+    sets.push("full_name = ?");
+    vals.push(String(b.full_name || "").trim().slice(0, 120) || null);
+  }
+  if ("phone" in b) {
+    sets.push("phone = ?");
+    vals.push(String(b.phone || "").trim().slice(0, 40) || null);
+  }
+  if ("email" in b) {
+    sets.push("email = ?");
+    vals.push(String(b.email || "").trim().slice(0, 120) || null);
+  }
+  if ("level" in b) {
+    const lvl = Number(b.level);
+    if (!VALID_LEVELS.includes(lvl))
+      return res.status(400).json({ error: "Nivel inválido" });
+    // No permitir que el admin actual se baje a si mismo de admin
+    if (id === req.session.userId && lvl !== 99)
+      return res.status(400).json({ error: "No podés bajarte de Administrador a vos mismo" });
+    sets.push("level = ?");
+    vals.push(lvl);
+  }
+  if ("active" in b) {
+    const act = b.active ? 1 : 0;
+    if (id === req.session.userId && !act)
+      return res.status(400).json({ error: "No podés desactivar tu propio usuario" });
+    sets.push("active = ?");
+    vals.push(act);
+  }
+
+  if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
+  vals.push(id);
+  db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+  const user = db.prepare(
+    "SELECT id, username, full_name, phone, email, level, active, created_at, last_login_at FROM users WHERE id = ?"
+  ).get(id);
+  res.json({ ok: true, user: user });
+});
+
+app.post("/api/admin/users/:id/reset-password", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID inválido" });
+  const target = db.prepare("SELECT id FROM users WHERE id = ?").get(id);
+  if (!target) return res.status(404).json({ error: "Usuario no encontrado" });
+  const password = String((req.body || {}).password || "");
+  if (password.length < 6)
+    return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+  const hash = bcrypt.hashSync(password, 10);
+  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, id);
+  res.json({ ok: true });
+});
+
 // Subir Excel y reimportar precios + stock (NO destructivo: preserva users y orders)
 app.post("/api/admin/import-excel", requireAdmin, excelUpload.single("file"), (req, res) => {
   if (!req.file || !req.file.buffer || !req.file.buffer.length) {
