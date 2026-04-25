@@ -269,6 +269,48 @@ button { font: inherit; cursor: pointer; }
 }
 .card-add:hover { background: #f59e0b; }
 
+/* Control −[N]+ que aparece cuando el producto ya esta en el carrito */
+.card-qty {
+  display: inline-flex;
+  align-items: stretch;
+  background: #fbbf24;
+  border-radius: 6px;
+  overflow: hidden;
+  height: 26px;
+}
+.card-qty-btn {
+  background: transparent;
+  border: 0;
+  padding: 0 9px;
+  font-weight: 700;
+  color: #111827;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+}
+.card-qty-btn:hover { background: rgba(0,0,0,.12); }
+.card-qty-btn:active { background: rgba(0,0,0,.2); }
+.card-qty-num {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  padding: 0 4px;
+  background: rgba(255,255,255,.55);
+  font-weight: 700;
+  color: #111827;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Card resaltado cuando tiene items en el carrito */
+.card.in-cart {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 1px #fbbf24, 0 4px 14px rgba(251,191,36,.15);
+}
+
 /* ====== Drawer carrito ====== */
 .drawer {
   position: fixed;

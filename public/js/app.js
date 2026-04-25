@@ -108,50 +108,74 @@
     if (!list.length) { els.grid.innerHTML = ""; els.empty.hidden = false; return; }
     els.empty.hidden = true;
     els.grid.innerHTML = list.map(cardHtml).join("");
-    els.grid.querySelectorAll(".card-add").forEach((btn) => {
-      btn.addEventListener("click", () => addToCart(Number(btn.dataset.id)));
-    });
+    // Event delegation: un solo handler en la grilla maneja add/inc/dec
+    // de TODOS los cards. Asi no hay que re-bindear handlers cada
+    // vez que se vuelve a renderizar la accion de un card.
   }
 
   function cardHtml(p) {
     const img = p.image_url
       ? '<img src="' + escapeHtml(p.image_url) + '" alt="' + escapeHtml(p.name) + '" loading="lazy" />'
       : '<div class="muted" style="font-size:12px;padding:8px;text-align:center">Sin foto</div>';
-    return '<article class="card" data-id="' + p.id + '">' +
+    const inCart = state.cart.has(p.id);
+    return '<article class="card' + (inCart ? ' in-cart' : '') + '" data-id="' + p.id + '">' +
       '<div class="card-img">' + img + '</div>' +
       '<div class="card-body">' +
         '<div class="card-cat">' + escapeHtml(p.category_name || "") + '</div>' +
         '<div class="card-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</div>' +
         '<div class="card-foot">' +
           '<div class="card-price">' + fmtPrice(p.price) + '</div>' +
-          '<button class="card-add" data-id="' + p.id + '" type="button" title="Agregar al carrito">+</button>' +
+          '<div class="card-actions" data-id="' + p.id + '">' + cardActionHtml(p.id) + '</div>' +
         '</div>' +
       '</div>' +
     '</article>';
   }
 
-  function addToCart(id) {
-    const p = state.products.find((x) => x.id === id); if (!p) return;
-    const cur = state.cart.get(id);
-    if (cur) cur.qty += 1;
-    else state.cart.set(id, { id: p.id, name: p.name, price: p.price, qty: 1, image: p.image_url });
-    flashAddedFeedback(id); renderCart();
+  function cardActionHtml(productId) {
+    const item = state.cart.get(productId);
+    if (!item || item.qty <= 0) {
+      return '<button class="card-add" data-act="add" data-id="' + productId +
+             '" type="button" title="Agregar al carrito">+</button>';
+    }
+    return '<div class="card-qty">' +
+      '<button class="card-qty-btn" data-act="dec" data-id="' + productId + '" type="button" aria-label="Restar">−</button>' +
+      '<span class="card-qty-num">' + item.qty + '</span>' +
+      '<button class="card-qty-btn" data-act="inc" data-id="' + productId + '" type="button" aria-label="Sumar">+</button>' +
+    '</div>';
   }
 
-  function flashAddedFeedback(id) {
-    const card = els.grid.querySelector('.card[data-id="' + id + '"] .card-add');
+  // Re-renderiza solo la accion (+ o − N +) y la clase in-cart de un card
+  // puntual, sin tocar el resto de la grilla. Mantiene scroll y foco.
+  function refreshCardForProduct(productId) {
+    const card = els.grid.querySelector('.card[data-id="' + productId + '"]');
     if (!card) return;
-    const original = card.textContent;
-    card.textContent = "OK"; card.style.background = "#10b981"; card.style.color = "#fff";
-    setTimeout(() => { card.textContent = original; card.style.background = ""; card.style.color = ""; }, 600);
+    const slot = card.querySelector('.card-actions[data-id="' + productId + '"]');
+    if (slot) slot.innerHTML = cardActionHtml(productId);
+    if (state.cart.has(productId)) card.classList.add("in-cart");
+    else card.classList.remove("in-cart");
   }
 
   function changeQty(id, delta) {
-    const item = state.cart.get(id); if (!item) return;
-    item.qty += delta; if (item.qty <= 0) state.cart.delete(id);
+    const item = state.cart.get(id);
+    if (item) {
+      item.qty += delta;
+      if (item.qty <= 0) state.cart.delete(id);
+    } else if (delta > 0) {
+      const p = state.products.find((x) => x.id === id);
+      if (!p) return;
+      state.cart.set(id, { id: p.id, name: p.name, price: p.price, qty: delta, image: p.image_url });
+    } else {
+      return;
+    }
     renderCart();
+    refreshCardForProduct(id);
   }
-  function removeFromCart(id) { state.cart.delete(id); renderCart(); }
+
+  function removeFromCart(id) {
+    state.cart.delete(id);
+    renderCart();
+    refreshCardForProduct(id);
+  }
   function cartTotal() { let t = 0; state.cart.forEach((it) => (t += it.price * it.qty)); return t; }
   function cartCount() { let n = 0; state.cart.forEach((it) => (n += it.qty)); return n; }
 
@@ -268,9 +292,11 @@
         showWhatsappFallback(out.order.id, waUrl);
       }
 
+      const clearedIds = Array.from(state.cart.keys());
       state.cart.clear();
       if (els.cartNotes) els.cartNotes.value = "";
       renderCart();
+      clearedIds.forEach(refreshCardForProduct);
       els.cartDrawer.hidden = true;
       flashOrderSaved(out.order.id);
     } catch (e) {
@@ -487,6 +513,16 @@
   els.logoutBtn.addEventListener("click", async () => {
     try { await fetch("/logout", { method: "POST" }); }
     finally { location.href = "/login"; }
+  });
+
+  // Event delegation para los botones add / inc / dec en cada card
+  els.grid.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act][data-id]");
+    if (!btn || !els.grid.contains(btn)) return;
+    const id = Number(btn.dataset.id);
+    const act = btn.dataset.act;
+    if (act === "add" || act === "inc") changeQty(id, +1);
+    else if (act === "dec") changeQty(id, -1);
   });
 
   els.cartBtn.addEventListener("click", () => { els.cartDrawer.hidden = false; });
