@@ -4,7 +4,8 @@
   "description": "Catálogo Maxaria con login y precios por nivel de cliente",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node scripts/seed.js && node server.js",
+    "start:plain": "node server.js",
     "dev": "node --watch server.js",
     "seed": "node scripts/seed.js",
     "create-admin": "node scripts/create-admin.js",
