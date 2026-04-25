@@ -10,8 +10,8 @@
  *   6  Principal          -> price_publico (informativo)
  *   7  L0                 -> price_vip
  *   8  L1                 -> price_mayorista
- *   9  L2                 -> price_minorista
- *   10 L3                 -> DESCARTAR
+ *   9  L2                 -> DESCARTAR
+ *   10 L3                 -> price_minorista
  *   11 LESP               -> price_revendedor
  */
 const fs = require("fs");
@@ -27,7 +27,7 @@ const COL = {
   price_publico: "Principal",
   price_vip: "L0",
   price_mayorista: "L1",
-  price_minorista: "L2",
+  price_minorista: "L3",
   price_revendedor: "LESP",
 };
 
@@ -130,7 +130,7 @@ function writeExcel(filePath, products) {
       Number(p.stock) || 0, p.category || "",
       Number(p.cost) || 0, Number(p.price_publico) || 0,
       Number(p.price_vip) || 0, Number(p.price_mayorista) || 0,
-      Number(p.price_minorista) || 0, 0,
+      0, Number(p.price_minorista) || 0,
       Number(p.price_revendedor) || 0,
     ]);
   }

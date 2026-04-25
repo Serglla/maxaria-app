@@ -87,8 +87,8 @@ El Excel debe tener estas columnas exactas en la primera fila:
 | Principal | precio público (informativo) |
 | L0 | precio VIP |
 | L1 | precio Mayorista |
-| L2 | precio Minorista |
-| L3 | (descartado) |
+| L2 | (descartado) |
+| L3 | precio Minorista |
 | LESP | precio Revendedor |
 
 ---
@@ -229,9 +229,27 @@ Nueva dependencia: `multer` (manejo de uploads multipart). Después del pull:
 npm install
 ```
 
-**Etapas pendientes:**
-- B: gestión de usuarios (crear / editar / reset password / desactivar).
-- C: gráficos básicos.
+**Etapa B (lista):** gestión de usuarios desde `/admin` → tab **Usuarios**.
+
+- Tabla con todos los usuarios y edición inline de nombre, nivel, teléfono,
+  email y activo (toggle). Auto-save al perder foco igual que en productos.
+- Botón **+ Crear usuario**: modal con username, password, nombre, nivel,
+  teléfono y email.
+- Botón **Reset pass** por fila: modal para definir una contraseña nueva.
+- Salvaguardas: no podés bajarte de Administrador a vos mismo ni
+  desactivarte. Los toggles correspondientes salen disabled.
+
+Endpoints nuevos:
+
+| Método | Ruta | Para qué |
+|---|---|---|
+| `GET`   | `/api/admin/users` | Lista de usuarios |
+| `POST`  | `/api/admin/users` | Crear nuevo usuario |
+| `PATCH` | `/api/admin/users/:id` | Editar nombre/nivel/teléfono/email/active |
+| `POST`  | `/api/admin/users/:id/reset-password` | Cambiar contraseña |
+
+**Etapa pendiente:**
+- C: gráficos básicos (top productos vendidos, pedidos por mes, facturado por nivel).
 
 ### Hito 4 — pendiente
 Filtros (rango de precio, stock alto), búsqueda más inteligente, imágenes
