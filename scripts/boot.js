@@ -86,6 +86,31 @@ function logFilesystemDiagnostic() {
     } catch (_) {}
     console.log("[boot]   " + p + ":", info);
   }
+  // Tambien expandir /mnt y / por si el volume aparece con nombre
+  // no estandar (Railway a veces hace cosas raras).
+  for (const dir of ["/mnt", "/app"]) {
+    try {
+      if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+        const ls = fs.readdirSync(dir).sort();
+        console.log("[boot]   Contenido de " + dir + ":", ls.length ? ls.join(" ") : "(vacio)");
+      }
+    } catch (_) {}
+  }
+  // Y mostrar las env vars que comienzan con DB_ o RAILWAY_ por si hay
+  // alguna pista oculta sobre la ruta del volume.
+  const envHints = Object.keys(process.env)
+    .filter((k) => k === "DB_PATH" || k.startsWith("RAILWAY_") || k.includes("VOLUME") || k.includes("MOUNT"))
+    .sort();
+  if (envHints.length) {
+    console.log("[boot]   Env vars relevantes:");
+    for (const k of envHints) {
+      const v = process.env[k] || "";
+      const safe = (k === "SESSION_SECRET" || k.includes("SECRET") || k.includes("TOKEN")) ? "(oculto)" : v;
+      console.log("[boot]     " + k + " =", safe);
+    }
+  } else {
+    console.log("[boot]   Env vars relevantes: ninguna (DB_PATH / RAILWAY_* / *VOLUME* / *MOUNT* no estan seteadas)");
+  }
 }
 const _resolved = resolveDbPath();
 const DB_PATH = _resolved.path;
