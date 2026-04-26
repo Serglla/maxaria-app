@@ -25,16 +25,67 @@ const ROOT = path.join(__dirname, "..");
 //     cuando el hosting tiene un volume montado pero la env var no
 //     llega al container por algun bug del provider.
 //  3. Fallback local: <proyecto>/data/maxaria.db (uso de desarrollo).
+// Lugares tipicos donde los providers montan los volumes persistentes.
+// Probamos en orden de preferencia. El primero que exista como directorio
+// gana.
+const COMMON_VOLUME_PATHS = [
+  "/data",
+  "/var/data",
+  "/mnt/data",
+  "/persistent",
+  "/storage",
+  "/volume",
+  "/volumes",
+];
+
+function findExistingDir(candidates) {
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return p;
+    } catch (_) { /* sigo */ }
+  }
+  return null;
+}
+
 function resolveDbPath() {
   if (process.env.DB_PATH && process.env.DB_PATH.trim()) {
     return { path: process.env.DB_PATH.trim(), source: "env DB_PATH" };
   }
+  const dir = findExistingDir(COMMON_VOLUME_PATHS);
+  if (dir) {
+    return { path: path.join(dir, "maxaria.db"), source: "fallback " + dir + "/ (volumen detectado)" };
+  }
+  return { path: path.join(ROOT, "data", "maxaria.db"), source: "fallback dentro del proyecto (efimero)" };
+}
+
+// Diagnostico: imprime el estado del filesystem para entender que
+// rutas reales tiene el container. Util para deshilvanar problemas
+// de "el volume no aparece donde esperaba".
+function logFilesystemDiagnostic() {
+  console.log("[boot] DIAGNOSTICO filesystem:");
   try {
-    if (fs.existsSync("/data") && fs.statSync("/data").isDirectory()) {
-      return { path: "/data/maxaria.db", source: "fallback /data/ (volumen detectado)" };
-    }
-  } catch (_) { /* en Windows /data no existe, seguimos */ }
-  return { path: path.join(ROOT, "data", "maxaria.db"), source: "fallback dentro del proyecto" };
+    const rootEntries = fs.readdirSync("/").sort();
+    console.log("[boot]   Contenido de /:", rootEntries.join(" "));
+  } catch (e) {
+    console.log("[boot]   No pude listar /:", e.message);
+  }
+  for (const p of COMMON_VOLUME_PATHS) {
+    let info = "(no existe)";
+    try {
+      const st = fs.statSync(p);
+      if (st.isDirectory()) {
+        let entries = "";
+        try {
+          const ls = fs.readdirSync(p);
+          entries = ls.length ? "[" + ls.slice(0, 5).join(",") + (ls.length > 5 ? ",…" : "") + "]" : "[vacio]";
+        } catch (_) {}
+        info = "DIR " + entries;
+      } else {
+        info = "(no-dir)";
+      }
+    } catch (_) {}
+    console.log("[boot]   " + p + ":", info);
+  }
 }
 const _resolved = resolveDbPath();
 const DB_PATH = _resolved.path;
@@ -59,6 +110,13 @@ console.log("[boot] DB_PATH        =", DB_PATH);
 console.log("[boot] DB_PATH source =", DB_PATH_SOURCE);
 console.log("[boot] NODE_ENV       =", process.env.NODE_ENV || "development");
 console.log("[boot] BACKUP_KEEP    =", process.env.BACKUP_KEEP || "7 (default)");
+
+// Si en produccion terminamos cayendo al fallback efimero, imprimimos
+// que rutas tiene el filesystem para que se pueda debuggear el volumen
+// desde los logs sin tener que entrar al container.
+if (process.env.NODE_ENV === "production" && DB_PATH_SOURCE.indexOf("env") === -1 && DB_PATH_SOURCE.indexOf("volumen") === -1) {
+  logFilesystemDiagnostic();
+}
 
 if (process.env.NODE_ENV === "production" && isInsideProject(DB_PATH)) {
   console.warn("");
