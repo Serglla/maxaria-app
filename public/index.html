@@ -29,6 +29,7 @@
         <button id="orders-btn" class="btn btn-ghost" type="button">Mis pedidos</button>
         <button id="cart-btn" class="btn btn-ghost" type="button">
           Carrito <span id="cart-count" class="badge">0</span>
+          <span id="cart-total-top" class="cart-total-top" hidden>$0</span>
         </button>
         <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
       </div>
@@ -50,9 +51,13 @@
     <div id="empty" class="empty" hidden>No se encontraron productos.</div>
   </main>
 
+  <!-- Fondo oscuro detras de los drawers (carrito / pedidos) -->
+  <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+
   <!-- Drawer historial de pedidos -->
   <aside class="drawer drawer-wide" id="orders-drawer" hidden>
     <header class="drawer-head">
+      <button class="drawer-back" id="orders-back" type="button" aria-label="Volver">←</button>
       <h3 id="orders-title">Mis pedidos</h3>
       <button class="btn btn-ghost" id="orders-close" type="button">Cerrar</button>
     </header>
@@ -64,6 +69,7 @@
   <!-- Drawer carrito -->
   <aside class="drawer" id="cart-drawer" hidden>
     <header class="drawer-head">
+      <button class="drawer-back" id="cart-back" type="button" aria-label="Volver">←</button>
       <h3>Tu pedido</h3>
       <button class="btn btn-ghost" id="cart-close" type="button">Cerrar</button>
     </header>

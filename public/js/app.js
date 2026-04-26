@@ -14,8 +14,10 @@
     logoutBtn: document.getElementById("logout-btn"),
     cartBtn: document.getElementById("cart-btn"),
     cartCount: document.getElementById("cart-count"),
+    cartTotalTop: document.getElementById("cart-total-top"),
     cartDrawer: document.getElementById("cart-drawer"),
     cartClose: document.getElementById("cart-close"),
+    cartBack: document.getElementById("cart-back"),
     cartBody: document.getElementById("cart-body"),
     cartTotal: document.getElementById("cart-total"),
     cartSend: document.getElementById("cart-send"),
@@ -23,9 +25,11 @@
     ordersBtn: document.getElementById("orders-btn"),
     ordersDrawer: document.getElementById("orders-drawer"),
     ordersClose: document.getElementById("orders-close"),
+    ordersBack: document.getElementById("orders-back"),
     ordersBody: document.getElementById("orders-body"),
     ordersTitle: document.getElementById("orders-title"),
     adminLink: document.getElementById("admin-link"),
+    backdrop: document.getElementById("drawer-backdrop"),
   };
 
   const state = {
@@ -185,7 +189,17 @@
 
   function renderCart() {
     const items = Array.from(state.cart.values());
+    const total = cartTotal();
     els.cartCount.textContent = cartCount();
+    // Total visible en el topbar mientras se arma el pedido
+    if (els.cartTotalTop) {
+      if (items.length) {
+        els.cartTotalTop.textContent = fmtPrice(total);
+        els.cartTotalTop.hidden = false;
+      } else {
+        els.cartTotalTop.hidden = true;
+      }
+    }
     if (!items.length) {
       els.cartBody.innerHTML = '<p class="muted">Tu carrito esta vacio.</p>';
       els.cartTotal.textContent = "$0";
@@ -193,7 +207,7 @@
       return;
     }
     els.cartBody.innerHTML = items.map(cartItemHtml).join("");
-    els.cartTotal.textContent = fmtPrice(cartTotal());
+    els.cartTotal.textContent = fmtPrice(total);
     els.cartSend.disabled = false;
     els.cartBody.querySelectorAll("[data-act]").forEach((btn) => {
       const id = Number(btn.dataset.id);
@@ -301,7 +315,7 @@
       if (els.cartNotes) els.cartNotes.value = "";
       renderCart();
       clearedIds.forEach(refreshCardForProduct);
-      els.cartDrawer.hidden = true;
+      closeDrawers();
       flashOrderSaved(out.order.id);
     } catch (e) {
       if (popup && !popup.closed) popup.close();
@@ -362,7 +376,7 @@
     const isAdmin = state.me && state.me.level === 99;
     els.ordersTitle.textContent = isAdmin ? "Todos los pedidos" : "Mis pedidos";
     els.ordersBody.innerHTML = '<p class="muted">Cargando...</p>';
-    els.ordersDrawer.hidden = false;
+    openDrawer(els.ordersDrawer);
     try {
       const orders = await api("/api/orders");
       if (!orders.length) {
@@ -529,17 +543,60 @@
     else if (act === "dec") changeQty(id, -1);
   });
 
-  els.cartBtn.addEventListener("click", () => { els.cartDrawer.hidden = false; });
-  els.cartClose.addEventListener("click", () => { els.cartDrawer.hidden = true; });
+  // ----- Apertura / cierre de los drawers -----
+  // El estado "hay un drawer abierto" tambien se refleja como
+  // una entrada en el history del navegador, asi el boton "atras"
+  // del navegador (o del celular) cierra el drawer en vez de
+  // sacar al usuario del catalogo.
+  let drawerHistoryPushed = false;
+
+  function openDrawer(drawer) {
+    // Si ya habia otro drawer abierto, lo ocultamos sin tocar el history
+    els.cartDrawer.hidden = true;
+    els.ordersDrawer.hidden = true;
+    drawer.hidden = false;
+    els.backdrop.hidden = false;
+    if (!drawerHistoryPushed) {
+      try { history.pushState({ drawerOpen: true }, ""); } catch (_) {}
+      drawerHistoryPushed = true;
+    }
+  }
+
+  function closeDrawers(fromPopState) {
+    const wasOpen = !els.cartDrawer.hidden || !els.ordersDrawer.hidden;
+    els.cartDrawer.hidden = true;
+    els.ordersDrawer.hidden = true;
+    els.backdrop.hidden = true;
+    if (wasOpen && drawerHistoryPushed && !fromPopState) {
+      drawerHistoryPushed = false;
+      try { history.back(); } catch (_) {}
+    } else if (fromPopState) {
+      drawerHistoryPushed = false;
+    }
+  }
+
+  els.cartBtn.addEventListener("click", () => { openDrawer(els.cartDrawer); });
+  els.cartClose.addEventListener("click", () => { closeDrawers(); });
+  els.cartBack.addEventListener("click", () => { closeDrawers(); });
   els.cartSend.addEventListener("click", sendCart);
 
   els.ordersBtn.addEventListener("click", openOrders);
-  els.ordersClose.addEventListener("click", () => { els.ordersDrawer.hidden = true; });
+  els.ordersClose.addEventListener("click", () => { closeDrawers(); });
+  els.ordersBack.addEventListener("click", () => { closeDrawers(); });
+
+  // Click en el fondo oscuro = cerrar
+  els.backdrop.addEventListener("click", () => { closeDrawers(); });
+
+  // Boton "atras" del navegador / celular
+  window.addEventListener("popstate", () => {
+    if (!els.cartDrawer.hidden || !els.ordersDrawer.hidden) {
+      closeDrawers(true);
+    }
+  });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      els.cartDrawer.hidden = true;
-      els.ordersDrawer.hidden = true;
+    if (e.key === "Escape" && (!els.cartDrawer.hidden || !els.ordersDrawer.hidden)) {
+      closeDrawers();
     }
   });
 
