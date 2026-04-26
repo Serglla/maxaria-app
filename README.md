@@ -67,6 +67,7 @@ node scripts/create-admin.js admin nuevaclave 99
 | `npm run import-prices` | Actualiza precios y stock desde el Excel sin perder usuarios ni pedidos |
 | `npm run export-prices` | Genera un Excel con la base actual |
 | `npm run create-admin <user> <pass> [nivel]` | Crear o resetear un usuario |
+| `npm run backup` | Hace una copia de la base en `data/backups/` (también corre solo al arrancar) |
 
 > Antes de correr `seed` o `import-prices`, parar el server (Ctrl+C) para
 > que no tenga la base bloqueada.
@@ -123,11 +124,49 @@ Similar, salvo que:
 - `DB_PATH` = `/data/maxaria.db`
 - El resto igual.
 
+> **IMPORTANTÍSIMO:** si `DB_PATH` no está seteado o apunta a una ruta
+> dentro del proyecto (ej `data/maxaria.db`), **cada redeploy borra la
+> base y todos los usuarios creados a mano**, porque el filesystem del
+> container es efímero y se reemplaza por el checkout de git.
+>
+> **Cómo verificar que está bien en Railway:**
+> 1. En tu service → **Variables** → confirmá que `DB_PATH=/data/maxaria.db`
+>    (o la ruta donde montaste el volume).
+> 2. En tu service → **Settings** → **Volumes** → debe haber un volume
+>    montado en `/data` (o la ruta que pusiste en `DB_PATH`).
+> 3. Mirá los **logs** al arrancar. Vas a ver:
+>    ```
+>    [boot] DB_PATH        = /data/maxaria.db
+>    [boot] Base encontrada en /data/maxaria.db (XXX KB)
+>    [backup] Copia creada: /data/backups/maxaria-20260101-120000.db
+>    ```
+>    Si en cambio ves **`*** No existe la base en ...`** después de un
+>    deploy donde antes ya había usuarios, el volume **no** está
+>    persistiendo (mount path mal, DB_PATH apuntando a otro lado, etc.).
+
 ### Fly.io
 
 - `fly volumes create maxaria_data --size 1` y montar en `/data` desde el `fly.toml`.
 - En `[env]` setear `DB_PATH = "/data/maxaria.db"`.
 - Resto igual.
+
+### Backups automáticos
+
+Al arrancar, `boot.js` hace un backup de la base en
+`{dirname(DB_PATH)}/backups/maxaria-YYYYMMDD-HHmmss.db` y mantiene los
+últimos `BACKUP_KEEP` (default **7**) para no llenar el disco.
+
+**Restaurar un backup:**
+
+```
+# parar el server primero
+cp /data/backups/maxaria-20260101-120000.db /data/maxaria.db
+# arrancar de nuevo
+```
+
+En Railway lo podés hacer desde la pestaña "Shell" del service. Si necesitás
+descargarte un backup a tu máquina, podés copiarlo a un endpoint
+temporario o usar `railway run` con un comando que lo imprima en base64.
 
 ### Actualizar precios en producción
 

@@ -705,6 +705,33 @@ button { font: inherit; cursor: pointer; }
   white-space: nowrap;
 }
 .admin-table thead th.num { text-align: right; }
+
+/* Headers ordenables: cursor pointer, hover y flechita */
+.admin-table thead th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s ease, color .12s ease;
+}
+.admin-table thead th.sortable:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+.admin-table thead th.sortable .sort-arrow {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 10px;
+  width: 10px;
+  color: #9ca3af;
+  vertical-align: middle;
+}
+.admin-table thead th.sortable.sort-asc .sort-arrow::before  { content: "▲"; color: #2563eb; }
+.admin-table thead th.sortable.sort-desc .sort-arrow::before { content: "▼"; color: #2563eb; }
+.admin-table thead th.sortable.sort-asc,
+.admin-table thead th.sortable.sort-desc {
+  background: #e0e7ff;
+  color: #1e3a8a;
+}
+.admin-table thead th.sortable.num .sort-arrow { margin-left: 2px; }
 .admin-table tbody td {
   padding: 4px 8px;
   border-bottom: 1px solid #f3f4f6;

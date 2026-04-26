@@ -7,6 +7,24 @@
   "use strict";
 
   const PAGE_SIZE = 50;
+  const LS_KEY = "maxaria.admin.products.prefs";
+
+  // Tipos por columna para el comparador.
+  // "text"   -> compare con localeCompare
+  // "number" -> compare numerico
+  const SORT_TYPES = {
+    code: "text",
+    name: "text",
+    category_name: "text",
+    stock: "number",
+    cost: "number",
+    price_minorista: "number",
+    price_revendedor: "number",
+    price_mayorista: "number",
+    price_vip: "number",
+    price_publico: "number",
+    active: "number",
+  };
 
   const els = {
     userInfo: document.getElementById("user-info"),
@@ -24,6 +42,8 @@
     pageNext: document.getElementById("page-next"),
     pageInfo: document.getElementById("page-info"),
     excelFile: document.getElementById("excel-file"),
+    prodTable: document.getElementById("prod-table"),
+    prodHeaders: document.querySelectorAll('#prod-table thead th.sortable'),
 
     // Pedidos
     ordersSearch: document.getElementById("orders-search"),
@@ -69,6 +89,11 @@
     users: [],
     usersLoaded: false,
     resetTargetId: null,
+    // Ordenamiento de la tabla de productos.
+    // sortField: null = orden original que vino del server.
+    // sortDir: "asc" | "desc"
+    sortField: null,
+    sortDir: "asc",
   };
 
   const LEVEL_NAMES = {
@@ -92,6 +117,40 @@
       hour: "2-digit", minute: "2-digit",
     });
   }
+  // ---------- preferencias persistentes (filtros + orden) ----------
+  function loadPrefs() {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (_) { return null; }
+  }
+  function savePrefs() {
+    try {
+      const data = {
+        search: els.prodSearch.value,
+        stock: els.filterStock.value,
+        inactive: els.filterInactive.checked,
+        sortField: state.sortField,
+        sortDir: state.sortDir,
+      };
+      localStorage.setItem(LS_KEY, JSON.stringify(data));
+    } catch (_) {}
+  }
+  function applyPrefsToControls() {
+    const p = loadPrefs();
+    if (!p) return;
+    if (typeof p.search === "string") els.prodSearch.value = p.search;
+    if (p.stock && els.filterStock.querySelector('[value="' + p.stock + '"]')) {
+      els.filterStock.value = p.stock;
+    }
+    if (typeof p.inactive === "boolean") els.filterInactive.checked = p.inactive;
+    if (p.sortField && SORT_TYPES[p.sortField]) {
+      state.sortField = p.sortField;
+      state.sortDir = p.sortDir === "desc" ? "desc" : "asc";
+    }
+  }
+
   function showToast(msg, type) {
     els.toast.textContent = msg;
     els.toast.className = "admin-toast " + (type || "ok");
@@ -116,6 +175,9 @@
 
   // ---------- bootstrap ----------
   async function bootstrap() {
+    // Restaurar busqueda + filtros + orden ANTES de pedir productos
+    // para no tener que re-renderizar dos veces.
+    applyPrefsToControls();
     try {
       const [me, prods] = await Promise.all([
         api("/api/me"),
@@ -375,7 +437,30 @@
     }
   });
 
-  // ---------- Productos: filtros + paginacion ----------
+  // ---------- Productos: filtros + orden + paginacion ----------
+  function compareBy(field, dir) {
+    const type = SORT_TYPES[field] || "text";
+    const mult = dir === "desc" ? -1 : 1;
+    return (a, b) => {
+      const va = a[field];
+      const vb = b[field];
+      if (type === "number") {
+        // null/undefined cuentan como 0 para que no rompan el orden numerico
+        const na = (va === null || va === undefined || va === "") ? 0 : Number(va);
+        const nb = (vb === null || vb === undefined || vb === "") ? 0 : Number(vb);
+        if (na < nb) return -1 * mult;
+        if (na > nb) return 1 * mult;
+      } else {
+        const sa = (va == null ? "" : String(va)).toLowerCase();
+        const sb = (vb == null ? "" : String(vb)).toLowerCase();
+        const cmp = sa.localeCompare(sb, "es", { numeric: true, sensitivity: "base" });
+        if (cmp !== 0) return cmp * mult;
+      }
+      // Tie-breaker estable: por id, asi el orden no "salta" entre renders
+      return (a.id || 0) - (b.id || 0);
+    };
+  }
+
   function applyFilters() {
     const q = els.prodSearch.value.trim().toLowerCase();
     const stockMode = els.filterStock.value; // "all" | "in" | "out"
@@ -393,10 +478,42 @@
     else if (stockMode === "out") list = list.filter((p) => (p.stock || 0) <= 0);
     if (onlyInactive) list = list.filter((p) => !p.active);
 
+    if (state.sortField && SORT_TYPES[state.sortField]) {
+      // copiamos para no mutar el array original que vino del server
+      list = list.slice().sort(compareBy(state.sortField, state.sortDir));
+    }
+
     state.productsFiltered = list;
     state.page = 0;
     renderProducts();
+    updateSortHeaders();
+    savePrefs();
   }
+
+  function updateSortHeaders() {
+    els.prodHeaders.forEach((th) => {
+      const f = th.dataset.sort;
+      th.classList.remove("sort-asc", "sort-desc");
+      if (f && f === state.sortField) {
+        th.classList.add(state.sortDir === "desc" ? "sort-desc" : "sort-asc");
+      }
+    });
+  }
+
+  // Click en header -> ordenar. Mismo header -> invertir direccion.
+  els.prodHeaders.forEach((th) => {
+    th.addEventListener("click", () => {
+      const field = th.dataset.sort;
+      if (!field) return;
+      if (state.sortField === field) {
+        state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+      } else {
+        state.sortField = field;
+        state.sortDir = "asc";
+      }
+      applyFilters();
+    });
+  });
 
   function renderProducts() {
     const list = state.productsFiltered;
