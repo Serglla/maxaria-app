@@ -29,12 +29,21 @@
     ordersBody: document.getElementById("orders-body"),
     ordersTitle: document.getElementById("orders-title"),
     adminLink: document.getElementById("admin-link"),
+    levelSwitcher: document.getElementById("level-switcher"),
+    levelSelect: document.getElementById("level-select"),
     backdrop: document.getElementById("drawer-backdrop"),
   };
+
+  const LEVEL_NAMES = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
+  const LS_VIEW_AS_LEVEL = "maxaria.viewAsLevel"; // solo admin
 
   const state = {
     me: null, categories: [], products: [], cat: "all", query: "",
     cart: new Map(),
+    // Solo aplica si me.level === 99: el admin esta viendo el catalogo
+    // con la lista de precios de OTRO nivel (1..4). null = ver con su
+    // propio mapeo (admin usa minorista por defecto en server).
+    viewAsLevel: null,
   };
 
   function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR"); }
@@ -55,36 +64,78 @@
     return res.json();
   }
 
+  function loadViewAsLevel() {
+    try {
+      const v = Number(localStorage.getItem(LS_VIEW_AS_LEVEL));
+      return [1, 2, 3, 4].includes(v) ? v : null;
+    } catch (_) { return null; }
+  }
+
+  function productsUrl() {
+    if (state.me && state.me.level === 99 && state.viewAsLevel) {
+      return "/api/products?as_level=" + state.viewAsLevel;
+    }
+    return "/api/products";
+  }
+
   async function bootstrap() {
     try {
-      const [me, cats, prods] = await Promise.all([
-        api("/api/me"), api("/api/categories"), api("/api/products"),
+      // Pedimos /api/me PRIMERO para saber si es admin y, en ese caso,
+      // recuperar el nivel "ver como ..." que tenia guardado.
+      const me = await api("/api/me");
+      state.me = me;
+      if (me.level === 99) {
+        state.viewAsLevel = loadViewAsLevel();
+      }
+      const [cats, prods] = await Promise.all([
+        api("/api/categories"), api(productsUrl()),
       ]);
-      state.me = me; state.categories = cats; state.products = prods;
+      state.categories = cats; state.products = prods;
       renderUser(); renderCategories(); renderProducts();
     } catch (e) { console.error(e); }
   }
 
   function renderUser() {
     const u = state.me; if (!u) return;
-    els.userInfo.textContent = (u.fullName || u.username) + " - " + u.levelName;
+    const viewing = u.level === 99 && state.viewAsLevel
+      ? " (viendo como " + LEVEL_NAMES[state.viewAsLevel] + ")"
+      : "";
+    els.userInfo.textContent = (u.fullName || u.username) + " - " + u.levelName + viewing;
     if (els.ordersBtn) {
       els.ordersBtn.textContent = u.level === 99 ? "Todos los pedidos" : "Mis pedidos";
     }
     if (els.adminLink) {
       els.adminLink.hidden = u.level !== 99;
     }
+    // Selector "Ver como ...": SOLO admin
+    if (els.levelSwitcher) {
+      const isAdmin = u.level === 99;
+      els.levelSwitcher.hidden = !isAdmin;
+      if (isAdmin) {
+        els.levelSelect.value = String(state.viewAsLevel || 1);
+      }
+    }
   }
 
   function renderCategories() {
+    const isAdmin = state.me && state.me.level === 99;
+    // El contador "(N)" se muestra SOLO al admin. A los clientes les
+    // mostramos solo el nombre de la categoria, asi no se ven los
+    // numeros de stock (eso es info interna).
+    const totalLabel = isAdmin
+      ? "Todas (" + state.products.length + ")"
+      : "Todas";
     const items = [
-      '<li><button class="cat-btn ' + (state.cat === "all" ? "active" : "") + '" data-cat="all">Todas (' + state.products.length + ')</button></li>',
+      '<li><button class="cat-btn ' + (state.cat === "all" ? "active" : "") + '" data-cat="all">' + escapeHtml(totalLabel) + '</button></li>',
     ];
     state.categories.forEach((c) => {
       const count = state.products.filter((p) => p.category_id === c.id).length;
-      if (!count) return;
+      if (!count) return; // categorias vacias se siguen ocultando para todos
+      const label = isAdmin
+        ? c.name + " (" + count + ")"
+        : c.name;
       items.push(
-        '<li><button class="cat-btn ' + (state.cat === c.id ? "active" : "") + '" data-cat="' + c.id + '">' + escapeHtml(c.name) + ' (' + count + ')</button></li>'
+        '<li><button class="cat-btn ' + (state.cat === c.id ? "active" : "") + '" data-cat="' + c.id + '">' + escapeHtml(label) + '</button></li>'
       );
     });
     els.catList.innerHTML = items.join("");
@@ -527,6 +578,47 @@
     state.query = els.search.value.trim();
     renderProducts();
   }, 150));
+
+  // Selector "Ver como ..." (solo admin). Al cambiar de nivel, re-pedimos
+  // los productos al server con el nuevo as_level y re-renderizamos.
+  // Nota: el carrito conserva los precios capturados al agregar; si el
+  // admin tenia items, los avisamos para que no se confunda.
+  if (els.levelSelect) {
+    els.levelSelect.addEventListener("change", async () => {
+      if (!state.me || state.me.level !== 99) return;
+      const lvl = Number(els.levelSelect.value);
+      if (![1, 2, 3, 4].includes(lvl)) return;
+
+      if (state.cart.size > 0) {
+        const ok = confirm(
+          "Tenés " + state.cart.size + " producto(s) en el carrito con precios " +
+          "del nivel anterior.\n\n¿Vaciar el carrito y cambiar a " + LEVEL_NAMES[lvl] + "?"
+        );
+        if (!ok) {
+          // Revertir el select al valor previo
+          els.levelSelect.value = String(state.viewAsLevel || 1);
+          return;
+        }
+        const ids = Array.from(state.cart.keys());
+        state.cart.clear();
+        if (els.cartNotes) els.cartNotes.value = "";
+        renderCart();
+        ids.forEach(refreshCardForProduct);
+      }
+
+      state.viewAsLevel = lvl;
+      try { localStorage.setItem(LS_VIEW_AS_LEVEL, String(lvl)); } catch (_) {}
+      try {
+        state.products = await api(productsUrl());
+        renderUser();
+        renderCategories();
+        renderProducts();
+      } catch (e) {
+        console.error(e);
+        alert("No se pudieron cargar los precios para " + LEVEL_NAMES[lvl]);
+      }
+    });
+  }
 
   els.logoutBtn.addEventListener("click", async () => {
     try { await fetch("/logout", { method: "POST" }); }

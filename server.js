@@ -219,7 +219,15 @@ app.get("/api/categories", requireLogin, (req, res) => {
 });
 
 app.get("/api/products", requireLogin, (req, res) => {
-  const col = priceColumnFor(req.session.level);
+  // Admin (level 99) puede ver el catalogo "como si fuera" otro nivel
+  // pasando ?as_level=1|2|3|4. Util para revisar precios desde la
+  // perspectiva del cliente sin tener que loguearse con otra cuenta.
+  let effectiveLevel = req.session.level;
+  if (req.session.level === 99 && req.query.as_level != null) {
+    const asLvl = Number(req.query.as_level);
+    if ([1, 2, 3, 4].includes(asLvl)) effectiveLevel = asLvl;
+  }
+  const col = priceColumnFor(effectiveLevel);
   const sql =
     "SELECT p.id, p.code, p.category_id, c.name AS category_name," +
     "       p.name, p.image_url, p." + col + " AS price, p.stock" +

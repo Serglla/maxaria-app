@@ -143,6 +143,40 @@ button { font: inherit; cursor: pointer; }
 }
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
 
+/* Selector "Ver como ..." (solo admin en /catalogo).
+   Permite que el admin vea el catalogo con la lista de precios
+   de cualquier nivel sin tener que loguearse con otra cuenta. */
+.level-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #c7d2fe;
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.25);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.level-switcher[hidden] { display: none; }
+.level-switcher:hover { background: rgba(255,255,255,.18); }
+.level-select {
+  background: transparent;
+  border: 0;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.level-select option {
+  color: #1f2937;
+  background: #fff;
+}
+.level-select:focus { outline: 2px solid #fbbf2455; border-radius: 4px; }
+
 /* Total de la compra mostrado en el boton del carrito (topbar) */
 #cart-btn { display: inline-flex; align-items: center; gap: 4px; }
 .cart-total-top {

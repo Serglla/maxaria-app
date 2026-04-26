@@ -26,6 +26,15 @@
 
       <div class="topbar-actions">
         <a id="admin-link" class="btn btn-ghost" href="/admin" hidden>Admin</a>
+        <label id="level-switcher" class="level-switcher" hidden>
+          Ver como:
+          <select id="level-select" class="level-select" aria-label="Ver lista de precios como">
+            <option value="1">Minorista</option>
+            <option value="2">Revendedor</option>
+            <option value="3">Mayorista</option>
+            <option value="4">VIP</option>
+          </select>
+        </label>
         <button id="orders-btn" class="btn btn-ghost" type="button">Mis pedidos</button>
         <button id="cart-btn" class="btn btn-ghost" type="button">
           Carrito <span id="cart-count" class="badge">0</span>
