@@ -33,6 +33,16 @@ const NODE_ENV = process.env.NODE_ENV || "development";
 const WHATSAPP_NUMBER = (process.env.WHATSAPP_NUMBER || "").replace(/[^0-9]/g, "");
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "maxaria.db");
+
+// Detecta si la DB esta dentro del checkout del proyecto. En hosting tipo
+// Railway/Render eso significa filesystem efimero -> la base se borra en
+// cada deploy. Lo usamos para mostrar advertencias en /admin.
+function isEphemeralDbPath(p) {
+  const abs = path.resolve(p);
+  const root = path.resolve(__dirname);
+  return abs === root || abs.startsWith(root + path.sep);
+}
+
 if (!fs.existsSync(DB_PATH)) {
   console.error("ERROR: no existe la base", DB_PATH, "\nCorre primero:  npm run seed");
   process.exit(1);
@@ -508,6 +518,126 @@ app.post("/api/admin/users/:id/reset-password", requireAdmin, (req, res) => {
   const hash = bcrypt.hashSync(password, 10);
   db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, id);
   res.json({ ok: true });
+});
+
+// Info diagnostica de la base. Sirve para detectar DB efimera y mostrar
+// la advertencia en /admin antes de que el deploy se lleve los datos.
+app.get("/api/admin/dbinfo", requireAdmin, (req, res) => {
+  let size = null, mtime = null;
+  try {
+    const st = fs.statSync(DB_PATH);
+    size = st.size;
+    mtime = st.mtime.toISOString();
+  } catch (_) {}
+  const backupsDir = path.join(path.dirname(DB_PATH), "backups");
+  let backups = [];
+  try {
+    if (fs.existsSync(backupsDir)) {
+      const base = path.basename(DB_PATH, path.extname(DB_PATH));
+      backups = fs.readdirSync(backupsDir)
+        .filter((f) => f.startsWith(base + "-") && f.endsWith(".db"))
+        .map((f) => {
+          const full = path.join(backupsDir, f);
+          const s = fs.statSync(full);
+          return { name: f, size: s.size, mtime: s.mtime.toISOString() };
+        })
+        .sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
+    }
+  } catch (_) {}
+  const ephemeral = isEphemeralDbPath(DB_PATH);
+  const counts = {
+    users: db.prepare("SELECT COUNT(*) AS n FROM users").get().n,
+    products: db.prepare("SELECT COUNT(*) AS n FROM products").get().n,
+    orders: db.prepare("SELECT COUNT(*) AS n FROM orders").get().n,
+  };
+  res.json({
+    dbPath: DB_PATH,
+    ephemeral: ephemeral,
+    nodeEnv: NODE_ENV,
+    size: size,
+    mtime: mtime,
+    backupsDir: backupsDir,
+    backups: backups,
+    counts: counts,
+  });
+});
+
+// Export de usuarios a JSON. Incluye password_hash para que el restore
+// funcione sin que tengan que reasignar contrasenas. Es info sensible,
+// solo el admin la puede bajar.
+app.get("/api/admin/users/export", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT username, password_hash, full_name, phone, email, level, active, created_at, last_login_at" +
+    "  FROM users ORDER BY id"
+  ).all();
+  const payload = {
+    type: "maxaria-users-export",
+    version: 1,
+    exported_at: new Date().toISOString(),
+    db_path: DB_PATH,
+    count: rows.length,
+    users: rows,
+  };
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="maxaria-users-' + new Date().toISOString().replace(/[:.]/g, "-") + '.json"'
+  );
+  res.send(JSON.stringify(payload, null, 2));
+});
+
+// Import de usuarios desde JSON: UPSERT por username. NUNCA borra
+// usuarios existentes que no esten en el archivo, asi un import parcial
+// no rompe nada. Sirve para recuperar despues de un deploy que vacio la
+// base, o para mover usuarios entre entornos.
+app.post("/api/admin/users/import", requireAdmin, (req, res) => {
+  const body = req.body || {};
+  const list = Array.isArray(body) ? body : (body.users || []);
+  if (!Array.isArray(list) || !list.length) {
+    return res.status(400).json({ error: "JSON invalido: se esperaba un array 'users' con al menos 1 usuario" });
+  }
+  const stats = { inserted: 0, updated: 0, skipped: 0, errors: [] };
+  const findStmt = db.prepare("SELECT id FROM users WHERE username = ?");
+  const updateStmt = db.prepare(
+    "UPDATE users SET password_hash = ?, full_name = ?, phone = ?, email = ?, level = ?, active = ?" +
+    "  WHERE id = ?"
+  );
+  const insertStmt = db.prepare(
+    "INSERT INTO users (username, password_hash, full_name, phone, email, level, active, created_at, last_login_at)" +
+    "  VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?)"
+  );
+
+  db.transaction(() => {
+    for (const u of list) {
+      try {
+        const username = String((u.username || "")).trim().toLowerCase();
+        if (!isValidUsername(username) || !u.password_hash || !VALID_LEVELS.includes(Number(u.level))) {
+          stats.skipped++;
+          stats.errors.push({ username: u.username, error: "Datos invalidos" });
+          continue;
+        }
+        const fullName = u.full_name ? String(u.full_name).slice(0, 120) : null;
+        const phone    = u.phone     ? String(u.phone).slice(0, 40)      : null;
+        const email    = u.email     ? String(u.email).slice(0, 120)     : null;
+        const level    = Number(u.level);
+        const active   = u.active ? 1 : 0;
+        const existing = findStmt.get(username);
+        if (existing) {
+          updateStmt.run(u.password_hash, fullName, phone, email, level, active, existing.id);
+          stats.updated++;
+        } else {
+          insertStmt.run(username, u.password_hash, fullName, phone, email, level, active,
+                         u.created_at || null, u.last_login_at || null);
+          stats.inserted++;
+        }
+      } catch (e) {
+        stats.skipped++;
+        stats.errors.push({ username: u && u.username, error: e.message });
+      }
+    }
+  })();
+
+  res.json({ ok: true, stats: stats });
 });
 
 // Subir Excel y reimportar precios + stock (NO destructivo: preserva users y orders)

@@ -62,6 +62,23 @@
     cfgWhatsappMsg: document.getElementById("cfg-whatsapp-msg"),
     cfgWhatsappCurrent: document.getElementById("cfg-whatsapp-current"),
 
+    // Banner DB
+    dbWarning: document.getElementById("db-warning"),
+    dbWarningText: document.getElementById("db-warning-text"),
+    dbWarningDetails: document.getElementById("db-warning-details"),
+
+    // DB info / users export-import
+    dbinfoPath: document.getElementById("dbinfo-path"),
+    dbinfoStatus: document.getElementById("dbinfo-status"),
+    dbinfoSize: document.getElementById("dbinfo-size"),
+    dbinfoMtime: document.getElementById("dbinfo-mtime"),
+    dbinfoCounts: document.getElementById("dbinfo-counts"),
+    dbinfoBackupsDir: document.getElementById("dbinfo-backups-dir"),
+    dbinfoBackups: document.getElementById("dbinfo-backups"),
+    usersExportBtn: document.getElementById("users-export-btn"),
+    usersImportFile: document.getElementById("users-import-file"),
+    usersIoMsg: document.getElementById("users-io-msg"),
+
     // Usuarios
     userSearch: document.getElementById("user-search"),
     userCount: document.getElementById("user-count"),
@@ -94,6 +111,8 @@
     // sortDir: "asc" | "desc"
     sortField: null,
     sortDir: "asc",
+    // Info de la DB (path, ephemeral, backups, etc). Se llena en checkDbInfo().
+    dbInfo: null,
   };
 
   const LEVEL_NAMES = {
@@ -191,6 +210,72 @@
       console.error(e);
       els.prodTbody.innerHTML = '<tr><td colspan="11" class="muted">Error cargando productos</td></tr>';
     }
+    // En paralelo, chequear dbinfo (no bloqueamos el render principal por esto)
+    checkDbInfo();
+  }
+
+  // ---------- DB info / banner ----------
+  async function checkDbInfo() {
+    try {
+      const info = await api("/api/admin/dbinfo");
+      state.dbInfo = info;
+      // Banner solo si la DB esta en una ruta efimera
+      if (info.ephemeral && els.dbWarning) {
+        els.dbWarning.hidden = false;
+        els.dbWarningText.textContent =
+          "Tu base está en una ruta efímera (" + info.dbPath + "). " +
+          "En el próximo deploy se va a borrar y vas a perder los " +
+          info.counts.users + " usuario(s) y " + info.counts.orders + " pedido(s).";
+      }
+      // Si el tab de Config ya estaba abierto, refrescar
+      renderDbInfoCard();
+    } catch (e) {
+      console.warn("No se pudo cargar dbinfo:", e);
+    }
+  }
+
+  function fmtSize(bytes) {
+    if (!bytes) return "—";
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+  }
+
+  function renderDbInfoCard() {
+    const info = state.dbInfo;
+    if (!info || !els.dbinfoPath) return;
+    els.dbinfoPath.textContent = info.dbPath;
+    if (info.ephemeral) {
+      els.dbinfoStatus.innerHTML =
+        '<span class="ephemeral">EFÍMERA</span> ' +
+        '<span class="muted">la base se va a borrar en el próximo deploy</span>';
+    } else {
+      els.dbinfoStatus.innerHTML =
+        '<span class="persistent">PERSISTENTE</span> ' +
+        '<span class="muted">en un volumen montado, sobrevive a deploys</span>';
+    }
+    els.dbinfoSize.textContent = fmtSize(info.size);
+    els.dbinfoMtime.textContent = info.mtime ? formatDate(info.mtime) : "—";
+    els.dbinfoCounts.textContent =
+      info.counts.users + " · " + info.counts.products + " · " + info.counts.orders;
+    els.dbinfoBackupsDir.textContent = info.backupsDir;
+    if (info.backups && info.backups.length) {
+      const list = info.backups.slice(0, 7).map((b) =>
+        '<li><code>' + escapeHtml(b.name) + '</code> · ' +
+        fmtSize(b.size) + ' · ' + formatDate(b.mtime) + '</li>'
+      ).join("");
+      els.dbinfoBackups.innerHTML = '<ul class="dbinfo-backup-list">' + list + '</ul>';
+    } else {
+      els.dbinfoBackups.textContent = "—";
+    }
+  }
+
+  // Click en "Ver detalles" del banner -> ir a tab Config
+  if (els.dbWarningDetails) {
+    els.dbWarningDetails.addEventListener("click", () => {
+      const cfgBtn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "config");
+      if (cfgBtn) cfgBtn.click();
+    });
   }
 
   // ---------- tabs ----------
@@ -395,6 +480,78 @@
       els.cfgWhatsappMsg.textContent = "Error cargando config";
       els.cfgWhatsappMsg.className = "config-msg err";
     }
+    // Refrescar dbinfo cada vez que entran a Config (asi siempre se ve
+    // el ultimo tamano y la lista de backups actualizada).
+    checkDbInfo();
+  }
+
+  // ---------- Export / Import de usuarios ----------
+  if (els.usersExportBtn) {
+    els.usersExportBtn.addEventListener("click", () => {
+      // Forzamos navegacion para que el browser maneje el "Save as".
+      // El endpoint manda Content-Disposition: attachment.
+      const a = document.createElement("a");
+      a.href = "/api/admin/users/export";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      els.usersIoMsg.textContent = "Descarga iniciada ✓";
+      els.usersIoMsg.className = "config-msg ok";
+      setTimeout(() => { els.usersIoMsg.textContent = ""; }, 3000);
+    });
+  }
+
+  if (els.usersImportFile) {
+    els.usersImportFile.addEventListener("change", async () => {
+      const file = els.usersImportFile.files && els.usersImportFile.files[0];
+      if (!file) return;
+      els.usersIoMsg.textContent = "Leyendo archivo…";
+      els.usersIoMsg.className = "config-msg";
+      try {
+        const text = await file.text();
+        let body;
+        try { body = JSON.parse(text); }
+        catch (_) { throw new Error("El archivo no es un JSON válido"); }
+        const list = Array.isArray(body) ? body : (body.users || []);
+        if (!Array.isArray(list) || !list.length) {
+          throw new Error("No encontré usuarios en el archivo");
+        }
+        const ok = confirm(
+          "Vas a importar " + list.length + " usuario(s).\n" +
+          "Los que ya existan se ACTUALIZAN (mismo username).\n" +
+          "Los nuevos se crean. Ningún usuario se borra.\n\n¿Seguir?"
+        );
+        if (!ok) {
+          els.usersIoMsg.textContent = "";
+          els.usersImportFile.value = "";
+          return;
+        }
+        els.usersIoMsg.textContent = "Importando…";
+        const out = await api("/api/admin/users/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ users: list }),
+        });
+        const s = out.stats || {};
+        els.usersIoMsg.textContent =
+          "Importados: " + (s.inserted || 0) + " nuevos, " + (s.updated || 0) + " actualizados, " +
+          (s.skipped || 0) + " omitidos.";
+        els.usersIoMsg.className = "config-msg ok";
+        showToast("Usuarios importados");
+        // Refrescar la tabla de usuarios si ya estaba cargada
+        if (state.usersLoaded) {
+          state.usersLoaded = false;
+          loadUsers();
+        }
+        checkDbInfo();
+      } catch (err) {
+        els.usersIoMsg.textContent = "Error: " + err.message;
+        els.usersIoMsg.className = "config-msg err";
+      } finally {
+        els.usersImportFile.value = "";
+      }
+    });
   }
 
   function updateWhatsappPreview(num) {

@@ -28,6 +28,13 @@
     </div>
   </header>
 
+  <!-- Banner cuando la DB esta en una ruta efimera (riesgo de perdida en deploy) -->
+  <div id="db-warning" class="db-warning" hidden>
+    <strong>⚠ ATENCIÓN:</strong>
+    <span id="db-warning-text">Tu base de datos está en una ruta efímera y se va a borrar en el próximo deploy.</span>
+    <button type="button" id="db-warning-details" class="db-warning-link">Ver detalles</button>
+  </div>
+
   <main class="admin-main">
 
     <!-- ===== TAB PRODUCTOS ===== -->
@@ -124,6 +131,46 @@
           <span id="cfg-whatsapp-msg" class="config-msg"></span>
         </div>
         <p class="muted" id="cfg-whatsapp-current"></p>
+      </div>
+
+      <div class="config-card">
+        <h3>Base de datos</h3>
+        <p class="muted">
+          Información sobre dónde se está guardando la base SQLite.
+          Si está en una ruta efímera, los datos se van a perder en el próximo deploy.
+        </p>
+        <dl class="dbinfo">
+          <dt>Ruta:</dt><dd><code id="dbinfo-path">…</code></dd>
+          <dt>Estado:</dt><dd id="dbinfo-status">…</dd>
+          <dt>Tamaño:</dt><dd id="dbinfo-size">…</dd>
+          <dt>Última modificación:</dt><dd id="dbinfo-mtime">…</dd>
+          <dt>Usuarios / Productos / Pedidos:</dt><dd id="dbinfo-counts">…</dd>
+          <dt>Carpeta de backups:</dt><dd><code id="dbinfo-backups-dir">…</code></dd>
+          <dt>Backups en disco:</dt><dd id="dbinfo-backups">…</dd>
+        </dl>
+      </div>
+
+      <div class="config-card">
+        <h3>Backup manual de usuarios</h3>
+        <p class="muted">
+          Exportá un JSON con todos los usuarios (incluyendo sus contraseñas hasheadas)
+          como respaldo manual. Si en algún deploy se pierden, podés re-importar
+          este archivo y los usuarios vuelven sin necesidad de recrearlos.
+          <br/>
+          <strong>El JSON tiene info sensible</strong> (los hashes), guardalo en un lugar privado.
+        </p>
+        <div class="config-row">
+          <button class="btn btn-primary" id="users-export-btn" type="button">⬇ Exportar usuarios (JSON)</button>
+          <label class="btn admin-upload">
+            ⬆ Importar usuarios (JSON)
+            <input type="file" id="users-import-file" accept=".json,application/json" hidden />
+          </label>
+          <span id="users-io-msg" class="config-msg"></span>
+        </div>
+        <p class="muted small">
+          El import hace UPSERT por <code>username</code>: usuarios existentes se actualizan,
+          nuevos se crean. Nunca borra usuarios.
+        </p>
       </div>
     </section>
 
