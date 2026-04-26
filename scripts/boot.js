@@ -17,7 +17,31 @@ const fs = require("fs");
 const path = require("path");
 
 const ROOT = path.join(__dirname, "..");
-const DB_PATH = process.env.DB_PATH || path.join(ROOT, "data", "maxaria.db");
+
+// Resolucion del DB_PATH con tres niveles:
+//  1. Variable de entorno DB_PATH (si esta seteada).
+//  2. Si existe /data como directorio (convencion de volumenes en
+//     Railway / Render / Fly), usar /data/maxaria.db. Esto nos cubre
+//     cuando el hosting tiene un volume montado pero la env var no
+//     llega al container por algun bug del provider.
+//  3. Fallback local: <proyecto>/data/maxaria.db (uso de desarrollo).
+function resolveDbPath() {
+  if (process.env.DB_PATH && process.env.DB_PATH.trim()) {
+    return { path: process.env.DB_PATH.trim(), source: "env DB_PATH" };
+  }
+  try {
+    if (fs.existsSync("/data") && fs.statSync("/data").isDirectory()) {
+      return { path: "/data/maxaria.db", source: "fallback /data/ (volumen detectado)" };
+    }
+  } catch (_) { /* en Windows /data no existe, seguimos */ }
+  return { path: path.join(ROOT, "data", "maxaria.db"), source: "fallback dentro del proyecto" };
+}
+const _resolved = resolveDbPath();
+const DB_PATH = _resolved.path;
+const DB_PATH_SOURCE = _resolved.source;
+// Lo propagamos a process.env para que server.js lo herede sin tener
+// que repetir el calculo (server.js usa process.env.DB_PATH).
+process.env.DB_PATH = DB_PATH;
 
 // Heuristica simple: si DB_PATH cae adentro del checkout del proyecto,
 // en hosting tipo Railway el filesystem es efimero y la base se va a borrar
@@ -32,6 +56,7 @@ function isInsideProject(p) {
 console.log("=".repeat(60));
 console.log("[boot] Maxaria - arranque");
 console.log("[boot] DB_PATH        =", DB_PATH);
+console.log("[boot] DB_PATH source =", DB_PATH_SOURCE);
 console.log("[boot] NODE_ENV       =", process.env.NODE_ENV || "development");
 console.log("[boot] BACKUP_KEEP    =", process.env.BACKUP_KEEP || "7 (default)");
 
