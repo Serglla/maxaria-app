@@ -61,6 +61,31 @@ db.exec(
   ")"
 );
 
+// Migracion: tablas para historial de cambios de precio. Se crean en
+// bases existentes la primera vez que arranca el server con esta version.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS price_updates (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))," +
+  "  source TEXT," +
+  "  rows_total INTEGER NOT NULL DEFAULT 0," +
+  "  products_changed INTEGER NOT NULL DEFAULT 0," +
+  "  products_new INTEGER NOT NULL DEFAULT 0" +
+  ");" +
+  "CREATE TABLE IF NOT EXISTS price_changes (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  update_id INTEGER NOT NULL REFERENCES price_updates(id) ON DELETE CASCADE," +
+  "  product_id INTEGER REFERENCES products(id)," +
+  "  code TEXT, name TEXT, is_new INTEGER NOT NULL DEFAULT 0," +
+  "  old_minorista INTEGER, new_minorista INTEGER," +
+  "  old_revendedor INTEGER, new_revendedor INTEGER," +
+  "  old_mayorista INTEGER, new_mayorista INTEGER," +
+  "  old_vip INTEGER, new_vip INTEGER" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_price_changes_update ON price_changes(update_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_price_changes_product ON price_changes(product_id);"
+);
+
 function getSetting(key, fallback) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   if (row && row.value != null) return row.value;
@@ -76,6 +101,50 @@ function setSetting(key, value) {
 // Bootstrap: si nunca hubo config de WhatsApp en la base pero hay env, migrar.
 if (getSetting("whatsapp_number") == null && WHATSAPP_NUMBER) {
   setSetting("whatsapp_number", WHATSAPP_NUMBER);
+}
+
+// Default: niveles que pueden ver la solapa "Cambios de precio" en el catalogo.
+// Por defecto Mayorista (3) + VIP (4). Editable desde /admin -> Configuracion.
+if (getSetting("price_changes_visible_levels") == null) {
+  setSetting("price_changes_visible_levels", "3,4");
+}
+
+// Parsea un valor del setting a un Set de niveles validos (1..4).
+// Si recibe basura, devuelve un set vacio (= nadie ve la solapa).
+function parseVisibleLevels(raw) {
+  const out = new Set();
+  if (!raw) return out;
+  String(raw).split(/[,\s]+/).forEach((s) => {
+    const n = Number(s);
+    if ([1, 2, 3, 4].includes(n)) out.add(n);
+  });
+  return out;
+}
+
+function getPriceChangesVisibleLevels() {
+  return parseVisibleLevels(getSetting("price_changes_visible_levels", "3,4"));
+}
+
+// Le indica al frontend (en /api/me) si este usuario tiene acceso a la
+// solapa "Cambios de precio". El admin SIEMPRE puede ver (asi puede
+// validar lo que se les muestra a los clientes).
+function userCanSeePriceChanges(level) {
+  if (Number(level) === 99) return true;
+  return getPriceChangesVisibleLevels().has(Number(level));
+}
+
+// Mapea el nivel a las columnas old_X / new_X de la tabla price_changes.
+function priceChangeCols(level) {
+  switch (Number(level)) {
+    case 1: return { old: "old_minorista",  new: "new_minorista"  };
+    case 2: return { old: "old_revendedor", new: "new_revendedor" };
+    case 3: return { old: "old_mayorista",  new: "new_mayorista"  };
+    case 4: return { old: "old_vip",        new: "new_vip"        };
+    // Admin: por defecto le mostramos VIP (suele ser el que mas mira). El
+    // ?as_level en el endpoint le permite cambiar la perspectiva.
+    case 99: return { old: "old_vip", new: "new_vip" };
+    default: return { old: "old_minorista", new: "new_minorista" };
+  }
 }
 
 class SqliteStore extends session.Store {
@@ -221,6 +290,93 @@ app.get("/api/me", requireLogin, (req, res) => {
     fullName: req.session.fullName, level: req.session.level,
     levelName: levelName(req.session.level),
     whatsapp: wa ? String(wa).replace(/[^0-9]/g, "") : null,
+    canSeePriceChanges: userCanSeePriceChanges(req.session.level),
+  });
+});
+
+// Cambios de precio del ULTIMO update (Excel subido).
+// - Visible solo para los niveles configurados + admin.
+// - Devuelve old/new del nivel del cliente (admin: VIP por defecto, o ?as_level=N).
+// - Calcula delta absoluto y porcentaje. Productos nuevos vienen en una
+//   lista aparte ('nuevos') porque no tienen "precio anterior".
+app.get("/api/price-changes", requireLogin, (req, res) => {
+  const level = req.session.level;
+  if (!userCanSeePriceChanges(level)) {
+    return res.status(403).json({ error: "No tenés acceso a esta sección" });
+  }
+
+  // Admin puede mirar como otro nivel (igual que /api/products).
+  let effectiveLevel = level;
+  if (level === 99 && req.query.as_level != null) {
+    const asLvl = Number(req.query.as_level);
+    if ([1, 2, 3, 4].includes(asLvl)) effectiveLevel = asLvl;
+  }
+
+  const last = db.prepare(
+    "SELECT id, created_at, source, rows_total, products_changed, products_new" +
+    "  FROM price_updates ORDER BY id DESC LIMIT 1"
+  ).get();
+
+  if (!last) {
+    return res.json({ update: null, cambios: [], nuevos: [], level: effectiveLevel });
+  }
+
+  const cols = priceChangeCols(effectiveLevel);
+  const rows = db.prepare(
+    "SELECT pc.product_id, pc.code, pc.name, pc.is_new," +
+    "       pc." + cols.old + " AS old_price," +
+    "       pc." + cols.new + " AS new_price," +
+    "       p.image_url, p.stock, p.active" +
+    "  FROM price_changes pc" +
+    "  LEFT JOIN products p ON p.id = pc.product_id" +
+    "  WHERE pc.update_id = ?" +
+    "  ORDER BY pc.is_new DESC, pc.name"
+  ).all(last.id);
+
+  const cambios = [];
+  const nuevos = [];
+  for (const r of rows) {
+    // Ocultamos productos inactivos o sin stock al cliente final
+    // (al admin tambien, por consistencia: si no se ven en el catalogo
+    // tampoco tiene mucho sentido mostrar el cambio).
+    if (!r.active || (r.stock != null && r.stock <= 0)) continue;
+
+    const newP = Number(r.new_price) || 0;
+    const oldP = r.old_price == null ? null : Number(r.old_price);
+
+    if (r.is_new) {
+      nuevos.push({
+        product_id: r.product_id, code: r.code, name: r.name,
+        image_url: r.image_url || null, new_price: newP,
+      });
+      continue;
+    }
+    // Solo nos interesan cambios reales en este nivel (puede no haber).
+    if (oldP == null || oldP === newP) continue;
+    const delta = newP - oldP;
+    const pct = oldP > 0 ? (delta / oldP) * 100 : null;
+    cambios.push({
+      product_id: r.product_id, code: r.code, name: r.name,
+      image_url: r.image_url || null,
+      old_price: oldP, new_price: newP,
+      delta: delta,
+      delta_pct: pct == null ? null : Math.round(pct * 10) / 10,
+    });
+  }
+  // Ordenamos por mayor aumento absoluto en %, productos con mayor suba arriba
+  cambios.sort((a, b) => {
+    const pa = a.delta_pct == null ? -Infinity : a.delta_pct;
+    const pb = b.delta_pct == null ? -Infinity : b.delta_pct;
+    return pb - pa;
+  });
+  nuevos.sort((a, b) => (a.name || "").localeCompare(b.name || "", "es"));
+
+  res.json({
+    update: last,
+    cambios: cambios,
+    nuevos: nuevos,
+    level: effectiveLevel,
+    levelName: levelName(effectiveLevel),
   });
 });
 
@@ -390,10 +546,11 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   res.json({ ok: true, id: id });
 });
 
-// Settings runtime (por ahora solo whatsapp_number)
+// Settings runtime: whatsapp_number + price_changes_visible_levels
 app.get("/api/admin/settings", requireAdmin, (req, res) => {
   res.json({
     whatsapp_number: getSetting("whatsapp_number", WHATSAPP_NUMBER || ""),
+    price_changes_visible_levels: Array.from(getPriceChangesVisibleLevels()).sort(),
   });
 });
 
@@ -406,9 +563,17 @@ app.patch("/api/admin/settings", requireAdmin, (req, res) => {
     }
     setSetting("whatsapp_number", raw);
   }
+  if ("price_changes_visible_levels" in body) {
+    // Aceptamos tanto array [3,4] como string "3,4". Filtramos a valores validos.
+    const raw = body.price_changes_visible_levels;
+    const arr = Array.isArray(raw) ? raw : String(raw || "").split(/[,\s]+/);
+    const valid = Array.from(new Set(arr.map(Number).filter((n) => [1, 2, 3, 4].includes(n)))).sort();
+    setSetting("price_changes_visible_levels", valid.join(","));
+  }
   res.json({
     ok: true,
     whatsapp_number: getSetting("whatsapp_number", ""),
+    price_changes_visible_levels: Array.from(getPriceChangesVisibleLevels()).sort(),
   });
 });
 
@@ -437,11 +602,11 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
   const level    = Number(b.level);
 
   if (!isValidUsername(username))
-    return res.status(400).json({ error: "Usuario inválido (3-32 caracteres, letras/números/_-.)" });
+    return res.status(400).json({ error: "Usuario invalido (3-32 caracteres, letras/numeros/_-.)" });
   if (password.length < 6)
-    return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+    return res.status(400).json({ error: "La contrasena debe tener al menos 6 caracteres" });
   if (!VALID_LEVELS.includes(level))
-    return res.status(400).json({ error: "Nivel inválido. Valores: " + VALID_LEVELS.join(", ") });
+    return res.status(400).json({ error: "Nivel invalido. Valores: " + VALID_LEVELS.join(", ") });
 
   const exists = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
   if (exists) return res.status(409).json({ error: "Ese usuario ya existe" });
@@ -460,7 +625,7 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
 
 app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
-  if (!id) return res.status(400).json({ error: "ID inválido" });
+  if (!id) return res.status(400).json({ error: "ID invalido" });
   const target = db.prepare("SELECT id, level FROM users WHERE id = ?").get(id);
   if (!target) return res.status(404).json({ error: "Usuario no encontrado" });
 
@@ -483,17 +648,17 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   if ("level" in b) {
     const lvl = Number(b.level);
     if (!VALID_LEVELS.includes(lvl))
-      return res.status(400).json({ error: "Nivel inválido" });
+      return res.status(400).json({ error: "Nivel invalido" });
     // No permitir que el admin actual se baje a si mismo de admin
     if (id === req.session.userId && lvl !== 99)
-      return res.status(400).json({ error: "No podés bajarte de Administrador a vos mismo" });
+      return res.status(400).json({ error: "No podes bajarte de Administrador a vos mismo" });
     sets.push("level = ?");
     vals.push(lvl);
   }
   if ("active" in b) {
     const act = b.active ? 1 : 0;
     if (id === req.session.userId && !act)
-      return res.status(400).json({ error: "No podés desactivar tu propio usuario" });
+      return res.status(400).json({ error: "No podes desactivar tu propio usuario" });
     sets.push("active = ?");
     vals.push(act);
   }
@@ -509,12 +674,12 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
 
 app.post("/api/admin/users/:id/reset-password", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
-  if (!id) return res.status(400).json({ error: "ID inválido" });
+  if (!id) return res.status(400).json({ error: "ID invalido" });
   const target = db.prepare("SELECT id FROM users WHERE id = ?").get(id);
   if (!target) return res.status(404).json({ error: "Usuario no encontrado" });
   const password = String((req.body || {}).password || "");
   if (password.length < 6)
-    return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+    return res.status(400).json({ error: "La contrasena debe tener al menos 6 caracteres" });
   const hash = bcrypt.hashSync(password, 10);
   db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, id);
   res.json({ ok: true });
@@ -653,7 +818,7 @@ app.post("/api/admin/import-excel", requireAdmin, excelUpload.single("file"), (r
   }
   if (!items.length) return res.status(400).json({ error: "El Excel no tiene filas validas" });
   try {
-    const stats = importPrices(items, db);
+    const stats = importPrices(items, db, { source: "excel-upload" });
     res.json({ ok: true, filas: items.length, stats: stats });
   } catch (e) {
     console.error("import-excel error:", e);

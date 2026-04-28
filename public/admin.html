@@ -134,6 +134,28 @@
       </div>
 
       <div class="config-card">
+        <h3>Cambios de precio · Visibilidad</h3>
+        <p class="muted">
+          Cuando subís un Excel de precios, los clientes que estén dentro de los
+          niveles seleccionados ven una solapa <strong>Cambios de precio</strong>
+          en el catálogo con los aumentos y bajas de la <strong>última actualización</strong>,
+          calculados sobre la lista de precios que les corresponde a ellos.
+        </p>
+        <div class="config-row pc-levels-row">
+          <label class="cfg-check"><input type="checkbox" data-pc-level="1" /> Minorista</label>
+          <label class="cfg-check"><input type="checkbox" data-pc-level="2" /> Revendedor</label>
+          <label class="cfg-check"><input type="checkbox" data-pc-level="3" /> Mayorista</label>
+          <label class="cfg-check"><input type="checkbox" data-pc-level="4" /> VIP</label>
+          <button class="btn btn-primary" id="cfg-pc-save" type="button">Guardar</button>
+          <span id="cfg-pc-msg" class="config-msg"></span>
+        </div>
+        <p class="muted small">
+          El admin siempre puede ver esta solapa, sin importar la configuración.
+          Si no marcás ningún nivel, ningún cliente la ve.
+        </p>
+      </div>
+
+      <div class="config-card">
         <h3>Base de datos</h3>
         <p class="muted">
           Información sobre dónde se está guardando la base SQLite.

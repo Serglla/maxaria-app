@@ -61,6 +61,9 @@
     cfgWhatsappSave: document.getElementById("cfg-whatsapp-save"),
     cfgWhatsappMsg: document.getElementById("cfg-whatsapp-msg"),
     cfgWhatsappCurrent: document.getElementById("cfg-whatsapp-current"),
+    cfgPcChecks: document.querySelectorAll('input[data-pc-level]'),
+    cfgPcSave: document.getElementById("cfg-pc-save"),
+    cfgPcMsg: document.getElementById("cfg-pc-msg"),
 
     // Banner DB
     dbWarning: document.getElementById("db-warning"),
@@ -475,6 +478,11 @@
       const s = await api("/api/admin/settings");
       els.cfgWhatsapp.value = s.whatsapp_number || "";
       updateWhatsappPreview(s.whatsapp_number);
+      // Niveles que ven "Cambios de precio"
+      const visible = new Set((s.price_changes_visible_levels || []).map(Number));
+      els.cfgPcChecks.forEach((cb) => {
+        cb.checked = visible.has(Number(cb.dataset.pcLevel));
+      });
       state.settingsLoaded = true;
     } catch (e) {
       els.cfgWhatsappMsg.textContent = "Error cargando config";
@@ -483,6 +491,38 @@
     // Refrescar dbinfo cada vez que entran a Config (asi siempre se ve
     // el ultimo tamano y la lista de backups actualizada).
     checkDbInfo();
+  }
+
+  // Guardar niveles que pueden ver "Cambios de precio"
+  if (els.cfgPcSave) {
+    els.cfgPcSave.addEventListener("click", async () => {
+      const selected = Array.from(els.cfgPcChecks)
+        .filter((cb) => cb.checked)
+        .map((cb) => Number(cb.dataset.pcLevel));
+      els.cfgPcSave.disabled = true;
+      els.cfgPcMsg.textContent = "Guardando…";
+      els.cfgPcMsg.className = "config-msg";
+      try {
+        const out = await api("/api/admin/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ price_changes_visible_levels: selected }),
+        });
+        const visible = new Set((out.price_changes_visible_levels || []).map(Number));
+        els.cfgPcChecks.forEach((cb) => {
+          cb.checked = visible.has(Number(cb.dataset.pcLevel));
+        });
+        els.cfgPcMsg.textContent = "✓ Guardado";
+        els.cfgPcMsg.className = "config-msg ok";
+        showToast("Visibilidad de cambios de precio actualizada");
+        setTimeout(() => { els.cfgPcMsg.textContent = ""; }, 2500);
+      } catch (e) {
+        els.cfgPcMsg.textContent = "Error: " + e.message;
+        els.cfgPcMsg.className = "config-msg err";
+      } finally {
+        els.cfgPcSave.disabled = false;
+      }
+    });
   }
 
   // ---------- Export / Import de usuarios ----------

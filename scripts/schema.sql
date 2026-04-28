@@ -89,3 +89,39 @@ CREATE TABLE IF NOT EXISTS settings (
   value       TEXT,
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Cabecera de cada importacion de precios (un Excel subido = un update).
+-- Se usa para mostrar a los clientes los cambios de la ULTIMA actualizacion.
+CREATE TABLE IF NOT EXISTS price_updates (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  source          TEXT,
+  rows_total      INTEGER NOT NULL DEFAULT 0,
+  products_changed INTEGER NOT NULL DEFAULT 0,
+  products_new    INTEGER NOT NULL DEFAULT 0
+);
+
+-- Detalle de cambios por producto en cada update. Una fila por
+-- producto que cambio (precio o nuevo) en ese update. Guardamos
+-- old/new para los 4 niveles asi al reimportar podemos calcular
+-- el % de aumento o baja con la base anterior, sin depender del
+-- nivel del cliente al momento del import.
+CREATE TABLE IF NOT EXISTS price_changes (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  update_id         INTEGER NOT NULL REFERENCES price_updates(id) ON DELETE CASCADE,
+  product_id        INTEGER REFERENCES products(id),
+  code              TEXT,
+  name              TEXT,
+  is_new            INTEGER NOT NULL DEFAULT 0,
+  old_minorista     INTEGER,
+  new_minorista     INTEGER,
+  old_revendedor    INTEGER,
+  new_revendedor    INTEGER,
+  old_mayorista     INTEGER,
+  new_mayorista     INTEGER,
+  old_vip           INTEGER,
+  new_vip           INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_changes_update ON price_changes(update_id);
+CREATE INDEX IF NOT EXISTS idx_price_changes_product ON price_changes(product_id);

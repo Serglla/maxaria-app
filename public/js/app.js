@@ -28,6 +28,12 @@
     ordersBack: document.getElementById("orders-back"),
     ordersBody: document.getElementById("orders-body"),
     ordersTitle: document.getElementById("orders-title"),
+    priceChangesBtn: document.getElementById("price-changes-btn"),
+    priceChangesDrawer: document.getElementById("price-changes-drawer"),
+    pcClose: document.getElementById("pc-close"),
+    pcBack: document.getElementById("pc-back"),
+    pcBody: document.getElementById("pc-body"),
+    pcTitle: document.getElementById("pc-title"),
     adminLink: document.getElementById("admin-link"),
     levelSwitcher: document.getElementById("level-switcher"),
     levelSelect: document.getElementById("level-select"),
@@ -106,6 +112,9 @@
     }
     if (els.adminLink) {
       els.adminLink.hidden = u.level !== 99;
+    }
+    if (els.priceChangesBtn) {
+      els.priceChangesBtn.hidden = !u.canSeePriceChanges;
     }
     // Selector "Ver como ...": SOLO admin
     if (els.levelSwitcher) {
@@ -423,6 +432,97 @@
     setTimeout(() => tip.remove(), 3500);
   }
 
+  // ----- Cambios de precio (ultima actualizacion) -----
+  async function openPriceChanges() {
+    els.pcBody.innerHTML = '<p class="muted">Cargando…</p>';
+    openDrawer(els.priceChangesDrawer);
+    try {
+      const url = state.me && state.me.level === 99 && state.viewAsLevel
+        ? "/api/price-changes?as_level=" + state.viewAsLevel
+        : "/api/price-changes";
+      const data = await api(url);
+      els.pcBody.innerHTML = renderPriceChangesHtml(data);
+    } catch (e) {
+      const msg = e && e.message ? e.message : "Error";
+      els.pcBody.innerHTML = '<p class="muted">' + escapeHtml(msg) + '</p>';
+    }
+  }
+
+  function renderPriceChangesHtml(data) {
+    if (!data || !data.update) {
+      return '<p class="muted">Todavía no se subió ninguna actualización de precios.</p>';
+    }
+    const u = data.update;
+    const date = formatDate(u.created_at);
+    const lvl = data.levelName ? ' · Lista <strong>' + escapeHtml(data.levelName) + '</strong>' : '';
+    const header =
+      '<div class="pc-summary">' +
+        '<div><strong>Última actualización:</strong> ' + escapeHtml(date) + lvl + '</div>' +
+        '<div class="muted">' + (u.products_changed || 0) + ' producto(s) con cambio de precio · ' +
+          (u.products_new || 0) + ' producto(s) nuevo(s)' + '</div>' +
+      '</div>';
+
+    const cambios = data.cambios || [];
+    const nuevos = data.nuevos || [];
+
+    let cambiosBlock = '';
+    if (!cambios.length) {
+      cambiosBlock = '<p class="muted">Sin cambios de precio en tu lista.</p>';
+    } else {
+      const subas = cambios.filter((c) => c.delta > 0).length;
+      const bajas = cambios.filter((c) => c.delta < 0).length;
+      cambiosBlock =
+        '<h4 class="pc-section-title">' +
+          'Cambios de precio ' +
+          '<span class="muted">(' + subas + ' suba(s), ' + bajas + ' baja(s))</span>' +
+        '</h4>' +
+        '<table class="pc-table">' +
+          '<thead><tr>' +
+            '<th>Código</th><th>Producto</th>' +
+            '<th class="num">Anterior</th><th class="num">Nuevo</th>' +
+            '<th class="num">Var.</th>' +
+          '</tr></thead>' +
+          '<tbody>' + cambios.map(pcRowHtml).join("") + '</tbody>' +
+        '</table>';
+    }
+
+    let nuevosBlock = '';
+    if (nuevos.length) {
+      nuevosBlock =
+        '<h4 class="pc-section-title">Productos nuevos <span class="muted">(' + nuevos.length + ')</span></h4>' +
+        '<table class="pc-table">' +
+          '<thead><tr><th>Código</th><th>Producto</th><th class="num">Precio</th></tr></thead>' +
+          '<tbody>' + nuevos.map(pcNewRowHtml).join("") + '</tbody>' +
+        '</table>';
+    }
+
+    return header + cambiosBlock + nuevosBlock;
+  }
+
+  function pcRowHtml(c) {
+    const pct = c.delta_pct;
+    const cls = c.delta > 0 ? "pc-up" : (c.delta < 0 ? "pc-down" : "pc-eq");
+    const sign = c.delta > 0 ? "+" : "";
+    const pctTxt = (pct == null)
+      ? "—"
+      : sign + pct.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
+    return '<tr class="' + cls + '">' +
+      '<td class="pc-code">' + escapeHtml(c.code || "") + '</td>' +
+      '<td>' + escapeHtml(c.name || "") + '</td>' +
+      '<td class="num">' + fmtPrice(c.old_price) + '</td>' +
+      '<td class="num"><strong>' + fmtPrice(c.new_price) + '</strong></td>' +
+      '<td class="num pc-pct">' + escapeHtml(pctTxt) + '</td>' +
+    '</tr>';
+  }
+
+  function pcNewRowHtml(n) {
+    return '<tr class="pc-new">' +
+      '<td class="pc-code">' + escapeHtml(n.code || "") + '</td>' +
+      '<td>' + escapeHtml(n.name || "") + ' <span class="pc-tag">NUEVO</span></td>' +
+      '<td class="num"><strong>' + fmtPrice(n.new_price) + '</strong></td>' +
+    '</tr>';
+  }
+
   async function openOrders() {
     const isAdmin = state.me && state.me.level === 99;
     els.ordersTitle.textContent = isAdmin ? "Todos los pedidos" : "Mis pedidos";
@@ -646,6 +746,7 @@
     // Si ya habia otro drawer abierto, lo ocultamos sin tocar el history
     els.cartDrawer.hidden = true;
     els.ordersDrawer.hidden = true;
+    if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
     drawer.hidden = false;
     els.backdrop.hidden = false;
     if (!drawerHistoryPushed) {
@@ -654,10 +755,16 @@
     }
   }
 
+  function anyDrawerOpen() {
+    return !els.cartDrawer.hidden || !els.ordersDrawer.hidden ||
+           (els.priceChangesDrawer && !els.priceChangesDrawer.hidden);
+  }
+
   function closeDrawers(fromPopState) {
-    const wasOpen = !els.cartDrawer.hidden || !els.ordersDrawer.hidden;
+    const wasOpen = anyDrawerOpen();
     els.cartDrawer.hidden = true;
     els.ordersDrawer.hidden = true;
+    if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
     els.backdrop.hidden = true;
     if (wasOpen && drawerHistoryPushed && !fromPopState) {
       drawerHistoryPushed = false;
@@ -676,20 +783,22 @@
   els.ordersClose.addEventListener("click", () => { closeDrawers(); });
   els.ordersBack.addEventListener("click", () => { closeDrawers(); });
 
+  if (els.priceChangesBtn) {
+    els.priceChangesBtn.addEventListener("click", openPriceChanges);
+  }
+  if (els.pcClose) els.pcClose.addEventListener("click", () => { closeDrawers(); });
+  if (els.pcBack)  els.pcBack.addEventListener("click",  () => { closeDrawers(); });
+
   // Click en el fondo oscuro = cerrar
   els.backdrop.addEventListener("click", () => { closeDrawers(); });
 
   // Boton "atras" del navegador / celular
   window.addEventListener("popstate", () => {
-    if (!els.cartDrawer.hidden || !els.ordersDrawer.hidden) {
-      closeDrawers(true);
-    }
+    if (anyDrawerOpen()) closeDrawers(true);
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && (!els.cartDrawer.hidden || !els.ordersDrawer.hidden)) {
-      closeDrawers();
-    }
+    if (e.key === "Escape" && anyDrawerOpen()) closeDrawers();
   });
 
   bootstrap();
