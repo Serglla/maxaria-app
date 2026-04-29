@@ -1061,7 +1061,46 @@ button { font: inherit; cursor: pointer; }
   .admin-table { min-width: 900px; font-size: 12px; }
 }
 
-/* ====== Cambios de precio (drawer en catalogo) ====== */
+/* ====== Ver cambios / historial (drawer en catalogo) ====== */
+.pc-history-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 12px;
+}
+/* Bloque por actualizacion */
+.pc-update-block {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.pc-update-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f9fafb;
+  border: none;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 14px;
+  font-family: inherit;
+}
+.pc-update-head:hover { background: #f3f4f6; }
+.pc-update-date { font-weight: 600; color: #111827; flex-shrink: 0; }
+.pc-update-summary { font-size: 13px; flex: 1; }
+.pc-chevron { margin-left: auto; font-size: 16px; color: #9ca3af; transition: transform .2s; flex-shrink: 0; }
+.pc-update-body {
+  display: none;
+  padding: 0 12px 12px;
+}
+.pc-update-block.pc-open .pc-update-body { display: block; }
+.pc-update-block.pc-open .pc-chevron { transform: rotate(180deg); }
+/* Secciones dentro de cada update */
 .pc-summary {
   background: #f9fafb;
   border: 1px solid #e5e7eb;
@@ -1109,7 +1148,10 @@ button { font: inherit; cursor: pointer; }
 .pc-table tr.pc-down  { background: #ecfdf5; }
 .pc-table tr.pc-up:hover    { background: #fee2e2; }
 .pc-table tr.pc-down:hover  { background: #d1fae5; }
-.pc-table tr.pc-new   { background: #eff6ff; }
+.pc-table tr.pc-new      { background: #eff6ff; }
+.pc-table tr.pc-reingreso { background: #fefce8; }
+.pc-table tr.pc-reingreso:hover { background: #fef9c3; }
+.pc-reingreso-title { color: #92400e; }
 .pc-tag {
   display: inline-block;
   background: #2563eb;
@@ -1120,6 +1162,9 @@ button { font: inherit; cursor: pointer; }
   border-radius: 999px;
   margin-left: 6px;
   vertical-align: middle;
+}
+.pc-tag-reingreso {
+  background: #d97706;
 }
 
 /* Config: niveles que ven "Cambios de precio" */

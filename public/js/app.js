@@ -434,7 +434,7 @@
     setTimeout(() => tip.remove(), 3500);
   }
 
-  // ----- Cambios de precio (ultima actualizacion) -----
+  // ----- Historial de cambios (ultimas 10 actualizaciones) -----
   async function openPriceChanges() {
     els.pcBody.innerHTML = '<p class="muted">Cargando…</p>';
     openDrawer(els.priceChangesDrawer);
@@ -451,54 +451,83 @@
   }
 
   function renderPriceChangesHtml(data) {
-    if (!data || !data.update) {
-      return '<p class="muted">Todavía no se subió ninguna actualización de precios.</p>';
+    if (!data || !data.updates || !data.updates.length) {
+      return '<p class="muted">Todavía no hay actualizaciones registradas.</p>';
     }
-    const u = data.update;
-    const date = formatDate(u.created_at);
-    const lvl = data.levelName ? ' · Lista <strong>' + escapeHtml(data.levelName) + '</strong>' : '';
-    const header =
-      '<div class="pc-summary">' +
-        '<div><strong>Última actualización:</strong> ' + escapeHtml(date) + lvl + '</div>' +
-        '<div class="muted">' + (u.products_changed || 0) + ' producto(s) con cambio de precio · ' +
-          (u.products_new || 0) + ' producto(s) nuevo(s)' + '</div>' +
-      '</div>';
+    const lvl = data.levelName
+      ? '<span class="muted"> · Lista <strong>' + escapeHtml(data.levelName) + '</strong></span>'
+      : '';
+    let html = '<div class="pc-history-header">Historial de cambios' + lvl + '</div>';
 
-    const cambios = data.cambios || [];
-    const nuevos = data.nuevos || [];
+    data.updates.forEach(function(entry, idx) {
+      const u = entry.update;
+      const cambios = entry.cambios || [];
+      const nuevos = entry.nuevos || [];
+      const reingresos = entry.reingresos || [];
+      const date = formatDate(u.created_at);
 
-    let cambiosBlock = '';
-    if (!cambios.length) {
-      cambiosBlock = '<p class="muted">Sin cambios de precio en tu lista.</p>';
-    } else {
-      const subas = cambios.filter((c) => c.delta > 0).length;
-      const bajas = cambios.filter((c) => c.delta < 0).length;
-      cambiosBlock =
-        '<h4 class="pc-section-title">' +
-          'Cambios de precio ' +
-          '<span class="muted">(' + subas + ' suba(s), ' + bajas + ' baja(s))</span>' +
-        '</h4>' +
-        '<table class="pc-table">' +
-          '<thead><tr>' +
-            '<th>Código</th><th>Producto</th>' +
-            '<th class="num">Anterior</th><th class="num">Nuevo</th>' +
-            '<th class="num">Var.</th>' +
-          '</tr></thead>' +
-          '<tbody>' + cambios.map(pcRowHtml).join("") + '</tbody>' +
-        '</table>';
-    }
+      // Resumen de contadores para el encabezado del update
+      const parts = [];
+      if (cambios.length) parts.push(cambios.length + ' cambio(s) de precio');
+      if (reingresos.length) parts.push(reingresos.length + ' reingreso(s)');
+      if (nuevos.length) parts.push(nuevos.length + ' nuevo(s)');
+      const summary = parts.join(' · ');
 
-    let nuevosBlock = '';
-    if (nuevos.length) {
-      nuevosBlock =
-        '<h4 class="pc-section-title">Productos nuevos <span class="muted">(' + nuevos.length + ')</span></h4>' +
-        '<table class="pc-table">' +
-          '<thead><tr><th>Código</th><th>Producto</th><th class="num">Precio</th></tr></thead>' +
-          '<tbody>' + nuevos.map(pcNewRowHtml).join("") + '</tbody>' +
-        '</table>';
-    }
+      // El mas reciente (idx 0) se muestra expandido, el resto colapsado
+      const blockId = 'pc-block-' + u.id;
+      const isOpen = idx === 0;
 
-    return header + cambiosBlock + nuevosBlock;
+      html +=
+        '<div class="pc-update-block' + (isOpen ? ' pc-open' : '') + '" id="' + blockId + '">' +
+          '<button class="pc-update-head" type="button" onclick="(function(el){' +
+            'el.closest(\'.pc-update-block\').classList.toggle(\'pc-open\')' +
+          '})(this)">' +
+            '<span class="pc-update-date">' + escapeHtml(date) + '</span>' +
+            '<span class="pc-update-summary muted">' + escapeHtml(summary) + '</span>' +
+            '<span class="pc-chevron">▾</span>' +
+          '</button>' +
+          '<div class="pc-update-body">';
+
+      // — Reingresos —
+      if (reingresos.length) {
+        html +=
+          '<h4 class="pc-section-title pc-reingreso-title">Reingresos <span class="muted">(' + reingresos.length + ')</span></h4>' +
+          '<table class="pc-table">' +
+            '<thead><tr><th>Código</th><th>Producto</th><th class="num">Precio</th></tr></thead>' +
+            '<tbody>' + reingresos.map(pcReingresoRowHtml).join("") + '</tbody>' +
+          '</table>';
+      }
+
+      // — Cambios de precio —
+      if (cambios.length) {
+        const subas = cambios.filter(function(c){ return c.delta > 0; }).length;
+        const bajas = cambios.filter(function(c){ return c.delta < 0; }).length;
+        html +=
+          '<h4 class="pc-section-title">Cambios de precio <span class="muted">(' + subas + ' ↑, ' + bajas + ' ↓)</span></h4>' +
+          '<table class="pc-table">' +
+            '<thead><tr>' +
+              '<th>Código</th><th>Producto</th>' +
+              '<th class="num">Anterior</th><th class="num">Nuevo</th>' +
+              '<th class="num">Var.</th>' +
+            '</tr></thead>' +
+            '<tbody>' + cambios.map(pcRowHtml).join("") + '</tbody>' +
+          '</table>';
+      }
+
+      // — Productos nuevos —
+      if (nuevos.length) {
+        html +=
+          '<h4 class="pc-section-title">Productos nuevos <span class="muted">(' + nuevos.length + ')</span></h4>' +
+          '<table class="pc-table">' +
+            '<thead><tr><th>Código</th><th>Producto</th><th class="num">Precio</th></tr></thead>' +
+            '<tbody>' + nuevos.map(pcNewRowHtml).join("") + '</tbody>' +
+          '</table>';
+      }
+
+      html += '</div></div>'; // pc-update-body / pc-update-block
+    });
+
+    return html;
   }
 
   function pcRowHtml(c) {
@@ -521,6 +550,14 @@
     return '<tr class="pc-new">' +
       '<td class="pc-code">' + escapeHtml(n.code || "") + '</td>' +
       '<td>' + escapeHtml(n.name || "") + ' <span class="pc-tag">NUEVO</span></td>' +
+      '<td class="num"><strong>' + fmtPrice(n.new_price) + '</strong></td>' +
+    '</tr>';
+  }
+
+  function pcReingresoRowHtml(n) {
+    return '<tr class="pc-reingreso">' +
+      '<td class="pc-code">' + escapeHtml(n.code || "") + '</td>' +
+      '<td>' + escapeHtml(n.name || "") + ' <span class="pc-tag pc-tag-reingreso">REINGRESO</span></td>' +
       '<td class="num"><strong>' + fmtPrice(n.new_price) + '</strong></td>' +
     '</tr>';
   }

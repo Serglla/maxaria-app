@@ -86,6 +86,10 @@ db.exec(
   "CREATE INDEX IF NOT EXISTS idx_price_changes_product ON price_changes(product_id);"
 );
 
+// Migracion: soporte para reingresos (productos que vuelven de stock 0).
+try { db.exec("ALTER TABLE price_changes ADD COLUMN is_reingreso INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+try { db.exec("ALTER TABLE price_updates ADD COLUMN products_reingreso INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+
 function getSetting(key, fallback) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   if (row && row.value != null) return row.value;
@@ -308,11 +312,12 @@ app.get("/api/me", requireLogin, (req, res) => {
   });
 });
 
-// Cambios de precio del ULTIMO update (Excel subido).
-// - Visible solo para los niveles configurados + admin.
-// - Devuelve old/new del nivel del cliente (admin: VIP por defecto, o ?as_level=N).
-// - Calcula delta absoluto y porcentaje. Productos nuevos vienen en una
-//   lista aparte ('nuevos') porque no tienen "precio anterior".
+// Historial de cambios: ultimas 10 actualizaciones (Excel subidos).
+// Cada actualizacion incluye:
+//   - cambios de precio (subas/bajas) de productos con stock
+//   - productos nuevos (is_new = 1)
+//   - reingresos (is_reingreso = 1): productos que volvieron de stock 0
+// Visible solo para los niveles configurados + admin.
 app.get("/api/price-changes", requireLogin, (req, res) => {
   const level = req.session.level;
   if (!userCanSeePriceChanges(level)) {
@@ -326,18 +331,20 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     if ([1, 2, 3, 4].includes(asLvl)) effectiveLevel = asLvl;
   }
 
-  const last = db.prepare(
-    "SELECT id, created_at, source, rows_total, products_changed, products_new" +
-    "  FROM price_updates ORDER BY id DESC LIMIT 1"
-  ).get();
+  const updates = db.prepare(
+    "SELECT id, created_at, source, rows_total, products_changed, products_new," +
+    "       COALESCE(products_reingreso, 0) AS products_reingreso" +
+    "  FROM price_updates ORDER BY id DESC LIMIT 10"
+  ).all();
 
-  if (!last) {
-    return res.json({ update: null, cambios: [], nuevos: [], level: effectiveLevel });
+  if (!updates.length) {
+    return res.json({ updates: [], level: effectiveLevel, levelName: levelName(effectiveLevel) });
   }
 
   const cols = priceChangeCols(effectiveLevel);
-  const rows = db.prepare(
+  const rowsStmt = db.prepare(
     "SELECT pc.product_id, pc.code, pc.name, pc.is_new," +
+    "       COALESCE(pc.is_reingreso, 0) AS is_reingreso," +
     "       pc." + cols.old + " AS old_price," +
     "       pc." + cols.new + " AS new_price," +
     "       p.image_url, p.stock, p.active" +
@@ -345,50 +352,70 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     "  LEFT JOIN products p ON p.id = pc.product_id" +
     "  WHERE pc.update_id = ?" +
     "  ORDER BY pc.is_new DESC, pc.name"
-  ).all(last.id);
+  );
 
-  const cambios = [];
-  const nuevos = [];
-  for (const r of rows) {
-    // Ocultamos productos inactivos o sin stock al cliente final
-    // (al admin tambien, por consistencia: si no se ven en el catalogo
-    // tampoco tiene mucho sentido mostrar el cambio).
-    if (!r.active || (r.stock != null && r.stock <= 0)) continue;
+  const result = [];
+  for (const u of updates) {
+    const rows = rowsStmt.all(u.id);
+    const cambios = [];
+    const nuevos = [];
+    const reingresos = [];
 
-    const newP = Number(r.new_price) || 0;
-    const oldP = r.old_price == null ? null : Number(r.old_price);
+    for (const r of rows) {
+      // Productos inactivos no se muestran en ninguna seccion
+      if (!r.active) continue;
 
-    if (r.is_new) {
-      nuevos.push({
+      const newP = Number(r.new_price) || 0;
+      const oldP = r.old_price == null ? null : Number(r.old_price);
+
+      // Reingresos: vuelven de stock 0 — se muestran igual aunque ahora tengan stock
+      if (r.is_reingreso) {
+        reingresos.push({
+          product_id: r.product_id, code: r.code, name: r.name,
+          image_url: r.image_url || null, new_price: newP,
+        });
+        continue;
+      }
+
+      if (r.is_new) {
+        nuevos.push({
+          product_id: r.product_id, code: r.code, name: r.name,
+          image_url: r.image_url || null, new_price: newP,
+        });
+        continue;
+      }
+
+      // Cambios de precio: solo mostramos si el producto tiene stock ahora
+      if (r.stock != null && r.stock <= 0) continue;
+      if (oldP == null || oldP === newP) continue;
+      const delta = newP - oldP;
+      const pct = oldP > 0 ? (delta / oldP) * 100 : null;
+      cambios.push({
         product_id: r.product_id, code: r.code, name: r.name,
-        image_url: r.image_url || null, new_price: newP,
+        image_url: r.image_url || null,
+        old_price: oldP, new_price: newP,
+        delta: delta,
+        delta_pct: pct == null ? null : Math.round(pct * 10) / 10,
       });
-      continue;
     }
-    // Solo nos interesan cambios reales en este nivel (puede no haber).
-    if (oldP == null || oldP === newP) continue;
-    const delta = newP - oldP;
-    const pct = oldP > 0 ? (delta / oldP) * 100 : null;
-    cambios.push({
-      product_id: r.product_id, code: r.code, name: r.name,
-      image_url: r.image_url || null,
-      old_price: oldP, new_price: newP,
-      delta: delta,
-      delta_pct: pct == null ? null : Math.round(pct * 10) / 10,
+
+    // Ordenamos cambios por mayor suba %, reingresos y nuevos alfabetico
+    cambios.sort((a, b) => {
+      const pa = a.delta_pct == null ? -Infinity : a.delta_pct;
+      const pb = b.delta_pct == null ? -Infinity : b.delta_pct;
+      return pb - pa;
     });
+    nuevos.sort((a, b) => (a.name || "").localeCompare(b.name || "", "es"));
+    reingresos.sort((a, b) => (a.name || "").localeCompare(b.name || "", "es"));
+
+    // Solo incluimos el update si tiene algo para mostrar
+    if (cambios.length || nuevos.length || reingresos.length) {
+      result.push({ update: u, cambios, nuevos, reingresos });
+    }
   }
-  // Ordenamos por mayor aumento absoluto en %, productos con mayor suba arriba
-  cambios.sort((a, b) => {
-    const pa = a.delta_pct == null ? -Infinity : a.delta_pct;
-    const pb = b.delta_pct == null ? -Infinity : b.delta_pct;
-    return pb - pa;
-  });
-  nuevos.sort((a, b) => (a.name || "").localeCompare(b.name || "", "es"));
 
   res.json({
-    update: last,
-    cambios: cambios,
-    nuevos: nuevos,
+    updates: result,
     level: effectiveLevel,
     levelName: levelName(effectiveLevel),
   });

@@ -45,9 +45,9 @@ function importPrices(items, db, opts) {
     db.prepare("SELECT id, name FROM categories").all().map((c) => [c.name, c.id])
   );
 
-  // Trae los precios actuales de un producto por code, para snapshot.
+  // Trae los precios actuales y stock de un producto por code, para snapshot.
   const findFullByCode = db.prepare(
-    "SELECT id, price_minorista, price_revendedor, price_mayorista, price_vip" +
+    "SELECT id, price_minorista, price_revendedor, price_mayorista, price_vip, stock" +
     "  FROM products WHERE code = ?"
   );
   const updateExisting = db.prepare(`
@@ -67,23 +67,23 @@ function importPrices(items, db, opts) {
 
   // Insert para registrar la cabecera del update y cada cambio.
   const insertUpdate = db.prepare(
-    "INSERT INTO price_updates (source, rows_total, products_changed, products_new)" +
-    " VALUES (?, ?, 0, 0)"
+    "INSERT INTO price_updates (source, rows_total, products_changed, products_new, products_reingreso)" +
+    " VALUES (?, ?, 0, 0, 0)"
   );
   const insertChange = db.prepare(
     "INSERT INTO price_changes" +
-    " (update_id, product_id, code, name, is_new," +
+    " (update_id, product_id, code, name, is_new, is_reingreso," +
     "  old_minorista, new_minorista, old_revendedor, new_revendedor," +
     "  old_mayorista, new_mayorista, old_vip, new_vip)" +
-    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   const updateUpdateCounters = db.prepare(
-    "UPDATE price_updates SET products_changed = ?, products_new = ? WHERE id = ?"
+    "UPDATE price_updates SET products_changed = ?, products_new = ?, products_reingreso = ? WHERE id = ?"
   );
 
   const stats = {
     actualizados: 0, nuevos: 0, sinStock: 0, visibles: 0,
-    updateId: null, cambiosPrecio: 0,
+    updateId: null, cambiosPrecio: 0, reingresos: 0,
   };
 
   // Buffer de cambios. Lo llenamos durante la transaccion y al final
@@ -105,12 +105,15 @@ function importPrices(items, db, opts) {
           Number(existing.price_revendedor) !== Number(p.price_revendedor) ||
           Number(existing.price_mayorista)  !== Number(p.price_mayorista) ||
           Number(existing.price_vip)        !== Number(p.price_vip);
-        if (priceChanged) {
+        // Reingreso: estaba sin stock y vuelve con stock
+        const isReingreso = Number(existing.stock) <= 0 && Number(p.stock) > 0;
+        if (priceChanged || isReingreso) {
           pendingChanges.push({
             product_id: existing.id,
             code: p.code,
             name: p.name,
             is_new: 0,
+            is_reingreso: isReingreso ? 1 : 0,
             old_minorista:  existing.price_minorista,
             new_minorista:  p.price_minorista,
             old_revendedor: existing.price_revendedor,
@@ -138,6 +141,7 @@ function importPrices(items, db, opts) {
           code: p.code,
           name: p.name,
           is_new: 1,
+          is_reingreso: 0,
           old_minorista: null, new_minorista: p.price_minorista,
           old_revendedor: null, new_revendedor: p.price_revendedor,
           old_mayorista: null, new_mayorista: p.price_mayorista,
@@ -161,19 +165,23 @@ function importPrices(items, db, opts) {
       const updateId = u.lastInsertRowid;
       let changedCount = 0;
       let newCount = 0;
+      let reingresoCount = 0;
       for (const c of pendingChanges) {
         insertChange.run(
-          updateId, c.product_id, c.code, c.name, c.is_new,
+          updateId, c.product_id, c.code, c.name, c.is_new, c.is_reingreso,
           c.old_minorista,  c.new_minorista,
           c.old_revendedor, c.new_revendedor,
           c.old_mayorista,  c.new_mayorista,
           c.old_vip,        c.new_vip
         );
-        if (c.is_new) newCount++; else changedCount++;
+        if (c.is_new) newCount++;
+        else if (c.is_reingreso) reingresoCount++;
+        else changedCount++;
       }
-      updateUpdateCounters.run(changedCount, newCount, updateId);
+      updateUpdateCounters.run(changedCount, newCount, reingresoCount, updateId);
       stats.updateId = updateId;
       stats.cambiosPrecio = changedCount;
+      stats.reingresos = reingresoCount;
     }
   })();
 
