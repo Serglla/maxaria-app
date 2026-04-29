@@ -295,6 +295,12 @@ button { font: inherit; cursor: pointer; }
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.card-code {
+  font-size: 11px;
+  color: #9ca3af;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: .4px;
+}
 .card-foot {
   display: flex;
   align-items: center;
@@ -1131,3 +1137,151 @@ button { font: inherit; cursor: pointer; }
   user-select: none;
 }
 .pc-levels-row .cfg-check input[type="checkbox"] { margin: 0; }
+
+/* ====== Admin: columna de imagen de producto ====== */
+.col-img {
+  width: 52px;
+  text-align: center;
+  padding: 4px !important;
+}
+.prod-img-btn {
+  background: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 2px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  overflow: hidden;
+  transition: border-color .15s;
+}
+.prod-img-btn:hover { border-color: #2563eb; }
+.prod-thumb {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  display: block;
+}
+.prod-thumb-empty {
+  font-size: 18px;
+  color: #9ca3af;
+  line-height: 1;
+}
+
+/* ====== Admin: modal de imagen ====== */
+.img-modal-box {
+  max-width: 480px;
+}
+.img-preview-wrap {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 220px;
+  background: #f3f4f6;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.img-preview-wrap img {
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+}
+.img-modal-section {
+  margin-bottom: 14px;
+}
+.img-upload-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.img-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.img-url-row .config-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ====== Admin: columna de imagen de producto ====== */
+.col-img {
+  width: 52px;
+  text-align: center;
+  padding: 4px !important;
+}
+.prod-img-btn {
+  background: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 2px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  overflow: hidden;
+  transition: border-color .15s;
+}
+.prod-img-btn:hover { border-color: #2563eb; }
+.prod-thumb {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  display: block;
+}
+.prod-thumb-empty {
+  font-size: 18px;
+  color: #9ca3af;
+  line-height: 1;
+}
+
+/* ====== Admin: modal de imagen ====== */
+.img-modal-box {
+  max-width: 480px;
+}
+.img-preview-wrap {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 220px;
+  background: #f3f4f6;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.img-preview-wrap img {
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+}
+.img-modal-section {
+  margin-bottom: 14px;
+}
+.img-upload-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.img-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.img-url-row .config-input {
+  flex: 1;
+  min-width: 0;
+}

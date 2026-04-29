@@ -164,6 +164,7 @@
     if (state.query) {
       const q = state.query.toLowerCase();
       list = list.filter((p) =>
+        (p.code || "").toLowerCase().includes(q) ||
         (p.name || "").toLowerCase().includes(q) ||
         (p.category_name || "").toLowerCase().includes(q));
     }
@@ -191,6 +192,7 @@
       '<div class="card-body">' +
         '<div class="card-cat">' + escapeHtml(p.category_name || "") + '</div>' +
         '<div class="card-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</div>' +
+        (p.code ? '<div class="card-code">' + escapeHtml(p.code) + '</div>' : '') +
         '<div class="card-foot">' +
           '<div class="card-price">' + fmtPrice(p.price) + '</div>' +
           '<div class="card-actions" data-id="' + p.id + '">' + cardActionHtml(p.id) + '</div>' +

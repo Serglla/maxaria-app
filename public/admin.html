@@ -64,6 +64,7 @@
         <table class="admin-table" id="prod-table">
           <thead>
             <tr>
+              <th class="col-img">Foto</th>
               <th class="sortable" data-sort="code">Código<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="name">Nombre<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="category_name">Categoría<span class="sort-arrow"></span></th>
@@ -77,7 +78,7 @@
               <th class="sortable" data-sort="active">Activo<span class="sort-arrow"></span></th>
             </tr>
           </thead>
-          <tbody id="prod-tbody"><tr><td colspan="11" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="prod-tbody"><tr><td colspan="12" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
 
@@ -209,6 +210,35 @@
     </section>
 
   </main>
+
+  <!-- Modal imagen de producto -->
+  <div class="admin-modal" id="img-modal" hidden>
+    <div class="admin-modal-box img-modal-box">
+      <h3 id="img-modal-title">Imagen del producto</h3>
+      <div class="img-preview-wrap">
+        <img id="img-modal-preview" alt="" />
+        <div id="img-modal-no-img" class="muted">Sin imagen</div>
+      </div>
+      <div class="img-modal-section">
+        <p class="muted small">Subir un archivo (jpg, png, webp, gif · máx 5 MB):</p>
+        <label class="btn btn-primary img-upload-label">
+          📷 Elegir imagen
+          <input type="file" id="img-upload-file" accept="image/*" hidden />
+        </label>
+      </div>
+      <div class="img-modal-section">
+        <p class="muted small">O guardar una URL externa:</p>
+        <div class="img-url-row">
+          <input type="url" id="img-url-input" class="config-input" placeholder="https://ejemplo.com/foto.jpg" />
+          <button id="img-url-save" class="btn btn-primary" type="button">Guardar URL</button>
+        </div>
+      </div>
+      <p id="img-modal-msg" class="config-msg"></p>
+      <div class="admin-modal-foot">
+        <button class="btn" type="button" data-close>Cerrar</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal de feedback de import -->
   <div class="admin-modal" id="import-modal" hidden>

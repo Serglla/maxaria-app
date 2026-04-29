@@ -249,6 +249,20 @@ const excelUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
+// Directorio donde se guardan las imagenes de productos.
+const PRODUCT_IMAGES_DIR = path.join(__dirname, "public", "images", "products");
+if (!fs.existsSync(PRODUCT_IMAGES_DIR)) fs.mkdirSync(PRODUCT_IMAGES_DIR, { recursive: true });
+
+// Upload de imagen de producto en memoria. Limite 5MB. Solo imagenes.
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^image\/(jpeg|jpg|png|webp|gif)$/.test(file.mimetype)) return cb(null, true);
+    cb(new Error("Solo se permiten imágenes (jpg, png, webp, gif)"));
+  },
+});
+
 app.get("/login", (req, res) => {
   if (req.session && req.session.userId) return res.redirect("/catalogo");
   res.sendFile(path.join(__dirname, "public", "login.html"));
@@ -523,7 +537,7 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   if (!id) return res.status(400).json({ error: "ID invalido" });
   const allowed = [
     "name", "cost", "price_minorista", "price_revendedor",
-    "price_mayorista", "price_vip", "price_publico", "stock", "active",
+    "price_mayorista", "price_vip", "price_publico", "stock", "active", "image_url",
   ];
   const sets = [];
   const vals = [];
@@ -533,6 +547,7 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
       // Numericos: parsear; texto: trim. active: 0/1.
       let v = req.body[k];
       if (k === "name") v = String(v || "").trim().slice(0, 200);
+      else if (k === "image_url") v = String(v || "").trim().slice(0, 500) || null;
       else if (k === "active") v = v ? 1 : 0;
       else { v = Number(v); if (!isFinite(v)) v = 0; v = Math.round(v); }
       vals.push(v);
@@ -544,6 +559,37 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   const r = db.prepare("UPDATE products SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
   if (!r.changes) return res.status(404).json({ error: "Producto no encontrado" });
   res.json({ ok: true, id: id });
+});
+
+// Subir imagen de un producto. Guarda en public/images/products/product-{id}.{ext}
+// y actualiza image_url en la base.
+app.post("/api/admin/products/:id/image", requireAdmin, imageUpload.single("image"), (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID inválido" });
+  const prod = db.prepare("SELECT id FROM products WHERE id = ?").get(id);
+  if (!prod) return res.status(404).json({ error: "Producto no encontrado" });
+  if (!req.file) return res.status(400).json({ error: "No se recibió imagen" });
+
+  const origExt = path.extname(req.file.originalname || "").toLowerCase();
+  const validExts = [".jpg", ".jpeg", ".png", ".webp", ".gif"];
+  const safeExt = validExts.includes(origExt) ? origExt : ".jpg";
+
+  const filename = "product-" + id + safeExt;
+  const filePath = path.join(PRODUCT_IMAGES_DIR, filename);
+
+  // Eliminar imágenes locales anteriores del mismo producto (distinta extension)
+  try {
+    fs.readdirSync(PRODUCT_IMAGES_DIR).forEach((f) => {
+      if (f.startsWith("product-" + id + ".") && f !== filename) {
+        fs.unlinkSync(path.join(PRODUCT_IMAGES_DIR, f));
+      }
+    });
+  } catch (_) {}
+
+  fs.writeFileSync(filePath, req.file.buffer);
+  const imageUrl = "/images/products/" + filename + "?v=" + Date.now();
+  db.prepare("UPDATE products SET image_url = ?, updated_at = datetime('now') WHERE id = ?").run(imageUrl, id);
+  res.json({ ok: true, image_url: imageUrl });
 });
 
 // Settings runtime: whatsapp_number + price_changes_visible_levels

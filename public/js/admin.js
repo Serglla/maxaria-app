@@ -50,6 +50,16 @@
     ordersCount: document.getElementById("orders-count"),
     ordersList: document.getElementById("orders-list"),
 
+    // Modal imagen
+    imgModal: document.getElementById("img-modal"),
+    imgModalTitle: document.getElementById("img-modal-title"),
+    imgModalPreview: document.getElementById("img-modal-preview"),
+    imgModalNoImg: document.getElementById("img-modal-no-img"),
+    imgUploadFile: document.getElementById("img-upload-file"),
+    imgUrlInput: document.getElementById("img-url-input"),
+    imgUrlSave: document.getElementById("img-url-save"),
+    imgModalMsg: document.getElementById("img-modal-msg"),
+
     // Modal de import
     importModal: document.getElementById("import-modal"),
     importTitle: document.getElementById("import-title"),
@@ -211,7 +221,7 @@
       applyFilters();
     } catch (e) {
       console.error(e);
-      els.prodTbody.innerHTML = '<tr><td colspan="11" class="muted">Error cargando productos</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="12" class="muted">Error cargando productos</td></tr>';
     }
     // En paralelo, chequear dbinfo (no bloqueamos el render principal por esto)
     checkDbInfo();
@@ -716,7 +726,7 @@
     const list = state.productsFiltered;
     els.prodCount.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     if (!list.length) {
-      els.prodTbody.innerHTML = '<tr><td colspan="11" class="muted">Sin resultados</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="12" class="muted">Sin resultados</td></tr>';
       els.pageInfo.textContent = "Página 0 / 0";
       els.pagePrev.disabled = true;
       els.pageNext.disabled = true;
@@ -735,7 +745,12 @@
   }
 
   function rowHtml(p) {
+    const imgSrc = p.image_url ? escapeHtml(p.image_url) : "";
+    const imgThumb = imgSrc
+      ? '<img src="' + imgSrc + '" alt="" class="prod-thumb" />'
+      : '<span class="prod-thumb-empty" title="Sin imagen">📷</span>';
     return '<tr data-id="' + p.id + '"' + (p.stock <= 0 ? ' class="row-oos"' : '') + (p.active ? '' : ' class="row-inactive"') + '>' +
+      '<td class="col-img"><button class="prod-img-btn" type="button" data-act="edit-img" data-id="' + p.id + '" data-name="' + escapeHtml(p.name) + '" title="Ver / cambiar imagen">' + imgThumb + '</button></td>' +
       '<td class="cell-code">' + escapeHtml(p.code || "") + '</td>' +
       '<td><input class="cell-input cell-name" data-field="name" value="' + escapeHtml(p.name) + '" /></td>' +
       '<td class="cell-cat muted">' + escapeHtml(p.category_name || "") + '</td>' +
@@ -955,6 +970,126 @@
   }
 
   els.ordersSearch.addEventListener("input", debounce(renderOrders, 150));
+
+  // ---------- Modal de imagen de producto ----------
+  const imgState = { productId: null };
+
+  function openImgModal(productId, productName, currentUrl) {
+    imgState.productId = productId;
+    els.imgModalTitle.textContent = "Imagen: " + productName;
+    els.imgModalMsg.textContent = "";
+    els.imgModalMsg.className = "config-msg";
+    els.imgUrlInput.value = currentUrl || "";
+    if (currentUrl) {
+      els.imgModalPreview.src = currentUrl;
+      els.imgModalPreview.hidden = false;
+      els.imgModalNoImg.hidden = true;
+    } else {
+      els.imgModalPreview.src = "";
+      els.imgModalPreview.hidden = true;
+      els.imgModalNoImg.hidden = false;
+    }
+    els.imgUploadFile.value = "";
+    els.imgModal.hidden = false;
+  }
+
+  function updateProductImageInState(productId, imageUrl) {
+    const p = state.products.find((x) => x.id === productId);
+    if (p) p.image_url = imageUrl;
+    // Actualizar el thumbnail en la fila de la tabla sin re-renderizar todo
+    const tr = els.prodTbody.querySelector('tr[data-id="' + productId + '"]');
+    if (tr) {
+      const btn = tr.querySelector('.prod-img-btn[data-act="edit-img"]');
+      if (btn) {
+        if (imageUrl) {
+          btn.innerHTML = '<img src="' + escapeHtml(imageUrl) + '" alt="" class="prod-thumb" />';
+          btn.dataset.currentUrl = imageUrl;
+        } else {
+          btn.innerHTML = '<span class="prod-thumb-empty" title="Sin imagen">📷</span>';
+          btn.dataset.currentUrl = "";
+        }
+      }
+    }
+  }
+
+  // Click en botón de imagen en la tabla → abrir modal
+  els.prodTbody.addEventListener("click", (e) => {
+    const btn = e.target.closest('[data-act="edit-img"]');
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    const name = btn.dataset.name || "";
+    const prod = state.products.find((x) => x.id === id);
+    const currentUrl = prod ? (prod.image_url || "") : "";
+    openImgModal(id, name, currentUrl);
+  });
+
+  // Subir archivo de imagen
+  els.imgUploadFile.addEventListener("change", async () => {
+    const file = els.imgUploadFile.files && els.imgUploadFile.files[0];
+    if (!file || !imgState.productId) return;
+    els.imgModalMsg.textContent = "Subiendo imagen…";
+    els.imgModalMsg.className = "config-msg";
+    const fd = new FormData();
+    fd.append("image", file);
+    try {
+      const res = await fetch("/api/admin/products/" + imgState.productId + "/image", {
+        method: "POST",
+        body: fd,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Error " + res.status);
+      // Actualizar preview
+      els.imgModalPreview.src = body.image_url;
+      els.imgModalPreview.hidden = false;
+      els.imgModalNoImg.hidden = true;
+      els.imgUrlInput.value = body.image_url;
+      els.imgModalMsg.textContent = "✓ Imagen guardada";
+      els.imgModalMsg.className = "config-msg ok";
+      updateProductImageInState(imgState.productId, body.image_url);
+      showToast("Imagen actualizada");
+      setTimeout(() => { els.imgModalMsg.textContent = ""; }, 2500);
+    } catch (err) {
+      els.imgModalMsg.textContent = "Error: " + err.message;
+      els.imgModalMsg.className = "config-msg err";
+    } finally {
+      els.imgUploadFile.value = "";
+    }
+  });
+
+  // Guardar URL de imagen
+  els.imgUrlSave.addEventListener("click", async () => {
+    if (!imgState.productId) return;
+    const url = els.imgUrlInput.value.trim();
+    els.imgUrlSave.disabled = true;
+    els.imgModalMsg.textContent = "Guardando URL…";
+    els.imgModalMsg.className = "config-msg";
+    try {
+      await api("/api/admin/products/" + imgState.productId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_url: url }),
+      });
+      if (url) {
+        els.imgModalPreview.src = url;
+        els.imgModalPreview.hidden = false;
+        els.imgModalNoImg.hidden = true;
+      } else {
+        els.imgModalPreview.src = "";
+        els.imgModalPreview.hidden = true;
+        els.imgModalNoImg.hidden = false;
+      }
+      els.imgModalMsg.textContent = "✓ URL guardada";
+      els.imgModalMsg.className = "config-msg ok";
+      updateProductImageInState(imgState.productId, url || null);
+      showToast("Imagen actualizada");
+      setTimeout(() => { els.imgModalMsg.textContent = ""; }, 2500);
+    } catch (err) {
+      els.imgModalMsg.textContent = "Error: " + err.message;
+      els.imgModalMsg.className = "config-msg err";
+    } finally {
+      els.imgUrlSave.disabled = false;
+    }
+  });
 
   // ---------- logout ----------
   els.logoutBtn.addEventListener("click", async () => {
