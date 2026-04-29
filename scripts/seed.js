@@ -39,7 +39,27 @@ function runSeed(opts = {}) {
   }
   console.log("Leyendo Excel:", excelPath);
 
+  // Antes de borrar la base, rescatar las imagenes que el admin haya
+  // cargado manualmente (image_url por código de producto). Asi al
+  // re-seedear no se pierden las fotos.
+  const imgByCodeFromDb = new Map();
   if (fs.existsSync(DB_PATH)) {
+    try {
+      const oldDb = new Database(DB_PATH, { readonly: true });
+      const rows = oldDb.prepare(
+        "SELECT code, image_url FROM products WHERE image_url IS NOT NULL AND image_url != ''"
+      ).all();
+      for (const r of rows) {
+        if (r.code && r.image_url) imgByCodeFromDb.set(String(r.code).trim(), r.image_url);
+      }
+      oldDb.close();
+      if (imgByCodeFromDb.size > 0) {
+        console.log(`Imágenes rescatadas del DB anterior: ${imgByCodeFromDb.size}`);
+      }
+    } catch (e) {
+      console.warn("WARN: no se pudieron leer imágenes del DB anterior:", e.message);
+    }
+
     fs.unlinkSync(DB_PATH);
     console.log("Base anterior borrada.");
   }
@@ -92,7 +112,8 @@ function runSeed(opts = {}) {
     for (const p of items) {
       if (seenCodes.has(p.code)) { dup++; continue; }
       seenCodes.add(p.code);
-      const img = imgByCode.get(p.code) || null;
+      // Prioridad: imagen guardada en el DB anterior > imagen del products.json legacy
+      const img = imgByCodeFromDb.get(p.code) || imgByCode.get(p.code) || null;
       if (img) conImg++;
       insertProd.run(
         p.code, catIdByName.get(p.category) || null, p.name, img, p.cost,

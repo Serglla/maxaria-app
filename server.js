@@ -254,8 +254,12 @@ const excelUpload = multer({
 });
 
 // Directorio donde se guardan las imagenes de productos.
-const PRODUCT_IMAGES_DIR = path.join(__dirname, "public", "images", "products");
+// Se guarda en el MISMO directorio que la DB (el volumen persistente en Railway/Render),
+// no dentro de /public que es efimero en cada deploy.
+// Ej: si DB_PATH=/data/maxaria.db -> imagenes en /data/product-images/
+const PRODUCT_IMAGES_DIR = path.join(path.dirname(path.resolve(DB_PATH)), "product-images");
 if (!fs.existsSync(PRODUCT_IMAGES_DIR)) fs.mkdirSync(PRODUCT_IMAGES_DIR, { recursive: true });
+console.log("Imagenes de productos en:", PRODUCT_IMAGES_DIR);
 
 // Upload de imagen de producto en memoria. Limite 5MB. Solo imagenes.
 const imageUpload = multer({
@@ -900,6 +904,8 @@ app.post("/api/admin/import-excel", requireAdmin, excelUpload.single("file"), (r
 });
 
 app.get("/healthz", (req, res) => res.json({ ok: true, ts: Date.now() }));
+// Servir imagenes de productos desde el volumen persistente (mismo dir que la DB)
+app.use("/images/products", express.static(PRODUCT_IMAGES_DIR));
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 app.use((req, res) => res.status(404).send("No encontrado"));
 
