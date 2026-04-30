@@ -1463,6 +1463,180 @@
     }
   }
 
+  function orderCardHtml(o) {
+    var statusLabels = {
+      pendiente: "Pendiente", preparando: "Preparando",
+      enviado: "Enviado", entregado: "Entregado", cancelado: "Cancelado"
+    };
+    var statusLabel = statusLabels[o.status] || o.status || "";
+    var clientLabel = escapeHtml(o.full_name || o.username || "—");
+    var dateLabel = formatDate(o.created_at);
+    var totalLabel = fmtPrice(o.total || 0);
+
+    var vendBadge = "";
+    if (o.assigned_vendedor_id) {
+      var vendName = escapeHtml(o.vendedor_full_name || o.vendedor_username || "#" + o.assigned_vendedor_id);
+      vendBadge = ' <span class="vend-badge">' + vendName + "</span>";
+    }
+
+    var delivBadge = "";
+    if (o.delivery_id) {
+      var cobrado = fmtPrice((o.efectivo_amount || 0) + (o.transferencia_amount || 0));
+      delivBadge = ' <span class="delivery-badge">Cobrado: ' + cobrado + "</span>";
+    }
+
+    var delivBtn = "";
+    if (o.status !== "cancelado") {
+      var hasDelivery = o.delivery_id ? "1" : "0";
+      var delivLabel = o.delivery_id ? "Ver entrega" : "Registrar entrega";
+      delivBtn = '<button class="btn btn-small btn-deliver" data-id="' + o.id +
+        '" data-has-delivery="' + hasDelivery + '" type="button">' + delivLabel + "</button>";
+    }
+
+    return '<article class="order-card" data-id="' + o.id + '">' +
+      '<div class="order-head">' +
+        '<div>' +
+          '<h4>Pedido #' + o.id + ' · ' +
+            '<span class="order-status ' + (o.status || "") + '">' + escapeHtml(statusLabel) + "</span>" +
+            vendBadge + delivBadge +
+          "</h4>" +
+          '<span class="meta">' + clientLabel + " · " + dateLabel + "</span>" +
+        "</div>" +
+        '<div class="order-card-right">' +
+          '<span class="order-total">' + totalLabel + "</span>" +
+          delivBtn +
+        "</div>" +
+      "</div>" +
+      '<div class="order-detail" hidden></div>' +
+    "</article>";
+  }
+
+  async function toggleOrderDetail(card, orderId) {
+    var detailEl = card.querySelector(".order-detail");
+    if (!detailEl) return;
+    if (!detailEl.hidden) {
+      detailEl.hidden = true;
+      return;
+    }
+    detailEl.hidden = false;
+    if (detailEl.dataset.loaded) return;
+    detailEl.innerHTML = '<p class="muted">Cargando…</p>';
+    try {
+      var order = await api("/api/orders/" + orderId);
+      detailEl.dataset.loaded = "1";
+      renderOrderDetail(detailEl, order);
+      wireOrderDetail(detailEl, order);
+    } catch (err) {
+      detailEl.innerHTML = '<p class="muted err">Error: ' + escapeHtml(err.message) + "</p>";
+    }
+  }
+
+  function renderOrderDetail(detailEl, order) {
+    var items = order.items || [];
+    var itemsHtml = items.length
+      ? "<table><thead><tr>" +
+          "<th>Código</th><th>Producto</th><th>Cant.</th>" +
+          '<th class="num">P. Unit.</th><th class="num">Subtotal</th>' +
+        "</tr></thead><tbody>" +
+        items.map(function(it) {
+          return "<tr>" +
+            "<td><code>" + escapeHtml(it.product_code || "") + "</code></td>" +
+            "<td>" + escapeHtml(it.product_name || "") + "</td>" +
+            "<td>" + it.quantity + "</td>" +
+            '<td class="num">' + fmtPrice(it.unit_price) + "</td>" +
+            '<td class="num">' + fmtPrice(it.subtotal) + "</td>" +
+          "</tr>";
+        }).join("") +
+        "</tbody></table>"
+      : '<p class="muted">Sin items.</p>';
+
+    var statuses = ["pendiente", "preparando", "enviado", "entregado", "cancelado"];
+    var statusNames = { pendiente: "Pendiente", preparando: "Preparando", enviado: "Enviado", entregado: "Entregado", cancelado: "Cancelado" };
+    var statusOpts = statuses.map(function(s) {
+      return '<option value="' + s + '"' + (order.status === s ? " selected" : "") + ">" + statusNames[s] + "</option>";
+    }).join("");
+    var statusRow = '<div class="order-vend-row"><label>Estado</label>' +
+      '<select class="order-status-select cell-select" data-order-id="' + order.id + '">' + statusOpts + "</select></div>";
+
+    var vendRow = "";
+    if (state.isAdmin) {
+      var vendOpts = '<option value="">Sin asignar</option>' +
+        (state.vendedores || []).map(function(v) {
+          return '<option value="' + v.id + '"' + (order.assigned_vendedor_id === v.id ? " selected" : "") + ">" +
+            escapeHtml(v.full_name || v.username) + "</option>";
+        }).join("");
+      vendRow = '<div class="order-vend-row"><label>Vendedor</label>' +
+        '<select class="order-vend-select cell-select" data-order-id="' + order.id + '">' + vendOpts + "</select></div>";
+    }
+
+    var delivInfo = "";
+    if (order.delivery_id) {
+      delivInfo = '<div class="order-notes">' +
+        "Recibido por: <strong>" + escapeHtml(order.delivered_to || "—") + "</strong> &nbsp;·&nbsp; " +
+        "Efectivo: <strong>" + fmtPrice(order.efectivo_amount || 0) + "</strong> &nbsp;·&nbsp; " +
+        "Transfer.: <strong>" + fmtPrice(order.transferencia_amount || 0) + "</strong>" +
+      "</div>";
+    }
+
+    var notesHtml = order.notes
+      ? '<p class="order-notes">' + escapeHtml(order.notes) + "</p>"
+      : "";
+
+    detailEl.innerHTML = statusRow + vendRow + itemsHtml + notesHtml + delivInfo;
+  }
+
+  function wireOrderDetail(detailEl, order) {
+    var statusSel = detailEl.querySelector(".order-status-select");
+    if (statusSel) {
+      statusSel.addEventListener("change", async function() {
+        var newStatus = statusSel.value;
+        var orderId = Number(statusSel.dataset.orderId);
+        try {
+          await api("/api/orders/" + orderId, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: newStatus }),
+          });
+          var o = state.orders.find(function(x) { return x.id === orderId; });
+          if (o) o.status = newStatus;
+          var card = detailEl.closest(".order-card");
+          if (card) {
+            var badge = card.querySelector(".order-status");
+            if (badge) {
+              var labels = { pendiente: "Pendiente", preparando: "Preparando", enviado: "Enviado", entregado: "Entregado", cancelado: "Cancelado" };
+              badge.textContent = labels[newStatus] || newStatus;
+              badge.className = "order-status " + newStatus;
+            }
+          }
+          showToast("Estado actualizado");
+        } catch (err) {
+          showToast("Error: " + err.message, "error");
+          statusSel.value = order.status;
+        }
+      });
+    }
+
+    var vendSel = detailEl.querySelector(".order-vend-select");
+    if (vendSel) {
+      vendSel.addEventListener("change", async function() {
+        var vendId = vendSel.value ? Number(vendSel.value) : null;
+        var orderId = Number(vendSel.dataset.orderId);
+        try {
+          await api("/api/admin/orders/" + orderId + "/assign", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ vendedor_id: vendId }),
+          });
+          var o = state.orders.find(function(x) { return x.id === orderId; });
+          if (o) o.assigned_vendedor_id = vendId;
+          showToast("Vendedor asignado");
+        } catch (err) {
+          showToast("Error: " + err.message, "error");
+        }
+      });
+    }
+  }
+
   function renderOrders() {
     const q = els.ordersSearch.value.trim().toLowerCase();
     const clientFilter = els.ordersClientFilter.value; // "all" | username
@@ -1485,8 +1659,9 @@
     els.ordersList.innerHTML = list.map(orderCardHtml).join("");
     els.ordersList.querySelectorAll(".order-card").forEach((card) => {
       // Click en header abre/cierra el detalle (pero no en los botones)
-      card.querySelector(".order-head").addEventListener("click", (e) => {
-        if (e.target.closest(".btn-deliver")) return; // no abrir al clickear el boton
+      const head = card.querySelector(".order-head");
+      if (head) head.addEventListener("click", (e) => {
+        if (e.target.closest(".btn-deliver")) return;
         toggleOrderDetail(card, Number(card.dataset.id));
       });
 
@@ -1497,11 +1672,16 @@
           e.stopPropagation();
           const orderId = Number(deliverBtn.dataset.id);
           const hasDelivery = deliverBtn.dataset.hasDelivery === "1";
-          let existingDelivery = null;
-          if (hasDelivery) {
-            try { existingDelivery = JSON.parse(card.dataset.order || "{}"); } catch (_) {}
-          }
           const orderObj = list.find((o) => o.id === orderId);
+          let existingDelivery = null;
+          if (hasDelivery && orderObj) {
+            existingDelivery = {
+              delivered_to: orderObj.delivered_to || "",
+              efectivo_amount: orderObj.efectivo_amount || 0,
+              transferencia_amount: orderObj.transferencia_amount || 0,
+              notes: "",
+            };
+          }
           const totalLabel = orderObj ? fmtPrice(orderObj.total) : "";
           openDeliveryModal(orderId, "Pedido #" + orderId + (totalLabel ? " · " + totalLabel : ""), existingDelivery);
         });

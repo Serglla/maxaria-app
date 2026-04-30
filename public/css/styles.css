@@ -1517,3 +1517,62 @@ button { font: inherit; cursor: pointer; }
   margin-top: -8px;
   margin-bottom: 4px;
 }
+
+/* ====== Admin: pedidos — badges y botón de entrega ====== */
+.order-card-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.vend-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #ede9fe;
+  color: #5b21b6;
+  white-space: nowrap;
+}
+.delivery-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #d1fae5;
+  color: #065f46;
+  white-space: nowrap;
+}
+.btn-deliver {
+  font-size: 11px;
+  padding: 3px 9px;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.btn-deliver:hover { background: #1d4ed8; }
+.order-vend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.order-vend-row label {
+  min-width: 70px;
+  color: #6b7280;
+  font-weight: 600;
+}
+.order-vend-select, .order-status-select {
+  padding: 3px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+}
