@@ -446,22 +446,16 @@
     els.userCatsModal.hidden = false;
 
     try {
-      const [catData, allCats] = await Promise.all([
-        api("/api/admin/users/" + userId + "/categories"),
-        state.allCategories.length
-          ? Promise.resolve(state.allCategories)
-          : api("/api/categories").then((r) => { state.allCategories = r; return r; }),
-      ]);
-      const allowedSet = catData.category_ids
-        ? new Set(catData.category_ids)
-        : null; // null = todas habilitadas
+      const catData = await api("/api/admin/users/" + userId + "/categories");
+      // catData = { categories: [{id, name, allowed}], restricted: bool }
+      const allCats = catData.categories || [];
 
       if (!allCats.length) {
         els.userCatsList.innerHTML = '<span class="muted">No hay categorías cargadas.</span>';
         return;
       }
       els.userCatsList.innerHTML = allCats.map((c) => {
-        const checked = allowedSet === null || allowedSet.has(c.id) ? " checked" : "";
+        const checked = c.allowed ? " checked" : "";
         return '<label class="cfg-check cats-check">' +
           '<input type="checkbox" data-cat-id="' + c.id + '"' + checked + ' /> ' +
           escapeHtml(c.name) +
