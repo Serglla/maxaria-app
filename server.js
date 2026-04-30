@@ -945,6 +945,54 @@ app.post("/api/admin/users/import", requireAdmin, (req, res) => {
   res.json({ ok: true, stats: stats });
 });
 
+// --- Categorías por usuario -------------------------------------------
+
+// GET  /api/admin/users/:id/categories
+// Devuelve { categories: [{ id, name, allowed }] }
+// allowed=true si el usuario puede verla (o si no tiene restricciones = ve todas)
+app.get("/api/admin/users/:id/categories", requireAdmin, (req, res) => {
+  const userId = Number(req.params.id);
+  if (!userId) return res.status(400).json({ error: "ID invalido" });
+  const user = db.prepare("SELECT id FROM users WHERE id = ?").get(userId);
+  if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+
+  const allCats = db.prepare("SELECT id, name FROM categories ORDER BY sort_order, name").all();
+  const allowed = new Set(
+    db.prepare("SELECT category_id FROM user_category_access WHERE user_id = ?")
+      .all(userId).map((r) => r.category_id)
+  );
+  const hasRestrictions = allowed.size > 0;
+  const result = allCats.map((c) => ({
+    id: c.id,
+    name: c.name,
+    allowed: hasRestrictions ? allowed.has(c.id) : true,
+  }));
+  res.json({ categories: result, restricted: hasRestrictions });
+});
+
+// PUT  /api/admin/users/:id/categories
+// Body: { category_ids: [1,2,3] }  — null o [] = sin restricciones (ve todas)
+app.put("/api/admin/users/:id/categories", requireAdmin, (req, res) => {
+  const userId = Number(req.params.id);
+  if (!userId) return res.status(400).json({ error: "ID invalido" });
+  const user = db.prepare("SELECT id FROM users WHERE id = ?").get(userId);
+  if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+
+  const ids = req.body && Array.isArray(req.body.category_ids)
+    ? req.body.category_ids.map(Number).filter((n) => n > 0)
+    : [];
+
+  db.transaction(() => {
+    db.prepare("DELETE FROM user_category_access WHERE user_id = ?").run(userId);
+    if (ids.length) {
+      const ins = db.prepare("INSERT OR IGNORE INTO user_category_access (user_id, category_id) VALUES (?, ?)");
+      for (const catId of ids) ins.run(userId, catId);
+    }
+  })();
+
+  res.json({ ok: true, restricted: ids.length > 0, category_ids: ids });
+});
+
 // Subir Excel y reimportar precios + stock (NO destructivo: preserva users y orders)
 app.post("/api/admin/import-excel", requireAdmin, excelUpload.single("file"), (req, res) => {
   if (!req.file || !req.file.buffer || !req.file.buffer.length) {
