@@ -1330,3 +1330,35 @@ button { font: inherit; cursor: pointer; }
   flex: 1;
   min-width: 0;
 }
+
+/* ====== Botón Categorías en tabla de usuarios ====== */
+.btn-cats {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+.btn-cats:hover { background: #dbeafe; }
+
+/* ====== Modal de categorías por usuario ====== */
+.cats-check-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 12px 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.cats-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+  min-width: 120px;
+}
+.cats-check input[type="checkbox"] { margin: 0; }

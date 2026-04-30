@@ -67,6 +67,9 @@
     importClose: document.getElementById("import-close"),
 
     // Config
+    cfgAppName: document.getElementById("cfg-app-name"),
+    cfgAppNameSave: document.getElementById("cfg-app-name-save"),
+    cfgAppNameMsg: document.getElementById("cfg-app-name-msg"),
     cfgWhatsapp: document.getElementById("cfg-whatsapp"),
     cfgWhatsappSave: document.getElementById("cfg-whatsapp-save"),
     cfgWhatsappMsg: document.getElementById("cfg-whatsapp-msg"),
@@ -104,6 +107,11 @@
     userResetForm: document.getElementById("user-reset-form"),
     userResetTarget: document.getElementById("user-reset-target"),
     userResetMsg: document.getElementById("user-reset-msg"),
+    userCatsModal: document.getElementById("user-cats-modal"),
+    userCatsTarget: document.getElementById("user-cats-target"),
+    userCatsList: document.getElementById("user-cats-list"),
+    userCatsMsg: document.getElementById("user-cats-msg"),
+    userCatsSave: document.getElementById("user-cats-save"),
 
     toast: document.getElementById("toast"),
   };
@@ -119,6 +127,8 @@
     users: [],
     usersLoaded: false,
     resetTargetId: null,
+    catsTargetId: null,
+    allCategories: [],           // Cache de todas las categorias (para el modal)
     // Ordenamiento de la tabla de productos.
     // sortField: null = orden original que vino del server.
     // sortDir: "asc" | "desc"
@@ -218,6 +228,12 @@
       state.me = me;
       state.products = prods;
       els.userInfo.textContent = (me.fullName || me.username) + " - " + me.levelName;
+      // Nombre dinamico de la app
+      if (me.app_name) {
+        const brandEl = document.getElementById("topbar-brand-name");
+        if (brandEl) brandEl.textContent = me.app_name + " · Admin";
+        document.getElementById("page-title").textContent = me.app_name + " · Admin";
+      }
       applyFilters();
     } catch (e) {
       console.error(e);
@@ -307,12 +323,16 @@
   // ---------- Usuarios ----------
   async function loadUsers() {
     try {
-      els.userTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+      els.userTbody.innerHTML = '<tr><td colspan="9" class="muted">Cargando…</td></tr>';
       state.users = await api("/api/admin/users");
       state.usersLoaded = true;
+      // Cargar todas las categorias en cache para el modal de permisos
+      if (!state.allCategories.length) {
+        try { state.allCategories = await api("/api/categories"); } catch (_) {}
+      }
       renderUsers();
     } catch (e) {
-      els.userTbody.innerHTML = '<tr><td colspan="8" class="muted">Error cargando usuarios</td></tr>';
+      els.userTbody.innerHTML = '<tr><td colspan="9" class="muted">Error cargando usuarios</td></tr>';
     }
   }
 
@@ -328,7 +348,7 @@
     }
     els.userCount.textContent = list.length + (list.length === 1 ? " usuario" : " usuarios");
     if (!list.length) {
-      els.userTbody.innerHTML = '<tr><td colspan="8" class="muted">Sin resultados</td></tr>';
+      els.userTbody.innerHTML = '<tr><td colspan="9" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.userTbody.innerHTML = list.map(userRowHtml).join("");
@@ -351,6 +371,7 @@
       '<td><label class="cell-toggle"' + (isMe ? ' title="No podés desactivarte a vos mismo"' : '') + '>' +
         '<input type="checkbox" data-field="active"' + (u.active ? " checked" : "") + (isMe ? " disabled" : "") + ' /><span></span></label></td>' +
       '<td class="muted small-cell">' + lastLogin + '</td>' +
+      '<td><button class="btn btn-small btn-cats" data-act="cats" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button" title="Gestionar categorías visibles">Categorías</button></td>' +
       '<td><button class="btn btn-small btn-reset" data-act="reset" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button">Reset pass</button></td>' +
     '</tr>';
   }
@@ -399,16 +420,56 @@
     }
   });
 
-  // Click en "Reset pass" → abrir modal
-  els.userTbody.addEventListener("click", (e) => {
-    const btn = e.target.closest('[data-act="reset"]');
-    if (!btn) return;
-    state.resetTargetId = Number(btn.dataset.id);
-    els.userResetTarget.textContent = "Para el usuario: " + btn.dataset.username;
-    els.userResetMsg.textContent = "";
-    els.userResetForm.reset();
-    els.userResetModal.hidden = false;
-    setTimeout(() => els.userResetForm.querySelector('[name="password"]').focus(), 50);
+  // Click en botones de accion de la tabla de usuarios
+  els.userTbody.addEventListener("click", async (e) => {
+    // Reset pass
+    const resetBtn = e.target.closest('[data-act="reset"]');
+    if (resetBtn) {
+      state.resetTargetId = Number(resetBtn.dataset.id);
+      els.userResetTarget.textContent = "Para el usuario: " + resetBtn.dataset.username;
+      els.userResetMsg.textContent = "";
+      els.userResetForm.reset();
+      els.userResetModal.hidden = false;
+      setTimeout(() => els.userResetForm.querySelector('[name="password"]').focus(), 50);
+      return;
+    }
+
+    // Categorias: abrir modal de permisos
+    const catsBtn = e.target.closest('[data-act="cats"]');
+    if (!catsBtn) return;
+    const userId = Number(catsBtn.dataset.id);
+    const username = catsBtn.dataset.username;
+    state.catsTargetId = userId;
+    els.userCatsTarget.textContent = "Usuario: " + username;
+    els.userCatsMsg.textContent = "";
+    els.userCatsList.innerHTML = '<span class="muted">Cargando…</span>';
+    els.userCatsModal.hidden = false;
+
+    try {
+      const [catData, allCats] = await Promise.all([
+        api("/api/admin/users/" + userId + "/categories"),
+        state.allCategories.length
+          ? Promise.resolve(state.allCategories)
+          : api("/api/categories").then((r) => { state.allCategories = r; return r; }),
+      ]);
+      const allowedSet = catData.category_ids
+        ? new Set(catData.category_ids)
+        : null; // null = todas habilitadas
+
+      if (!allCats.length) {
+        els.userCatsList.innerHTML = '<span class="muted">No hay categorías cargadas.</span>';
+        return;
+      }
+      els.userCatsList.innerHTML = allCats.map((c) => {
+        const checked = allowedSet === null || allowedSet.has(c.id) ? " checked" : "";
+        return '<label class="cfg-check cats-check">' +
+          '<input type="checkbox" data-cat-id="' + c.id + '"' + checked + ' /> ' +
+          escapeHtml(c.name) +
+        '</label>';
+      }).join("");
+    } catch (err) {
+      els.userCatsList.innerHTML = '<span class="muted err">Error cargando categorías: ' + escapeHtml(err.message) + '</span>';
+    }
   });
 
   els.userSearch.addEventListener("input", debounce(renderUsers, 150));
@@ -471,6 +532,41 @@
     }
   });
 
+  // Guardar permisos de categorias
+  if (els.userCatsSave) {
+    els.userCatsSave.addEventListener("click", async () => {
+      if (!state.catsTargetId) return;
+      const checkboxes = els.userCatsList.querySelectorAll('input[data-cat-id]');
+      if (!checkboxes.length) return;
+
+      const allChecked = Array.from(checkboxes).every((cb) => cb.checked);
+      // Si todas marcadas = sin restriccion (null). Si algunas = lista de IDs.
+      const category_ids = allChecked
+        ? null
+        : Array.from(checkboxes).filter((cb) => cb.checked).map((cb) => Number(cb.dataset.catId));
+
+      els.userCatsSave.disabled = true;
+      els.userCatsMsg.textContent = "Guardando…";
+      els.userCatsMsg.className = "config-msg";
+      try {
+        await api("/api/admin/users/" + state.catsTargetId + "/categories", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ category_ids: category_ids }),
+        });
+        els.userCatsMsg.textContent = "✓ Guardado";
+        els.userCatsMsg.className = "config-msg ok";
+        showToast("Permisos de categorías actualizados");
+        setTimeout(() => { els.userCatsModal.hidden = true; }, 800);
+      } catch (err) {
+        els.userCatsMsg.textContent = "Error: " + err.message;
+        els.userCatsMsg.className = "config-msg err";
+      } finally {
+        els.userCatsSave.disabled = false;
+      }
+    });
+  }
+
   // Cerrar modales con [data-close] o click en overlay o Escape
   document.querySelectorAll(".admin-modal").forEach((m) => {
     m.addEventListener("click", (e) => {
@@ -486,6 +582,9 @@
   async function loadSettings() {
     try {
       const s = await api("/api/admin/settings");
+      // Nombre de la app
+      if (els.cfgAppName) els.cfgAppName.value = s.app_name || "";
+      // WhatsApp
       els.cfgWhatsapp.value = s.whatsapp_number || "";
       updateWhatsappPreview(s.whatsapp_number);
       // Niveles que ven "Cambios de precio"
@@ -501,6 +600,37 @@
     // Refrescar dbinfo cada vez que entran a Config (asi siempre se ve
     // el ultimo tamano y la lista de backups actualizada).
     checkDbInfo();
+  }
+
+  // Guardar nombre de la app
+  if (els.cfgAppNameSave) {
+    els.cfgAppNameSave.addEventListener("click", async () => {
+      const name = (els.cfgAppName.value || "").trim();
+      els.cfgAppNameSave.disabled = true;
+      els.cfgAppNameMsg.textContent = "Guardando…";
+      els.cfgAppNameMsg.className = "config-msg";
+      try {
+        const out = await api("/api/admin/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app_name: name }),
+        });
+        els.cfgAppName.value = out.app_name || "";
+        // Actualizar el nombre en el topbar en tiempo real
+        const brandEl = document.getElementById("topbar-brand-name");
+        if (brandEl) brandEl.textContent = out.app_name + " · Admin";
+        document.getElementById("page-title").textContent = out.app_name + " · Admin";
+        els.cfgAppNameMsg.textContent = "✓ Guardado";
+        els.cfgAppNameMsg.className = "config-msg ok";
+        showToast("Nombre de la app actualizado");
+        setTimeout(() => { els.cfgAppNameMsg.textContent = ""; }, 2500);
+      } catch (e) {
+        els.cfgAppNameMsg.textContent = "Error: " + e.message;
+        els.cfgAppNameMsg.className = "config-msg err";
+      } finally {
+        els.cfgAppNameSave.disabled = false;
+      }
+    });
   }
 
   // Guardar niveles que pueden ver "Cambios de precio"
@@ -1012,7 +1142,7 @@
     }
   }
 
-  // Click en botón de imagen en la tabla → abrir modal
+  // Click en boton de imagen en la tabla -> abrir modal
   els.prodTbody.addEventListener("click", (e) => {
     const btn = e.target.closest('[data-act="edit-img"]');
     if (!btn) return;

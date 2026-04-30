@@ -90,6 +90,19 @@ db.exec(
 try { db.exec("ALTER TABLE price_changes ADD COLUMN is_reingreso INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 try { db.exec("ALTER TABLE price_updates ADD COLUMN products_reingreso INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 
+// Migracion: tabla para permisos de categorias por usuario.
+// Si un usuario no tiene filas en esta tabla, ve TODAS las categorias.
+// Si tiene filas, solo ve las categorias permitidas.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS user_category_access (" +
+  "  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE," +
+  "  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE," +
+  "  PRIMARY KEY (user_id, category_id)" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_uca_user     ON user_category_access(user_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_uca_category ON user_category_access(category_id);"
+);
+
 function getSetting(key, fallback) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   if (row && row.value != null) return row.value;
@@ -111,6 +124,27 @@ if (getSetting("whatsapp_number") == null && WHATSAPP_NUMBER) {
 // Por defecto Mayorista (3) + VIP (4). Editable desde /admin -> Configuracion.
 if (getSetting("price_changes_visible_levels") == null) {
   setSetting("price_changes_visible_levels", "3,4");
+}
+
+// Default: nombre de la aplicacion. Editable desde /admin -> Configuracion.
+if (getSetting("app_name") == null) {
+  setSetting("app_name", "Maxaria");
+}
+
+// Devuelve el nombre de la app configurado (nunca null).
+function getAppName() {
+  return getSetting("app_name", "Maxaria") || "Maxaria";
+}
+
+// Devuelve un Set de IDs de categoria permitidos para el usuario dado.
+// Si el usuario es admin o no tiene restricciones, devuelve null (= acceso total).
+function getUserAllowedCategoryIds(userId, level) {
+  if (Number(level) === 99) return null; // admin ve todo
+  const rows = db.prepare(
+    "SELECT category_id FROM user_category_access WHERE user_id = ?"
+  ).all(userId);
+  if (!rows.length) return null; // sin restricciones = ve todo
+  return new Set(rows.map((r) => r.category_id));
 }
 
 // Parsea un valor del setting a un Set de niveles validos (1..4).
@@ -305,6 +339,11 @@ app.get("/catalogo", requireLogin, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
+// Endpoint publico (sin login) para que login.html pueda mostrar el nombre.
+app.get("/api/app-info", (req, res) => {
+  res.json({ app_name: getAppName() });
+});
+
 app.get("/api/me", requireLogin, (req, res) => {
   const wa = getSetting("whatsapp_number", WHATSAPP_NUMBER || null);
   res.json({
@@ -313,6 +352,7 @@ app.get("/api/me", requireLogin, (req, res) => {
     levelName: levelName(req.session.level),
     whatsapp: wa ? String(wa).replace(/[^0-9]/g, "") : null,
     canSeePriceChanges: userCanSeePriceChanges(req.session.level),
+    app_name: getAppName(),
   });
 });
 
@@ -426,7 +466,12 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
 });
 
 app.get("/api/categories", requireLogin, (req, res) => {
-  res.json(db.prepare("SELECT id, name, icon_url FROM categories ORDER BY sort_order, name").all());
+  const allowedIds = getUserAllowedCategoryIds(req.session.userId, req.session.level);
+  let rows = db.prepare("SELECT id, name, icon_url FROM categories ORDER BY sort_order, name").all();
+  if (allowedIds !== null) {
+    rows = rows.filter((c) => allowedIds.has(c.id));
+  }
+  res.json(rows);
 });
 
 app.get("/api/products", requireLogin, (req, res) => {
@@ -439,13 +484,25 @@ app.get("/api/products", requireLogin, (req, res) => {
     if ([1, 2, 3, 4].includes(asLvl)) effectiveLevel = asLvl;
   }
   const col = priceColumnFor(effectiveLevel);
-  const sql =
+
+  // Filtro de categorias por permisos del usuario
+  const allowedIds = getUserAllowedCategoryIds(req.session.userId, req.session.level);
+  let sql =
     "SELECT p.id, p.code, p.category_id, c.name AS category_name," +
     "       p.name, p.image_url, p." + col + " AS price, p.stock" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
-    "  WHERE p.active = 1 AND p.stock > 0" +
-    "  ORDER BY c.sort_order, c.name, p.name";
-  res.json(db.prepare(sql).all());
+    "  WHERE p.active = 1 AND p.stock > 0";
+  const params = [];
+  if (allowedIds !== null && allowedIds.size > 0) {
+    const placeholders = Array.from(allowedIds).map(() => "?").join(",");
+    sql += " AND p.category_id IN (" + placeholders + ")";
+    params.push(...Array.from(allowedIds));
+  } else if (allowedIds !== null && allowedIds.size === 0) {
+    // Usuario con restriccion a 0 categorias -> no ve nada
+    return res.json([]);
+  }
+  sql += "  ORDER BY c.sort_order, c.name, p.name";
+  res.json(db.prepare(sql).all(...params));
 });
 
 // ----- Pedidos -----
@@ -623,9 +680,10 @@ app.post("/api/admin/products/:id/image", requireAdmin, imageUpload.single("imag
   res.json({ ok: true, image_url: imageUrl });
 });
 
-// Settings runtime: whatsapp_number + price_changes_visible_levels
+// Settings runtime: app_name + whatsapp_number + price_changes_visible_levels
 app.get("/api/admin/settings", requireAdmin, (req, res) => {
   res.json({
+    app_name: getAppName(),
     whatsapp_number: getSetting("whatsapp_number", WHATSAPP_NUMBER || ""),
     price_changes_visible_levels: Array.from(getPriceChangesVisibleLevels()).sort(),
   });
@@ -633,6 +691,10 @@ app.get("/api/admin/settings", requireAdmin, (req, res) => {
 
 app.patch("/api/admin/settings", requireAdmin, (req, res) => {
   const body = req.body || {};
+  if ("app_name" in body) {
+    const name = String(body.app_name || "").trim().slice(0, 60);
+    setSetting("app_name", name || "Maxaria");
+  }
   if ("whatsapp_number" in body) {
     const raw = String(body.whatsapp_number || "").replace(/[^0-9]/g, "");
     if (raw && (raw.length < 8 || raw.length > 15)) {
@@ -649,6 +711,7 @@ app.patch("/api/admin/settings", requireAdmin, (req, res) => {
   }
   res.json({
     ok: true,
+    app_name: getAppName(),
     whatsapp_number: getSetting("whatsapp_number", ""),
     price_changes_visible_levels: Array.from(getPriceChangesVisibleLevels()).sort(),
   });

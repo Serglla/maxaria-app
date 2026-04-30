@@ -97,6 +97,13 @@
         api("/api/categories"), api(productsUrl()),
       ]);
       state.categories = cats; state.products = prods;
+      // Nombre dinámico de la app
+      if (me.app_name) {
+        const brandEl = document.getElementById("topbar-brand-name");
+        if (brandEl) brandEl.textContent = me.app_name;
+        const titleEl = document.getElementById("page-title");
+        if (titleEl) titleEl.textContent = me.app_name + " · Catálogo";
+      }
       renderUser(); renderCategories(); renderProducts();
     } catch (e) { console.error(e); }
   }
@@ -302,7 +309,7 @@
     const u = state.me;
     const notes = (els.cartNotes && els.cartNotes.value.trim()) || null;
     const lines = [];
-    lines.push("Hola Maxaria! Soy " + (u.fullName || u.username) + " (" + u.levelName + ").");
+    lines.push("Hola " + (u.app_name || "!") + " Soy " + (u.fullName || u.username) + " (" + u.levelName + ").");
     lines.push("Quiero hacer este pedido:");
     lines.push("");
     state.cart.forEach((it) => {
@@ -317,7 +324,7 @@
   function buildWhatsappMessageFromOrder(order) {
     const u = state.me;
     const lines = [];
-    lines.push("Hola Maxaria! Soy " + (u.fullName || u.username) + " (" + u.levelName + ").");
+    lines.push("Hola " + (u.app_name || "!") + " Soy " + (u.fullName || u.username) + " (" + u.levelName + ").");
     lines.push("Quiero reenviar el pedido #" + order.id + ":");
     lines.push("");
     (order.items || []).forEach((it) => {

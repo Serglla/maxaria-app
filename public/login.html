@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Maxaria · Iniciar sesión</title>
+  <title id="page-title">Iniciar sesión</title>
   <link rel="stylesheet" href="/css/styles.css" />
 </head>
 <body class="login-page">
   <main class="login-card">
     <div class="login-brand">
-      <h1>Maxaria</h1>
+      <h1 id="login-brand-name">Catálogo</h1>
       <p>Catálogo mayorista y minorista</p>
     </div>
 
@@ -34,6 +34,17 @@
   </main>
 
   <script>
+    // Cargar nombre de la app desde la API pública y actualizar la UI
+    fetch("/api/app-info")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.app_name) {
+          document.getElementById("login-brand-name").textContent = d.app_name;
+          document.getElementById("page-title").textContent = d.app_name + " · Iniciar sesión";
+        }
+      })
+      .catch(() => {});
+
     const form = document.getElementById("login-form");
     const btn = document.getElementById("login-btn");
     const err = document.getElementById("login-error");

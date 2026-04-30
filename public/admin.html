@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Maxaria · Admin</title>
+  <title id="page-title">Admin</title>
   <link rel="stylesheet" href="/css/styles.css" />
 </head>
 <body class="admin-page">
@@ -11,7 +11,7 @@
   <header class="topbar">
     <div class="topbar-inner">
       <div class="topbar-brand">
-        <strong>Maxaria · Admin</strong>
+        <strong id="topbar-brand-name">Admin</strong>
         <span class="topbar-sub" id="user-info">…</span>
       </div>
       <nav class="admin-tabs">
@@ -109,16 +109,30 @@
               <th>Email</th>
               <th>Activo</th>
               <th>Último login</th>
+              <th>Categorías</th>
               <th>Acciones</th>
             </tr>
           </thead>
-          <tbody id="user-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="user-tbody"><tr><td colspan="9" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
     </section>
 
     <!-- ===== TAB CONFIG ===== -->
     <section class="tab-panel" id="tab-config" hidden>
+      <div class="config-card">
+        <h3>Nombre de la aplicación</h3>
+        <p class="muted">
+          Este nombre aparece en el encabezado del catálogo, en la pantalla de login
+          y en el panel de administración. Máximo 60 caracteres.
+        </p>
+        <div class="config-row">
+          <input type="text" id="cfg-app-name" class="config-input" placeholder="Maxaria" maxlength="60" autocomplete="off" />
+          <button class="btn btn-primary" id="cfg-app-name-save" type="button">Guardar</button>
+          <span id="cfg-app-name-msg" class="config-msg"></span>
+        </div>
+      </div>
+
       <div class="config-card">
         <h3>WhatsApp para recibir pedidos</h3>
         <p class="muted">
@@ -286,6 +300,26 @@
           <button type="submit" class="btn btn-primary">Crear</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Modal categorías por usuario -->
+  <div class="admin-modal" id="user-cats-modal" hidden>
+    <div class="admin-modal-box">
+      <h3>Categorías visibles</h3>
+      <p id="user-cats-target" class="muted"></p>
+      <p class="muted small">
+        Marcá las categorías que puede ver este usuario. Si no marcás ninguna,
+        <strong>ve todas</strong> (comportamiento por defecto).
+      </p>
+      <div id="user-cats-list" class="cats-check-list">
+        <span class="muted">Cargando…</span>
+      </div>
+      <p id="user-cats-msg" class="config-msg"></p>
+      <div class="admin-modal-foot">
+        <button type="button" class="btn" data-close>Cancelar</button>
+        <button type="button" class="btn btn-primary" id="user-cats-save">Guardar</button>
+      </div>
     </div>
   </div>
 
