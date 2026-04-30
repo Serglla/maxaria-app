@@ -48,6 +48,7 @@
 
     // Pedidos
     ordersSearch: document.getElementById("orders-search"),
+    ordersClientFilter: document.getElementById("orders-client-filter"),
     ordersCount: document.getElementById("orders-count"),
     ordersList: document.getElementById("orders-list"),
 
@@ -1022,15 +1023,46 @@
       const orders = await api("/api/orders");
       state.orders = orders;
       state.ordersLoaded = true;
+      populateClientFilter(orders);
       renderOrders();
     } catch (e) {
       els.ordersList.innerHTML = '<p class="muted">Error cargando pedidos</p>';
     }
   }
 
+  function populateClientFilter(orders) {
+    const currentVal = els.ordersClientFilter.value;
+    // Recopilar clientes únicos (clave: username, etiqueta: full_name o username)
+    const seen = new Map();
+    orders.forEach((o) => {
+      const key = o.username || "";
+      if (key && !seen.has(key)) {
+        seen.set(key, o.full_name || o.username);
+      }
+    });
+    // Reconstruir opciones
+    els.ordersClientFilter.innerHTML = '<option value="all">Todos los clientes</option>';
+    Array.from(seen.entries())
+      .sort((a, b) => a[1].localeCompare(b[1]))
+      .forEach(([username, label]) => {
+        const opt = document.createElement("option");
+        opt.value = username;
+        opt.textContent = label;
+        els.ordersClientFilter.appendChild(opt);
+      });
+    // Restaurar selección si sigue siendo válida
+    if (currentVal && els.ordersClientFilter.querySelector('[value="' + currentVal + '"]')) {
+      els.ordersClientFilter.value = currentVal;
+    }
+  }
+
   function renderOrders() {
     const q = els.ordersSearch.value.trim().toLowerCase();
+    const clientFilter = els.ordersClientFilter.value; // "all" | username
     let list = state.orders;
+    if (clientFilter !== "all") {
+      list = list.filter((o) => (o.username || "") === clientFilter);
+    }
     if (q) {
       list = list.filter((o) =>
         String(o.id).includes(q) ||
@@ -1130,6 +1162,7 @@
   }
 
   els.ordersSearch.addEventListener("input", debounce(renderOrders, 150));
+  els.ordersClientFilter.addEventListener("change", renderOrders);
 
   // ---------- Modal de imagen de producto ----------
   const imgState = { productId: null };
