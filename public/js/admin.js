@@ -1108,56 +1108,284 @@
     det.innerHTML = '<p class="muted">Cargando detalle…</p>';
     try {
       const o = await api("/api/orders/" + id);
-      const rows = o.items.map((it) =>
-        '<tr>' +
-          '<td>' + escapeHtml(it.product_code || "") + '</td>' +
-          '<td>' + escapeHtml(it.product_name) + '</td>' +
-          '<td class="num">' + it.quantity + '</td>' +
-          '<td class="num">' + fmtPrice(it.unit_price) + '</td>' +
-          '<td class="num">' + fmtPrice(it.subtotal) + '</td>' +
-        '</tr>'
-      ).join("");
-      const statuses = ["pendiente", "enviado", "preparando", "entregado", "cancelado"];
-      const optHtml = statuses.map((s) =>
-        '<option value="' + s + '"' + (s === o.status ? " selected" : "") + '>' +
-          s.charAt(0).toUpperCase() + s.slice(1) + '</option>'
-      ).join("");
-      det.innerHTML =
-        '<table class="order-items-table">' +
-          '<thead><tr><th>Cod.</th><th>Producto</th><th class="num">Cant.</th><th class="num">Unit.</th><th class="num">Subtotal</th></tr></thead>' +
-          '<tbody>' + rows + '</tbody>' +
-        '</table>' +
-        (o.notes ? '<div class="order-notes">Nota: ' + escapeHtml(o.notes) + '</div>' : "") +
-        '<div class="order-det-foot">' +
-          '<label class="order-status-label">Estado: ' +
-            '<select class="order-status-select">' + optHtml + '</select>' +
-          '</label>' +
-          '<span class="order-status-msg"></span>' +
-        '</div>';
-      det.dataset.loaded = "1";
-      const sel = det.querySelector(".order-status-select");
-      sel.addEventListener("change", async () => {
-        const msg = det.querySelector(".order-status-msg");
-        sel.disabled = true;
-        try {
-          await api("/api/orders/" + id, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status: sel.value }),
-          });
-          const badge = card.querySelector(".order-status");
-          badge.className = "order-status " + sel.value;
-          badge.textContent = sel.value;
-          msg.textContent = "✓"; msg.style.color = "#10b981";
-        } catch (err) {
-          msg.textContent = "Error"; msg.style.color = "#dc2626";
-        } finally {
-          sel.disabled = false;
-          setTimeout(() => { msg.textContent = ""; }, 2000);
-        }
-      });
+      renderOrderDetail(det, card, o);
     } catch (e) {
       det.innerHTML = '<p class="muted">No se pudo cargar el detalle.</p>';
+    }
+  }
+
+  function renderOrderDetail(det, card, o) {
+    det.dataset.loaded = "1";
+    const statuses = ["pendiente", "enviado", "preparando", "entregado", "cancelado"];
+    const optHtml = statuses.map((s) =>
+      '<option value="' + s + '"' + (s === o.status ? " selected" : "") + '>' +
+        s.charAt(0).toUpperCase() + s.slice(1) + '</option>'
+    ).join("");
+
+    const itemRows = o.items.map((it) => orderItemRowHtml(it)).join("");
+    const initialTotal = o.items.reduce((acc, it) => acc + (it.unit_price * it.quantity), 0);
+
+    det.innerHTML =
+      '<table class="order-items-table order-items-edit-table">' +
+        '<thead><tr>' +
+          '<th>Cód.</th><th>Producto</th>' +
+          '<th class="num">Cant.</th>' +
+          '<th class="num">Precio unit.</th>' +
+          '<th class="num">Subtotal</th>' +
+          '<th class="col-del"></th>' +
+        '</tr></thead>' +
+        '<tbody class="order-items-tbody">' + itemRows + '</tbody>' +
+        '<tfoot><tr class="order-total-row">' +
+          '<td colspan="4" class="order-total-label">Total del pedido</td>' +
+          '<td class="num order-total-cell">' + fmtPrice(o.total) + '</td>' +
+          '<td></td>' +
+        '</tr></tfoot>' +
+      '</table>' +
+      (o.notes ? '<div class="order-notes">Nota: ' + escapeHtml(o.notes) + '</div>' : "") +
+      '<div class="order-add-prod">' +
+        '<div class="order-add-prod-label">Agregar producto al pedido:</div>' +
+        '<div class="order-add-prod-row">' +
+          '<div class="add-prod-search-wrap">' +
+            '<input type="text" class="add-prod-search cell-input" placeholder="Buscar por código o nombre…" autocomplete="off" />' +
+            '<div class="add-prod-results" hidden></div>' +
+          '</div>' +
+          '<input type="number" class="add-prod-qty cell-input cell-num" value="1" min="1" placeholder="Cant." />' +
+          '<button class="btn btn-small btn-add-item" data-act="add-item" type="button">+ Agregar</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="order-det-foot">' +
+        '<label class="order-status-label">Estado: ' +
+          '<select class="order-status-select">' + optHtml + '</select>' +
+        '</label>' +
+        '<span class="order-status-msg"></span>' +
+        '<div class="order-save-wrap">' +
+          '<button class="btn btn-primary btn-save-items" data-act="save-items" type="button">💾 Guardar cambios</button>' +
+          '<span class="order-save-msg"></span>' +
+        '</div>' +
+      '</div>';
+
+    wireOrderDetail(det, card, o.id);
+  }
+
+  function orderItemRowHtml(it) {
+    return '<tr data-item-id="' + (it.id || "") + '" data-product-id="' + (it.product_id || "") + '">' +
+      '<td class="cell-code item-code">' + escapeHtml(it.product_code || "") + '</td>' +
+      '<td class="item-name">' + escapeHtml(it.product_name) + '</td>' +
+      '<td class="num"><input type="number" min="1" class="cell-input cell-num item-qty" value="' + (it.quantity || 1) + '" /></td>' +
+      '<td class="num"><input type="number" min="0" class="cell-input cell-num item-price" value="' + (it.unit_price || 0) + '" /></td>' +
+      '<td class="num item-subtotal">' + fmtPrice((it.unit_price || 0) * (it.quantity || 1)) + '</td>' +
+      '<td class="col-del"><button class="btn btn-small btn-del-item" data-act="del-item" type="button" title="Quitar del pedido">✕</button></td>' +
+    '</tr>';
+  }
+
+  function recalcRowSubtotal(tr) {
+    const qty = Math.max(0, Number(tr.querySelector(".item-qty").value) || 0);
+    const price = Math.max(0, Number(tr.querySelector(".item-price").value) || 0);
+    tr.querySelector(".item-subtotal").textContent = fmtPrice(qty * price);
+  }
+
+  function recalcOrderTotal(det) {
+    let total = 0;
+    det.querySelectorAll(".order-items-tbody tr").forEach((tr) => {
+      const qty = Math.max(0, Number((tr.querySelector(".item-qty") || {}).value) || 0);
+      const price = Math.max(0, Number((tr.querySelector(".item-price") || {}).value) || 0);
+      total += qty * price;
+    });
+    const cell = det.querySelector(".order-total-cell");
+    if (cell) cell.textContent = fmtPrice(total);
+  }
+
+  function filterAddProductResults(det, q) {
+    const container = det.querySelector(".add-prod-results");
+    if (!container) return;
+    const term = (q || "").trim().toLowerCase();
+    if (term.length < 2) { container.hidden = true; container.innerHTML = ""; return; }
+    const matches = state.products.filter((p) =>
+      (p.code || "").toLowerCase().includes(term) ||
+      (p.name || "").toLowerCase().includes(term)
+    ).slice(0, 8);
+    if (!matches.length) {
+      container.innerHTML = '<div class="add-prod-no-results muted">Sin resultados</div>';
+      container.hidden = false;
+      return;
+    }
+    container.innerHTML = matches.map((p) =>
+      '<div class="add-prod-result-item" ' +
+        'data-product-id="' + p.id + '" ' +
+        'data-code="' + escapeHtml(p.code || "") + '" ' +
+        'data-name="' + escapeHtml(p.name) + '" ' +
+        'data-price="' + (p.price_minorista || 0) + '">' +
+        (p.code ? '<span class="result-code muted">' + escapeHtml(p.code) + '</span> ' : '') +
+        '<span class="result-name">' + escapeHtml(p.name) + '</span>' +
+        '<span class="result-meta muted"> · stock: ' + (p.stock || 0) + ' · $' + (p.price_minorista || 0).toLocaleString("es-AR") + '</span>' +
+      '</div>'
+    ).join("");
+    container.hidden = false;
+  }
+
+  function selectAddProduct(det, productId, code, name, price) {
+    const search = det.querySelector(".add-prod-search");
+    search.value = (code ? code + " - " : "") + name;
+    search.dataset.selectedId = productId;
+    search.dataset.selectedCode = code;
+    search.dataset.selectedName = name;
+    search.dataset.selectedPrice = price;
+    const container = det.querySelector(".add-prod-results");
+    if (container) { container.hidden = true; container.innerHTML = ""; }
+  }
+
+  function wireOrderDetail(det, card, orderId) {
+    // Cambio de estado
+    const sel = det.querySelector(".order-status-select");
+    sel.addEventListener("change", async () => {
+      const msg = det.querySelector(".order-status-msg");
+      sel.disabled = true;
+      try {
+        await api("/api/orders/" + orderId, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: sel.value }),
+        });
+        const badge = card.querySelector(".order-status");
+        badge.className = "order-status " + sel.value;
+        badge.textContent = sel.value;
+        msg.textContent = "✓"; msg.style.color = "#10b981";
+      } catch (err) {
+        msg.textContent = "Error"; msg.style.color = "#dc2626";
+      } finally {
+        sel.disabled = false;
+        setTimeout(() => { msg.textContent = ""; }, 2000);
+      }
+    });
+
+    // Recalcular subtotal y total al cambiar cantidad o precio
+    det.addEventListener("input", (e) => {
+      const inp = e.target;
+      if (inp.classList.contains("item-qty") || inp.classList.contains("item-price")) {
+        const tr = inp.closest("tr");
+        if (tr) recalcRowSubtotal(tr);
+        recalcOrderTotal(det);
+      }
+      if (inp.classList.contains("add-prod-search")) {
+        filterAddProductResults(det, inp.value);
+      }
+    });
+
+    // Clicks dentro del detalle
+    det.addEventListener("click", (e) => {
+      // Quitar item
+      const delBtn = e.target.closest("[data-act='del-item']");
+      if (delBtn) {
+        const tr = delBtn.closest("tr");
+        if (tr) { tr.remove(); recalcOrderTotal(det); }
+        return;
+      }
+
+      // Seleccionar producto del dropdown
+      const resultItem = e.target.closest(".add-prod-result-item");
+      if (resultItem) {
+        selectAddProduct(det,
+          resultItem.dataset.productId,
+          resultItem.dataset.code,
+          resultItem.dataset.name,
+          resultItem.dataset.price
+        );
+        return;
+      }
+
+      // Agregar producto al pedido
+      const addBtn = e.target.closest("[data-act='add-item']");
+      if (addBtn) {
+        const search = det.querySelector(".add-prod-search");
+        const productId = Number(search.dataset.selectedId);
+        if (!productId) { showToast("Primero seleccioná un producto de la lista", "err"); return; }
+        const qty = Math.max(1, Number(det.querySelector(".add-prod-qty").value) || 1);
+        const price = Number(search.dataset.selectedPrice) || 0;
+        const code = search.dataset.selectedCode || "";
+        const name = search.dataset.selectedName || "";
+
+        // Si el producto ya está en el pedido, sumar cantidad
+        const existing = det.querySelector('.order-items-tbody tr[data-product-id="' + productId + '"]');
+        if (existing) {
+          const qtyInput = existing.querySelector(".item-qty");
+          qtyInput.value = Number(qtyInput.value) + qty;
+          recalcRowSubtotal(existing);
+          recalcOrderTotal(det);
+          showToast("Cantidad actualizada en el pedido");
+        } else {
+          const newItem = { id: null, product_id: productId, product_code: code,
+                            product_name: name, quantity: qty, unit_price: price, subtotal: price * qty };
+          det.querySelector(".order-items-tbody").insertAdjacentHTML("beforeend", orderItemRowHtml(newItem));
+          recalcOrderTotal(det);
+          showToast("Producto agregado al pedido");
+        }
+
+        // Limpiar buscador
+        search.value = "";
+        search.dataset.selectedId = "";
+        det.querySelector(".add-prod-results").hidden = true;
+        det.querySelector(".add-prod-qty").value = "1";
+        return;
+      }
+
+      // Guardar cambios
+      const saveBtn = e.target.closest("[data-act='save-items']");
+      if (saveBtn) {
+        saveOrderItems(det, card, orderId);
+        return;
+      }
+    });
+
+    // Cerrar dropdown al hacer click fuera
+    document.addEventListener("click", function closeResults(e) {
+      if (!det.contains(e.target)) {
+        const container = det.querySelector(".add-prod-results");
+        if (container) { container.hidden = true; container.innerHTML = ""; }
+      }
+    });
+  }
+
+  async function saveOrderItems(det, card, orderId) {
+    const rows = det.querySelectorAll(".order-items-tbody tr");
+    const items = [];
+    rows.forEach((tr) => {
+      const productId = Number(tr.dataset.productId);
+      if (!productId) return;
+      const qty = Math.max(1, Number(tr.querySelector(".item-qty").value) || 1);
+      const unitPrice = Math.max(0, Number(tr.querySelector(".item-price").value) || 0);
+      const productName = (tr.querySelector(".item-name") || {}).textContent || "";
+      const productCode = (tr.querySelector(".item-code") || {}).textContent || "";
+      items.push({ product_id: productId, product_code: productCode.trim(),
+                   product_name: productName.trim(), quantity: qty, unit_price: unitPrice });
+    });
+
+    if (!items.length) { showToast("El pedido debe tener al menos 1 producto", "err"); return; }
+
+    const saveMsg = det.querySelector(".order-save-msg");
+    const saveBtn = det.querySelector("[data-act='save-items']");
+    saveBtn.disabled = true;
+    if (saveMsg) { saveMsg.textContent = "Guardando…"; saveMsg.removeAttribute("style"); }
+
+    try {
+      const out = await api("/api/admin/orders/" + orderId + "/items", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      const totalEl = card.querySelector(".order-total");
+      if (totalEl) totalEl.textContent = fmtPrice(out.total);
+      const totalCell = det.querySelector(".order-total-cell");
+      if (totalCell) totalCell.textContent = fmtPrice(out.total);
+      const idx = state.orders.findIndex((o) => o.id === orderId);
+      if (idx >= 0) state.orders[idx].total = out.total;
+      if (saveMsg) { saveMsg.textContent = "✓ Guardado"; saveMsg.style.color = "#10b981"; }
+      showToast("Pedido #" + orderId + " actualizado");
+      setTimeout(() => { if (saveMsg) saveMsg.textContent = ""; }, 3000);
+    } catch (err) {
+      if (saveMsg) { saveMsg.textContent = "Error: " + err.message; saveMsg.style.color = "#dc2626"; }
+      showToast("Error al guardar: " + err.message, "err");
+    } finally {
+      saveBtn.disabled = false;
     }
   }
 
@@ -1189,7 +1417,6 @@
   function updateProductImageInState(productId, imageUrl) {
     const p = state.products.find((x) => x.id === productId);
     if (p) p.image_url = imageUrl;
-    // Actualizar el thumbnail en la fila de la tabla sin re-renderizar todo
     const tr = els.prodTbody.querySelector('tr[data-id="' + productId + '"]');
     if (tr) {
       const btn = tr.querySelector('.prod-img-btn[data-act="edit-img"]');
@@ -1231,7 +1458,6 @@
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || "Error " + res.status);
-      // Actualizar preview
       els.imgModalPreview.src = body.image_url;
       els.imgModalPreview.hidden = false;
       els.imgModalNoImg.hidden = true;

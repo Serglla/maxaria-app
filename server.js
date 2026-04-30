@@ -596,7 +596,7 @@ app.get("/api/orders/:id", requireLogin, (req, res) => {
     : db.prepare(orderSql).get(id, req.session.userId);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
   const items = db.prepare(
-    "SELECT product_code, product_name, quantity, unit_price, subtotal" +
+    "SELECT id, product_id, product_code, product_name, quantity, unit_price, subtotal" +
     "  FROM order_items WHERE order_id = ? ORDER BY id"
   ).all(id);
   res.json(Object.assign({}, order, { items: items }));
@@ -615,6 +615,53 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
   const r = db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
   if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
   res.json({ ok: true, id: id, status: status });
+});
+
+// Editar items de un pedido (solo admin): reemplaza todos los items y recalcula el total
+app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID inválido" });
+  const order = db.prepare("SELECT id FROM orders WHERE id = ?").get(id);
+  if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+
+  const rawItems = req.body && Array.isArray(req.body.items) ? req.body.items : [];
+  if (!rawItems.length) return res.status(400).json({ error: "El pedido debe tener al menos 1 item" });
+
+  const lines = [];
+  let total = 0;
+  for (const it of rawItems) {
+    const productId = Number(it.product_id);
+    const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
+    const unitPrice = Math.round(Math.max(0, Number(it.unit_price) || 0));
+    if (!productId) continue;
+    const prod = db.prepare("SELECT id, code, name FROM products WHERE id = ?").get(productId);
+    if (!prod) continue;
+    const productName = String(it.product_name || prod.name || "").trim().slice(0, 200);
+    const productCode = String(it.product_code || prod.code || "").trim().slice(0, 50);
+    const subtotal = unitPrice * qty;
+    total += subtotal;
+    lines.push({ product_id: productId, product_code: productCode, product_name: productName,
+                 quantity: qty, unit_price: unitPrice, subtotal });
+  }
+  if (!lines.length) return res.status(400).json({ error: "Ningún item válido" });
+
+  db.transaction(() => {
+    db.prepare("DELETE FROM order_items WHERE order_id = ?").run(id);
+    const ins = db.prepare(
+      "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+    for (const l of lines) {
+      ins.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.subtotal);
+    }
+    db.prepare("UPDATE orders SET total = ? WHERE id = ?").run(total, id);
+  })();
+
+  const updatedItems = db.prepare(
+    "SELECT id, product_id, product_code, product_name, quantity, unit_price, subtotal" +
+    "  FROM order_items WHERE order_id = ? ORDER BY id"
+  ).all(id);
+  res.json({ ok: true, total, items: updatedItems });
 });
 
 // ===== Panel admin =====
