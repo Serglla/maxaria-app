@@ -183,7 +183,24 @@
     els.resultCount.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     if (!list.length) { els.grid.innerHTML = ""; els.empty.hidden = false; return; }
     els.empty.hidden = true;
-    els.grid.innerHTML = list.map(cardHtml).join("");
+    // Cuando se muestran todas las categorias (o hay busqueda con varias),
+    // insertar un encabezado de categoria de ancho completo antes de cada
+    // grupo para que la nueva categoria siempre arranque en una fila nueva.
+    const showHeaders = state.cat === "all" || (state.query && new Set(list.map(p => p.category_id)).size > 1);
+    if (showHeaders) {
+      const parts = [];
+      let lastCat = null;
+      list.forEach((p) => {
+        if (p.category_id !== lastCat) {
+          lastCat = p.category_id;
+          parts.push('<div class="grid-cat-header">' + escapeHtml(p.category_name || "") + '</div>');
+        }
+        parts.push(cardHtml(p));
+      });
+      els.grid.innerHTML = parts.join("");
+    } else {
+      els.grid.innerHTML = list.map(cardHtml).join("");
+    }
     // Event delegation: un solo handler en la grilla maneja add/inc/dec
     // de TODOS los cards. Asi no hay que re-bindear handlers cada
     // vez que se vuelve a renderizar la accion de un card.
