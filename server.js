@@ -385,6 +385,9 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     return res.json({ updates: [], level: effectiveLevel, levelName: levelName(effectiveLevel) });
   }
 
+  // Categorías permitidas para este usuario (null = ve todas)
+  const allowedCats = getUserAllowedCategoryIds(req.session.userId, level);
+
   const cols = priceChangeCols(effectiveLevel);
   const rowsStmt = db.prepare(
     "SELECT pc.product_id, pc.code, pc.name, pc.is_new," +
@@ -392,6 +395,7 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     "       pc." + cols.old + " AS old_price," +
     "       pc." + cols.new + " AS new_price," +
     "       p.image_url, p.stock, p.active," +
+    "       p.category_id," +
     "       COALESCE(c.name, '') AS category_name" +
     "  FROM price_changes pc" +
     "  LEFT JOIN products p ON p.id = pc.product_id" +
@@ -402,7 +406,11 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
 
   const result = [];
   for (const u of updates) {
-    const rows = rowsStmt.all(u.id);
+    let rows = rowsStmt.all(u.id);
+    // Filtrar por categorías permitidas si el usuario tiene restricción
+    if (allowedCats !== null) {
+      rows = rows.filter((r) => r.category_id != null && allowedCats.has(r.category_id));
+    }
     const cambios = [];
     const nuevos = [];
     const reingresos = [];
