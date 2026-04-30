@@ -103,6 +103,27 @@ db.exec(
   "CREATE INDEX IF NOT EXISTS idx_uca_category ON user_category_access(category_id);"
 );
 
+// Migracion: Vendedores (nivel 5).
+// - orders.assigned_vendedor_id: vendedor asignado a entregar el pedido.
+// - users.vendedor_price_level: lista de precios que ve el vendedor (1-4).
+// - deliveries: registro de entrega + cobro (efectivo / transferencia).
+try { db.exec("ALTER TABLE orders ADD COLUMN assigned_vendedor_id INTEGER REFERENCES users(id)"); } catch (_) {}
+try { db.exec("ALTER TABLE users ADD COLUMN vendedor_price_level INTEGER NOT NULL DEFAULT 1"); } catch (_) {}
+db.exec(
+  "CREATE TABLE IF NOT EXISTS deliveries (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  order_id INTEGER NOT NULL REFERENCES orders(id)," +
+  "  vendedor_id INTEGER NOT NULL REFERENCES users(id)," +
+  "  delivered_to TEXT NOT NULL DEFAULT ''," +
+  "  efectivo_amount REAL NOT NULL DEFAULT 0," +
+  "  transferencia_amount REAL NOT NULL DEFAULT 0," +
+  "  notes TEXT," +
+  "  delivered_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_deliveries_order    ON deliveries(order_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_deliveries_vendedor ON deliveries(vendedor_id);"
+);
+
 function getSetting(key, fallback) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   if (row && row.value != null) return row.value;
@@ -137,9 +158,9 @@ function getAppName() {
 }
 
 // Devuelve un Set de IDs de categoria permitidos para el usuario dado.
-// Si el usuario es admin o no tiene restricciones, devuelve null (= acceso total).
+// Si el usuario es admin/vendedor o no tiene restricciones, devuelve null (= acceso total).
 function getUserAllowedCategoryIds(userId, level) {
-  if (Number(level) === 99) return null; // admin ve todo
+  if (Number(level) === 99 || Number(level) === 5) return null; // admin/vendedor ve todo
   const rows = db.prepare(
     "SELECT category_id FROM user_category_access WHERE user_id = ?"
   ).all(userId);
@@ -167,7 +188,7 @@ function getPriceChangesVisibleLevels() {
 // solapa "Cambios de precio". El admin SIEMPRE puede ver (asi puede
 // validar lo que se les muestra a los clientes).
 function userCanSeePriceChanges(level) {
-  if (Number(level) === 99) return true;
+  if (Number(level) === 99 || Number(level) === 5) return true;
   return getPriceChangesVisibleLevels().has(Number(level));
 }
 
@@ -257,6 +278,7 @@ function levelName(level) {
     case 2: return "Revendedor";
     case 3: return "Mayorista";
     case 4: return "VIP";
+    case 5: return "Vendedor";
     case 99: return "Administrador";
     default: return "Cliente";
   }
@@ -277,6 +299,19 @@ function requireAdmin(req, res, next) {
   if (req.session.level !== 99) {
     if (req.path.startsWith("/api/")) return res.status(403).json({ error: "Solo admin" });
     return res.status(403).send("Acceso restringido. Solo el administrador puede entrar a /admin.");
+  }
+  next();
+}
+
+// Vendedores (nivel 5) o admin (nivel 99) pueden acceder a estas rutas.
+function requireVendedorOrAdmin(req, res, next) {
+  if (!req.session || !req.session.userId) {
+    if (req.path.startsWith("/api/")) return res.status(401).json({ error: "No autenticado" });
+    return res.redirect("/login");
+  }
+  if (req.session.level !== 5 && req.session.level !== 99) {
+    if (req.path.startsWith("/api/")) return res.status(403).json({ error: "Acceso restringido" });
+    return res.redirect("/login");
   }
   next();
 }
@@ -314,7 +349,7 @@ app.post("/login", (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: "Faltan datos" });
   const user = db
-    .prepare("SELECT id, username, password_hash, full_name, level, active FROM users WHERE username = ?")
+    .prepare("SELECT id, username, password_hash, full_name, level, active, vendedor_price_level FROM users WHERE username = ?")
     .get(String(username).trim().toLowerCase());
   if (!user || !user.active) return res.status(401).json({ error: "Usuario o contrasena incorrectos" });
   if (!bcrypt.compareSync(String(password), user.password_hash))
@@ -324,6 +359,11 @@ app.post("/login", (req, res) => {
   req.session.username = user.username;
   req.session.level = user.level;
   req.session.fullName = user.full_name;
+  // Para vendedores: guardar su lista de precios configurada
+  if (user.level === 5) {
+    req.session.vendedorPriceLevel = [1, 2, 3, 4].includes(Number(user.vendedor_price_level))
+      ? Number(user.vendedor_price_level) : 1;
+  }
   res.json({ ok: true, user: { id: user.id, username: user.username, fullName: user.full_name, level: user.level, levelName: levelName(user.level) } });
 });
 
@@ -489,11 +529,15 @@ app.get("/api/categories", requireLogin, (req, res) => {
 });
 
 app.get("/api/products", requireLogin, (req, res) => {
-  // Admin (level 99) puede ver el catalogo "como si fuera" otro nivel
-  // pasando ?as_level=1|2|3|4. Util para revisar precios desde la
-  // perspectiva del cliente sin tener que loguearse con otra cuenta.
+  // Admin (level 99) puede ver el catalogo "como si fuera" otro nivel.
+  // Vendedor (level 5) ve la lista de precios configurada en su perfil.
   let effectiveLevel = req.session.level;
-  if (req.session.level === 99 && req.query.as_level != null) {
+  if (req.session.level === 5) {
+    // Siempre leer de la DB para reflejar cambios hechos por el admin
+    const u = db.prepare("SELECT vendedor_price_level FROM users WHERE id = ?").get(req.session.userId);
+    const vpl = u && Number(u.vendedor_price_level);
+    effectiveLevel = [1, 2, 3, 4].includes(vpl) ? vpl : 1;
+  } else if (req.session.level === 99 && req.query.as_level != null) {
     const asLvl = Number(req.query.as_level);
     if ([1, 2, 3, 4].includes(asLvl)) effectiveLevel = asLvl;
   }
@@ -572,28 +616,81 @@ app.post("/api/orders", requireLogin, (req, res) => {
 
 app.get("/api/orders", requireLogin, (req, res) => {
   const isAdmin = req.session.level === 99;
-  const sql = isAdmin
-    ? "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
-      "       u.username, u.full_name" +
-      "  FROM orders o JOIN users u ON u.id = o.user_id" +
+  const isVendedor = req.session.level === 5;
+
+  if (isAdmin) {
+    const rows = db.prepare(
+      "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
+      "       u.username, u.full_name," +
+      "       o.assigned_vendedor_id," +
+      "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
+      "  FROM orders o" +
+      "  JOIN users u ON u.id = o.user_id" +
+      "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
+      "  LEFT JOIN deliveries d ON d.order_id = o.id" +
       "  ORDER BY o.created_at DESC LIMIT 200"
-    : "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
-      "       NULL AS username, NULL AS full_name" +
-      "  FROM orders o WHERE o.user_id = ?" +
-      "  ORDER BY o.created_at DESC LIMIT 200";
-  res.json(isAdmin ? db.prepare(sql).all() : db.prepare(sql).all(req.session.userId));
+    ).all();
+    return res.json(rows);
+  }
+
+  if (isVendedor) {
+    // Vendedor solo ve sus pedidos asignados
+    const rows = db.prepare(
+      "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
+      "       u.username, u.full_name," +
+      "       o.assigned_vendedor_id, NULL AS vendedor_username, NULL AS vendedor_full_name," +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
+      "  FROM orders o" +
+      "  JOIN users u ON u.id = o.user_id" +
+      "  LEFT JOIN deliveries d ON d.order_id = o.id" +
+      "  WHERE o.assigned_vendedor_id = ?" +
+      "  ORDER BY o.created_at DESC LIMIT 200"
+    ).all(req.session.userId);
+    return res.json(rows);
+  }
+
+  // Usuario normal: solo sus propios pedidos
+  const rows = db.prepare(
+    "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
+    "       NULL AS username, NULL AS full_name," +
+    "       NULL AS assigned_vendedor_id, NULL AS delivery_id" +
+    "  FROM orders o WHERE o.user_id = ?" +
+    "  ORDER BY o.created_at DESC LIMIT 200"
+  ).all(req.session.userId);
+  res.json(rows);
 });
 
 app.get("/api/orders/:id", requireLogin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
   const isAdmin = req.session.level === 99;
-  const orderSql = isAdmin
-    ? "SELECT o.*, u.username, u.full_name FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?"
-    : "SELECT o.*, NULL AS username, NULL AS full_name FROM orders o WHERE o.id = ? AND o.user_id = ?";
-  const order = isAdmin
-    ? db.prepare(orderSql).get(id)
-    : db.prepare(orderSql).get(id, req.session.userId);
+  const isVendedor = req.session.level === 5;
+  let order;
+  if (isAdmin) {
+    order = db.prepare(
+      "SELECT o.*, u.username, u.full_name," +
+      "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
+      "  FROM orders o JOIN users u ON u.id = o.user_id" +
+      "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
+      "  LEFT JOIN deliveries d ON d.order_id = o.id" +
+      "  WHERE o.id = ?"
+    ).get(id);
+  } else if (isVendedor) {
+    order = db.prepare(
+      "SELECT o.*, u.username, u.full_name," +
+      "       NULL AS vendedor_username, NULL AS vendedor_full_name," +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
+      "  FROM orders o JOIN users u ON u.id = o.user_id" +
+      "  LEFT JOIN deliveries d ON d.order_id = o.id" +
+      "  WHERE o.id = ? AND o.assigned_vendedor_id = ?"
+    ).get(id, req.session.userId);
+  } else {
+    order = db.prepare(
+      "SELECT o.*, NULL AS username, NULL AS full_name FROM orders o WHERE o.id = ? AND o.user_id = ?"
+    ).get(id, req.session.userId);
+  }
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
   const items = db.prepare(
     "SELECT id, product_id, product_code, product_name, quantity, unit_price, subtotal" +
@@ -602,16 +699,25 @@ app.get("/api/orders/:id", requireLogin, (req, res) => {
   res.json(Object.assign({}, order, { items: items }));
 });
 
-// ----- Cambio de estado (solo admin) -----
+// ----- Cambio de estado (admin o vendedor asignado) -----
 app.patch("/api/orders/:id", requireLogin, (req, res) => {
-  if (req.session.level !== 99)
-    return res.status(403).json({ error: "Solo el admin puede cambiar estados" });
+  const isAdmin = req.session.level === 99;
+  const isVendedor = req.session.level === 5;
+  if (!isAdmin && !isVendedor)
+    return res.status(403).json({ error: "Solo el admin o vendedor puede cambiar estados" });
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
   const { status } = req.body || {};
   const valid = ["pendiente", "enviado", "preparando", "entregado", "cancelado"];
   if (!valid.includes(status))
     return res.status(400).json({ error: "Estado invalido. Valores: " + valid.join(", ") });
+  // Vendedores solo pueden marcar como "entregado" en su pedido asignado
+  if (isVendedor) {
+    if (status !== "entregado")
+      return res.status(403).json({ error: "Los vendedores solo pueden marcar pedidos como entregado" });
+    const order = db.prepare("SELECT id FROM orders WHERE id = ? AND assigned_vendedor_id = ?").get(id, req.session.userId);
+    if (!order) return res.status(404).json({ error: "Pedido no encontrado o no asignado a vos" });
+  }
   const r = db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
   if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
   res.json({ ok: true, id: id, status: status });
@@ -665,7 +771,8 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
 });
 
 // ===== Panel admin =====
-app.get("/admin", requireAdmin, (req, res) => {
+// Admin (99) accede completo; Vendedor (5) accede con funciones limitadas (solo Pedidos asignados).
+app.get("/admin", requireVendedorOrAdmin, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
 
@@ -779,7 +886,7 @@ app.patch("/api/admin/settings", requireAdmin, (req, res) => {
 });
 
 // ===== Usuarios =====
-const VALID_LEVELS = [1, 2, 3, 4, 99];
+const VALID_LEVELS = [1, 2, 3, 4, 5, 99];
 
 function isValidUsername(s) {
   return typeof s === "string" && /^[a-z0-9_.-]{3,32}$/i.test(s);
@@ -855,6 +962,13 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
       return res.status(400).json({ error: "No podes bajarte de Administrador a vos mismo" });
     sets.push("level = ?");
     vals.push(lvl);
+  }
+  if ("vendedor_price_level" in b) {
+    const vpl = Number(b.vendedor_price_level);
+    if (![1, 2, 3, 4].includes(vpl))
+      return res.status(400).json({ error: "Lista de precios invalida. Valores: 1 (Minorista), 2 (Revendedor), 3 (Mayorista), 4 (VIP)" });
+    sets.push("vendedor_price_level = ?");
+    vals.push(vpl);
   }
   if ("active" in b) {
     const act = b.active ? 1 : 0;
@@ -1075,8 +1189,110 @@ app.post("/api/admin/import-excel", requireAdmin, excelUpload.single("file"), (r
   }
 });
 
+// ===== Vendedores =====
+
+// Lista de vendedores con estadisticas de pedidos y entregas (solo admin)
+app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT u.id, u.username, u.full_name, u.phone, u.email, u.active," +
+    "       u.vendedor_price_level, u.created_at, u.last_login_at," +
+    "       COUNT(DISTINCT o.id) AS total_orders," +
+    "       COUNT(DISTINCT d.id) AS total_deliveries" +
+    "  FROM users u" +
+    "  LEFT JOIN orders o ON o.assigned_vendedor_id = u.id" +
+    "  LEFT JOIN deliveries d ON d.vendedor_id = u.id" +
+    "  WHERE u.level = 5" +
+    "  GROUP BY u.id" +
+    "  ORDER BY u.username"
+  ).all();
+  res.json(rows);
+});
+
+// Asignar (o desasignar) un vendedor a un pedido (solo admin)
+app.patch("/api/admin/orders/:id/assign", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const order = db.prepare("SELECT id FROM orders WHERE id = ?").get(id);
+  if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+
+  const vendedorId = req.body && req.body.vendedor_id ? Number(req.body.vendedor_id) : null;
+  if (vendedorId) {
+    const vendedor = db.prepare("SELECT id FROM users WHERE id = ? AND level = 5 AND active = 1").get(vendedorId);
+    if (!vendedor) return res.status(400).json({ error: "Vendedor no encontrado o inactivo" });
+  }
+  db.prepare("UPDATE orders SET assigned_vendedor_id = ? WHERE id = ?").run(vendedorId, id);
+  res.json({ ok: true, id, vendedor_id: vendedorId });
+});
+
+// Registrar entrega de un pedido (admin o vendedor asignado)
+// Body: { delivered_to, efectivo_amount, transferencia_amount, notes }
+app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+
+  const isAdmin = req.session.level === 99;
+  // Verificar que el pedido existe y (si vendedor) que le esta asignado
+  const order = isAdmin
+    ? db.prepare("SELECT id, status FROM orders WHERE id = ?").get(id)
+    : db.prepare("SELECT id, status FROM orders WHERE id = ? AND assigned_vendedor_id = ?").get(id, req.session.userId);
+  if (!order) return res.status(404).json({ error: "Pedido no encontrado o no asignado a vos" });
+
+  const { delivered_to, efectivo_amount, transferencia_amount, notes } = req.body || {};
+  const deliveredTo = String(delivered_to || "").trim().slice(0, 200);
+  if (!deliveredTo) return res.status(400).json({ error: "Falta indicar quien recibio el pedido" });
+
+  const efectivo = Math.max(0, Number(efectivo_amount) || 0);
+  const transferencia = Math.max(0, Number(transferencia_amount) || 0);
+  if (efectivo === 0 && transferencia === 0)
+    return res.status(400).json({ error: "Debe ingresar al menos un monto de pago (efectivo o transferencia)" });
+
+  const vendedorId = isAdmin
+    ? (db.prepare("SELECT assigned_vendedor_id FROM orders WHERE id = ?").get(id).assigned_vendedor_id || req.session.userId)
+    : req.session.userId;
+  const notesStr = notes ? String(notes).trim().slice(0, 500) : null;
+
+  const existing = db.prepare("SELECT id FROM deliveries WHERE order_id = ?").get(id);
+  let deliveryId;
+  db.transaction(() => {
+    if (existing) {
+      db.prepare(
+        "UPDATE deliveries SET delivered_to = ?, efectivo_amount = ?, transferencia_amount = ?, notes = ?," +
+        "  delivered_at = datetime('now') WHERE order_id = ?"
+      ).run(deliveredTo, efectivo, transferencia, notesStr, id);
+      deliveryId = existing.id;
+    } else {
+      const r = db.prepare(
+        "INSERT INTO deliveries (order_id, vendedor_id, delivered_to, efectivo_amount, transferencia_amount, notes)" +
+        " VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(id, vendedorId, deliveredTo, efectivo, transferencia, notesStr);
+      deliveryId = r.lastInsertRowid;
+    }
+    // Marcar el pedido como entregado automaticamente
+    db.prepare("UPDATE orders SET status = 'entregado' WHERE id = ?").run(id);
+  })();
+
+  res.json({ ok: true, delivery_id: deliveryId, order_id: id });
+});
+
+// Lista completa de entregas con datos de pago (solo admin)
+app.get("/api/admin/deliveries", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT d.id, d.order_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount," +
+    "       d.notes, d.delivered_at," +
+    "       v.id AS vendedor_id, v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
+    "       o.total AS order_total, o.status AS order_status," +
+    "       u.username AS client_username, u.full_name AS client_full_name" +
+    "  FROM deliveries d" +
+    "  JOIN users v ON v.id = d.vendedor_id" +
+    "  JOIN orders o ON o.id = d.order_id" +
+    "  JOIN users u ON u.id = o.user_id" +
+    "  ORDER BY d.delivered_at DESC LIMIT 500"
+  ).all();
+  res.json(rows);
+});
+
 app.get("/healthz", (req, res) => res.json({ ok: true, ts: Date.now() }));
-// Servir imagenes de productos desde el volumen persistente (mismo dir que la DB)
+// Servir imagenes de productos desde el volumen persistente
 app.use("/images/products", express.static(PRODUCT_IMAGES_DIR));
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 app.use((req, res) => res.status(404).send("No encontrado"));
