@@ -34,6 +34,7 @@
 
     // Productos
     prodSearch: document.getElementById("prod-search"),
+    filterCategory: document.getElementById("filter-category"),
     filterStock: document.getElementById("filter-stock"),
     filterInactive: document.getElementById("filter-inactive"),
     prodCount: document.getElementById("prod-count"),
@@ -171,6 +172,7 @@
     try {
       const data = {
         search: els.prodSearch.value,
+        category: els.filterCategory.value,
         stock: els.filterStock.value,
         inactive: els.filterInactive.checked,
         sortField: state.sortField,
@@ -183,6 +185,9 @@
     const p = loadPrefs();
     if (!p) return;
     if (typeof p.search === "string") els.prodSearch.value = p.search;
+    if (p.category && els.filterCategory.querySelector('[value="' + p.category + '"]')) {
+      els.filterCategory.value = p.category;
+    }
     if (p.stock && els.filterStock.querySelector('[value="' + p.stock + '"]')) {
       els.filterStock.value = p.stock;
     }
@@ -227,6 +232,7 @@
       ]);
       state.me = me;
       state.products = prods;
+      populateCategoryFilter(prods);
       els.userInfo.textContent = (me.fullName || me.username) + " - " + me.levelName;
       // Nombre dinamico de la app
       if (me.app_name) {
@@ -792,10 +798,37 @@
     };
   }
 
+  function populateCategoryFilter(products) {
+    const current = els.filterCategory.value;
+    // Recolectar categorías únicas ordenadas
+    const seen = new Map();
+    products.forEach((p) => {
+      if (p.category_id != null && !seen.has(p.category_id)) {
+        seen.set(p.category_id, p.category_name || ("Categoría " + p.category_id));
+      }
+    });
+    const sorted = Array.from(seen.entries()).sort((a, b) =>
+      (a[1] || "").localeCompare(b[1] || "", "es")
+    );
+    // Reconstruir opciones manteniendo la selección actual si sigue siendo válida
+    els.filterCategory.innerHTML = '<option value="all">Todas</option>';
+    sorted.forEach(([id, name]) => {
+      const opt = document.createElement("option");
+      opt.value = String(id);
+      opt.textContent = name;
+      els.filterCategory.appendChild(opt);
+    });
+    // Restaurar selección si sigue existiendo
+    if (current !== "all" && els.filterCategory.querySelector('[value="' + current + '"]')) {
+      els.filterCategory.value = current;
+    }
+  }
+
   function applyFilters() {
     const q = els.prodSearch.value.trim().toLowerCase();
     const stockMode = els.filterStock.value; // "all" | "in" | "out"
     const onlyInactive = els.filterInactive.checked;
+    const categoryFilter = els.filterCategory.value; // "all" | "<id>"
 
     let list = state.products;
     if (q) {
@@ -805,6 +838,7 @@
         (p.category_name || "").toLowerCase().includes(q)
       );
     }
+    if (categoryFilter !== "all") list = list.filter((p) => String(p.category_id) === categoryFilter);
     if (stockMode === "in") list = list.filter((p) => (p.stock || 0) > 0);
     else if (stockMode === "out") list = list.filter((p) => (p.stock || 0) <= 0);
     if (onlyInactive) list = list.filter((p) => !p.active);
@@ -928,6 +962,7 @@
   });
 
   els.prodSearch.addEventListener("input", debounce(applyFilters, 200));
+  els.filterCategory.addEventListener("change", applyFilters);
   els.filterStock.addEventListener("change", applyFilters);
   els.filterInactive.addEventListener("change", applyFilters);
   els.pagePrev.addEventListener("click", () => { if (state.page > 0) { state.page--; renderProducts(); window.scrollTo({ top: 0 }); } });
@@ -962,6 +997,7 @@
       // Recargar productos para reflejar los cambios en la tabla
       try {
         state.products = await api("/api/admin/products");
+        populateCategoryFilter(state.products);
         applyFilters();
       } catch (_) {}
     } catch (err) {
