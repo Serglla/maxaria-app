@@ -501,7 +501,7 @@
           '<h4 class="pc-section-title pc-reingreso-title">Reingresos <span class="muted">(' + reingresos.length + ')</span></h4>' +
           '<table class="pc-table">' +
             '<thead><tr><th>Código</th><th>Producto</th><th class="num">Precio</th></tr></thead>' +
-            '<tbody>' + reingresos.map(pcReingresoRowHtml).join("") + '</tbody>' +
+            '<tbody>' + pcRowsWithCategoryHeaders(reingresos, pcReingresoRowHtml) + '</tbody>' +
           '</table>';
       }
 
@@ -517,7 +517,7 @@
               '<th class="num">Anterior</th><th class="num">Nuevo</th>' +
               '<th class="num">Var.</th>' +
             '</tr></thead>' +
-            '<tbody>' + cambios.map(pcRowHtml).join("") + '</tbody>' +
+            '<tbody>' + pcRowsWithCategoryHeaders(cambios, pcRowHtml, 5) + '</tbody>' +
           '</table>';
       }
 
@@ -527,13 +527,29 @@
           '<h4 class="pc-section-title">Productos nuevos <span class="muted">(' + nuevos.length + ')</span></h4>' +
           '<table class="pc-table">' +
             '<thead><tr><th>Código</th><th>Producto</th><th class="num">Precio</th></tr></thead>' +
-            '<tbody>' + nuevos.map(pcNewRowHtml).join("") + '</tbody>' +
+            '<tbody>' + pcRowsWithCategoryHeaders(nuevos, pcNewRowHtml) + '</tbody>' +
           '</table>';
       }
 
       html += '</div></div>'; // pc-update-body / pc-update-block
     });
 
+    return html;
+  }
+
+  // Inserta filas de encabezado de categoría cada vez que cambia la categoría
+  function pcRowsWithCategoryHeaders(items, rowFn, colSpan) {
+    colSpan = colSpan || 3;
+    var html = "";
+    var lastCat = null;
+    items.forEach(function(item) {
+      var cat = item.category_name || "Sin categoría";
+      if (cat !== lastCat) {
+        html += '<tr class="pc-cat-header"><td colspan="' + colSpan + '">' + escapeHtml(cat) + '</td></tr>';
+        lastCat = cat;
+      }
+      html += rowFn(item);
+    });
     return html;
   }
 

@@ -1144,6 +1144,16 @@ button { font: inherit; cursor: pointer; }
 .pc-table .pc-pct { font-weight: 700; }
 .pc-table tr.pc-up    .pc-pct { color: #dc2626; }   /* aumento -> rojo */
 .pc-table tr.pc-down  .pc-pct { color: #10b981; }   /* baja    -> verde */
+.pc-table tr.pc-cat-header td {
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 5px 10px;
+  border-top: 1px solid #e5e7eb;
+}
 .pc-table tr.pc-up    { background: #fef2f2; }
 .pc-table tr.pc-down  { background: #ecfdf5; }
 .pc-table tr.pc-up:hover    { background: #fee2e2; }

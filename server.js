@@ -391,9 +391,11 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     "       COALESCE(pc.is_reingreso, 0) AS is_reingreso," +
     "       pc." + cols.old + " AS old_price," +
     "       pc." + cols.new + " AS new_price," +
-    "       p.image_url, p.stock, p.active" +
+    "       p.image_url, p.stock, p.active," +
+    "       COALESCE(c.name, '') AS category_name" +
     "  FROM price_changes pc" +
     "  LEFT JOIN products p ON p.id = pc.product_id" +
+    "  LEFT JOIN categories c ON c.id = p.category_id" +
     "  WHERE pc.update_id = ?" +
     "  ORDER BY pc.is_new DESC, pc.name"
   );
@@ -416,6 +418,7 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
       if (r.is_reingreso) {
         reingresos.push({
           product_id: r.product_id, code: r.code, name: r.name,
+          category_name: r.category_name || "",
           image_url: r.image_url || null, new_price: newP,
         });
         continue;
@@ -424,6 +427,7 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
       if (r.is_new) {
         nuevos.push({
           product_id: r.product_id, code: r.code, name: r.name,
+          category_name: r.category_name || "",
           image_url: r.image_url || null, new_price: newP,
         });
         continue;
@@ -436,6 +440,7 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
       const pct = oldP > 0 ? (delta / oldP) * 100 : null;
       cambios.push({
         product_id: r.product_id, code: r.code, name: r.name,
+        category_name: r.category_name || "",
         image_url: r.image_url || null,
         old_price: oldP, new_price: newP,
         delta: delta,
@@ -443,14 +448,15 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
       });
     }
 
-    // Ordenamos cambios por mayor suba %, reingresos y nuevos alfabetico
-    cambios.sort((a, b) => {
-      const pa = a.delta_pct == null ? -Infinity : a.delta_pct;
-      const pb = b.delta_pct == null ? -Infinity : b.delta_pct;
-      return pb - pa;
-    });
-    nuevos.sort((a, b) => (a.name || "").localeCompare(b.name || "", "es"));
-    reingresos.sort((a, b) => (a.name || "").localeCompare(b.name || "", "es"));
+    // Ordenar todo por categoría y luego alfabéticamente por nombre
+    const byCatThenName = (a, b) => {
+      const catCmp = (a.category_name || "").localeCompare(b.category_name || "", "es");
+      if (catCmp !== 0) return catCmp;
+      return (a.name || "").localeCompare(b.name || "", "es");
+    };
+    cambios.sort(byCatThenName);
+    nuevos.sort(byCatThenName);
+    reingresos.sort(byCatThenName);
 
     // Solo incluimos el update si tiene algo para mostrar
     if (cambios.length || nuevos.length || reingresos.length) {
