@@ -20,6 +20,10 @@
         <button class="tab-btn" data-tab="usuarios" type="button">Usuarios</button>
         <button class="tab-btn admin-only" data-tab="vendedores" type="button">Vendedores</button>
         <button class="tab-btn admin-only" data-tab="entregas" type="button">Entregas</button>
+        <button class="tab-btn admin-only" data-tab="proveedores" type="button">Proveedores</button>
+        <button class="tab-btn admin-only" data-tab="compras" type="button">Compras</button>
+        <button class="tab-btn admin-only" data-tab="pagos" type="button">Pagos</button>
+        <button class="tab-btn admin-only" data-tab="cuentas" type="button">Cuentas</button>
         <button class="tab-btn admin-only" data-tab="config" type="button">Configuración</button>
       </nav>
       <div class="topbar-actions">
@@ -292,6 +296,119 @@
       </div>
     </section>
 
+    <!-- ===== TAB PROVEEDORES ===== -->
+    <section class="tab-panel" id="tab-proveedores" hidden>
+      <div class="admin-toolbar">
+        <input type="search" id="sup-search" class="admin-search" placeholder="Buscar proveedor..." autocomplete="off" />
+        <span class="admin-spacer"></span>
+        <span id="sup-count" class="muted">…</span>
+        <button class="btn btn-primary" id="sup-create-btn" type="button">+ Nuevo proveedor</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="sup-table">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Contacto</th>
+              <th>Teléfono</th>
+              <th>Email</th>
+              <th>Notas</th>
+              <th>Activo</th>
+            </tr>
+          </thead>
+          <tbody id="sup-tbody"><tr><td colspan="6" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== TAB COMPRAS ===== -->
+    <section class="tab-panel" id="tab-compras" hidden>
+      <div class="admin-toolbar">
+        <select id="pur-sup-filter" class="admin-select" title="Filtrar por proveedor">
+          <option value="all">Todos los proveedores</option>
+        </select>
+        <select id="pur-month-filter" class="admin-select" title="Filtrar por mes">
+          <option value="all">Todos los meses</option>
+        </select>
+        <span class="admin-spacer"></span>
+        <span id="pur-count" class="muted">…</span>
+        <button class="btn btn-primary" id="pur-create-btn" type="button">+ Nueva compra</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="pur-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Proveedor</th>
+              <th>Referencia</th>
+              <th>Fecha recibido</th>
+              <th class="num">Items</th>
+              <th class="num">Costo total</th>
+            </tr>
+          </thead>
+          <tbody id="pur-tbody"><tr><td colspan="6" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== TAB PAGOS ===== -->
+    <section class="tab-panel" id="tab-pagos" hidden>
+      <div class="admin-toolbar">
+        <input type="search" id="pay-search" class="admin-search" placeholder="Buscar cliente..." autocomplete="off" />
+        <select id="pay-method-filter" class="admin-select" title="Filtrar por método">
+          <option value="all">Todos los métodos</option>
+          <option value="efectivo">Efectivo</option>
+          <option value="transferencia">Transferencia</option>
+          <option value="cheque">Cheque</option>
+          <option value="otro">Otro</option>
+        </select>
+        <span class="admin-spacer"></span>
+        <span id="pay-count" class="muted">…</span>
+        <button class="btn btn-primary" id="pay-create-btn" type="button">+ Registrar pago</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="pay-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Cliente</th>
+              <th class="num">Monto</th>
+              <th>Método</th>
+              <th>Referencia</th>
+              <th>Registrado por</th>
+              <th>Fecha</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="pay-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== TAB CUENTAS ===== -->
+    <section class="tab-panel" id="tab-cuentas" hidden>
+      <div class="admin-toolbar">
+        <input type="search" id="acc-search" class="admin-search" placeholder="Buscar cliente..." autocomplete="off" />
+        <span class="admin-spacer"></span>
+        <span id="acc-count" class="muted">…</span>
+        <button class="btn" id="acc-reload-btn" type="button">Actualizar</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="acc-table">
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Nivel</th>
+              <th class="num">Total débitos</th>
+              <th class="num">Total créditos</th>
+              <th class="num">Saldo</th>
+            </tr>
+          </thead>
+          <tbody id="acc-tbody"><tr><td colspan="5" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
   </main>
 
   <!-- Modal imagen de producto -->
@@ -499,6 +616,137 @@
         <div class="admin-modal-foot">
           <button type="button" class="btn" data-close>Cancelar</button>
           <button type="submit" class="btn btn-primary">Resetear</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal crear proveedor -->
+  <div class="admin-modal" id="supplier-create-modal" hidden>
+    <div class="admin-modal-box">
+      <h3>Nuevo proveedor</h3>
+      <form id="supplier-create-form" class="user-form">
+        <label>Nombre <span class="muted">(requerido)</span>
+          <input type="text" name="name" required autocomplete="off" maxlength="200" />
+        </label>
+        <label>Contacto
+          <input type="text" name="contact" autocomplete="off" maxlength="200" />
+        </label>
+        <label>Teléfono
+          <input type="tel" name="phone" maxlength="60" />
+        </label>
+        <label>Email
+          <input type="email" name="email" maxlength="120" />
+        </label>
+        <label>Notas
+          <input type="text" name="notes" maxlength="500" />
+        </label>
+        <p id="supplier-create-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary">Crear proveedor</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal crear compra -->
+  <div class="admin-modal" id="purchase-create-modal" hidden>
+    <div class="admin-modal-box purchase-modal-box">
+      <h3 id="purchase-modal-title">Nueva compra</h3>
+      <form id="purchase-create-form" class="user-form">
+        <div class="purchase-form-top">
+          <label>Proveedor
+            <div class="pur-supplier-row">
+              <select name="supplier_id" id="pur-form-supplier">
+                <option value="">Sin proveedor</option>
+              </select>
+              <button type="button" class="btn btn-small" id="pur-add-sup-btn" title="Crear nuevo proveedor">＋</button>
+            </div>
+          </label>
+          <label>Referencia / N° factura
+            <input type="text" name="reference" autocomplete="off" maxlength="200" />
+          </label>
+          <label>Fecha recibido
+            <input type="datetime-local" name="received_at" />
+          </label>
+          <label>Notas
+            <input type="text" name="notes" maxlength="500" />
+          </label>
+        </div>
+
+        <div class="purchase-items-section">
+          <div class="purchase-items-header">
+            <strong>Productos comprados</strong>
+            <div class="purchase-prod-search-wrap">
+              <input type="search" id="pur-prod-search" class="admin-search" placeholder="Buscar producto para agregar..." autocomplete="off" />
+              <div id="pur-prod-results" class="pur-prod-results" hidden></div>
+            </div>
+          </div>
+          <table class="admin-table" id="pur-items-table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Producto</th>
+                <th class="num">Cant.</th>
+                <th class="num">Costo unit.</th>
+                <th class="num">Subtotal</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="pur-items-tbody">
+              <tr id="pur-items-empty"><td colspan="6" class="muted">Agregá productos usando el buscador de arriba.</td></tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="4" class="num"><strong>Total</strong></td>
+                <td class="num" id="pur-items-total"><strong>$0</strong></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <p id="purchase-create-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="pur-submit-btn">Guardar compra</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal registrar pago -->
+  <div class="admin-modal" id="payment-create-modal" hidden>
+    <div class="admin-modal-box">
+      <h3>Registrar pago de cliente</h3>
+      <form id="payment-create-form" class="user-form">
+        <label>Cliente <span class="muted">(requerido)</span>
+          <select name="user_id" id="pay-form-client" required>
+            <option value="">Seleccionar cliente…</option>
+          </select>
+        </label>
+        <label>Monto ($) <span class="muted">(requerido)</span>
+          <input type="number" name="amount" required min="1" step="1" placeholder="0" />
+        </label>
+        <label>Método
+          <select name="method">
+            <option value="efectivo">Efectivo</option>
+            <option value="transferencia">Transferencia</option>
+            <option value="cheque">Cheque</option>
+            <option value="otro">Otro</option>
+          </select>
+        </label>
+        <label>Referencia / N° operación
+          <input type="text" name="reference" autocomplete="off" maxlength="200" />
+        </label>
+        <label>Notas
+          <input type="text" name="notes" maxlength="500" />
+        </label>
+        <p id="payment-create-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary">Registrar pago</button>
         </div>
       </form>
     </div>

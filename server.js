@@ -124,6 +124,66 @@ db.exec(
   "CREATE INDEX IF NOT EXISTS idx_deliveries_vendedor ON deliveries(vendedor_id);"
 );
 
+// Migracion: Proveedores, Compras, Pagos y Cuentas corrientes.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS suppliers (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  name TEXT NOT NULL," +
+  "  contact TEXT," +
+  "  phone TEXT," +
+  "  email TEXT," +
+  "  notes TEXT," +
+  "  active INTEGER NOT NULL DEFAULT 1," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE TABLE IF NOT EXISTS purchase_orders (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  supplier_id INTEGER REFERENCES suppliers(id)," +
+  "  reference TEXT," +
+  "  notes TEXT," +
+  "  total_cost REAL NOT NULL DEFAULT 0," +
+  "  received_at TEXT NOT NULL DEFAULT (datetime('now'))," +
+  "  created_by INTEGER REFERENCES users(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_po_supplier ON purchase_orders(supplier_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_po_date ON purchase_orders(received_at);" +
+  "CREATE TABLE IF NOT EXISTS purchase_items (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  purchase_order_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE," +
+  "  product_id INTEGER REFERENCES products(id)," +
+  "  product_code TEXT NOT NULL DEFAULT ''," +
+  "  product_name TEXT NOT NULL DEFAULT ''," +
+  "  quantity INTEGER NOT NULL DEFAULT 0," +
+  "  unit_cost REAL NOT NULL DEFAULT 0," +
+  "  subtotal REAL NOT NULL DEFAULT 0" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_pi_po ON purchase_items(purchase_order_id);" +
+  "CREATE TABLE IF NOT EXISTS payments (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  user_id INTEGER NOT NULL REFERENCES users(id)," +
+  "  amount REAL NOT NULL," +
+  "  method TEXT NOT NULL DEFAULT 'efectivo'," +
+  "  reference TEXT," +
+  "  notes TEXT," +
+  "  registered_by INTEGER REFERENCES users(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);" +
+  "CREATE TABLE IF NOT EXISTS account_movements (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  user_id INTEGER NOT NULL REFERENCES users(id)," +
+  "  type TEXT NOT NULL CHECK(type IN ('debit','credit'))," +
+  "  amount REAL NOT NULL," +
+  "  description TEXT," +
+  "  order_id INTEGER REFERENCES orders(id)," +
+  "  payment_id INTEGER REFERENCES payments(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_am_user ON account_movements(user_id);"
+);
+try { db.exec("ALTER TABLE orders ADD COLUMN stock_discounted INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+
 function getSetting(key, fallback) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   if (row && row.value != null) return row.value;
@@ -386,14 +446,59 @@ app.get("/api/app-info", (req, res) => {
 
 app.get("/api/me", requireLogin, (req, res) => {
   const wa = getSetting("whatsapp_number", WHATSAPP_NUMBER || null);
-  res.json({
+  const resp = {
     id: req.session.userId, username: req.session.username,
     fullName: req.session.fullName, level: req.session.level,
     levelName: levelName(req.session.level),
     whatsapp: wa ? String(wa).replace(/[^0-9]/g, "") : null,
     canSeePriceChanges: userCanSeePriceChanges(req.session.level),
     app_name: getAppName(),
-  });
+  };
+  if (req.session.level === 5) {
+    resp.vendedorClient = req.session.vendedorClientId
+      ? { id: req.session.vendedorClientId, name: req.session.vendedorClientName,
+          level: req.session.vendedorClientLevel, levelName: levelName(req.session.vendedorClientLevel) }
+      : null;
+  }
+  res.json(resp);
+});
+
+// Lista de clientes (level 1-4) para que un vendedor (level 5) pueda elegir
+// a quién está atendiendo. Solo accesible por vendedores.
+app.get("/api/clients", requireLogin, (req, res) => {
+  if (req.session.level !== 5) return res.status(403).json({ error: "Solo vendedores" });
+  const rows = db.prepare(
+    "SELECT id, username, full_name, level FROM users" +
+    "  WHERE level IN (1,2,3,4) AND active = 1" +
+    "  ORDER BY full_name, username"
+  ).all();
+  res.json(rows.map((r) => ({
+    id: r.id, username: r.username, full_name: r.full_name,
+    level: r.level, levelName: levelName(r.level),
+  })));
+});
+
+// Vendedor selecciona (o deselecciona) el cliente que está atendiendo.
+// Guarda el cliente en la sesión; los endpoints de productos y categorías
+// lo usan para devolver precios y restricciones del cliente.
+app.post("/api/vendedor/select-client", requireLogin, (req, res) => {
+  if (req.session.level !== 5) return res.status(403).json({ error: "Solo vendedores" });
+  const clientId = req.body && req.body.client_id ? Number(req.body.client_id) : null;
+  if (clientId) {
+    const client = db.prepare(
+      "SELECT id, username, full_name, level FROM users WHERE id = ? AND active = 1 AND level IN (1,2,3,4)"
+    ).get(clientId);
+    if (!client) return res.status(404).json({ error: "Cliente no encontrado" });
+    req.session.vendedorClientId = client.id;
+    req.session.vendedorClientName = client.full_name || client.username;
+    req.session.vendedorClientLevel = client.level;
+    return res.json({ ok: true, client: { id: client.id, name: client.full_name || client.username,
+                                          level: client.level, levelName: levelName(client.level) } });
+  }
+  delete req.session.vendedorClientId;
+  delete req.session.vendedorClientName;
+  delete req.session.vendedorClientLevel;
+  return res.json({ ok: true, client: null });
 });
 
 // Historial de cambios: ultimas 10 actualizaciones (Excel subidos).
@@ -520,7 +625,15 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
 });
 
 app.get("/api/categories", requireLogin, (req, res) => {
-  const allowedIds = getUserAllowedCategoryIds(req.session.userId, req.session.level);
+  // Vendedor con cliente seleccionado: usar restricciones del cliente.
+  // Vendedor sin cliente (o cualquier otro rol): comportamiento estándar.
+  let userId = req.session.userId;
+  let userLevel = req.session.level;
+  if (userLevel === 5 && req.session.vendedorClientId) {
+    userId = req.session.vendedorClientId;
+    userLevel = req.session.vendedorClientLevel;
+  }
+  const allowedIds = getUserAllowedCategoryIds(userId, userLevel);
   let rows = db.prepare("SELECT id, name, icon_url FROM categories ORDER BY sort_order, name").all();
   if (allowedIds !== null) {
     rows = rows.filter((c) => allowedIds.has(c.id));
@@ -529,25 +642,34 @@ app.get("/api/categories", requireLogin, (req, res) => {
 });
 
 app.get("/api/products", requireLogin, (req, res) => {
-  // Admin (level 99) puede ver el catalogo "como si fuera" otro nivel.
-  // Vendedor (level 5) ve la lista de precios configurada en su perfil.
+  // Vendedor sin cliente seleccionado: muestra el catálogo sin precios (noPrice=true).
+  // Vendedor con cliente: usa nivel y restricciones de categoría del cliente.
+  // Admin: puede ver "como otro nivel" via ?as_level.
+  // Resto de usuarios: comportamiento estándar.
   let effectiveLevel = req.session.level;
+  let effectiveUserId = req.session.userId;
+  let noPrice = false;
+
   if (req.session.level === 5) {
-    // Siempre leer de la DB para reflejar cambios hechos por el admin
-    const u = db.prepare("SELECT vendedor_price_level FROM users WHERE id = ?").get(req.session.userId);
-    const vpl = u && Number(u.vendedor_price_level);
-    effectiveLevel = [1, 2, 3, 4].includes(vpl) ? vpl : 1;
+    if (req.session.vendedorClientId) {
+      effectiveLevel = req.session.vendedorClientLevel;
+      effectiveUserId = req.session.vendedorClientId;
+    } else {
+      noPrice = true; // level 5 sin cliente: sin precios, sin restricciones de categoría
+    }
   } else if (req.session.level === 99 && req.query.as_level != null) {
     const asLvl = Number(req.query.as_level);
     if ([1, 2, 3, 4].includes(asLvl)) effectiveLevel = asLvl;
   }
-  const col = priceColumnFor(effectiveLevel);
 
-  // Filtro de categorias por permisos del usuario
-  const allowedIds = getUserAllowedCategoryIds(req.session.userId, req.session.level);
+  const col = priceColumnFor(effectiveLevel);
+  const priceExpr = noPrice ? "NULL" : "p." + col;
+  // getUserAllowedCategoryIds devuelve null (sin restricción) para level 5 sin cliente
+  const allowedIds = getUserAllowedCategoryIds(effectiveUserId, effectiveLevel);
+
   let sql =
     "SELECT p.id, p.code, p.category_id, c.name AS category_name," +
-    "       p.name, p.image_url, p." + col + " AS price, p.stock" +
+    "       p.name, p.image_url, " + priceExpr + " AS price, p.stock" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  WHERE p.active = 1 AND p.stock > 0";
   const params = [];
@@ -556,7 +678,6 @@ app.get("/api/products", requireLogin, (req, res) => {
     sql += " AND p.category_id IN (" + placeholders + ")";
     params.push(...Array.from(allowedIds));
   } else if (allowedIds !== null && allowedIds.size === 0) {
-    // Usuario con restriccion a 0 categorias -> no ve nada
     return res.json([]);
   }
   sql += "  ORDER BY c.sort_order, c.name, p.name";
@@ -565,11 +686,22 @@ app.get("/api/products", requireLogin, (req, res) => {
 
 // ----- Pedidos -----
 app.post("/api/orders", requireLogin, (req, res) => {
+  const isVendedor = req.session.level === 5;
+  // Vendedor debe tener un cliente seleccionado para poder hacer pedidos
+  if (isVendedor && !req.session.vendedorClientId) {
+    return res.status(400).json({ error: "Seleccioná un cliente antes de hacer un pedido" });
+  }
+
   const { items, notes } = req.body || {};
   if (!Array.isArray(items) || items.length === 0)
     return res.status(400).json({ error: "Carrito vacio" });
 
-  const col = priceColumnFor(req.session.level);
+  // Si es vendedor: el pedido se registra bajo el cliente, con el vendedor asignado
+  const priceLevel = isVendedor ? req.session.vendedorClientLevel : req.session.level;
+  const orderUserId = isVendedor ? req.session.vendedorClientId : req.session.userId;
+  const assignedVendedorId = isVendedor ? req.session.userId : null;
+
+  const col = priceColumnFor(priceLevel);
   const getProd = db.prepare(
     "SELECT id, code, name, " + col + " AS price, stock FROM products WHERE id = ? AND active = 1"
   );
@@ -593,8 +725,8 @@ app.post("/api/orders", requireLogin, (req, res) => {
     return res.status(400).json({ error: "Ninguno de los productos del carrito esta disponible" });
 
   const insertOrder = db.prepare(
-    "INSERT INTO orders (user_id, status, total, notes, whatsapp_sent_at, created_at)" +
-    " VALUES (?, 'enviado', ?, ?, datetime('now'), datetime('now'))"
+    "INSERT INTO orders (user_id, status, total, notes, whatsapp_sent_at, assigned_vendedor_id, created_at)" +
+    " VALUES (?, 'enviado', ?, ?, datetime('now'), ?, datetime('now'))"
   );
   const insertItem = db.prepare(
     "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal)" +
@@ -603,7 +735,7 @@ app.post("/api/orders", requireLogin, (req, res) => {
 
   let orderId;
   db.transaction(() => {
-    const r = insertOrder.run(req.session.userId, total, (notes || "").slice(0, 500) || null);
+    const r = insertOrder.run(orderUserId, total, (notes || "").slice(0, 500) || null, assignedVendedorId);
     orderId = r.lastInsertRowid;
     for (const l of lines) {
       insertItem.run(orderId, l.product_id, l.product_code, l.product_name,
@@ -711,6 +843,7 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
   const valid = ["pendiente", "enviado", "preparando", "entregado", "cancelado"];
   if (!valid.includes(status))
     return res.status(400).json({ error: "Estado invalido. Valores: " + valid.join(", ") });
+
   // Vendedores solo pueden marcar como "entregado" en su pedido asignado
   if (isVendedor) {
     if (status !== "entregado")
@@ -718,8 +851,54 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
     const order = db.prepare("SELECT id FROM orders WHERE id = ? AND assigned_vendedor_id = ?").get(id, req.session.userId);
     if (!order) return res.status(404).json({ error: "Pedido no encontrado o no asignado a vos" });
   }
-  const r = db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
-  if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
+
+  // Leer el pedido antes de actualizar para conocer estado anterior
+  const order = db.prepare(
+    "SELECT id, status, stock_discounted, total, user_id FROM orders WHERE id = ?"
+  ).get(id);
+  if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+
+  const prevStatus = order.status;
+
+  db.transaction(() => {
+    db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
+
+    // Al marcar "entregado": descontar stock y generar debito en cuenta corriente
+    if (status === "entregado" && prevStatus !== "entregado" && !order.stock_discounted) {
+      const items = db.prepare(
+        "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
+      ).all(id);
+      const updStock = db.prepare(
+        "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?"
+      );
+      for (const it of items) {
+        if (it.product_id) updStock.run(it.quantity, it.product_id);
+      }
+      db.prepare(
+        "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+        " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
+      ).run(order.user_id, order.total, "Pedido #" + id, id);
+      db.prepare("UPDATE orders SET stock_discounted = 1 WHERE id = ?").run(id);
+    }
+
+    // Al cancelar: devolver stock y eliminar el movimiento de debito del pedido
+    if (status === "cancelado" && prevStatus !== "cancelado" && order.stock_discounted) {
+      const items = db.prepare(
+        "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
+      ).all(id);
+      const retStock = db.prepare(
+        "UPDATE products SET stock = stock + ? WHERE id = ?"
+      );
+      for (const it of items) {
+        if (it.product_id) retStock.run(it.quantity, it.product_id);
+      }
+      db.prepare(
+        "DELETE FROM account_movements WHERE order_id = ? AND type = 'debit'"
+      ).run(id);
+      db.prepare("UPDATE orders SET stock_discounted = 0 WHERE id = ?").run(id);
+    }
+  })();
+
   res.json({ ok: true, id: id, status: status });
 });
 
@@ -1243,8 +1422,6 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, (req, res) => {
 
   const efectivo = Math.max(0, Number(efectivo_amount) || 0);
   const transferencia = Math.max(0, Number(transferencia_amount) || 0);
-  if (efectivo === 0 && transferencia === 0)
-    return res.status(400).json({ error: "Debe ingresar al menos un monto de pago (efectivo o transferencia)" });
 
   const vendedorId = isAdmin
     ? (db.prepare("SELECT assigned_vendedor_id FROM orders WHERE id = ?").get(id).assigned_vendedor_id || req.session.userId)
@@ -1289,6 +1466,334 @@ app.get("/api/admin/deliveries", requireAdmin, (req, res) => {
     "  ORDER BY d.delivered_at DESC LIMIT 500"
   ).all();
   res.json(rows);
+});
+
+// ===== Proveedores =====
+
+app.get("/api/admin/suppliers", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, name, contact, phone, email, notes, active, created_at" +
+    "  FROM suppliers ORDER BY name"
+  ).all();
+  res.json(rows);
+});
+
+app.post("/api/admin/suppliers", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || "").trim().slice(0, 200);
+  if (!name) return res.status(400).json({ error: "El nombre es requerido" });
+  const contact = String(b.contact || "").trim().slice(0, 200) || null;
+  const phone   = String(b.phone   || "").trim().slice(0, 60)  || null;
+  const email   = String(b.email   || "").trim().slice(0, 120) || null;
+  const notes   = String(b.notes   || "").trim().slice(0, 500) || null;
+  const r = db.prepare(
+    "INSERT INTO suppliers (name, contact, phone, email, notes) VALUES (?, ?, ?, ?, ?)"
+  ).run(name, contact, phone, email, notes);
+  const row = db.prepare("SELECT * FROM suppliers WHERE id = ?").get(r.lastInsertRowid);
+  res.json({ ok: true, supplier: row });
+});
+
+app.patch("/api/admin/suppliers/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const b = req.body || {};
+  const allowed = ["name", "contact", "phone", "email", "notes", "active"];
+  const sets = [];
+  const vals = [];
+  for (const k of allowed) {
+    if (k in b) {
+      if (k === "name") {
+        const v = String(b.name || "").trim().slice(0, 200);
+        if (!v) return res.status(400).json({ error: "El nombre es requerido" });
+        sets.push("name = ?"); vals.push(v);
+      } else if (k === "active") {
+        sets.push("active = ?"); vals.push(b.active ? 1 : 0);
+      } else {
+        sets.push(k + " = ?"); vals.push(String(b[k] || "").trim().slice(0, 500) || null);
+      }
+    }
+  }
+  if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
+  vals.push(id);
+  const r = db.prepare("UPDATE suppliers SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+  if (!r.changes) return res.status(404).json({ error: "Proveedor no encontrado" });
+  const row = db.prepare("SELECT * FROM suppliers WHERE id = ?").get(id);
+  res.json({ ok: true, supplier: row });
+});
+
+// ===== Compras =====
+
+app.get("/api/admin/purchases", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT po.id, po.supplier_id, s.name AS supplier_name," +
+    "       po.reference, po.notes, po.total_cost, po.received_at, po.created_at," +
+    "       COUNT(pi.id) AS items_count" +
+    "  FROM purchase_orders po" +
+    "  LEFT JOIN suppliers s ON s.id = po.supplier_id" +
+    "  LEFT JOIN purchase_items pi ON pi.purchase_order_id = po.id" +
+    "  GROUP BY po.id" +
+    "  ORDER BY po.received_at DESC LIMIT 200"
+  ).all();
+  res.json(rows);
+});
+
+app.post("/api/admin/purchases", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const supplier_id  = b.supplier_id ? Number(b.supplier_id) : null;
+  const reference    = String(b.reference || "").trim().slice(0, 200) || null;
+  const notes        = String(b.notes || "").trim().slice(0, 500) || null;
+  const received_at  = String(b.received_at || "").trim() || null;
+  const rawItems     = Array.isArray(b.items) ? b.items : [];
+
+  if (!rawItems.length) return res.status(400).json({ error: "La compra debe tener al menos 1 item" });
+
+  if (supplier_id) {
+    const sup = db.prepare("SELECT id FROM suppliers WHERE id = ?").get(supplier_id);
+    if (!sup) return res.status(400).json({ error: "Proveedor no encontrado" });
+  }
+
+  const lines = [];
+  let totalCost = 0;
+  for (const it of rawItems) {
+    const product_id  = it.product_id ? Number(it.product_id) : null;
+    const quantity    = Math.max(1, Math.floor(Number(it.quantity) || 1));
+    const unit_cost   = Math.max(0, Number(it.unit_cost) || 0);
+    const subtotal    = unit_cost * quantity;
+    totalCost += subtotal;
+    let product_code = String(it.product_code || "").trim().slice(0, 50);
+    let product_name = String(it.product_name || "").trim().slice(0, 200);
+    if (product_id && (!product_code || !product_name)) {
+      const prod = db.prepare("SELECT code, name FROM products WHERE id = ?").get(product_id);
+      if (prod) {
+        if (!product_code) product_code = prod.code || "";
+        if (!product_name) product_name = prod.name || "";
+      }
+    }
+    if (!product_name) continue;
+    lines.push({ product_id, product_code, product_name, quantity, unit_cost, subtotal });
+  }
+  if (!lines.length) return res.status(400).json({ error: "Sin items validos" });
+
+  let purchaseId;
+  db.transaction(() => {
+    const r = db.prepare(
+      "INSERT INTO purchase_orders (supplier_id, reference, notes, total_cost, received_at, created_by, created_at)" +
+      " VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')), ?, datetime('now'))"
+    ).run(supplier_id, reference, notes, totalCost, received_at, req.session.userId);
+    purchaseId = r.lastInsertRowid;
+
+    const insItem = db.prepare(
+      "INSERT INTO purchase_items (purchase_order_id, product_id, product_code, product_name, quantity, unit_cost, subtotal)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+    const updStock = db.prepare(
+      "UPDATE products SET stock = stock + ? WHERE id = ?"
+    );
+    for (const l of lines) {
+      insItem.run(purchaseId, l.product_id, l.product_code, l.product_name,
+                  l.quantity, l.unit_cost, l.subtotal);
+      if (l.product_id) updStock.run(l.quantity, l.product_id);
+    }
+  })();
+
+  const purchase = db.prepare(
+    "SELECT po.*, s.name AS supplier_name FROM purchase_orders po" +
+    "  LEFT JOIN suppliers s ON s.id = po.supplier_id WHERE po.id = ?"
+  ).get(purchaseId);
+  res.json({ ok: true, purchase: purchase });
+});
+
+app.get("/api/admin/purchases/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const purchase = db.prepare(
+    "SELECT po.*, s.name AS supplier_name FROM purchase_orders po" +
+    "  LEFT JOIN suppliers s ON s.id = po.supplier_id WHERE po.id = ?"
+  ).get(id);
+  if (!purchase) return res.status(404).json({ error: "Compra no encontrada" });
+  const items = db.prepare(
+    "SELECT id, product_id, product_code, product_name, quantity, unit_cost, subtotal" +
+    "  FROM purchase_items WHERE purchase_order_id = ? ORDER BY id"
+  ).all(id);
+  res.json(Object.assign({}, purchase, { items: items }));
+});
+
+app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+
+  const existing = db.prepare("SELECT id FROM purchase_orders WHERE id = ?").get(id);
+  if (!existing) return res.status(404).json({ error: "Compra no encontrada" });
+
+  const b = req.body || {};
+  const supplier_id = b.supplier_id ? Number(b.supplier_id) : null;
+  const reference   = String(b.reference || "").trim().slice(0, 200) || null;
+  const notes       = String(b.notes || "").trim().slice(0, 500) || null;
+  const received_at = String(b.received_at || "").trim() || null;
+  const rawItems    = Array.isArray(b.items) ? b.items : [];
+
+  if (!rawItems.length) return res.status(400).json({ error: "La compra debe tener al menos 1 item" });
+
+  const lines = [];
+  let totalCost = 0;
+  for (const it of rawItems) {
+    const product_id  = it.product_id ? Number(it.product_id) : null;
+    const quantity    = Math.max(1, Math.floor(Number(it.quantity) || 1));
+    const unit_cost   = Math.max(0, Number(it.unit_cost) || 0);
+    const subtotal    = unit_cost * quantity;
+    totalCost += subtotal;
+    let product_code = String(it.product_code || "").trim().slice(0, 50);
+    let product_name = String(it.product_name || "").trim().slice(0, 200);
+    if (product_id && (!product_code || !product_name)) {
+      const prod = db.prepare("SELECT code, name FROM products WHERE id = ?").get(product_id);
+      if (prod) {
+        if (!product_code) product_code = prod.code || "";
+        if (!product_name) product_name = prod.name || "";
+      }
+    }
+    if (!product_name) continue;
+    lines.push({ product_id, product_code, product_name, quantity, unit_cost, subtotal });
+  }
+  if (!lines.length) return res.status(400).json({ error: "Sin items validos" });
+
+  db.transaction(() => {
+    // Revertir stock de items anteriores
+    const oldItems = db.prepare("SELECT product_id, quantity FROM purchase_items WHERE purchase_order_id = ?").all(id);
+    const decStock = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+    for (const oi of oldItems) {
+      if (oi.product_id) decStock.run(oi.quantity, oi.product_id);
+    }
+
+    // Borrar items anteriores
+    db.prepare("DELETE FROM purchase_items WHERE purchase_order_id = ?").run(id);
+
+    // Actualizar cabecera
+    db.prepare(
+      "UPDATE purchase_orders SET supplier_id = ?, reference = ?, notes = ?, total_cost = ?," +
+      "  received_at = COALESCE(?, received_at) WHERE id = ?"
+    ).run(supplier_id, reference, notes, totalCost, received_at, id);
+
+    // Insertar nuevos items y sumar stock
+    const insItem = db.prepare(
+      "INSERT INTO purchase_items (purchase_order_id, product_id, product_code, product_name, quantity, unit_cost, subtotal)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+    const incStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
+    for (const l of lines) {
+      insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_cost, l.subtotal);
+      if (l.product_id) incStock.run(l.quantity, l.product_id);
+    }
+  })();
+
+  const purchase = db.prepare(
+    "SELECT po.*, s.name AS supplier_name FROM purchase_orders po" +
+    "  LEFT JOIN suppliers s ON s.id = po.supplier_id WHERE po.id = ?"
+  ).get(id);
+  const items = db.prepare(
+    "SELECT id, product_id, product_code, product_name, quantity, unit_cost, subtotal" +
+    "  FROM purchase_items WHERE purchase_order_id = ? ORDER BY id"
+  ).all(id);
+  res.json({ ok: true, purchase: Object.assign({}, purchase, { items: items }) });
+});
+
+// ===== Pagos =====
+
+app.get("/api/admin/payments", requireAdmin, (req, res) => {
+  const userId = req.query.user_id ? Number(req.query.user_id) : null;
+  let sql =
+    "SELECT p.id, p.user_id, p.amount, p.method, p.reference, p.notes, p.created_at," +
+    "       u.username AS client_username, u.full_name AS client_full_name," +
+    "       rb.username AS registered_by_username, rb.full_name AS registered_by_full_name" +
+    "  FROM payments p" +
+    "  JOIN users u ON u.id = p.user_id" +
+    "  LEFT JOIN users rb ON rb.id = p.registered_by";
+  const params = [];
+  if (userId) { sql += "  WHERE p.user_id = ?"; params.push(userId); }
+  sql += "  ORDER BY p.created_at DESC LIMIT 500";
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post("/api/admin/payments", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const user_id   = Number(b.user_id);
+  const amount    = Number(b.amount);
+  const method    = String(b.method || "efectivo").trim().slice(0, 50);
+  const reference = String(b.reference || "").trim().slice(0, 200) || null;
+  const notes     = String(b.notes || "").trim().slice(0, 500) || null;
+
+  if (!user_id || !amount || amount <= 0)
+    return res.status(400).json({ error: "Faltan datos: user_id y amount son requeridos" });
+
+  const client = db.prepare("SELECT id, full_name, username FROM users WHERE id = ? AND active = 1").get(user_id);
+  if (!client) return res.status(404).json({ error: "Cliente no encontrado" });
+
+  let paymentId;
+  db.transaction(() => {
+    const r = db.prepare(
+      "INSERT INTO payments (user_id, amount, method, reference, notes, registered_by, created_at)" +
+      " VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
+    ).run(user_id, amount, method, reference, notes, req.session.userId);
+    paymentId = r.lastInsertRowid;
+    const desc = "Pago " + method + (reference ? " · " + reference : "");
+    db.prepare(
+      "INSERT INTO account_movements (user_id, type, amount, description, payment_id, created_at)" +
+      " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
+    ).run(user_id, amount, desc, paymentId);
+  })();
+
+  const payment = db.prepare(
+    "SELECT p.*, u.username AS client_username, u.full_name AS client_full_name" +
+    "  FROM payments p JOIN users u ON u.id = p.user_id WHERE p.id = ?"
+  ).get(paymentId);
+  res.json({ ok: true, payment: payment });
+});
+
+app.delete("/api/admin/payments/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const payment = db.prepare("SELECT id FROM payments WHERE id = ?").get(id);
+  if (!payment) return res.status(404).json({ error: "Pago no encontrado" });
+  db.transaction(() => {
+    db.prepare("DELETE FROM account_movements WHERE payment_id = ?").run(id);
+    db.prepare("DELETE FROM payments WHERE id = ?").run(id);
+  })();
+  res.json({ ok: true });
+});
+
+// ===== Cuentas corrientes =====
+
+app.get("/api/admin/accounts", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT u.id, u.username, u.full_name, u.level," +
+    "       COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END),0) AS total_credit," +
+    "       COALESCE(SUM(CASE WHEN am.type='debit'  THEN am.amount ELSE 0 END),0) AS total_debit," +
+    "       COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE -am.amount END),0) AS balance" +
+    "  FROM users u" +
+    "  LEFT JOIN account_movements am ON am.user_id = u.id" +
+    "  WHERE u.level IN (1,2,3,4) AND u.active = 1" +
+    "  GROUP BY u.id" +
+    "  ORDER BY u.full_name, u.username"
+  ).all();
+  res.json(rows);
+});
+
+app.get("/api/admin/accounts/:userId", requireAdmin, (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!userId) return res.status(400).json({ error: "ID invalido" });
+  const user = db.prepare("SELECT id, username, full_name, level FROM users WHERE id = ?").get(userId);
+  if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+  const movements = db.prepare(
+    "SELECT am.id, am.type, am.amount, am.description, am.created_at," +
+    "       am.order_id, am.payment_id" +
+    "  FROM account_movements am" +
+    "  WHERE am.user_id = ?" +
+    "  ORDER BY am.created_at DESC LIMIT 200"
+  ).all(userId);
+  const balance = db.prepare(
+    "SELECT COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE -amount END),0) AS balance" +
+    "  FROM account_movements WHERE user_id = ?"
+  ).get(userId);
+  res.json({ user: user, movements: movements, balance: balance.balance });
 });
 
 app.get("/healthz", (req, res) => res.json({ ok: true, ts: Date.now() }));

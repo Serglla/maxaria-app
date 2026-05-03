@@ -38,6 +38,11 @@
     levelSwitcher: document.getElementById("level-switcher"),
     levelSelect: document.getElementById("level-select"),
     backdrop: document.getElementById("drawer-backdrop"),
+    vendedorBar: document.getElementById("vendedor-bar"),
+    clientDrawer: document.getElementById("client-drawer"),
+    clientClose: document.getElementById("client-close"),
+    clientBack: document.getElementById("client-back"),
+    clientBody: document.getElementById("client-body"),
   };
 
   const LEVEL_NAMES = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
@@ -50,6 +55,10 @@
     // con la lista de precios de OTRO nivel (1..4). null = ver con su
     // propio mapeo (admin usa minorista por defecto en server).
     viewAsLevel: null,
+    // Solo aplica si me.level === 5: cliente que está atendiendo el vendedor.
+    // null = aún no eligió cliente (catálogo sin precios).
+    vendedorClient: null,
+    clients: [], // lista de usuarios (level 1-4) cargada para vendedores
   };
 
   function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR"); }
@@ -86,24 +95,27 @@
 
   async function bootstrap() {
     try {
-      // Pedimos /api/me PRIMERO para saber si es admin y, en ese caso,
-      // recuperar el nivel "ver como ..." que tenia guardado.
       const me = await api("/api/me");
       state.me = me;
       if (me.level === 99) {
         state.viewAsLevel = loadViewAsLevel();
       }
+      if (me.level === 5) {
+        // Recuperar cliente seleccionado en sesión previa y cargar lista de clientes
+        state.vendedorClient = me.vendedorClient || null;
+        state.clients = await api("/api/clients");
+      }
       const [cats, prods] = await Promise.all([
         api("/api/categories"), api(productsUrl()),
       ]);
       state.categories = cats; state.products = prods;
-      // Nombre dinámico de la app
       if (me.app_name) {
         const brandEl = document.getElementById("topbar-brand-name");
         if (brandEl) brandEl.textContent = me.app_name;
         const titleEl = document.getElementById("page-title");
         if (titleEl) titleEl.textContent = me.app_name + " · Catálogo";
       }
+      renderVendedorBar();
       renderUser(); renderCategories(); renderProducts();
     } catch (e) { console.error(e); }
   }
@@ -121,7 +133,8 @@
       els.adminLink.hidden = u.level !== 99;
     }
     if (els.priceChangesBtn) {
-      els.priceChangesBtn.hidden = !u.canSeePriceChanges;
+      // Vendedores no ven cambios de precio (no tiene sentido sin un nivel fijo propio)
+      els.priceChangesBtn.hidden = !u.canSeePriceChanges || u.level === 5;
     }
     // Selector "Ver como ...": SOLO admin
     if (els.levelSwitcher) {
@@ -206,11 +219,147 @@
     // vez que se vuelve a renderizar la accion de un card.
   }
 
+  // ----- Flujo vendedor: selección de cliente -----
+
+  function renderVendedorBar() {
+    if (!els.vendedorBar) return;
+    if (!state.me || state.me.level !== 5) {
+      els.vendedorBar.hidden = true;
+      document.documentElement.style.setProperty("--vbar-h", "0px");
+      return;
+    }
+    els.vendedorBar.hidden = false;
+    if (state.vendedorClient) {
+      els.vendedorBar.className = "vendedor-bar vendedor-bar-has-client";
+      els.vendedorBar.innerHTML =
+        '<div class="vendedor-bar-inner">' +
+          '<span>Atendiendo a: <strong>' + escapeHtml(state.vendedorClient.name) + '</strong>' +
+            ' <span class="vb-level">(' + escapeHtml(state.vendedorClient.levelName) + ')</span>' +
+          '</span>' +
+          '<button class="vb-change-btn" id="vb-change-btn" type="button">Cambiar cliente</button>' +
+        '</div>';
+      document.getElementById("vb-change-btn").addEventListener("click", openClientPicker);
+    } else {
+      els.vendedorBar.className = "vendedor-bar vendedor-bar-no-client";
+      els.vendedorBar.innerHTML =
+        '<div class="vendedor-bar-inner">' +
+          '<span>Seleccioná un cliente para ver los precios del catálogo</span>' +
+          '<button class="vb-select-btn" id="vb-select-btn" type="button">Seleccionar cliente</button>' +
+        '</div>';
+      document.getElementById("vb-select-btn").addEventListener("click", openClientPicker);
+    }
+    // Actualizar variable CSS para que el sidebar sticky quede debajo de la barra
+    requestAnimationFrame(() => {
+      const h = els.vendedorBar.offsetHeight;
+      document.documentElement.style.setProperty("--vbar-h", h + "px");
+    });
+  }
+
+  function openClientPicker() {
+    renderClientPickerUI("");
+    openDrawer(els.clientDrawer);
+    // Foco en el campo de búsqueda al abrir
+    setTimeout(() => {
+      const inp = document.getElementById("client-search-input");
+      if (inp) inp.focus();
+    }, 80);
+  }
+
+  function renderClientPickerUI(filter) {
+    filter = (filter || "").toLowerCase().trim();
+    const list = filter
+      ? state.clients.filter((c) =>
+          (c.full_name || "").toLowerCase().includes(filter) ||
+          (c.username || "").toLowerCase().includes(filter))
+      : state.clients;
+
+    let html =
+      '<div class="client-search-wrap">' +
+        '<input class="client-search-input" type="search" id="client-search-input"' +
+        '  placeholder="Buscar por nombre o usuario..." autocomplete="off"' +
+        '  value="' + escapeHtml(filter) + '" />' +
+      '</div>';
+
+    if (!state.clients.length) {
+      html += '<p class="muted">No hay clientes registrados.</p>';
+    } else if (!list.length) {
+      html += '<p class="muted">No se encontraron clientes con ese nombre.</p>';
+    } else {
+      html += '<ul class="client-list">';
+      list.forEach((c) => {
+        const selected = state.vendedorClient && state.vendedorClient.id === c.id;
+        html +=
+          '<li class="client-item' + (selected ? ' client-item--selected' : '') + '" data-id="' + c.id + '">' +
+            '<div class="client-item-name">' + escapeHtml(c.full_name || c.username) + '</div>' +
+            '<div class="client-item-meta">' + escapeHtml(c.username) + ' &middot; ' + escapeHtml(c.levelName) + '</div>' +
+          '</li>';
+      });
+      html += '</ul>';
+    }
+
+    els.clientBody.innerHTML = html;
+
+    const inp = document.getElementById("client-search-input");
+    if (inp) {
+      inp.addEventListener("input", debounce(() => renderClientPickerUI(inp.value), 180));
+    }
+    els.clientBody.querySelectorAll(".client-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        const id = Number(item.dataset.id);
+        const client = state.clients.find((c) => c.id === id);
+        if (client) selectClient(client);
+      });
+    });
+  }
+
+  async function selectClient(client) {
+    if (state.cart.size > 0) {
+      const ok = confirm(
+        "Tenés " + state.cart.size + " producto(s) en el carrito.\n\n" +
+        "¿Cambiar al cliente " + (client.full_name || client.username) + " y vaciar el carrito?"
+      );
+      if (!ok) return;
+      const ids = Array.from(state.cart.keys());
+      state.cart.clear();
+      if (els.cartNotes) els.cartNotes.value = "";
+      renderCart();
+      ids.forEach(refreshCardForProduct);
+    }
+    try {
+      await api("/api/vendedor/select-client", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: client.id }),
+      });
+      state.vendedorClient = { id: client.id, name: client.full_name || client.username,
+                               level: client.level, levelName: client.levelName };
+      state.cat = "all";
+      state.query = "";
+      if (els.search) els.search.value = "";
+      const [cats, prods] = await Promise.all([api("/api/categories"), api("/api/products")]);
+      state.categories = cats;
+      state.products = prods;
+      closeDrawers();
+      renderVendedorBar();
+      renderCategories();
+      renderProducts();
+    } catch (e) {
+      alert("Error al seleccionar cliente: " + (e.message || "Error desconocido"));
+    }
+  }
+
   function cardHtml(p) {
     const img = p.image_url
       ? '<img src="' + escapeHtml(p.image_url) + '" alt="' + escapeHtml(p.name) + '" loading="lazy" />'
       : '<div class="muted" style="font-size:12px;padding:8px;text-align:center">Sin foto</div>';
     const inCart = state.cart.has(p.id);
+    const noClient = state.me && state.me.level === 5 && !state.vendedorClient;
+    const priceHtml = noClient
+      ? '<div class="card-price card-price-none">—</div>'
+      : '<div class="card-price">' + fmtPrice(p.price) + '</div>';
+    const actionsHtml = noClient
+      ? '<div class="card-actions-none"></div>'
+      : '<div class="card-actions" data-id="' + p.id + '">' + cardActionHtml(p.id) + '</div>';
     return '<article class="card' + (inCart ? ' in-cart' : '') + '" data-id="' + p.id + '">' +
       '<div class="card-img">' + img + '</div>' +
       '<div class="card-body">' +
@@ -218,8 +367,8 @@
         '<div class="card-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</div>' +
         (p.code ? '<div class="card-code">' + escapeHtml(p.code) + '</div>' : '') +
         '<div class="card-foot">' +
-          '<div class="card-price">' + fmtPrice(p.price) + '</div>' +
-          '<div class="card-actions" data-id="' + p.id + '">' + cardActionHtml(p.id) + '</div>' +
+          priceHtml +
+          actionsHtml +
         '</div>' +
       '</div>' +
     '</article>';
@@ -250,6 +399,7 @@
   }
 
   function changeQty(id, delta) {
+    if (state.me && state.me.level === 5 && !state.vendedorClient) return;
     const item = state.cart.get(id);
     if (item) {
       item.qty += delta;
@@ -325,8 +475,12 @@
   function buildWhatsappMessage() {
     const u = state.me;
     const notes = (els.cartNotes && els.cartNotes.value.trim()) || null;
+    // Si es vendedor con cliente, el pedido va a nombre del cliente
+    const isVendedorConCliente = u.level === 5 && state.vendedorClient;
+    const clientName = isVendedorConCliente ? state.vendedorClient.name : (u.fullName || u.username);
+    const clientLevelName = isVendedorConCliente ? state.vendedorClient.levelName : u.levelName;
     const lines = [];
-    lines.push("Hola " + (u.app_name || "!") + " Soy " + (u.fullName || u.username) + " (" + u.levelName + ").");
+    lines.push("Hola " + (u.app_name || "!") + " Soy " + clientName + " (" + clientLevelName + ").");
     lines.push("Quiero hacer este pedido:");
     lines.push("");
     state.cart.forEach((it) => {
@@ -335,6 +489,10 @@
     lines.push("");
     lines.push("*Total: " + fmtPrice(cartTotal()) + "*");
     if (notes) { lines.push(""); lines.push("Nota: " + notes); }
+    if (isVendedorConCliente) {
+      lines.push("");
+      lines.push("(Pedido tomado por el vendedor " + (u.fullName || u.username) + ")");
+    }
     return lines.join("\n");
   }
 
@@ -822,10 +980,10 @@
   let drawerHistoryPushed = false;
 
   function openDrawer(drawer) {
-    // Si ya habia otro drawer abierto, lo ocultamos sin tocar el history
     els.cartDrawer.hidden = true;
     els.ordersDrawer.hidden = true;
     if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
+    if (els.clientDrawer) els.clientDrawer.hidden = true;
     drawer.hidden = false;
     els.backdrop.hidden = false;
     if (!drawerHistoryPushed) {
@@ -836,7 +994,8 @@
 
   function anyDrawerOpen() {
     return !els.cartDrawer.hidden || !els.ordersDrawer.hidden ||
-           (els.priceChangesDrawer && !els.priceChangesDrawer.hidden);
+           (els.priceChangesDrawer && !els.priceChangesDrawer.hidden) ||
+           (els.clientDrawer && !els.clientDrawer.hidden);
   }
 
   function closeDrawers(fromPopState) {
@@ -844,6 +1003,7 @@
     els.cartDrawer.hidden = true;
     els.ordersDrawer.hidden = true;
     if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
+    if (els.clientDrawer) els.clientDrawer.hidden = true;
     els.backdrop.hidden = true;
     if (wasOpen && drawerHistoryPushed && !fromPopState) {
       drawerHistoryPushed = false;
@@ -867,6 +1027,9 @@
   }
   if (els.pcClose) els.pcClose.addEventListener("click", () => { closeDrawers(); });
   if (els.pcBack)  els.pcBack.addEventListener("click",  () => { closeDrawers(); });
+
+  if (els.clientClose) els.clientClose.addEventListener("click", () => { closeDrawers(); });
+  if (els.clientBack)  els.clientBack.addEventListener("click",  () => { closeDrawers(); });
 
   // Click en el fondo oscuro = cerrar
   els.backdrop.addEventListener("click", () => { closeDrawers(); });
