@@ -1751,4 +1751,928 @@
             existingDelivery = {
               delivered_to: orderObj.delivered_to || "",
               efectivo_amount: orderObj.efectivo_amount || 0,
-              transferencia_amount: orderObj.tra
+              transferencia_amount: orderObj.transferencia_amount || 0,
+              notes: "",
+            };
+          }
+          const totalLabel = orderObj ? fmtPrice(orderObj.total) : "";
+          openDeliveryModal(orderId, "Pedido #" + orderId + (totalLabel ? " · " + totalLabel : ""), existingDelivery);
+        });
+      }
+    });
+  }
+
+  els.ordersSearch.addEventListener("input", debounce(renderOrders, 150));
+  els.ordersClientFilter.addEventListener("change", renderOrders);
+
+  // ---------- Modal de imagen de producto ----------
+  const imgState = { productId: null };
+
+  function openImgModal(productId, productName, currentUrl) {
+    imgState.productId = productId;
+    els.imgModalTitle.textContent = "Imagen: " + productName;
+    els.imgModalMsg.textContent = "";
+    els.imgModalMsg.className = "config-msg";
+    els.imgUrlInput.value = currentUrl || "";
+    if (currentUrl) {
+      els.imgModalPreview.src = currentUrl;
+      els.imgModalPreview.hidden = false;
+      els.imgModalNoImg.hidden = true;
+    } else {
+      els.imgModalPreview.src = "";
+      els.imgModalPreview.hidden = true;
+      els.imgModalNoImg.hidden = false;
+    }
+    els.imgUploadFile.value = "";
+    els.imgModal.hidden = false;
+  }
+
+  function updateProductImageInState(productId, imageUrl) {
+    const p = state.products.find((x) => x.id === productId);
+    if (p) p.image_url = imageUrl;
+    const tr = els.prodTbody.querySelector('tr[data-id="' + productId + '"]');
+    if (tr) {
+      const btn = tr.querySelector('.prod-img-btn[data-act="edit-img"]');
+      if (btn) {
+        if (imageUrl) {
+          btn.innerHTML = '<img src="' + escapeHtml(imageUrl) + '" alt="" class="prod-thumb" />';
+          btn.dataset.currentUrl = imageUrl;
+        } else {
+          btn.innerHTML = '<span class="prod-thumb-empty" title="Sin imagen">\u{1F4F7}</span>';
+          btn.dataset.currentUrl = "";
+        }
+      }
+    }
+  }
+
+  // Click en boton de imagen en la tabla -> abrir modal
+  els.prodTbody.addEventListener("click", (e) => {
+    const btn = e.target.closest('[data-act="edit-img"]');
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    const name = btn.dataset.name || "";
+    const prod = state.products.find((x) => x.id === id);
+    const currentUrl = prod ? (prod.image_url || "") : "";
+    openImgModal(id, name, currentUrl);
+  });
+
+  // Subir archivo de imagen
+  els.imgUploadFile.addEventListener("change", async () => {
+    const file = els.imgUploadFile.files && els.imgUploadFile.files[0];
+    if (!file || !imgState.productId) return;
+    els.imgModalMsg.textContent = "Subiendo imagen…";
+    els.imgModalMsg.className = "config-msg";
+    const fd = new FormData();
+    fd.append("image", file);
+    try {
+      const res = await fetch("/api/admin/products/" + imgState.productId + "/image", {
+        method: "POST",
+        body: fd,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Error " + res.status);
+      els.imgModalPreview.src = body.image_url;
+      els.imgModalPreview.hidden = false;
+      els.imgModalNoImg.hidden = true;
+      els.imgUrlInput.value = body.image_url;
+      els.imgModalMsg.textContent = "\u2713 Imagen guardada";
+      els.imgModalMsg.className = "config-msg ok";
+      updateProductImageInState(imgState.productId, body.image_url);
+      showToast("Imagen actualizada");
+      setTimeout(() => { els.imgModalMsg.textContent = ""; }, 2500);
+    } catch (err) {
+      els.imgModalMsg.textContent = "Error: " + err.message;
+      els.imgModalMsg.className = "config-msg err";
+    } finally {
+      els.imgUploadFile.value = "";
+    }
+  });
+
+  // Guardar URL de imagen
+  els.imgUrlSave.addEventListener("click", async () => {
+    if (!imgState.productId) return;
+    const url = els.imgUrlInput.value.trim();
+    els.imgUrlSave.disabled = true;
+    els.imgModalMsg.textContent = "Guardando URL…";
+    els.imgModalMsg.className = "config-msg";
+    try {
+      await api("/api/admin/products/" + imgState.productId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_url: url }),
+      });
+      if (url) {
+        els.imgModalPreview.src = url;
+        els.imgModalPreview.hidden = false;
+        els.imgModalNoImg.hidden = true;
+      } else {
+        els.imgModalPreview.src = "";
+        els.imgModalPreview.hidden = true;
+        els.imgModalNoImg.hidden = false;
+      }
+      els.imgModalMsg.textContent = "\u2713 URL guardada";
+      els.imgModalMsg.className = "config-msg ok";
+      updateProductImageInState(imgState.productId, url || null);
+      showToast("Imagen actualizada");
+      setTimeout(() => { els.imgModalMsg.textContent = ""; }, 2500);
+    } catch (err) {
+      els.imgModalMsg.textContent = "Error: " + err.message;
+      els.imgModalMsg.className = "config-msg err";
+    } finally {
+      els.imgUrlSave.disabled = false;
+    }
+  });
+
+  // ---------- logout ----------
+  els.logoutBtn.addEventListener("click", async () => {
+    try { await fetch("/logout", { method: "POST" }); }
+    finally { location.href = "/login"; }
+  });
+
+  // ========== PROVEEDORES ==========
+
+  async function loadSuppliers() {
+    try {
+      if (els.supTbody) els.supTbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando…</td></tr>';
+      state.suppliers = await api("/api/admin/suppliers");
+      state.suppliersLoaded = true;
+      renderSuppliers();
+    } catch (e) {
+      if (els.supTbody) els.supTbody.innerHTML = '<tr><td colspan="6" class="muted">Error cargando proveedores</td></tr>';
+    }
+  }
+
+  function renderSuppliers() {
+    if (!els.supTbody) return;
+    const q = (els.supSearch ? els.supSearch.value : "").trim().toLowerCase();
+    let list = state.suppliers;
+    if (q) {
+      list = list.filter((s) =>
+        (s.name || "").toLowerCase().includes(q) ||
+        (s.contact || "").toLowerCase().includes(q) ||
+        (s.phone || "").toLowerCase().includes(q) ||
+        (s.email || "").toLowerCase().includes(q)
+      );
+    }
+    if (els.supCount) els.supCount.textContent = list.length + (list.length === 1 ? " proveedor" : " proveedores");
+    if (!list.length) {
+      els.supTbody.innerHTML = '<tr><td colspan="6" class="muted">Sin resultados</td></tr>';
+      return;
+    }
+    els.supTbody.innerHTML = list.map(supplierRowHtml).join("");
+  }
+
+  function supplierRowHtml(s) {
+    return '<tr data-id="' + s.id + '"' + (s.active ? '' : ' class="row-inactive"') + '>' +
+      '<td><input class="cell-input" data-field="name" value="' + escapeHtml(s.name || "") + '" /></td>' +
+      '<td><input class="cell-input" data-field="contact" value="' + escapeHtml(s.contact || "") + '" /></td>' +
+      '<td><input class="cell-input" data-field="phone" value="' + escapeHtml(s.phone || "") + '" /></td>' +
+      '<td><input class="cell-input" data-field="email" type="email" value="' + escapeHtml(s.email || "") + '" /></td>' +
+      '<td><input class="cell-input" data-field="notes" value="' + escapeHtml(s.notes || "") + '" /></td>' +
+      '<td><label class="cell-toggle"><input type="checkbox" data-field="active"' + (s.active ? " checked" : "") + ' /><span></span></label></td>' +
+    '</tr>';
+  }
+
+  if (els.supTbody) {
+    els.supTbody.addEventListener("change", async (e) => {
+      const inp = e.target.closest("[data-field]");
+      if (!inp) return;
+      const tr = inp.closest("tr");
+      if (!tr) return;
+      const id = Number(tr.dataset.id);
+      const field = inp.dataset.field;
+      const value = inp.type === "checkbox" ? (inp.checked ? 1 : 0) : inp.value;
+      inp.classList.add("saving");
+      try {
+        const out = await api("/api/admin/suppliers/" + id, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [field]: value }),
+        });
+        const idx = state.suppliers.findIndex((x) => x.id === id);
+        if (idx >= 0) state.suppliers[idx] = out.supplier;
+        inp.classList.remove("saving");
+        inp.classList.add("saved");
+        setTimeout(() => inp.classList.remove("saved"), 1200);
+        if (field === "active") tr.classList.toggle("row-inactive", !out.supplier.active);
+      } catch (err) {
+        inp.classList.remove("saving");
+        inp.classList.add("error");
+        showToast("Error: " + err.message, "err");
+        setTimeout(() => inp.classList.remove("error"), 2000);
+        const orig = state.suppliers.find((x) => x.id === id);
+        if (orig) {
+          if (inp.type === "checkbox") inp.checked = !!orig.active;
+          else inp.value = orig[field] || "";
+        }
+      }
+    });
+  }
+
+  if (els.supSearch) els.supSearch.addEventListener("input", debounce(renderSuppliers, 150));
+
+  if (els.supCreateBtn) {
+    els.supCreateBtn.addEventListener("click", () => {
+      if (els.supplierCreateForm) els.supplierCreateForm.reset();
+      if (els.supplierCreateMsg) els.supplierCreateMsg.textContent = "";
+      if (els.supplierCreateModal) els.supplierCreateModal.hidden = false;
+      setTimeout(() => {
+        if (els.supplierCreateForm) els.supplierCreateForm.querySelector('[name="name"]').focus();
+      }, 50);
+    });
+  }
+
+  if (els.purAddSupBtn) {
+    els.purAddSupBtn.addEventListener("click", () => {
+      state.supplierCreatedFromPurchase = true;
+      if (els.supplierCreateForm) els.supplierCreateForm.reset();
+      if (els.supplierCreateMsg) els.supplierCreateMsg.textContent = "";
+      if (els.supplierCreateModal) els.supplierCreateModal.hidden = false;
+      setTimeout(() => {
+        if (els.supplierCreateForm) els.supplierCreateForm.querySelector('[name="name"]').focus();
+      }, 50);
+    });
+  }
+
+  if (els.supplierCreateForm) {
+    els.supplierCreateForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(els.supplierCreateForm);
+      const body = {
+        name: fd.get("name"),
+        contact: fd.get("contact"),
+        phone: fd.get("phone"),
+        email: fd.get("email"),
+        notes: fd.get("notes"),
+      };
+      if (els.supplierCreateMsg) { els.supplierCreateMsg.textContent = "Creando…"; els.supplierCreateMsg.className = "config-msg"; }
+      try {
+        const out = await api("/api/admin/suppliers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        state.suppliers.push(out.supplier);
+        state.suppliers.sort((a, b) => (a.name || "").localeCompare(b.name || "", "es"));
+        renderSuppliers();
+        if (els.supplierCreateModal) els.supplierCreateModal.hidden = true;
+        showToast("Proveedor " + escapeHtml(out.supplier.name) + " creado");
+        // Actualizar selector en modal de compras
+        populatePurchaseSupplierSelect();
+        // Si se creó desde el modal de compra, auto-seleccionarlo
+        if (state.supplierCreatedFromPurchase) {
+          state.supplierCreatedFromPurchase = false;
+          if (els.purFormSupplier) els.purFormSupplier.value = String(out.supplier.id);
+        }
+      } catch (err) {
+        if (els.supplierCreateMsg) { els.supplierCreateMsg.textContent = err.message; els.supplierCreateMsg.className = "config-msg err"; }
+      }
+    });
+  }
+
+  // ========== COMPRAS ==========
+
+  async function loadPurchases() {
+    try {
+      if (els.purTbody) els.purTbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando…</td></tr>';
+      state.purchases = await api("/api/admin/purchases");
+      state.purchasesLoaded = true;
+      // Cargar proveedores si no estaban
+      if (!state.suppliersLoaded) {
+        try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+      }
+      populatePurchaseSupplierSelect();
+      populatePurSupFilter();
+      populatePurMonthFilter();
+      renderPurchases();
+    } catch (e) {
+      if (els.purTbody) els.purTbody.innerHTML = '<tr><td colspan="6" class="muted">Error cargando compras</td></tr>';
+    }
+  }
+
+  function populatePurSupFilter() {
+    if (!els.purSupFilter) return;
+    const current = els.purSupFilter.value;
+    const seen = new Map();
+    state.purchases.forEach((p) => {
+      if (p.supplier_id && !seen.has(p.supplier_id)) {
+        seen.set(p.supplier_id, p.supplier_name || ("Proveedor #" + p.supplier_id));
+      }
+    });
+    els.purSupFilter.innerHTML = '<option value="all">Todos los proveedores</option>';
+    Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1], "es")).forEach(([id, name]) => {
+      const opt = document.createElement("option");
+      opt.value = String(id);
+      opt.textContent = name;
+      els.purSupFilter.appendChild(opt);
+    });
+    if (current && els.purSupFilter.querySelector('[value="' + current + '"]')) {
+      els.purSupFilter.value = current;
+    }
+  }
+
+  function populatePurMonthFilter() {
+    if (!els.purMonthFilter) return;
+    const current = els.purMonthFilter.value;
+    const months = new Map();
+    state.purchases.forEach((p) => {
+      const d = p.received_at ? p.received_at.slice(0, 7) : null; // "2026-05"
+      if (d && !months.has(d)) {
+        const [y, m] = d.split("-");
+        const label = new Date(Number(y), Number(m) - 1, 1).toLocaleString("es-AR", { month: "long", year: "numeric" });
+        months.set(d, label.charAt(0).toUpperCase() + label.slice(1));
+      }
+    });
+    els.purMonthFilter.innerHTML = '<option value="all">Todos los meses</option>';
+    Array.from(months.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .forEach(([val, label]) => {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = label;
+        els.purMonthFilter.appendChild(opt);
+      });
+    if (current && els.purMonthFilter.querySelector('[value="' + current + '"]')) {
+      els.purMonthFilter.value = current;
+    }
+  }
+
+  function populatePurchaseSupplierSelect() {
+    if (!els.purFormSupplier) return;
+    const current = els.purFormSupplier.value;
+    els.purFormSupplier.innerHTML = '<option value="">Sin proveedor</option>';
+    state.suppliers.filter((s) => s.active).forEach((s) => {
+      const opt = document.createElement("option");
+      opt.value = String(s.id);
+      opt.textContent = s.name;
+      els.purFormSupplier.appendChild(opt);
+    });
+    if (current && els.purFormSupplier.querySelector('[value="' + current + '"]')) {
+      els.purFormSupplier.value = current;
+    }
+  }
+
+  function renderPurchases() {
+    if (!els.purTbody) return;
+    const supFilter   = els.purSupFilter   ? els.purSupFilter.value   : "all";
+    const monthFilter = els.purMonthFilter ? els.purMonthFilter.value : "all";
+    let list = state.purchases;
+    if (supFilter !== "all")   list = list.filter((p) => String(p.supplier_id) === supFilter);
+    if (monthFilter !== "all") list = list.filter((p) => p.received_at && p.received_at.slice(0, 7) === monthFilter);
+    if (els.purCount) els.purCount.textContent = list.length + (list.length === 1 ? " compra" : " compras");
+    if (!list.length) {
+      els.purTbody.innerHTML = '<tr><td colspan="6" class="muted">Sin compras registradas.</td></tr>';
+      return;
+    }
+    els.purTbody.innerHTML = list.map(purchaseRowHtml).join("");
+    // Wiring de click para expandir detalle
+    els.purTbody.querySelectorAll("tr.pur-row").forEach((tr) => {
+      tr.addEventListener("click", () => togglePurchaseDetail(tr));
+    });
+  }
+
+  function purchaseRowHtml(p) {
+    return '<tr class="pur-row" data-id="' + p.id + '" style="cursor:pointer">' +
+      '<td class="cell-code">#' + p.id + '</td>' +
+      '<td>' + escapeHtml(p.supplier_name || "—") + '</td>' +
+      '<td>' + escapeHtml(p.reference || "—") + '</td>' +
+      '<td class="muted small-cell">' + formatDate(p.received_at) + '</td>' +
+      '<td class="num">' + (p.items_count || 0) + '</td>' +
+      '<td class="num"><strong>' + fmtPrice(p.total_cost) + '</strong></td>' +
+    '</tr>' +
+    '<tr class="pur-detail-row" data-for="' + p.id + '" hidden>' +
+      '<td colspan="6" class="pur-detail-cell"><span class="muted">Cargando…</span></td>' +
+    '</tr>';
+  }
+
+  async function togglePurchaseDetail(tr) {
+    const id = Number(tr.dataset.id);
+    const detailRow = els.purTbody.querySelector('tr.pur-detail-row[data-for="' + id + '"]');
+    if (!detailRow) return;
+    if (!detailRow.hidden) { detailRow.hidden = true; return; }
+    detailRow.hidden = false;
+    if (detailRow.dataset.loaded) return;
+    const cell = detailRow.querySelector(".pur-detail-cell");
+    try {
+      const data = await api("/api/admin/purchases/" + id);
+      detailRow.dataset.loaded = "1";
+      const items = data.items || [];
+      const notesHtml = data.notes ? '<p class="muted small">' + escapeHtml(data.notes) + '</p>' : '';
+      const tableHtml = items.length
+        ? '<table class="pur-detail-table"><thead><tr><th>Código</th><th>Producto</th><th class="num">Cant.</th><th class="num">Costo unit.</th><th class="num">Subtotal</th></tr></thead><tbody>' +
+          items.map((it) =>
+            '<tr><td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
+            '<td>' + escapeHtml(it.product_name || "") + '</td>' +
+            '<td class="num">' + it.quantity + '</td>' +
+            '<td class="num">' + fmtPrice(it.unit_cost) + '</td>' +
+            '<td class="num">' + fmtPrice(it.subtotal) + '</td></tr>'
+          ).join("") +
+          '</tbody></table>'
+        : '<p class="muted">Sin items.</p>';
+      const editBtn = '<div class="pur-detail-actions"><button type="button" class="btn btn-small pur-edit-btn" data-id="' + id + '">Editar compra</button></div>';
+      cell.innerHTML = notesHtml + tableHtml + editBtn;
+      cell.querySelector(".pur-edit-btn").addEventListener("click", () => openPurchaseEdit(id));
+    } catch (err) {
+      cell.innerHTML = '<span class="muted err">Error: ' + escapeHtml(err.message) + '</span>';
+    }
+  }
+
+  async function openPurchaseEdit(id) {
+    try {
+      const data = await api("/api/admin/purchases/" + id);
+      state.editingPurchaseId = id;
+      state.purchaseItems = (data.items || []).map((it) => ({
+        product_id:   it.product_id,
+        product_code: it.product_code || "",
+        product_name: it.product_name || "",
+        quantity:     it.quantity,
+        unit_cost:    it.unit_cost,
+        subtotal:     it.subtotal,
+      }));
+      if (els.purchaseCreateForm) els.purchaseCreateForm.reset();
+      if (els.purchaseCreateMsg) els.purchaseCreateMsg.textContent = "";
+      // Prellenar campos del header
+      if (els.purchaseCreateForm) {
+        const form = els.purchaseCreateForm;
+        if (!state.suppliersLoaded) {
+          try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+        }
+        populatePurchaseSupplierSelect();
+        const supSel = form.querySelector('[name="supplier_id"]');
+        if (supSel && data.supplier_id) supSel.value = String(data.supplier_id);
+        const refInput = form.querySelector('[name="reference"]');
+        if (refInput) refInput.value = data.reference || "";
+        const notesInput = form.querySelector('[name="notes"]');
+        if (notesInput) notesInput.value = data.notes || "";
+        const dtInput = form.querySelector('[name="received_at"]');
+        if (dtInput && data.received_at) dtInput.value = data.received_at.slice(0, 16).replace(" ", "T");
+      }
+      renderPurchaseItems();
+      await ensureAllProducts();
+      if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = "Editar compra #" + id;
+      if (els.purSubmitBtn) els.purSubmitBtn.textContent = "Guardar cambios";
+      if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = false;
+      setTimeout(() => { if (els.purProdSearch) els.purProdSearch.focus(); }, 80);
+    } catch (err) {
+      showToast("Error cargando compra: " + err.message, "err");
+    }
+  }
+
+  if (els.purSupFilter)   els.purSupFilter.addEventListener("change", renderPurchases);
+  if (els.purMonthFilter) els.purMonthFilter.addEventListener("change", renderPurchases);
+
+  // ---- Modal de nueva compra ----
+
+  // Cache de todos los productos para el buscador de compras
+  async function ensureAllProducts() {
+    if (state.allProductsLoaded) return;
+    try {
+      state.allProducts = await api("/api/admin/products");
+      state.allProductsLoaded = true;
+    } catch (_) {}
+  }
+
+  function recalcPurchaseTotal() {
+    const total = state.purchaseItems.reduce((s, it) => s + it.subtotal, 0);
+    if (els.purItemsTotal) els.purItemsTotal.innerHTML = '<strong>' + fmtPrice(total) + '</strong>';
+  }
+
+  function renderPurchaseItems() {
+    if (!els.purItemsTbody) return;
+    if (!state.purchaseItems.length) {
+      els.purItemsTbody.innerHTML = '<tr id="pur-items-empty"><td colspan="6" class="muted">Agregá productos usando el buscador de arriba.</td></tr>';
+      recalcPurchaseTotal();
+      return;
+    }
+    els.purItemsTbody.innerHTML = state.purchaseItems.map((it, idx) =>
+      '<tr data-idx="' + idx + '">' +
+      '<td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
+      '<td>' + escapeHtml(it.product_name || "") + '</td>' +
+      '<td class="num"><input type="number" class="cell-input cell-num pur-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:70px" /></td>' +
+      '<td class="num"><input type="number" class="cell-input cell-num pur-cost" min="0" step="1" value="' + it.unit_cost + '" data-idx="' + idx + '" style="width:90px" /></td>' +
+      '<td class="num pur-subtotal">' + fmtPrice(it.subtotal) + '</td>' +
+      '<td><button type="button" class="btn btn-small pur-remove" data-idx="' + idx + '">✕</button></td>' +
+    '</tr>'
+    ).join("");
+    recalcPurchaseTotal();
+  }
+
+  function addPurchaseItem(product) {
+    const existing = state.purchaseItems.find((it) => it.product_id === product.id);
+    if (existing) {
+      existing.quantity += 1;
+      existing.subtotal = existing.quantity * existing.unit_cost;
+    } else {
+      state.purchaseItems.push({
+        product_id: product.id,
+        product_code: product.code || "",
+        product_name: product.name || "",
+        quantity: 1,
+        unit_cost: product.cost || 0,
+        subtotal: product.cost || 0,
+      });
+    }
+    renderPurchaseItems();
+  }
+
+  if (els.purItemsTbody) {
+    els.purItemsTbody.addEventListener("input", (e) => {
+      const idx = e.target.dataset.idx != null ? Number(e.target.dataset.idx) : -1;
+      if (idx < 0 || !state.purchaseItems[idx]) return;
+      const it = state.purchaseItems[idx];
+      if (e.target.classList.contains("pur-qty")) {
+        it.quantity = Math.max(1, Math.floor(Number(e.target.value) || 1));
+        it.subtotal = it.quantity * it.unit_cost;
+      } else if (e.target.classList.contains("pur-cost")) {
+        it.unit_cost = Math.max(0, Number(e.target.value) || 0);
+        it.subtotal = it.quantity * it.unit_cost;
+      }
+      const tr = e.target.closest("tr");
+      if (tr) {
+        const subtotalCell = tr.querySelector(".pur-subtotal");
+        if (subtotalCell) subtotalCell.textContent = fmtPrice(it.subtotal);
+      }
+      recalcPurchaseTotal();
+    });
+
+    els.purItemsTbody.addEventListener("click", (e) => {
+      const btn = e.target.closest(".pur-remove");
+      if (!btn) return;
+      const idx = Number(btn.dataset.idx);
+      state.purchaseItems.splice(idx, 1);
+      renderPurchaseItems();
+    });
+  }
+
+  // Buscador de productos en modal de compra
+  if (els.purProdSearch) {
+    els.purProdSearch.addEventListener("input", debounce(async () => {
+      const q = els.purProdSearch.value.trim().toLowerCase();
+      if (!q) { if (els.purProdResults) els.purProdResults.hidden = true; return; }
+      await ensureAllProducts();
+      const matches = state.allProducts.filter((p) =>
+        (p.code || "").toLowerCase().includes(q) ||
+        (p.name || "").toLowerCase().includes(q)
+      ).slice(0, 12);
+      if (!els.purProdResults) return;
+      if (!matches.length) {
+        els.purProdResults.innerHTML = '<div class="pur-prod-result-item muted">Sin resultados</div>';
+        els.purProdResults.hidden = false;
+        return;
+      }
+      els.purProdResults.innerHTML = matches.map((p) =>
+        '<div class="pur-prod-result-item" data-id="' + p.id + '">' +
+        '<code>' + escapeHtml(p.code || "") + '</code> · ' + escapeHtml(p.name || "") +
+        ' <span class="muted">Stock: ' + (p.stock || 0) + '</span>' +
+        '</div>'
+      ).join("");
+      els.purProdResults.hidden = false;
+    }, 200));
+
+    els.purProdSearch.addEventListener("blur", () => {
+      setTimeout(() => { if (els.purProdResults) els.purProdResults.hidden = true; }, 200);
+    });
+  }
+
+  if (els.purProdResults) {
+    els.purProdResults.addEventListener("mousedown", (e) => {
+      const item = e.target.closest(".pur-prod-result-item[data-id]");
+      if (!item) return;
+      const id = Number(item.dataset.id);
+      const prod = state.allProducts.find((p) => p.id === id);
+      if (prod) addPurchaseItem(prod);
+      if (els.purProdSearch) els.purProdSearch.value = "";
+      if (els.purProdResults) els.purProdResults.hidden = true;
+    });
+  }
+
+  if (els.purCreateBtn) {
+    els.purCreateBtn.addEventListener("click", async () => {
+      state.purchaseItems = [];
+      if (els.purchaseCreateForm) els.purchaseCreateForm.reset();
+      if (els.purchaseCreateMsg) els.purchaseCreateMsg.textContent = "";
+      renderPurchaseItems();
+      // Fecha default = ahora
+      if (els.purchaseCreateForm) {
+        const dtInput = els.purchaseCreateForm.querySelector('[name="received_at"]');
+        if (dtInput) {
+          const now = new Date();
+          now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+          dtInput.value = now.toISOString().slice(0, 16);
+        }
+      }
+      // Cargar proveedores si no están
+      if (!state.suppliersLoaded) {
+        try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+      }
+      populatePurchaseSupplierSelect();
+      await ensureAllProducts();
+      if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = false;
+      setTimeout(() => { if (els.purProdSearch) els.purProdSearch.focus(); }, 80);
+    });
+  }
+
+  function resetPurchaseModal() {
+    state.editingPurchaseId = null;
+    if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = "Nueva compra";
+    if (els.purSubmitBtn) els.purSubmitBtn.textContent = "Guardar compra";
+  }
+
+  if (els.purchaseCreateForm) {
+    els.purchaseCreateForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!state.purchaseItems.length) {
+        if (els.purchaseCreateMsg) { els.purchaseCreateMsg.textContent = "Agregá al menos 1 producto."; els.purchaseCreateMsg.className = "config-msg err"; }
+        return;
+      }
+      const fd = new FormData(els.purchaseCreateForm);
+      const received_at_raw = fd.get("received_at");
+      const body = {
+        supplier_id: fd.get("supplier_id") ? Number(fd.get("supplier_id")) : null,
+        reference: fd.get("reference"),
+        notes: fd.get("notes"),
+        received_at: received_at_raw ? received_at_raw.replace("T", " ") : null,
+        items: state.purchaseItems.map((it) => ({
+          product_id: it.product_id,
+          product_code: it.product_code,
+          product_name: it.product_name,
+          quantity: it.quantity,
+          unit_cost: it.unit_cost,
+        })),
+      };
+      const isEditing = !!state.editingPurchaseId;
+      const url = isEditing ? "/api/admin/purchases/" + state.editingPurchaseId : "/api/admin/purchases";
+      const method = isEditing ? "PUT" : "POST";
+      if (els.purSubmitBtn) els.purSubmitBtn.disabled = true;
+      if (els.purchaseCreateMsg) { els.purchaseCreateMsg.textContent = "Guardando…"; els.purchaseCreateMsg.className = "config-msg"; }
+      try {
+        await api(url, { method: method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        state.purchasesLoaded = false;
+        await loadPurchases();
+        if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = true;
+        showToast(isEditing ? "Compra actualizada" : "Compra registrada");
+        resetPurchaseModal();
+        // Refrescar productos por cambio de stock
+        try { state.products = await api("/api/admin/products"); state.allProductsLoaded = false; } catch (_) {}
+      } catch (err) {
+        if (els.purchaseCreateMsg) { els.purchaseCreateMsg.textContent = err.message; els.purchaseCreateMsg.className = "config-msg err"; }
+      } finally {
+        if (els.purSubmitBtn) els.purSubmitBtn.disabled = false;
+      }
+    });
+  }
+
+  // ========== PAGOS ==========
+
+  async function loadPayments() {
+    try {
+      if (els.payTbody) els.payTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+      state.payments = await api("/api/admin/payments");
+      state.paymentsLoaded = true;
+      renderPayments();
+    } catch (e) {
+      if (els.payTbody) els.payTbody.innerHTML = '<tr><td colspan="8" class="muted">Error cargando pagos</td></tr>';
+    }
+  }
+
+  function renderPayments() {
+    if (!els.payTbody) return;
+    const q = (els.paySearch ? els.paySearch.value : "").trim().toLowerCase();
+    const methodFilter = els.payMethodFilter ? els.payMethodFilter.value : "all";
+    let list = state.payments;
+    if (methodFilter !== "all") list = list.filter((p) => p.method === methodFilter);
+    if (q) {
+      list = list.filter((p) =>
+        (p.client_username || "").toLowerCase().includes(q) ||
+        (p.client_full_name || "").toLowerCase().includes(q) ||
+        (p.reference || "").toLowerCase().includes(q)
+      );
+    }
+    if (els.payCount) els.payCount.textContent = list.length + (list.length === 1 ? " pago" : " pagos");
+    if (!list.length) {
+      els.payTbody.innerHTML = '<tr><td colspan="8" class="muted">Sin pagos registrados.</td></tr>';
+      return;
+    }
+    els.payTbody.innerHTML = list.map(paymentRowHtml).join("");
+    // Wiring de botón eliminar
+    els.payTbody.querySelectorAll("[data-act='del-pay']").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = Number(btn.dataset.id);
+        const client = btn.dataset.client;
+        const amount = btn.dataset.amount;
+        if (!confirm("Eliminar el pago de " + fmtPrice(amount) + " de " + client + "?\nEsto también eliminará el movimiento de cuenta corriente.")) return;
+        try {
+          await api("/api/admin/payments/" + id, { method: "DELETE" });
+          state.payments = state.payments.filter((p) => p.id !== id);
+          renderPayments();
+          // Refrescar cuentas si estaban cargadas
+          if (state.accountsLoaded) { state.accountsLoaded = false; loadAccounts(); }
+          showToast("Pago eliminado");
+        } catch (err) {
+          showToast("Error: " + err.message, "err");
+        }
+      });
+    });
+  }
+
+  function paymentRowHtml(p) {
+    const clientLabel = escapeHtml(p.client_full_name || p.client_username || "—");
+    const regBy = escapeHtml(p.registered_by_full_name || p.registered_by_username || "—");
+    return '<tr>' +
+      '<td class="cell-code">#' + p.id + '</td>' +
+      '<td>' + clientLabel + '</td>' +
+      '<td class="num"><strong>' + fmtPrice(p.amount) + '</strong></td>' +
+      '<td>' + escapeHtml(p.method || "") + '</td>' +
+      '<td class="muted">' + escapeHtml(p.reference || "—") + '</td>' +
+      '<td class="muted">' + regBy + '</td>' +
+      '<td class="muted small-cell">' + formatDate(p.created_at) + '</td>' +
+      '<td><button type="button" class="btn btn-small" data-act="del-pay" data-id="' + p.id + '" data-client="' + escapeHtml(p.client_full_name || p.client_username || "") + '" data-amount="' + (p.amount || 0) + '">Eliminar</button></td>' +
+    '</tr>';
+  }
+
+  if (els.paySearch) els.paySearch.addEventListener("input", debounce(renderPayments, 150));
+  if (els.payMethodFilter) els.payMethodFilter.addEventListener("change", renderPayments);
+
+  // Modal registrar pago
+  async function populatePayFormClients() {
+    if (!els.payFormClient) return;
+    const current = els.payFormClient.value;
+    els.payFormClient.innerHTML = '<option value="">Seleccionar cliente…</option>';
+    // Usar la lista de usuarios si está cargada, o cargar los clientes
+    let clients = state.users.filter((u) => [1, 2, 3, 4].includes(Number(u.level)) && u.active);
+    if (!clients.length) {
+      try {
+        const all = await api("/api/admin/users");
+        clients = all.filter((u) => [1, 2, 3, 4].includes(Number(u.level)) && u.active);
+        if (!state.usersLoaded) { state.users = all; }
+      } catch (_) {}
+    }
+    clients.sort((a, b) => (a.full_name || a.username || "").localeCompare(b.full_name || b.username || "", "es"));
+    clients.forEach((u) => {
+      const opt = document.createElement("option");
+      opt.value = String(u.id);
+      opt.textContent = (u.full_name || u.username) + " (" + LEVEL_NAMES[u.level] + ")";
+      els.payFormClient.appendChild(opt);
+    });
+    if (current && els.payFormClient.querySelector('[value="' + current + '"]')) {
+      els.payFormClient.value = current;
+    }
+  }
+
+  if (els.payCreateBtn) {
+    els.payCreateBtn.addEventListener("click", async () => {
+      if (els.paymentCreateForm) els.paymentCreateForm.reset();
+      if (els.paymentCreateMsg) els.paymentCreateMsg.textContent = "";
+      await populatePayFormClients();
+      if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
+      setTimeout(() => { if (els.payFormClient) els.payFormClient.focus(); }, 50);
+    });
+  }
+
+  if (els.paymentCreateForm) {
+    els.paymentCreateForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(els.paymentCreateForm);
+      const body = {
+        user_id: Number(fd.get("user_id")),
+        amount: Number(fd.get("amount")),
+        method: fd.get("method"),
+        reference: fd.get("reference"),
+        notes: fd.get("notes"),
+      };
+      if (!body.user_id || !body.amount) {
+        if (els.paymentCreateMsg) { els.paymentCreateMsg.textContent = "Completá cliente y monto."; els.paymentCreateMsg.className = "config-msg err"; }
+        return;
+      }
+      if (els.paymentCreateMsg) { els.paymentCreateMsg.textContent = "Guardando…"; els.paymentCreateMsg.className = "config-msg"; }
+      try {
+        const out = await api("/api/admin/payments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        state.payments.unshift(out.payment);
+        renderPayments();
+        if (els.paymentCreateModal) els.paymentCreateModal.hidden = true;
+        // Refrescar cuentas si estaban cargadas
+        if (state.accountsLoaded) { state.accountsLoaded = false; loadAccounts(); }
+        showToast("Pago registrado: " + fmtPrice(out.payment.amount));
+      } catch (err) {
+        if (els.paymentCreateMsg) { els.paymentCreateMsg.textContent = err.message; els.paymentCreateMsg.className = "config-msg err"; }
+      }
+    });
+  }
+
+  // ========== CUENTAS CORRIENTES ==========
+
+  async function loadAccounts() {
+    try {
+      if (els.accTbody) els.accTbody.innerHTML = '<tr><td colspan="5" class="muted">Cargando…</td></tr>';
+      state.accounts = await api("/api/admin/accounts");
+      state.accountsLoaded = true;
+      renderAccounts();
+    } catch (e) {
+      if (els.accTbody) els.accTbody.innerHTML = '<tr><td colspan="5" class="muted">Error cargando cuentas</td></tr>';
+    }
+  }
+
+  function renderAccounts() {
+    if (!els.accTbody) return;
+    const q = (els.accSearch ? els.accSearch.value : "").trim().toLowerCase();
+    let list = state.accounts;
+    if (q) {
+      list = list.filter((a) =>
+        (a.username || "").toLowerCase().includes(q) ||
+        (a.full_name || "").toLowerCase().includes(q)
+      );
+    }
+    if (els.accCount) els.accCount.textContent = list.length + (list.length === 1 ? " cliente" : " clientes");
+    if (!list.length) {
+      els.accTbody.innerHTML = '<tr><td colspan="5" class="muted">Sin clientes.</td></tr>';
+      return;
+    }
+    els.accTbody.innerHTML = list.map(accountRowHtml).join("");
+    // Wiring de click para expandir historial
+    els.accTbody.querySelectorAll("tr.acc-row").forEach((tr) => {
+      tr.addEventListener("click", () => toggleAccountDetail(tr));
+    });
+  }
+
+  function accountRowHtml(a) {
+    const balance = Number(a.balance) || 0;
+    const balanceClass = balance >= 0 ? "acc-balance-pos" : "acc-balance-neg";
+    const balanceLabel = balance >= 0 ? "A favor: " + fmtPrice(balance) : "Debe: " + fmtPrice(Math.abs(balance));
+    return '<tr class="acc-row" data-id="' + a.id + '" style="cursor:pointer">' +
+      '<td>' + escapeHtml(a.full_name || a.username || "") + ' <span class="muted small">@' + escapeHtml(a.username || "") + '</span></td>' +
+      '<td class="muted">' + escapeHtml(LEVEL_NAMES[a.level] || String(a.level)) + '</td>' +
+      '<td class="num muted">' + fmtPrice(a.total_debit) + '</td>' +
+      '<td class="num muted">' + fmtPrice(a.total_credit) + '</td>' +
+      '<td class="num"><span class="acc-balance-badge ' + balanceClass + '">' + balanceLabel + '</span></td>' +
+    '</tr>' +
+    '<tr class="acc-detail-row" data-for="' + a.id + '" hidden>' +
+      '<td colspan="5" class="acc-detail-cell"><span class="muted">Cargando historial…</span></td>' +
+    '</tr>';
+  }
+
+  async function toggleAccountDetail(tr) {
+    const id = Number(tr.dataset.id);
+    const detailRow = els.accTbody.querySelector('tr.acc-detail-row[data-for="' + id + '"]');
+    if (!detailRow) return;
+    if (!detailRow.hidden) { detailRow.hidden = true; return; }
+    detailRow.hidden = false;
+    if (detailRow.dataset.loaded) return;
+    const cell = detailRow.querySelector(".acc-detail-cell");
+    try {
+      const data = await api("/api/admin/accounts/" + id);
+      detailRow.dataset.loaded = "1";
+      const movs = data.movements || [];
+      if (!movs.length) {
+        cell.innerHTML = '<p class="muted">Sin movimientos.</p>';
+        return;
+      }
+      let running = 0;
+      // calcular running balance de más antiguo a más reciente, luego invertir para mostrar desc
+      const sorted = movs.slice().reverse();
+      const rows = sorted.map((m) => {
+        running += (m.type === "credit" ? m.amount : -m.amount);
+        return { m: m, running: running };
+      }).reverse();
+
+      cell.innerHTML = '<table class="acc-mov-table"><thead><tr>' +
+        '<th>Fecha</th><th>Tipo</th><th>Descripción</th>' +
+        '<th class="num">Monto</th><th class="num">Saldo</th>' +
+        '</tr></thead><tbody>' +
+        rows.map(({ m, running: rb }) => {
+          const typeLabel = m.type === "credit" ? "Crédito" : "Débito";
+          const typeClass = m.type === "credit" ? "acc-credit" : "acc-debit";
+          const runClass = rb >= 0 ? "acc-balance-pos" : "acc-balance-neg";
+          return '<tr>' +
+            '<td class="muted small-cell">' + formatDate(m.created_at) + '</td>' +
+            '<td><span class="' + typeClass + '">' + typeLabel + '</span></td>' +
+            '<td>' + escapeHtml(m.description || "—") + '</td>' +
+            '<td class="num">' + fmtPrice(m.amount) + '</td>' +
+            '<td class="num"><span class="' + runClass + '">' + fmtPrice(Math.abs(rb)) + (rb < 0 ? ' (debe)' : ' (favor)') + '</span></td>' +
+          '</tr>';
+        }).join("") +
+        '</tbody></table>';
+    } catch (err) {
+      cell.innerHTML = '<span class="muted err">Error: ' + escapeHtml(err.message) + '</span>';
+    }
+  }
+
+  if (els.accSearch) els.accSearch.addEventListener("input", debounce(renderAccounts, 150));
+  if (els.accReloadBtn) {
+    els.accReloadBtn.addEventListener("click", () => {
+      state.accountsLoaded = false;
+      loadAccounts();
+    });
+  }
+
+  // ---------- logout ----------
+  els.logoutBtn.addEventListener("click", async () => {
+    try { await fetch("/logout", { method: "POST" }); }
+    finally { location.href = "/login"; }
+  });
+
+  bootstrap();
+})();
