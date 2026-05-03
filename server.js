@@ -109,6 +109,7 @@ db.exec(
 // - deliveries: registro de entrega + cobro (efectivo / transferencia).
 try { db.exec("ALTER TABLE orders ADD COLUMN assigned_vendedor_id INTEGER REFERENCES users(id)"); } catch (_) {}
 try { db.exec("ALTER TABLE users ADD COLUMN vendedor_price_level INTEGER NOT NULL DEFAULT 1"); } catch (_) {}
+try { db.exec("ALTER TABLE users ADD COLUMN whatsapp_number TEXT"); } catch (_) {}
 db.exec(
   "CREATE TABLE IF NOT EXISTS deliveries (" +
   "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -445,12 +446,15 @@ app.get("/api/app-info", (req, res) => {
 });
 
 app.get("/api/me", requireLogin, (req, res) => {
-  const wa = getSetting("whatsapp_number", WHATSAPP_NUMBER || null);
+  const globalWa = getSetting("whatsapp_number", WHATSAPP_NUMBER || null);
+  const userRow = db.prepare("SELECT whatsapp_number FROM users WHERE id = ?").get(req.session.userId);
+  const userWa = userRow && userRow.whatsapp_number ? String(userRow.whatsapp_number).replace(/[^0-9]/g, "") : null;
+  const wa = userWa || (globalWa ? String(globalWa).replace(/[^0-9]/g, "") : null);
   const resp = {
     id: req.session.userId, username: req.session.username,
     fullName: req.session.fullName, level: req.session.level,
     levelName: levelName(req.session.level),
-    whatsapp: wa ? String(wa).replace(/[^0-9]/g, "") : null,
+    whatsapp: wa || null,
     canSeePriceChanges: userCanSeePriceChanges(req.session.level),
     app_name: getAppName(),
   };
@@ -1073,7 +1077,7 @@ function isValidUsername(s) {
 
 app.get("/api/admin/users", requireAdmin, (req, res) => {
   const rows = db.prepare(
-    "SELECT id, username, full_name, phone, email, level, active, created_at, last_login_at" +
+    "SELECT id, username, full_name, phone, whatsapp_number, email, level, active, created_at, last_login_at" +
     "  FROM users ORDER BY level DESC, username"
   ).all();
   res.json(rows);
@@ -1083,10 +1087,11 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
   const b = req.body || {};
   const username = String(b.username || "").trim().toLowerCase();
   const password = String(b.password || "");
-  const fullName = String(b.full_name || "").trim().slice(0, 120) || null;
-  const phone    = String(b.phone || "").trim().slice(0, 40) || null;
-  const email    = String(b.email || "").trim().slice(0, 120) || null;
-  const level    = Number(b.level);
+  const fullName       = String(b.full_name || "").trim().slice(0, 120) || null;
+  const phone          = String(b.phone || "").trim().slice(0, 40) || null;
+  const whatsappNumber = String(b.whatsapp_number || "").replace(/[^0-9+\s\-()]/g, "").trim().slice(0, 40) || null;
+  const email          = String(b.email || "").trim().slice(0, 120) || null;
+  const level          = Number(b.level);
 
   if (!isValidUsername(username))
     return res.status(400).json({ error: "Usuario invalido (3-32 caracteres, letras/numeros/_-.)" });
@@ -1100,12 +1105,12 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
 
   const hash = bcrypt.hashSync(password, 10);
   const r = db.prepare(
-    "INSERT INTO users (username, password_hash, full_name, phone, email, level, active)" +
-    " VALUES (?, ?, ?, ?, ?, ?, 1)"
-  ).run(username, hash, fullName, phone, email, level);
+    "INSERT INTO users (username, password_hash, full_name, phone, whatsapp_number, email, level, active)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, 1)"
+  ).run(username, hash, fullName, phone, whatsappNumber, email, level);
 
   const user = db.prepare(
-    "SELECT id, username, full_name, phone, email, level, active, created_at, last_login_at FROM users WHERE id = ?"
+    "SELECT id, username, full_name, phone, whatsapp_number, email, level, active, created_at, last_login_at FROM users WHERE id = ?"
   ).get(r.lastInsertRowid);
   res.json({ ok: true, user: user });
 });
@@ -1127,6 +1132,10 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   if ("phone" in b) {
     sets.push("phone = ?");
     vals.push(String(b.phone || "").trim().slice(0, 40) || null);
+  }
+  if ("whatsapp_number" in b) {
+    sets.push("whatsapp_number = ?");
+    vals.push(String(b.whatsapp_number || "").replace(/[^0-9+\s\-()]/g, "").trim().slice(0, 40) || null);
   }
   if ("email" in b) {
     sets.push("email = ?");
@@ -1161,7 +1170,7 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   vals.push(id);
   db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
   const user = db.prepare(
-    "SELECT id, username, full_name, phone, email, level, active, created_at, last_login_at FROM users WHERE id = ?"
+    "SELECT id, username, full_name, phone, whatsapp_number, email, level, active, created_at, last_login_at FROM users WHERE id = ?"
   ).get(id);
   res.json({ ok: true, user: user });
 });

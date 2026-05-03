@@ -117,6 +117,7 @@
               <th>Nombre</th>
               <th>Nivel</th>
               <th>Teléfono</th>
+              <th>WhatsApp destino</th>
               <th>Email</th>
               <th>Activo</th>
               <th>Último login</th>
@@ -124,7 +125,7 @@
               <th>Acciones</th>
             </tr>
           </thead>
-          <tbody id="user-tbody"><tr><td colspan="9" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="user-tbody"><tr><td colspan="10" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -488,6 +489,9 @@
         <label>Teléfono <span class="muted">(opcional)</span>
           <input type="tel" name="phone" />
         </label>
+        <label>WhatsApp destino <span class="muted">(nro al que manda pedidos, opcional)</span>
+          <input type="tel" name="whatsapp_number" placeholder="ej: 5491112345678" />
+        </label>
         <label>Email <span class="muted">(opcional)</span>
           <input type="email" name="email" />
         </label>
@@ -497,264 +501,4 @@
           <button type="submit" class="btn btn-primary">Crear</button>
         </div>
       </form>
-    </div>
-  </div>
-
-  <!-- Modal categorías por usuario -->
-  <div class="admin-modal" id="user-cats-modal" hidden>
-    <div class="admin-modal-box">
-      <h3>Categorías visibles</h3>
-      <p id="user-cats-target" class="muted"></p>
-      <p class="muted small">
-        Marcá las categorías que puede ver este usuario. Si no marcás ninguna,
-        <strong>ve todas</strong> (comportamiento por defecto).
-      </p>
-      <div id="user-cats-list" class="cats-check-list">
-        <span class="muted">Cargando…</span>
-      </div>
-      <p id="user-cats-msg" class="config-msg"></p>
-      <div class="admin-modal-foot">
-        <button type="button" class="btn" data-close>Cancelar</button>
-        <button type="button" class="btn btn-primary" id="user-cats-save">Guardar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal reset password -->
-  <div class="admin-modal" id="user-reset-modal" hidden>
-    <div class="admin-modal-box">
-      <h3>Resetear contraseña</h3>
-      <p id="user-reset-target" class="muted"></p>
-      <form id="user-reset-form" class="user-form">
-        <label>Nueva contraseña <span class="muted">mínimo 6</span>
-          <input type="text" name="password" required autocomplete="new-password" />
-        </label>
-        <p id="user-reset-msg" class="config-msg"></p>
-        <div class="admin-modal-foot">
-          <button type="button" class="btn" data-close>Cancelar</button>
-          <button type="submit" class="btn btn-primary">Resetear</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Modal registrar entrega -->
-  <div class="admin-modal" id="delivery-modal" hidden>
-    <div class="admin-modal-box">
-      <h3>Registrar entrega</h3>
-      <p id="delivery-modal-order" class="muted"></p>
-      <form id="delivery-form" class="user-form">
-        <label>¿Quién recibió el pedido? <span class="muted">(requerido)</span>
-          <input type="text" name="delivered_to" required placeholder="Nombre del receptor" autocomplete="off" maxlength="200" />
-        </label>
-        <label>Efectivo — monto cobrado ($)
-          <input type="number" name="efectivo_amount" min="0" step="1" value="0" placeholder="0" />
-        </label>
-        <label>Transferencia — monto cobrado ($)
-          <input type="number" name="transferencia_amount" min="0" step="1" value="0" placeholder="0" />
-        </label>
-        <div id="delivery-total-preview" class="muted small" style="margin-top:2px"></div>
-        <label>Notas <span class="muted">(opcional)</span>
-          <input type="text" name="notes" placeholder="Observaciones del cobro" maxlength="500" />
-        </label>
-        <p id="delivery-form-msg" class="config-msg"></p>
-        <div class="admin-modal-foot">
-          <button type="button" class="btn" data-close>Cancelar</button>
-          <button type="submit" class="btn btn-primary" id="delivery-submit-btn">Guardar entrega</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Modal crear vendedor -->
-  <div class="admin-modal" id="vend-create-modal" hidden>
-    <div class="admin-modal-box">
-      <h3>Crear vendedor</h3>
-      <form id="vend-create-form" class="user-form">
-        <label>Usuario (login) <span class="muted">3-32 caracteres, letras/números/_-.</span>
-          <input type="text" name="username" required autocomplete="off" />
-        </label>
-        <label>Contraseña <span class="muted">mínimo 6</span>
-          <input type="text" name="password" required autocomplete="new-password" />
-        </label>
-        <label>Nombre completo
-          <input type="text" name="full_name" />
-        </label>
-        <label>Lista de precios que ve
-          <select name="vendedor_price_level">
-            <option value="1">Minorista</option>
-            <option value="2">Revendedor</option>
-            <option value="3">Mayorista</option>
-            <option value="4">VIP</option>
-          </select>
-        </label>
-        <label>Teléfono <span class="muted">(opcional)</span>
-          <input type="tel" name="phone" />
-        </label>
-        <label>Email <span class="muted">(opcional)</span>
-          <input type="email" name="email" />
-        </label>
-        <p id="vend-create-msg" class="config-msg"></p>
-        <div class="admin-modal-foot">
-          <button type="button" class="btn" data-close>Cancelar</button>
-          <button type="submit" class="btn btn-primary">Crear vendedor</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Modal reset password vendedor -->
-  <div class="admin-modal" id="vend-reset-modal" hidden>
-    <div class="admin-modal-box">
-      <h3>Resetear contraseña</h3>
-      <p id="vend-reset-target" class="muted"></p>
-      <form id="vend-reset-form" class="user-form">
-        <label>Nueva contraseña <span class="muted">mínimo 6</span>
-          <input type="text" name="password" required autocomplete="new-password" />
-        </label>
-        <p id="vend-reset-msg" class="config-msg"></p>
-        <div class="admin-modal-foot">
-          <button type="button" class="btn" data-close>Cancelar</button>
-          <button type="submit" class="btn btn-primary">Resetear</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Modal crear proveedor -->
-  <div class="admin-modal" id="supplier-create-modal" hidden>
-    <div class="admin-modal-box">
-      <h3>Nuevo proveedor</h3>
-      <form id="supplier-create-form" class="user-form">
-        <label>Nombre <span class="muted">(requerido)</span>
-          <input type="text" name="name" required autocomplete="off" maxlength="200" />
-        </label>
-        <label>Contacto
-          <input type="text" name="contact" autocomplete="off" maxlength="200" />
-        </label>
-        <label>Teléfono
-          <input type="tel" name="phone" maxlength="60" />
-        </label>
-        <label>Email
-          <input type="email" name="email" maxlength="120" />
-        </label>
-        <label>Notas
-          <input type="text" name="notes" maxlength="500" />
-        </label>
-        <p id="supplier-create-msg" class="config-msg"></p>
-        <div class="admin-modal-foot">
-          <button type="button" class="btn" data-close>Cancelar</button>
-          <button type="submit" class="btn btn-primary">Crear proveedor</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Modal crear compra -->
-  <div class="admin-modal" id="purchase-create-modal" hidden>
-    <div class="admin-modal-box purchase-modal-box">
-      <h3 id="purchase-modal-title">Nueva compra</h3>
-      <form id="purchase-create-form" class="user-form">
-        <div class="purchase-form-top">
-          <label>Proveedor
-            <div class="pur-supplier-row">
-              <select name="supplier_id" id="pur-form-supplier">
-                <option value="">Sin proveedor</option>
-              </select>
-              <button type="button" class="btn btn-small" id="pur-add-sup-btn" title="Crear nuevo proveedor">＋</button>
-            </div>
-          </label>
-          <label>Referencia / N° factura
-            <input type="text" name="reference" autocomplete="off" maxlength="200" />
-          </label>
-          <label>Fecha recibido
-            <input type="datetime-local" name="received_at" />
-          </label>
-          <label>Notas
-            <input type="text" name="notes" maxlength="500" />
-          </label>
-        </div>
-
-        <div class="purchase-items-section">
-          <div class="purchase-items-header">
-            <strong>Productos comprados</strong>
-            <div class="purchase-prod-search-wrap">
-              <input type="search" id="pur-prod-search" class="admin-search" placeholder="Buscar producto para agregar..." autocomplete="off" />
-              <div id="pur-prod-results" class="pur-prod-results" hidden></div>
-            </div>
-          </div>
-          <table class="admin-table" id="pur-items-table">
-            <thead>
-              <tr>
-                <th>Código</th>
-                <th>Producto</th>
-                <th class="num">Cant.</th>
-                <th class="num">Costo unit.</th>
-                <th class="num">Subtotal</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="pur-items-tbody">
-              <tr id="pur-items-empty"><td colspan="6" class="muted">Agregá productos usando el buscador de arriba.</td></tr>
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="4" class="num"><strong>Total</strong></td>
-                <td class="num" id="pur-items-total"><strong>$0</strong></td>
-                <td></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-
-        <p id="purchase-create-msg" class="config-msg"></p>
-        <div class="admin-modal-foot">
-          <button type="button" class="btn" data-close>Cancelar</button>
-          <button type="submit" class="btn btn-primary" id="pur-submit-btn">Guardar compra</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Modal registrar pago -->
-  <div class="admin-modal" id="payment-create-modal" hidden>
-    <div class="admin-modal-box">
-      <h3>Registrar pago de cliente</h3>
-      <form id="payment-create-form" class="user-form">
-        <label>Cliente <span class="muted">(requerido)</span>
-          <select name="user_id" id="pay-form-client" required>
-            <option value="">Seleccionar cliente…</option>
-          </select>
-        </label>
-        <label>Monto ($) <span class="muted">(requerido)</span>
-          <input type="number" name="amount" required min="1" step="1" placeholder="0" />
-        </label>
-        <label>Método
-          <select name="method">
-            <option value="efectivo">Efectivo</option>
-            <option value="transferencia">Transferencia</option>
-            <option value="cheque">Cheque</option>
-            <option value="otro">Otro</option>
-          </select>
-        </label>
-        <label>Referencia / N° operación
-          <input type="text" name="reference" autocomplete="off" maxlength="200" />
-        </label>
-        <label>Notas
-          <input type="text" name="notes" maxlength="500" />
-        </label>
-        <p id="payment-create-msg" class="config-msg"></p>
-        <div class="admin-modal-foot">
-          <button type="button" class="btn" data-close>Cancelar</button>
-          <button type="submit" class="btn btn-primary">Registrar pago</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Mini-toast -->
-  <div id="toast" class="admin-toast" hidden></div>
-
-  <script src="/js/admin.js"></script>
-</body>
-</html>
+    </div
