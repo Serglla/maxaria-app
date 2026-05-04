@@ -38,6 +38,10 @@
     levelSwitcher: document.getElementById("level-switcher"),
     levelSelect: document.getElementById("level-select"),
     backdrop: document.getElementById("drawer-backdrop"),
+    catToggleBtn: document.getElementById("cat-toggle-btn"),
+    catToggleCurrent: document.getElementById("cat-toggle-current"),
+    sidebarEl: document.getElementById("sidebar"),
+    sidebarClose: document.getElementById("sidebar-close"),
     vendedorBar: document.getElementById("vendedor-bar"),
     clientDrawer: document.getElementById("client-drawer"),
     clientClose: document.getElementById("client-close"),
@@ -173,9 +177,24 @@
         const v = b.dataset.cat;
         state.cat = v === "all" ? "all" : Number(v);
         renderCategories(); renderProducts();
+        // En mobile, cerrar el drawer del sidebar al elegir categoria
+        if (els.sidebarEl && els.sidebarEl.classList.contains("sidebar-open")) {
+          closeDrawers();
+        }
         window.scrollTo({ top: 0, behavior: "smooth" });
       });
     });
+    updateCatToggleLabel();
+  }
+
+  function updateCatToggleLabel() {
+    if (!els.catToggleCurrent) return;
+    if (state.cat === "all") {
+      els.catToggleCurrent.textContent = "Todas";
+    } else {
+      const cat = state.categories.find((c) => c.id === state.cat);
+      els.catToggleCurrent.textContent = cat ? cat.name : "Todas";
+    }
   }
 
   function filterProducts() {
@@ -984,7 +1003,21 @@
     els.ordersDrawer.hidden = true;
     if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
     if (els.clientDrawer) els.clientDrawer.hidden = true;
+    if (els.sidebarEl) els.sidebarEl.classList.remove("sidebar-open");
     drawer.hidden = false;
+    els.backdrop.hidden = false;
+    if (!drawerHistoryPushed) {
+      try { history.pushState({ drawerOpen: true }, ""); } catch (_) {}
+      drawerHistoryPushed = true;
+    }
+  }
+
+  function openSidebarDrawer() {
+    els.cartDrawer.hidden = true;
+    els.ordersDrawer.hidden = true;
+    if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
+    if (els.clientDrawer) els.clientDrawer.hidden = true;
+    if (els.sidebarEl) els.sidebarEl.classList.add("sidebar-open");
     els.backdrop.hidden = false;
     if (!drawerHistoryPushed) {
       try { history.pushState({ drawerOpen: true }, ""); } catch (_) {}
@@ -995,7 +1028,8 @@
   function anyDrawerOpen() {
     return !els.cartDrawer.hidden || !els.ordersDrawer.hidden ||
            (els.priceChangesDrawer && !els.priceChangesDrawer.hidden) ||
-           (els.clientDrawer && !els.clientDrawer.hidden);
+           (els.clientDrawer && !els.clientDrawer.hidden) ||
+           (els.sidebarEl && els.sidebarEl.classList.contains("sidebar-open"));
   }
 
   function closeDrawers(fromPopState) {
@@ -1004,6 +1038,7 @@
     els.ordersDrawer.hidden = true;
     if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
     if (els.clientDrawer) els.clientDrawer.hidden = true;
+    if (els.sidebarEl) els.sidebarEl.classList.remove("sidebar-open");
     els.backdrop.hidden = true;
     if (wasOpen && drawerHistoryPushed && !fromPopState) {
       drawerHistoryPushed = false;
@@ -1030,6 +1065,10 @@
 
   if (els.clientClose) els.clientClose.addEventListener("click", () => { closeDrawers(); });
   if (els.clientBack)  els.clientBack.addEventListener("click",  () => { closeDrawers(); });
+
+  // Boton "Categorias" (solo visible en mobile) abre el sidebar como drawer
+  if (els.catToggleBtn) els.catToggleBtn.addEventListener("click", openSidebarDrawer);
+  if (els.sidebarClose) els.sidebarClose.addEventListener("click", () => { closeDrawers(); });
 
   // Click en el fondo oscuro = cerrar
   els.backdrop.addEventListener("click", () => { closeDrawers(); });

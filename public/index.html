@@ -50,6 +50,10 @@
   <div id="vendedor-bar" class="vendedor-bar" hidden></div>
 
   <aside class="sidebar" id="sidebar">
+    <div class="sidebar-mobile-head">
+      <h3>Categorías</h3>
+      <button class="sidebar-close" id="sidebar-close" type="button" aria-label="Cerrar">✕</button>
+    </div>
     <h2 class="sidebar-title">Categorías</h2>
     <ul class="cat-list" id="cat-list">
       <li><button class="cat-btn active" data-cat="all">Todas</button></li>
@@ -57,6 +61,12 @@
   </aside>
 
   <main class="catalog">
+    <button id="cat-toggle-btn" class="cat-toggle-btn" type="button" aria-label="Abrir categorías">
+      <span class="cat-toggle-icon" aria-hidden="true">☰</span>
+      <span class="cat-toggle-label">Categoría:</span>
+      <span id="cat-toggle-current" class="cat-toggle-current">Todas</span>
+      <span class="cat-toggle-chevron" aria-hidden="true">›</span>
+    </button>
     <div class="catalog-info">
       <span id="result-count">Cargando productos…</span>
     </div>

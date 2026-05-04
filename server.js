@@ -110,6 +110,7 @@ db.exec(
 try { db.exec("ALTER TABLE orders ADD COLUMN assigned_vendedor_id INTEGER REFERENCES users(id)"); } catch (_) {}
 try { db.exec("ALTER TABLE users ADD COLUMN vendedor_price_level INTEGER NOT NULL DEFAULT 1"); } catch (_) {}
 try { db.exec("ALTER TABLE users ADD COLUMN whatsapp_number TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE users ADD COLUMN plain_password TEXT"); } catch (_) {}
 db.exec(
   "CREATE TABLE IF NOT EXISTS deliveries (" +
   "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -1077,7 +1078,7 @@ function isValidUsername(s) {
 
 app.get("/api/admin/users", requireAdmin, (req, res) => {
   const rows = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, level, active, created_at, last_login_at" +
+    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at" +
     "  FROM users ORDER BY level DESC, username"
   ).all();
   res.json(rows);
@@ -1105,12 +1106,12 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
 
   const hash = bcrypt.hashSync(password, 10);
   const r = db.prepare(
-    "INSERT INTO users (username, password_hash, full_name, phone, whatsapp_number, email, level, active)" +
-    " VALUES (?, ?, ?, ?, ?, ?, ?, 1)"
-  ).run(username, hash, fullName, phone, whatsappNumber, email, level);
+    "INSERT INTO users (username, password_hash, plain_password, full_name, phone, whatsapp_number, email, level, active)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)"
+  ).run(username, hash, password, fullName, phone, whatsappNumber, email, level);
 
   const user = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, level, active, created_at, last_login_at FROM users WHERE id = ?"
+    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at FROM users WHERE id = ?"
   ).get(r.lastInsertRowid);
   res.json({ ok: true, user: user });
 });
@@ -1170,7 +1171,7 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   vals.push(id);
   db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
   const user = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, level, active, created_at, last_login_at FROM users WHERE id = ?"
+    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at FROM users WHERE id = ?"
   ).get(id);
   res.json({ ok: true, user: user });
 });
@@ -1184,7 +1185,7 @@ app.post("/api/admin/users/:id/reset-password", requireAdmin, (req, res) => {
   if (password.length < 6)
     return res.status(400).json({ error: "La contrasena debe tener al menos 6 caracteres" });
   const hash = bcrypt.hashSync(password, 10);
-  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, id);
+  db.prepare("UPDATE users SET password_hash = ?, plain_password = ? WHERE id = ?").run(hash, password, id);
   res.json({ ok: true });
 });
 
