@@ -741,6 +741,7 @@ button { font: inherit; cursor: pointer; }
 @media (max-width: 720px) {
   .catalog-page {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr;
     grid-template-areas:
       "top"
       "vbar"
@@ -771,7 +772,26 @@ button { font: inherit; cursor: pointer; }
   .sidebar-title { display: none; }
   .cat-toggle-btn { display: inline-flex; }
 
-  .topbar-search { max-width: none; }
+  /* En mobile el buscador baja a una segunda fila ocupando todo el ancho:
+     los botones de la topbar le comen el espacio si queda en la misma fila. */
+  .topbar-inner {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 56px;
+    padding: 8px 12px;
+    row-gap: 8px;
+  }
+  .topbar-brand { flex-shrink: 0; }
+  .topbar-actions { flex-shrink: 0; margin-left: auto; }
+  .topbar-search {
+    order: 3;
+    flex: 1 0 100%;
+    max-width: none;
+  }
+  .topbar-search input {
+    padding: 10px 12px;
+    font-size: 15px;
+  }
   .topbar-brand .topbar-sub { display: none; }
 
   /* Drawer ocupa el ancho completo de la pantalla (left+right en lugar de width
