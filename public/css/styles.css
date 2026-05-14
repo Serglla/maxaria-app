@@ -319,8 +319,14 @@ button { font: inherit; cursor: pointer; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: auto;
+  min-width: 0;
 }
+.card-foot > .card-price { min-width: 0; }
+.card-foot > .card-actions,
+.card-foot > .card-actions-none { flex: 0 0 auto; }
 .card-price {
   font-size: 16px;
   font-weight: 700;
@@ -366,12 +372,29 @@ button { font: inherit; cursor: pointer; }
   display: grid;
   place-items: center;
   min-width: 24px;
+  width: 36px;
   padding: 0 4px;
   background: rgba(255,255,255,.55);
   font-weight: 700;
   color: #111827;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
+  /* input editable: que parezca un span */
+  border: 0;
+  outline: none;
+  text-align: center;
+  font-family: inherit;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.card-qty-num::-webkit-outer-spin-button,
+.card-qty-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.card-qty-num:focus {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px #1e3a8a;
 }
 
 /* Card resaltado cuando tiene items en el carrito */
@@ -542,6 +565,30 @@ button { font: inherit; cursor: pointer; }
   line-height: 1;
 }
 .cart-item .qty span { min-width: 20px; text-align: center; font-weight: 600; }
+.cart-item .qty input {
+  width: 44px;
+  height: 24px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 13px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 4px;
+  font-family: inherit;
+  -moz-appearance: textfield;
+  appearance: textfield;
+  padding: 0 4px;
+}
+.cart-item .qty input::-webkit-outer-spin-button,
+.cart-item .qty input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.cart-item .qty input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px #2563eb33;
+}
 .cart-item .line-total {
   font-weight: 700;
   color: #1e3a8a;
@@ -817,6 +864,7 @@ button { font: inherit; cursor: pointer; }
     border-radius: 6px;
   }
   .cart-item .qty span { min-width: 32px; font-size: 17px; }
+  .cart-item .qty input { width: 64px; height: 36px; font-size: 17px; border-radius: 6px; }
   .cart-item .line-total { font-size: 17px; }
   .cart-item .remove { font-size: 14px; margin-top: 8px; }
   .cart-total { font-size: 19px; }
@@ -843,16 +891,16 @@ button { font: inherit; cursor: pointer; }
     -webkit-line-clamp: 3;
   }
   .card-code { font-size: 13px; }
-  .card-price { font-size: 26px; }
+  .card-price { font-size: 22px; }
   .card-add {
-    font-size: 26px;
-    padding: 10px 18px;
+    font-size: 22px;
+    padding: 8px 14px;
     border-radius: 8px;
-    min-width: 50px;
+    min-width: 44px;
   }
-  .card-qty { height: 44px; border-radius: 8px; }
-  .card-qty-btn { padding: 0 16px; font-size: 26px; min-width: 40px; }
-  .card-qty-num { min-width: 38px; font-size: 18px; }
+  .card-qty { height: 40px; border-radius: 8px; }
+  .card-qty-btn { padding: 0 10px; font-size: 22px; min-width: 32px; }
+  .card-qty-num { min-width: 36px; width: 44px; font-size: 18px; }
 }
 
 /* ============================================================

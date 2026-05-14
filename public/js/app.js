@@ -401,7 +401,7 @@
     }
     return '<div class="card-qty">' +
       '<button class="card-qty-btn" data-act="dec" data-id="' + productId + '" type="button" aria-label="Restar">−</button>' +
-      '<span class="card-qty-num">' + item.qty + '</span>' +
+      '<input class="card-qty-num" data-act="set" data-id="' + productId + '" type="text" inputmode="numeric" pattern="[0-9]*" value="' + item.qty + '" aria-label="Cantidad" />' +
       '<button class="card-qty-btn" data-act="inc" data-id="' + productId + '" type="button" aria-label="Sumar">+</button>' +
     '</div>';
   }
@@ -429,6 +429,25 @@
       state.cart.set(id, { id: p.id, name: p.name, price: p.price, qty: delta, image: p.image_url });
     } else {
       return;
+    }
+    renderCart();
+    refreshCardForProduct(id);
+  }
+
+  // Setea la cantidad directamente (cuando el usuario escribe en el input)
+  function setQty(id, rawValue) {
+    if (state.me && state.me.level === 5 && !state.vendedorClient) return;
+    let n = parseInt(String(rawValue).replace(/[^0-9]/g, ""), 10);
+    if (!Number.isFinite(n) || n < 0) n = 0;
+    const item = state.cart.get(id);
+    if (n <= 0) {
+      if (item) state.cart.delete(id);
+    } else if (item) {
+      item.qty = n;
+    } else {
+      const p = state.products.find((x) => x.id === id);
+      if (!p) return;
+      state.cart.set(id, { id: p.id, name: p.name, price: p.price, qty: n, image: p.image_url });
     }
     renderCart();
     refreshCardForProduct(id);
@@ -464,13 +483,22 @@
     els.cartBody.innerHTML = items.map(cartItemHtml).join("");
     els.cartTotal.textContent = fmtPrice(total);
     els.cartSend.disabled = false;
-    els.cartBody.querySelectorAll("[data-act]").forEach((btn) => {
+    els.cartBody.querySelectorAll("button[data-act]").forEach((btn) => {
       const id = Number(btn.dataset.id);
       const act = btn.dataset.act;
       btn.addEventListener("click", () => {
         if (act === "inc") changeQty(id, +1);
         else if (act === "dec") changeQty(id, -1);
         else if (act === "del") removeFromCart(id);
+      });
+    });
+    // Inputs editables de cantidad dentro del carrito
+    els.cartBody.querySelectorAll('input[data-act="set"]').forEach((inp) => {
+      const id = Number(inp.dataset.id);
+      inp.addEventListener("focus", () => inp.select());
+      inp.addEventListener("change", () => setQty(id, inp.value));
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); inp.blur(); }
       });
     });
   }
@@ -482,7 +510,7 @@
         '<div class="meta">' + fmtPrice(it.price) + ' c/u</div>' +
         '<div class="qty">' +
           '<button data-act="dec" data-id="' + it.id + '" type="button">-</button>' +
-          '<span>' + it.qty + '</span>' +
+          '<input data-act="set" data-id="' + it.id + '" type="text" inputmode="numeric" pattern="[0-9]*" value="' + it.qty + '" aria-label="Cantidad" />' +
           '<button data-act="inc" data-id="' + it.id + '" type="button">+</button>' +
         '</div>' +
         '<button class="remove" data-act="del" data-id="' + it.id + '" type="button">Quitar</button>' +
@@ -983,12 +1011,31 @@
 
   // Event delegation para los botones add / inc / dec en cada card
   els.grid.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-act][data-id]");
+    const btn = e.target.closest("button[data-act][data-id]");
     if (!btn || !els.grid.contains(btn)) return;
     const id = Number(btn.dataset.id);
     const act = btn.dataset.act;
     if (act === "add" || act === "inc") changeQty(id, +1);
     else if (act === "dec") changeQty(id, -1);
+  });
+
+  // Input editable de cantidad en cada card: confirma con blur o Enter
+  els.grid.addEventListener("change", (e) => {
+    const inp = e.target.closest('input.card-qty-num[data-act="set"][data-id]');
+    if (!inp) return;
+    setQty(Number(inp.dataset.id), inp.value);
+  });
+  els.grid.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const inp = e.target.closest('input.card-qty-num[data-act="set"][data-id]');
+    if (!inp) return;
+    e.preventDefault();
+    inp.blur(); // dispara el change
+  });
+  // Al hacer foco, seleccionar todo el contenido para que sea facil reescribir
+  els.grid.addEventListener("focusin", (e) => {
+    const inp = e.target.closest('input.card-qty-num[data-act="set"][data-id]');
+    if (inp) inp.select();
   });
 
   // ----- Apertura / cierre de los drawers -----
