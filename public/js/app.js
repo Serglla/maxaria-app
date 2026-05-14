@@ -137,8 +137,9 @@
       els.adminLink.hidden = u.level !== 99;
     }
     if (els.priceChangesBtn) {
-      // Vendedores no ven cambios de precio (no tiene sentido sin un nivel fijo propio)
-      els.priceChangesBtn.hidden = !u.canSeePriceChanges || u.level === 5;
+      // El vendedor ve los cambios segun el nivel del cliente seleccionado
+      // (o segun su vendedor_price_level si no hay cliente).
+      els.priceChangesBtn.hidden = !u.canSeePriceChanges;
     }
     // Selector "Ver como ...": SOLO admin
     if (els.levelSwitcher) {

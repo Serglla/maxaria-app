@@ -519,10 +519,19 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
   }
 
   // Admin puede mirar como otro nivel (igual que /api/products).
+  // Vendedor (nivel 5): si tiene cliente seleccionado, ve los cambios
+  // segun el nivel del cliente; si no, segun su vendedor_price_level.
   let effectiveLevel = level;
   if (level === 99 && req.query.as_level != null) {
     const asLvl = Number(req.query.as_level);
     if ([1, 2, 3, 4].includes(asLvl)) effectiveLevel = asLvl;
+  } else if (level === 5) {
+    if (req.session.vendedorClientId && [1, 2, 3, 4].includes(Number(req.session.vendedorClientLevel))) {
+      effectiveLevel = Number(req.session.vendedorClientLevel);
+    } else {
+      const vpl = Number(req.session.vendedorPriceLevel);
+      effectiveLevel = [1, 2, 3, 4].includes(vpl) ? vpl : 1;
+    }
   }
 
   const updates = db.prepare(
