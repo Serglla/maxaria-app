@@ -674,9 +674,114 @@
         : "/api/price-changes";
       const data = await api(url);
       els.pcBody.innerHTML = renderPriceChangesHtml(data);
+      state.priceChangesLevelName = (data && data.levelName) || "";
     } catch (e) {
       const msg = e && e.message ? e.message : "Error";
       els.pcBody.innerHTML = '<p class="muted">' + escapeHtml(msg) + '</p>';
+    }
+  }
+
+  // Delegacion: toggle del bloque + exportar como imagen
+  if (els.pcBody) {
+    els.pcBody.addEventListener("click", function (ev) {
+      const tgl = ev.target.closest('[data-action="toggle"]');
+      if (tgl) {
+        const block = tgl.closest(".pc-update-block");
+        if (block) block.classList.toggle("pc-open");
+        return;
+      }
+      const shr = ev.target.closest('[data-action="share"]');
+      if (shr) {
+        ev.preventDefault();
+        const block = shr.closest(".pc-update-block");
+        if (block) sharePriceUpdateAsImage(block);
+      }
+    });
+  }
+
+  // Genera una imagen PNG del bloque de cambios y la comparte (mobile) o
+  // la descarga (desktop). El bloque se fuerza a estado "abierto" durante
+  // la captura para que se rendericen todas las secciones.
+  async function sharePriceUpdateAsImage(blockEl) {
+    if (typeof window.html2canvas !== "function") {
+      alert("No se pudo cargar la herramienta de exportacion. Revisa tu conexion.");
+      return;
+    }
+
+    const shareBtn = blockEl.querySelector('[data-action="share"]');
+    const prevBtnHtml = shareBtn ? shareBtn.innerHTML : null;
+    if (shareBtn) {
+      shareBtn.disabled = true;
+      shareBtn.innerHTML = "…";
+    }
+
+    const wasOpen = blockEl.classList.contains("pc-open");
+    if (!wasOpen) blockEl.classList.add("pc-open");
+    blockEl.classList.add("pc-capturing");
+
+    // Agregamos un encabezado temporal con el nombre de la app y el nivel,
+    // asi la imagen exportada es autoexplicativa para WhatsApp.
+    const appName = (state.me && state.me.app_name) || document.title || "Maxaria";
+    const lvlName = state.priceChangesLevelName || "";
+    const headerEl = document.createElement("div");
+    headerEl.className = "pc-capture-header";
+    headerEl.innerHTML =
+      '<div class="pc-capture-app">' + escapeHtml(appName) + '</div>' +
+      (lvlName ? '<div class="pc-capture-lvl">Lista <strong>' + escapeHtml(lvlName) + '</strong></div>' : '');
+    blockEl.insertBefore(headerEl, blockEl.firstChild);
+
+    try {
+      const canvas = await window.html2canvas(blockEl, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      });
+
+      const dateStr = blockEl.getAttribute("data-date") || "";
+      const safeDate = dateStr.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "");
+      const fileName = "cambios-precios-" + (safeDate || "maxaria") + ".png";
+
+      const blob = await new Promise(function (res) { canvas.toBlob(res, "image/png"); });
+      if (!blob) throw new Error("No se pudo generar la imagen");
+
+      const file = new File([blob], fileName, { type: "image/png" });
+
+      // Mobile: usar el share sheet nativo (WhatsApp aparece como opcion)
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: "Cambios de precio",
+            text: "Cambios de precio" + (dateStr ? " - " + dateStr : ""),
+          });
+          return;
+        } catch (e) {
+          if (e && e.name === "AbortError") return;
+          // Si el share fallo por otro motivo, caemos al download
+        }
+      }
+
+      // Desktop / fallback: descarga directa
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    } catch (e) {
+      console.error(e);
+      alert("Error al generar la imagen: " + (e && e.message ? e.message : e));
+    } finally {
+      if (headerEl && headerEl.parentNode) headerEl.parentNode.removeChild(headerEl);
+      blockEl.classList.remove("pc-capturing");
+      if (!wasOpen) blockEl.classList.remove("pc-open");
+      if (shareBtn) {
+        shareBtn.disabled = false;
+        if (prevBtnHtml != null) shareBtn.innerHTML = prevBtnHtml;
+      }
     }
   }
 
@@ -708,14 +813,15 @@
       const isOpen = idx === 0;
 
       html +=
-        '<div class="pc-update-block' + (isOpen ? ' pc-open' : '') + '" id="' + blockId + '">' +
-          '<button class="pc-update-head" type="button" onclick="(function(el){' +
-            'el.closest(\'.pc-update-block\').classList.toggle(\'pc-open\')' +
-          '})(this)">' +
-            '<span class="pc-update-date">' + escapeHtml(date) + '</span>' +
-            '<span class="pc-update-summary muted">' + escapeHtml(summary) + '</span>' +
-            '<span class="pc-chevron">▾</span>' +
-          '</button>' +
+        '<div class="pc-update-block' + (isOpen ? ' pc-open' : '') + '" id="' + blockId + '" data-date="' + escapeHtml(date) + '">' +
+          '<div class="pc-update-head">' +
+            '<button class="pc-update-toggle" type="button" data-action="toggle">' +
+              '<span class="pc-update-date">' + escapeHtml(date) + '</span>' +
+              '<span class="pc-update-summary muted">' + escapeHtml(summary) + '</span>' +
+              '<span class="pc-chevron">▾</span>' +
+            '</button>' +
+            '<button class="pc-update-share" type="button" data-action="share" title="Compartir como imagen" aria-label="Compartir como imagen">📤</button>' +
+          '</div>' +
           '<div class="pc-update-body">';
 
       // — Reingresos —

@@ -1355,20 +1355,63 @@ button { font: inherit; cursor: pointer; }
 .pc-update-head {
   width: 100%;
   display: flex;
+  align-items: stretch;
+  background: #f9fafb;
+}
+.pc-update-toggle {
+  flex: 1;
+  display: flex;
   align-items: center;
   gap: 8px;
-  background: #f9fafb;
+  background: transparent;
   border: none;
   padding: 10px 12px;
   cursor: pointer;
   text-align: left;
   font-size: 14px;
   font-family: inherit;
+  color: inherit;
 }
-.pc-update-head:hover { background: #f3f4f6; }
+.pc-update-toggle:hover { background: #f3f4f6; }
+.pc-update-share {
+  background: transparent;
+  border: none;
+  border-left: 1px solid #e5e7eb;
+  padding: 0 12px;
+  cursor: pointer;
+  font-size: 16px;
+  color: #374151;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+}
+.pc-update-share:hover { background: #e5e7eb; }
+.pc-update-share:disabled { opacity: 0.5; cursor: wait; }
 .pc-update-date { font-weight: 600; color: #111827; flex-shrink: 0; }
 .pc-update-summary { font-size: 13px; flex: 1; }
 .pc-chevron { margin-left: auto; font-size: 16px; color: #9ca3af; transition: transform .2s; flex-shrink: 0; }
+
+/* Encabezado y ajustes durante la captura como imagen (html2canvas) */
+.pc-capture-header {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+.pc-capture-app {
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+}
+.pc-capture-lvl {
+  font-size: 13px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+.pc-update-block.pc-capturing .pc-update-share,
+.pc-update-block.pc-capturing .pc-chevron { display: none !important; }
+.pc-update-block.pc-capturing .pc-update-toggle { cursor: default; }
+.pc-update-block.pc-capturing .pc-update-head { background: #ffffff; border-bottom: 1px solid #e5e7eb; }
 .pc-update-body {
   display: none;
   padding: 0 12px 12px;
