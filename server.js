@@ -1818,6 +1818,17 @@ app.get("/api/admin/accounts/:userId", requireAdmin, (req, res) => {
 app.get("/healthz", (req, res) => res.json({ ok: true, ts: Date.now() }));
 // Servir imagenes de productos desde el volumen persistente
 app.use("/images/products", express.static(PRODUCT_IMAGES_DIR));
+// PWA: el service worker y el manifest no se deben cachear de forma agresiva,
+// asi cualquier cambio en sw.js se detecta al toque.
+app.use((req, res, next) => {
+  if (req.path === "/sw.js") {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Service-Worker-Allowed", "/");
+  } else if (req.path === "/manifest.json") {
+    res.setHeader("Cache-Control", "public, max-age=300");
+  }
+  next();
+});
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 app.use((req, res) => res.status(404).send("No encontrado"));
 
