@@ -283,4 +283,39 @@ maxaria_app/
 - **WhatsApp por usuario**: `users.whatsapp_number` tiene prioridad sobre el global de settings.
 - **Cambios de precio**: `is_new` (producto nuevo con stock > 0) e `is_reingreso` (vuelve de stock 0) son flags separados; el historial guarda `old_*`/`new_*` para los 4 niveles.
 - **`plain_password`**: solo se usa para export/import entre instancias y para mostrar la pass al crear usuario; la auth real es siempre con `password_hash`.
+
+---
+
+## Estado del proyecto e historial técnico
+
+### Branch actual de trabajo
+`multi-instancia` — commit más reciente: `bbffaab`
+
+### Hardening del arranque (branch multi-instancia, mayo 2026)
+
+**`scripts/boot.js`**
+- Variable `SEED_ON_EMPTY` (default `false` en producción, `true` en desarrollo). Si la DB no existe y `SEED_ON_EMPTY=false`, aborta con banner de error `!!!` claro en stderr en lugar de re-seedear silenciosamente.
+- Rama schema-only: si `SEED_ON_EMPTY=true` y no hay Excel disponible, crea la base desde `schema.sql` y genera un usuario `admin` con password aleatoria de 14 caracteres alfanuméricos (alfabeto sin `0/O/I/l/1` para facilitar dictado por teléfono). La password se imprime una sola vez en stdout con banner visible.
+- Banner consolidado de estado antes de levantar el server: ruta, estado (existente/creada ahora), tamaño, conteos de productos/usuarios/pedidos, último backup, flag efímera.
+
+**`scripts/excel_helper.js`** — `resolveExcelPath` respeta jerarquía estricta:
+- Argumento explícito → valida que exista, lanza `Error` si no (uso programático)
+- `EXCEL_PATH` seteada → usa solo esa, sin caer a fallbacks; si no existe, loguea `WARNING` y retorna `null`
+- Sin env var ni argumento → busca en `data/` y `../` (fallbacks de desarrollo)
+
+**`scripts/create-admin.js`** — respeta `process.env.DB_PATH` (antes tenía la ruta hardcodeada a `data/maxaria.db`, lo que rompía `npm run create-admin` en producción con volumen externo).
+
+**`.env.example`** — documenta `DB_PATH`, `EXCEL_PATH`, `BACKUP_KEEP`, `SEED_ON_EMPTY` con comentarios explicando cuándo usar cada una.
+
+**Bugs encontrados durante el testing:** `DB_PATH` hardcodeado en `create-admin.js` y `resolveExcelPath` con fallback silencioso peligroso (en producción podía usar un Excel viejo de `../` sin ningún aviso). Lección: validar siempre con código real antes de containerizar.
+
+### Próximos pasos pendientes (en orden)
+
+1. **Containerización**: Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, Caddyfile con HTTPS automático, `add-client.sh`, README de despliegue. Plan decidido, no implementado.
+2. **Backups externos automáticos**: rclone a B2/S3/Drive.
+3. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
+4. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
+
+### Objetivo de negocio
+Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.
 - **Cuenta corriente**: débito al entregar pedido (monto = total), crédito al registrar pago. Balance = créditos − débitos.
