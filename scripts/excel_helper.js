@@ -53,13 +53,34 @@ function trimStr(v) {
  */
 function resolveExcelPath(explicit) {
   const ROOT = path.join(__dirname, "..");
-  const candidatos = [
-    explicit ? path.resolve(explicit) : null,
-    process.env.EXCEL_PATH ? path.resolve(process.env.EXCEL_PATH) : null,
+
+  // Argumento explícito (uso programático desde seed.js, import-prices.js, etc.):
+  // validar estrictamente — si no existe es un error del llamador.
+  if (explicit) {
+    const p = path.resolve(explicit);
+    if (!fs.existsSync(p)) throw new Error("Excel no encontrado en ruta explícita: " + p);
+    return p;
+  }
+
+  // EXCEL_PATH seteada: usar esa y solo esa, sin caer a fallbacks.
+  // Retorna null si el archivo no existe — boot.js lo maneja con la rama schema-only.
+  if (process.env.EXCEL_PATH && process.env.EXCEL_PATH.trim()) {
+    const p = path.resolve(process.env.EXCEL_PATH.trim());
+    if (fs.existsSync(p)) return p;
+    console.warn(
+      '[excel_helper] WARNING: EXCEL_PATH="' + p +
+      '" está seteado pero el archivo no existe. ' +
+      'Continuando sin Excel (puede caer a la rama schema-only en boot.js).'
+    );
+    return null;
+  }
+
+  // Sin env var ni argumento: buscar en ubicaciones de desarrollo/convenio.
+  const fallbacks = [
     path.join(ROOT, "data", "precios_maxaria.xlsx"),
     path.join(ROOT, "..", "precios_maxaria.xlsx"),
-  ].filter(Boolean);
-  for (const p of candidatos) {
+  ];
+  for (const p of fallbacks) {
     if (fs.existsSync(p)) return p;
   }
   return null;

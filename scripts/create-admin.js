@@ -12,7 +12,7 @@ const path = require("path");
 const Database = require("better-sqlite3");
 const bcrypt = require("bcryptjs");
 
-const DB_PATH = path.join(__dirname, "..", "data", "maxaria.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "data", "maxaria.db");
 
 const [, , username, password, levelStr, fullName] = process.argv;
 
