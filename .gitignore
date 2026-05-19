@@ -5,3 +5,14 @@ data/backups/
 .env
 *.log
 .DS_Store
+
+# Backups y archivos de trabajo locales (no commitear)
+maxaria-prod-backup-*.db
+maxaria-prod-backup-*.db-shm
+maxaria-prod-backup-*.db-wal
+maxaria-backup.b64
+verify-backup.js
+decode-backup.js
+
+# Configuración local de Claude Code
+.claude/
