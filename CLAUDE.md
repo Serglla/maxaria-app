@@ -89,20 +89,21 @@ maxaria_app/
 
 **Catálogo (cliente)**
 - Login con username/password (bcrypt)
-- Catálogo con precios dinámicos según nivel
+- Catálogo con precios dinámicos según nivel **o** lista de precios personalizada asignada al cliente
 - Filtrado por categoría, búsqueda por nombre/código/categoría
 - Imágenes de producto, stock visible (oculta si ≤ 0)
 - Carrito con notas, total automático
 - Envío de pedido por WhatsApp (link `wa.me`); el pedido se guarda en BD **antes** de abrir WhatsApp
+- **El pedido va SIEMPRE al WhatsApp del vendedor asignado al cliente.** Si el cliente no tiene vendedor activo con WA, el botón Enviar queda deshabilitado y se muestra un aviso rojo "No tenés vendedor asignado".
 - Historial de pedidos del usuario con estados
 - Drawer de cambios de precio (visible para niveles configurables, default mayorista y VIP)
 
 **Vendedor (nivel 5)**
 - Barra para seleccionar cliente a atender
-- Catálogo con precios del cliente seleccionado
+- Catálogo con precios del cliente seleccionado (aplica lista personalizada del cliente si tiene una asignada)
 - Crea pedidos a nombre del cliente
-- Solo ve pedidos que le fueron asignados
-- Configurable qué nivel de precios ve (`users.vendedor_price_level`)
+- Ve los pedidos donde `orders.assigned_vendedor_id = vendedor` **O** los pedidos de sus clientes asignados (`users.assigned_vendedor_id = vendedor`)
+- Configurable qué nivel de precios ve cuando atiende sin cliente (`users.vendedor_price_level`, legacy — hoy con cliente seleccionado siempre usa la config del cliente)
 
 **Admin — Productos**
 - Tabla con todos los productos (incluyendo sin stock e inactivos)
@@ -120,12 +121,21 @@ maxaria_app/
 
 **Admin — Usuarios**
 - CRUD completo, edición inline, reset de contraseña
+- Para cada cliente (level 1-4): asignar **Vendedor asignado** y **Lista de precios** desde dos selects editables inline
 - Asignación de categorías permitidas (si tiene filas en `user_category_access`, solo ve esas)
 - Export/import a JSON (incluye password_hash para restore entre instancias)
 - Salvaguardas: el admin no puede bajarse de nivel ni desactivarse a sí mismo
+- Al cambiar de tab y volver a Usuarios, los selects de "Vendedor asignado" y "Lista de precios" se refrescan automáticamente (`refreshUserSelects()`), para que un vendedor o lista recién creada aparezca sin recargar la página
 
 **Admin — Vendedores**
 - Lista de usuarios nivel 5 con stats de pedidos asignados y entregas
+
+**Admin — Listas de precios**
+- CRUD completo en la pestaña dedicada. Cada lista: nombre único, lista base (minorista/revendedor/mayorista/vip/publico), markup % (-90 a 500), activa, notas
+- Tabla editable inline con auto-save
+- Botón **Preview**: muestra hasta 30 productos con su precio base y el efectivo calculado (modal)
+- DELETE bloqueado si hay clientes usando la lista (forzar desasignar o desactivar)
+- La asignación a clientes se hace desde la columna "Lista de precios" de la pestaña Usuarios
 
 **Admin — Entregas**
 - Registro: `delivered_to`, `efectivo_amount`, `transferencia_amount`, `notes`
@@ -160,7 +170,9 @@ maxaria_app/
 
 **products** — `id`, `code UNIQUE` (clave Excel), `category_id`, `name`, `description`, `image_url`, `cost`, `price_minorista`, `price_revendedor`, `price_mayorista`, `price_vip`, `price_publico`, `stock`, `active`, timestamps. Todos los precios son `INTEGER` (no se dividen — `price_minorista = 10000` es $10000).
 
-**users** — `id`, `username UNIQUE`, `password_hash`, `full_name`, `phone`, `email`, `level`, `active`, `vendedor_price_level` (para nivel 5), `whatsapp_number` (override personal), `plain_password` (solo para export/import, NO para auth), `created_at`, `last_login_at`
+**users** — `id`, `username UNIQUE`, `password_hash`, `full_name`, `phone`, `email`, `level`, `active`, `vendedor_price_level` (para nivel 5), `whatsapp_number` (override personal), `plain_password` (solo para export/import, NO para auth), `assigned_vendedor_id` (FK users.id — vendedor que tiene asignado este cliente), `price_list_id` (FK price_lists.id — lista personalizada del cliente; NULL = precios por nivel), `created_at`, `last_login_at`
+
+**price_lists** — `id`, `name UNIQUE`, `base_level` ('minorista'|'revendedor'|'mayorista'|'vip'|'publico'), `markup_percent` (REAL, -90 a 500), `active`, `notes`, `created_at`, `updated_at`. Precio efectivo de un cliente con `price_list_id = X`: `round(products.price_<base_level> × (1 + markup_percent/100))`, entero. Una lista solo se puede borrar si `users_count = 0`.
 
 **orders** — `id`, `user_id`, `status` (pendiente/enviado/preparando/entregado/cancelado), `total`, `notes`, `whatsapp_sent_at`, `assigned_vendedor_id`, `stock_discounted` (flag), `created_at`
 
@@ -230,9 +242,9 @@ maxaria_app/
 - `PATCH /api/admin/orders/:id/assign` — asignar/desasignar vendedor
 
 **Admin — Usuarios**
-- `GET /api/admin/users` — lista
+- `GET /api/admin/users` — lista (incluye `assigned_vendedor_id`, `price_list_id`, `vendedor_price_level`)
 - `POST /api/admin/users` — crear
-- `PATCH /api/admin/users/:id` — editar
+- `PATCH /api/admin/users/:id` — editar (acepta `assigned_vendedor_id`, `price_list_id`; `null`/`""`/`"0"` desasigna)
 - `POST /api/admin/users/:id/reset-password` — cambiar contraseña
 - `GET /api/admin/users/:id/categories` — restricciones de categoría
 - `PUT /api/admin/users/:id/categories` — asignar categorías
@@ -241,6 +253,13 @@ maxaria_app/
 
 **Admin — Vendedores**
 - `GET /api/admin/vendedores` — list level 5 con stats
+
+**Admin — Listas de precios**
+- `GET /api/admin/price-lists` — todas (incluye `users_count` calculado)
+- `POST /api/admin/price-lists` — crear (validaciones: nombre único, base_level válido, markup -90 a 500)
+- `PATCH /api/admin/price-lists/:id` — editar campos sueltos (name, base_level, markup_percent, active, notes)
+- `DELETE /api/admin/price-lists/:id` — borrar (409 si tiene clientes usándola)
+- `GET /api/admin/price-lists/:id/preview?limit=N` — devuelve productos con precio base y efectivo
 
 **Admin — Proveedores y Compras**
 - `GET/POST/PATCH /api/admin/suppliers[/:id]`
@@ -289,7 +308,42 @@ maxaria_app/
 ## Estado del proyecto e historial técnico
 
 ### Branch actual de trabajo
-`multi-instancia` — commit más reciente: `bbffaab`
+`multi-instancia` — feature de vendedor por cliente + listas de precios sin commitear aún al momento de esta nota (20 mayo 2026). Próximo push: rama `multi-instancia`.
+
+### Vendedor por cliente + Listas de precios personalizadas (mayo 2026)
+
+**Schema (migración idempotente al arranque)**
+- Tabla nueva `price_lists` (ver sección "Esquema").
+- `users.assigned_vendedor_id` (FK users.id) — cada cliente puede tener UN vendedor asignado.
+- `users.price_list_id` (FK price_lists.id) — cada cliente puede tener UNA lista personalizada (o NULL = precios por nivel).
+
+**Helpers en server.js**
+- `PRICE_LIST_BASE_LEVELS = ["minorista","revendedor","mayorista","vip","publico"]`.
+- `priceColumnForBaseLevel(baseLevel)` — devuelve `"price_<base>"`.
+- `getEffectivePriceConfig(userId, level)` — devuelve `{ kind: "list", column, markup_percent, listId }` si el cliente tiene `price_list_id` válido y activo, sino `{ kind: "level", column }`.
+- `computeEffectivePrice(basePrice, config)` — aplica markup y redondea a entero.
+- `priceSqlExpr(config, alias)` — devuelve `{ expr, params }` para usar en SELECT inline.
+
+**Reglas del flujo**
+- Cuando un cliente envía pedido, el WhatsApp del link `wa.me` es **siempre** el del vendedor asignado (`users.whatsapp_number` del vendedor). Si no hay vendedor activo o no tiene WA, el server devuelve 400 con mensaje claro y el botón "Enviar" del catálogo queda deshabilitado.
+- En `POST /api/orders`: si el usuario es cliente (level 1-4) sin vendedor activo, se rechaza el pedido. Si lo tiene, `orders.assigned_vendedor_id` se setea automáticamente al vendedor del cliente.
+- En `GET /api/orders` y `/:id`, vendedores ven pedidos donde `o.assigned_vendedor_id = vendedor` **OR** `u.assigned_vendedor_id = vendedor` (sus clientes asignados). Mismo OR en `PATCH /api/orders/:id` y `POST /api/orders/:id/deliver` para autorización.
+- El admin **no** está expuesto a este bloqueo: como su WA no depende de vendedor asignado, no se aplica.
+- Cuando un vendedor (level 5) atiende a un cliente desde el catálogo, los precios se calculan con la **config del cliente** (lista personalizada si tiene, sino por nivel). El campo legacy `vendedor_price_level` solo aplica si no hay cliente seleccionado.
+
+**Frontend admin**
+- Pestaña nueva "Listas de precios" en `admin.html` con tabla editable + modal "+ Nueva lista" + botón Preview.
+- Pestaña Usuarios: dos columnas nuevas ("Vendedor asignado", "Lista de precios") como `<select>` con auto-save. Sólo aparecen como editables para clientes (level 1-4); para vendedores/admin se muestra `—`.
+- `loadUsers()` carga en paralelo `/api/admin/users`, `/api/admin/vendedores` y `/api/admin/price-lists` para llenar los selects.
+- **Bug fix:** al cambiar de tab y volver a Usuarios, los caches de vendedores y listas se refrescan automáticamente vía `refreshUserSelects()`. Sin esto, un vendedor recién creado en otra pestaña no aparecía en el select de "Vendedor asignado". El handler del tab "usuarios" llama a `refreshUserSelects` cuando `state.usersLoaded === true`.
+
+**Frontend catálogo (app.js)**
+- `state.me.whatsapp` para clientes ahora es el WA del vendedor asignado (resuelto en el server).
+- Función `isClientWithoutVendedor()` — detecta si hay que bloquear el botón Enviar.
+- `renderCart()` muestra aviso rojo en el carrito si no hay vendedor o el vendedor no tiene WA.
+- `sendCart()` con alert específico para clientes ("pedile al admin que te asigne un vendedor") en vez del genérico viejo de WHATSAPP_NUMBER.
+
+**Cosa rara durante el dev:** Edits grandes en archivos grandes (server.js ~1900 líneas, admin.js ~2700 líneas, app.js ~1200 líneas) truncaban el archivo al final sin warning. Pasó 3 veces. Workaround usado: detectar con `node --check`, ubicar la última línea íntegra con `grep`, y reconstruir con `head -n N <archivo>` + `git show HEAD:<archivo> | sed -n 'M,$p'`. Para futuros refactors grandes en estos archivos, conviene partirlos o usar Edits más chicos.
 
 ### Hardening del arranque (branch multi-instancia, mayo 2026)
 

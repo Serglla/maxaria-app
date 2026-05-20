@@ -538,7 +538,7 @@
     state.priceLists.forEach((pl) => {
       if (!pl.active) return;
       const sel = Number(currentId) === Number(pl.id) ? " selected" : "";
-      const label = pl.name + " (" + pl.base_level + " +" + pl.markup_percent + "%)";
+      const label = pl.name + " (" + pl.base_level + ", gana " + pl.markup_percent + "%)";
       html += '<option value="' + pl.id + '"' + sel + '>' + escapeHtml(label) + '</option>';
     });
     return html;
@@ -891,7 +891,7 @@
     return '<tr data-id="' + pl.id + '"' + (pl.active ? '' : ' class="row-inactive"') + '>' +
       '<td><input class="cell-input" data-field="name" value="' + escapeHtml(pl.name) + '" /></td>' +
       '<td><select class="cell-input" data-field="base_level">' + baseOpts + '</select></td>' +
-      '<td class="num"><input class="cell-input num" data-field="markup_percent" type="number" step="0.01" min="-90" max="500" value="' + (Number(pl.markup_percent) || 0) + '" style="width:80px;text-align:right" /></td>' +
+      '<td class="num"><input class="cell-input num" data-field="markup_percent" type="number" step="0.01" min="-90" max="95" value="' + (Number(pl.markup_percent) || 0) + '" style="width:80px;text-align:right" title="Ganancia limpia % del vendedor sobre el precio final" /></td>' +
       '<td><label class="cell-toggle">' +
         '<input type="checkbox" data-field="active"' + (pl.active ? " checked" : "") + ' /><span></span></label></td>' +
       '<td class="num muted">' + (pl.users_count || 0) + '</td>' +
@@ -995,7 +995,7 @@
       '<div class="admin-modal-box" style="max-width:680px">' +
         '<h3>Preview · ' + escapeHtml(list.name || "") + '</h3>' +
         '<p class="muted small">Base: <strong>' + escapeHtml(list.base_level || "") +
-          '</strong> · Markup: <strong>' + (Number(list.markup_percent) || 0) + '%</strong>' +
+          '</strong> · Ganancia: <strong>' + (Number(list.markup_percent) || 0) + '%</strong>' +
           ' · Mostrando hasta 30 productos.</p>' +
         '<div class="admin-table-wrap" style="max-height:60vh;overflow:auto">' +
           '<table class="admin-table">' +

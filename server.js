@@ -113,9 +113,11 @@ try { db.exec("ALTER TABLE users ADD COLUMN whatsapp_number TEXT"); } catch (_) 
 try { db.exec("ALTER TABLE users ADD COLUMN plain_password TEXT"); } catch (_) {}
 
 // Migracion: Listas de precios personalizadas.
-// - price_lists: lista base (minorista/revendedor/mayorista/vip/publico) + % markup.
-//   El precio efectivo de un producto para una lista X es:
-//      Math.round(products.price_<base_level> * (1 + markup_percent / 100))
+// - price_lists: lista base (minorista/revendedor/mayorista/vip/publico) + % ganancia.
+//   `markup_percent` (nombre historico) representa la GANANCIA LIMPIA del vendedor
+//   sobre el precio final, NO un recargo sobre el base. El precio efectivo es:
+//      Math.round(products.price_<base_level> / (1 - markup_percent / 100))
+//   Asi, precio_efectivo - markup_percent% del precio_efectivo == base.
 // - users.assigned_vendedor_id: vendedor (level 5) que tiene asignado este cliente.
 //   El pedido del cliente va al WhatsApp del vendedor asignado.
 // - users.price_list_id: lista de precios que ve este cliente.
@@ -395,24 +397,35 @@ function getEffectivePriceConfig(userId, level) {
   return { kind: "level", column: priceColumnFor(level) };
 }
 
-// Calcula el precio efectivo aplicando markup si corresponde (siempre entero).
+// Calcula el precio efectivo aplicando margen sobre venta (siempre entero).
+// La columna se llama `markup_percent` por compatibilidad historica pero hoy
+// representa la GANANCIA LIMPIA del vendedor sobre el precio final:
+//   precio_venta = round(base / (1 - margen/100))
+// De esa forma, precio_venta - margen% del precio_venta = base.
 function computeEffectivePrice(basePrice, config) {
   const p = Number(basePrice) || 0;
   if (!config || config.kind !== "list") return p;
   const m = Number(config.markup_percent) || 0;
-  return Math.round(p * (1 + m / 100));
+  const denom = 1 - m / 100;
+  if (denom <= 0) return p; // proteccion: margen >= 100% no es valido
+  return Math.round(p / denom);
 }
 
 // SQL expression que devuelve el precio efectivo para una columna de producto
 // dada la config. Para no romper el orden de columnas en SELECTs viejos,
 // devolvemos un objeto: { expr, params } para concatenar al SELECT.
+// Aplica la misma formula de margen sobre venta. Si el denominador es <= 0
+// (margen invalido >= 100), cae al precio base para no devolver negativos.
 function priceSqlExpr(config, productAlias) {
   const a = productAlias || "p";
   if (!config) return { expr: "0", params: [] };
   if (config.kind === "list") {
     return {
-      expr: "CAST(ROUND(" + a + "." + config.column + " * (1 + ? / 100.0)) AS INTEGER)",
-      params: [Number(config.markup_percent) || 0],
+      expr:
+        "CASE WHEN (1 - ? / 100.0) > 0" +
+        " THEN CAST(ROUND(" + a + "." + config.column + " / (1 - ? / 100.0)) AS INTEGER)" +
+        " ELSE " + a + "." + config.column + " END",
+      params: [Number(config.markup_percent) || 0, Number(config.markup_percent) || 0],
     };
   }
   return { expr: a + "." + config.column, params: [] };
@@ -1616,8 +1629,8 @@ app.post("/api/admin/price-lists", requireAdmin, (req, res) => {
   if (!name) return res.status(400).json({ error: "Nombre requerido" });
   if (!PRICE_LIST_BASE_LEVELS.includes(base_level))
     return res.status(400).json({ error: "Lista base invalida. Valores: " + PRICE_LIST_BASE_LEVELS.join(", ") });
-  if (!isFinite(markup_percent) || markup_percent < -90 || markup_percent > 500)
-    return res.status(400).json({ error: "Markup invalido (debe ser un numero entre -90 y 500)" });
+  if (!isFinite(markup_percent) || markup_percent < -90 || markup_percent > 95)
+    return res.status(400).json({ error: "Ganancia invalida (debe ser un numero entre -90 y 95)" });
 
   const exists = db.prepare("SELECT id FROM price_lists WHERE name = ?").get(name);
   if (exists) return res.status(409).json({ error: "Ya existe una lista con ese nombre" });
@@ -1659,8 +1672,8 @@ app.patch("/api/admin/price-lists/:id", requireAdmin, (req, res) => {
   }
   if ("markup_percent" in b) {
     const v = Number(b.markup_percent);
-    if (!isFinite(v) || v < -90 || v > 500)
-      return res.status(400).json({ error: "Markup invalido (entre -90 y 500)" });
+    if (!isFinite(v) || v < -90 || v > 95)
+      return res.status(400).json({ error: "Ganancia invalida (entre -90 y 95)" });
     sets.push("markup_percent = ?"); vals.push(v);
   }
   if ("active" in b) {
@@ -1715,12 +1728,14 @@ app.get("/api/admin/price-lists/:id/preview", requireAdmin, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
   const products = db.prepare(
     "SELECT p.id, p.code, p.name, p." + col + " AS base_price," +
-    "       CAST(ROUND(p." + col + " * (1 + ? / 100.0)) AS INTEGER) AS effective_price," +
+    "       CASE WHEN (1 - ? / 100.0) > 0" +
+    "            THEN CAST(ROUND(p." + col + " / (1 - ? / 100.0)) AS INTEGER)" +
+    "            ELSE p." + col + " END AS effective_price," +
     "       p.stock, c.name AS category_name" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  WHERE p.active = 1 AND p.stock > 0" +
     "  ORDER BY c.sort_order, c.name, p.name LIMIT ?"
-  ).all(Number(list.markup_percent) || 0, limit);
+  ).all(Number(list.markup_percent) || 0, Number(list.markup_percent) || 0, limit);
   res.json({ list: list, products: products });
 });
 
