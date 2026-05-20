@@ -212,6 +212,18 @@ db.exec(
 );
 try { db.exec("ALTER TABLE orders ADD COLUMN stock_discounted INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 
+// Migracion: Vendedor tercerizado + snapshot del costo del vendedor por item.
+// - users.is_tercerizado: flag 0/1. Si vale 1, el vendedor solo ve sus clientes
+//   asignados (filtrado en GET /api/clients). La denominacion "Tercerizado" solo
+//   la ve el administrador; para el resto sigue siendo un vendedor mas.
+// - order_items.vendedor_cost_unit: snapshot del precio "base" (price_<base_level>
+//   de la lista del cliente) al momento del pedido. Permite calcular la ganancia
+//   del vendedor de forma historica aunque despues cambien precios o listas.
+//   NULL = el cliente no tenia lista personalizada al momento del pedido, por
+//   lo que no hay ganancia diferencial para el vendedor.
+try { db.exec("ALTER TABLE users ADD COLUMN is_tercerizado INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+try { db.exec("ALTER TABLE order_items ADD COLUMN vendedor_cost_unit INTEGER"); } catch (_) {}
+
 function getSetting(key, fallback) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   if (row && row.value != null) return row.value;
@@ -594,6 +606,11 @@ app.get("/api/me", requireLogin, (req, res) => {
       ? { id: req.session.vendedorClientId, name: req.session.vendedorClientName,
           level: req.session.vendedorClientLevel, levelName: levelName(req.session.vendedorClientLevel) }
       : null;
+    // is_tercerizado: NO se expone el nombre "tercerizado" al vendedor.
+    // El flag se manda como `restrictedToAssigned` para indicar que solo ve
+    // sus clientes; cualquier denominacion publica queda del lado del admin.
+    const meRow = db.prepare("SELECT is_tercerizado FROM users WHERE id = ?").get(req.session.userId) || {};
+    resp.restrictedToAssigned = Number(meRow.is_tercerizado) === 1;
   }
   res.json(resp);
 });
@@ -602,11 +619,19 @@ app.get("/api/me", requireLogin, (req, res) => {
 // a quién está atendiendo. Solo accesible por vendedores.
 app.get("/api/clients", requireLogin, (req, res) => {
   if (req.session.level !== 5) return res.status(403).json({ error: "Solo vendedores" });
-  const rows = db.prepare(
+  // Si el vendedor es tercerizado, solo ve los clientes que tiene asignados.
+  // Los vendedores propios siguen viendo todos los clientes activos.
+  const me = db.prepare("SELECT is_tercerizado FROM users WHERE id = ?").get(req.session.userId) || {};
+  let sql =
     "SELECT id, username, full_name, level FROM users" +
-    "  WHERE level IN (1,2,3,4) AND active = 1" +
-    "  ORDER BY full_name, username"
-  ).all();
+    "  WHERE level IN (1,2,3,4) AND active = 1";
+  const params = [];
+  if (Number(me.is_tercerizado) === 1) {
+    sql += " AND assigned_vendedor_id = ?";
+    params.push(req.session.userId);
+  }
+  sql += " ORDER BY full_name, username";
+  const rows = db.prepare(sql).all(...params);
   res.json(rows.map((r) => ({
     id: r.id, username: r.username, full_name: r.full_name,
     level: r.level, levelName: levelName(r.level),
@@ -621,9 +646,15 @@ app.post("/api/vendedor/select-client", requireLogin, (req, res) => {
   const clientId = req.body && req.body.client_id ? Number(req.body.client_id) : null;
   if (clientId) {
     const client = db.prepare(
-      "SELECT id, username, full_name, level FROM users WHERE id = ? AND active = 1 AND level IN (1,2,3,4)"
+      "SELECT id, username, full_name, level, assigned_vendedor_id FROM users" +
+      " WHERE id = ? AND active = 1 AND level IN (1,2,3,4)"
     ).get(clientId);
     if (!client) return res.status(404).json({ error: "Cliente no encontrado" });
+    // Si el vendedor es tercerizado, solo puede atender a sus clientes asignados.
+    const me = db.prepare("SELECT is_tercerizado FROM users WHERE id = ?").get(req.session.userId) || {};
+    if (Number(me.is_tercerizado) === 1 && Number(client.assigned_vendedor_id) !== Number(req.session.userId)) {
+      return res.status(403).json({ error: "Ese cliente no esta asignado a vos" });
+    }
     req.session.vendedorClientId = client.id;
     req.session.vendedorClientName = client.full_name || client.username;
     req.session.vendedorClientLevel = client.level;
@@ -634,6 +665,87 @@ app.post("/api/vendedor/select-client", requireLogin, (req, res) => {
   delete req.session.vendedorClientName;
   delete req.session.vendedorClientLevel;
   return res.json({ ok: true, client: null });
+});
+
+// Ganancias del vendedor (solo level 5).
+// Devuelve los pedidos visibles para el vendedor con su ganancia calculada como
+// SUM(unit_price - vendedor_cost_unit) * quantity sobre los items que tienen
+// snapshot de costo. Items sin snapshot (clientes sin lista personalizada) no
+// generan ganancia diferencial -> aportan 0.
+// Resumen totales + detalle por pedido.
+// Excluye pedidos cancelados.
+app.get("/api/vendedor/earnings", requireLogin, (req, res) => {
+  if (req.session.level !== 5) return res.status(403).json({ error: "Solo vendedores" });
+  const me = req.session.userId;
+  // Pedidos visibles: assigned al vendedor O del cliente que lo tiene asignado.
+  // Excluimos cancelados.
+  const orders = db.prepare(
+    "SELECT o.id, o.status, o.total, o.created_at," +
+    "       o.user_id, u.username AS client_username, u.full_name AS client_full_name," +
+    "       u.level AS client_level," +
+    "       COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+    "                         THEN oi.vendedor_cost_unit * oi.quantity ELSE 0 END), 0) AS cost_total," +
+    "       COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+    "                         THEN (oi.unit_price - oi.vendedor_cost_unit) * oi.quantity ELSE 0 END), 0) AS earning_total" +
+    "  FROM orders o" +
+    "  JOIN users u ON u.id = o.user_id" +
+    "  LEFT JOIN order_items oi ON oi.order_id = o.id" +
+    "  WHERE o.status != 'cancelado'" +
+    "    AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)" +
+    "  GROUP BY o.id" +
+    "  ORDER BY o.created_at DESC"
+  ).all(me, me);
+
+  let totalOrders = orders.length;
+  let totalDelivered = 0;
+  let totalSold = 0;
+  let totalCost = 0;
+  let totalEarning = 0;
+  for (const o of orders) {
+    totalSold += Number(o.total) || 0;
+    totalCost += Number(o.cost_total) || 0;
+    totalEarning += Number(o.earning_total) || 0;
+    if (o.status === "entregado") totalDelivered++;
+  }
+  res.json({
+    summary: {
+      total_orders: totalOrders,
+      total_delivered: totalDelivered,
+      total_sold: totalSold,
+      total_cost: totalCost,
+      total_earning: totalEarning,
+    },
+    orders: orders,
+  });
+});
+
+// Detalle de items con ganancia para un pedido (vendedor o admin).
+// El vendedor solo puede ver pedidos que le pertenecen.
+app.get("/api/vendedor/earnings/:orderId", requireLogin, (req, res) => {
+  const level = req.session.level;
+  if (level !== 5 && level !== 99) return res.status(403).json({ error: "No autorizado" });
+  const orderId = Number(req.params.orderId);
+  if (!orderId) return res.status(400).json({ error: "ID invalido" });
+  const order = db.prepare(
+    "SELECT o.id, o.status, o.total, o.created_at, o.assigned_vendedor_id," +
+    "       o.user_id, u.username AS client_username, u.full_name AS client_full_name," +
+    "       u.assigned_vendedor_id AS client_vendedor_id, u.level AS client_level" +
+    "  FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?"
+  ).get(orderId);
+  if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+  if (level === 5 &&
+      Number(order.assigned_vendedor_id) !== Number(req.session.userId) &&
+      Number(order.client_vendedor_id) !== Number(req.session.userId)) {
+    return res.status(403).json({ error: "No autorizado" });
+  }
+  const items = db.prepare(
+    "SELECT id, product_code, product_name, quantity, unit_price, subtotal," +
+    "       vendedor_cost_unit," +
+    "       CASE WHEN vendedor_cost_unit IS NOT NULL" +
+    "            THEN (unit_price - vendedor_cost_unit) * quantity ELSE 0 END AS earning" +
+    "  FROM order_items WHERE order_id = ? ORDER BY id"
+  ).all(orderId);
+  res.json({ order: order, items: items });
 });
 
 // Historial de cambios: ultimas 10 actualizaciones (Excel subidos).
@@ -883,7 +995,9 @@ app.post("/api/orders", requireLogin, (req, res) => {
     assignedVendedorId = cliRow.assigned_vendedor_id;
   }
 
-  // Calcular precios usando la config efectiva (lista personalizada o nivel base)
+  // Calcular precios usando la config efectiva (lista personalizada o nivel base).
+  // Si el cliente tiene lista personalizada, tambien guardamos el precio base
+  // (precio_<base_level>) como snapshot del "costo" del vendedor para ese item.
   const cfg = getEffectivePriceConfig(orderUserId, priceLevel);
   const getProd = db.prepare(
     "SELECT id, code, name, " + cfg.column + " AS base_price, stock" +
@@ -900,10 +1014,14 @@ app.post("/api/orders", requireLogin, (req, res) => {
     if (!p || p.stock <= 0) continue;
     const unitPrice = computeEffectivePrice(p.base_price, cfg);
     const subtotal = unitPrice * qty;
+    // Si el cliente tenia lista personalizada, base_price es el "costo" del vendedor.
+    // Si no, el costo es el mismo precio que el de venta -> guardamos NULL.
+    const costUnit = cfg.kind === "list" ? Math.round(Number(p.base_price) || 0) : null;
     total += subtotal;
     lines.push({
       product_id: p.id, product_code: p.code, product_name: p.name,
       quantity: qty, unit_price: unitPrice, subtotal: subtotal,
+      vendedor_cost_unit: costUnit,
     });
   }
   if (!lines.length)
@@ -914,8 +1032,8 @@ app.post("/api/orders", requireLogin, (req, res) => {
     " VALUES (?, 'enviado', ?, ?, datetime('now'), ?, datetime('now'))"
   );
   const insertItem = db.prepare(
-    "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal)" +
-    " VALUES (?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   let orderId;
@@ -924,7 +1042,7 @@ app.post("/api/orders", requireLogin, (req, res) => {
     orderId = r.lastInsertRowid;
     for (const l of lines) {
       insertItem.run(orderId, l.product_id, l.product_code, l.product_name,
-                     l.quantity, l.unit_price, l.subtotal);
+                     l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
     }
   })();
 
@@ -1099,11 +1217,19 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
 app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID inválido" });
-  const order = db.prepare("SELECT id FROM orders WHERE id = ?").get(id);
+  const order = db.prepare("SELECT id, user_id FROM orders WHERE id = ?").get(id);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
 
   const rawItems = req.body && Array.isArray(req.body.items) ? req.body.items : [];
   if (!rawItems.length) return res.status(400).json({ error: "El pedido debe tener al menos 1 item" });
+
+  // Para recalcular el costo del vendedor (snapshot) usamos la lista actual
+  // del cliente. Si no tiene lista personalizada, el costo queda NULL.
+  const cliRow = db.prepare("SELECT level FROM users WHERE id = ?").get(order.user_id) || {};
+  const cfg = getEffectivePriceConfig(order.user_id, cliRow.level || 1);
+  const getCostPrice = cfg.kind === "list"
+    ? db.prepare("SELECT " + cfg.column + " AS base_price FROM products WHERE id = ?")
+    : null;
 
   const lines = [];
   let total = 0;
@@ -1117,26 +1243,31 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     const productName = String(it.product_name || prod.name || "").trim().slice(0, 200);
     const productCode = String(it.product_code || prod.code || "").trim().slice(0, 50);
     const subtotal = unitPrice * qty;
+    let costUnit = null;
+    if (getCostPrice) {
+      const cp = getCostPrice.get(productId);
+      costUnit = cp ? Math.round(Number(cp.base_price) || 0) : null;
+    }
     total += subtotal;
     lines.push({ product_id: productId, product_code: productCode, product_name: productName,
-                 quantity: qty, unit_price: unitPrice, subtotal });
+                 quantity: qty, unit_price: unitPrice, subtotal, vendedor_cost_unit: costUnit });
   }
   if (!lines.length) return res.status(400).json({ error: "Ningún item válido" });
 
   db.transaction(() => {
     db.prepare("DELETE FROM order_items WHERE order_id = ?").run(id);
     const ins = db.prepare(
-      "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal)" +
-      " VALUES (?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     );
     for (const l of lines) {
-      ins.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.subtotal);
+      ins.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
     }
     db.prepare("UPDATE orders SET total = ? WHERE id = ?").run(total, id);
   })();
 
   const updatedItems = db.prepare(
-    "SELECT id, product_id, product_code, product_name, quantity, unit_price, subtotal" +
+    "SELECT id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit" +
     "  FROM order_items WHERE order_id = ? ORDER BY id"
   ).all(id);
   res.json({ ok: true, total, items: updatedItems });
@@ -1268,7 +1399,7 @@ app.get("/api/admin/users", requireAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password," +
     "       level, active, created_at, last_login_at," +
-    "       assigned_vendedor_id, price_list_id, vendedor_price_level" +
+    "       assigned_vendedor_id, price_list_id, vendedor_price_level, is_tercerizado" +
     "  FROM users ORDER BY level DESC, username"
   ).all();
   res.json(rows);
@@ -1301,7 +1432,7 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
   ).run(username, hash, password, fullName, phone, whatsappNumber, email, level);
 
   const user = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level FROM users WHERE id = ?"
+    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
   ).get(r.lastInsertRowid);
   res.json({ ok: true, user: user });
 });
@@ -1387,12 +1518,18 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
     sets.push("active = ?");
     vals.push(act);
   }
+  if ("is_tercerizado" in b) {
+    // Solo tiene sentido para vendedores (level 5). Si el usuario no es nivel 5,
+    // igual permitimos setearlo (la columna existe para todos) pero no tiene efecto.
+    sets.push("is_tercerizado = ?");
+    vals.push(b.is_tercerizado ? 1 : 0);
+  }
 
   if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
   vals.push(id);
   db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
   const user = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level FROM users WHERE id = ?"
+    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
   ).get(id);
   res.json({ ok: true, user: user });
 });
@@ -1741,11 +1878,64 @@ app.get("/api/admin/price-lists/:id/preview", requireAdmin, (req, res) => {
 
 // ===== Vendedores =====
 
+// Actividad de vendedores: resumen de pedidos + ganancia por vendedor.
+// La ganancia se calcula sobre order_items.vendedor_cost_unit (snapshot al
+// momento del pedido). Items sin snapshot aportan 0 a la ganancia.
+// Excluye pedidos cancelados. Solo admin.
+app.get("/api/admin/earnings", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT v.id AS vendedor_id, v.username, v.full_name, v.active, v.is_tercerizado," +
+    "       COUNT(DISTINCT o.id) AS total_orders," +
+    "       COALESCE(SUM(CASE WHEN o.status = 'entregado' THEN 1 ELSE 0 END), 0) AS total_delivered," +
+    "       COALESCE(SUM(o.total), 0) AS total_sold," +
+    "       COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+    "                         THEN oi.vendedor_cost_unit * oi.quantity ELSE 0 END), 0) AS total_cost," +
+    "       COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+    "                         THEN (oi.unit_price - oi.vendedor_cost_unit) * oi.quantity ELSE 0 END), 0) AS total_earning" +
+    "  FROM users v" +
+    "  LEFT JOIN orders o ON (o.assigned_vendedor_id = v.id OR" +
+    "                         o.user_id IN (SELECT id FROM users WHERE assigned_vendedor_id = v.id))" +
+    "                        AND o.status != 'cancelado'" +
+    "  LEFT JOIN order_items oi ON oi.order_id = o.id" +
+    "  WHERE v.level = 5" +
+    "  GROUP BY v.id" +
+    "  ORDER BY total_earning DESC, v.username"
+  ).all();
+  res.json(rows);
+});
+
+// Detalle de actividad de un vendedor: lista de pedidos con ganancia.
+// Excluye cancelados. Solo admin.
+app.get("/api/admin/earnings/:vendedorId", requireAdmin, (req, res) => {
+  const vid = Number(req.params.vendedorId);
+  if (!vid) return res.status(400).json({ error: "ID invalido" });
+  const vendedor = db.prepare(
+    "SELECT id, username, full_name, is_tercerizado FROM users WHERE id = ? AND level = 5"
+  ).get(vid);
+  if (!vendedor) return res.status(404).json({ error: "Vendedor no encontrado" });
+  const orders = db.prepare(
+    "SELECT o.id, o.status, o.total, o.created_at," +
+    "       o.user_id, u.username AS client_username, u.full_name AS client_full_name," +
+    "       COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+    "                         THEN oi.vendedor_cost_unit * oi.quantity ELSE 0 END), 0) AS cost_total," +
+    "       COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+    "                         THEN (oi.unit_price - oi.vendedor_cost_unit) * oi.quantity ELSE 0 END), 0) AS earning_total" +
+    "  FROM orders o" +
+    "  JOIN users u ON u.id = o.user_id" +
+    "  LEFT JOIN order_items oi ON oi.order_id = o.id" +
+    "  WHERE o.status != 'cancelado'" +
+    "    AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)" +
+    "  GROUP BY o.id" +
+    "  ORDER BY o.created_at DESC"
+  ).all(vid, vid);
+  res.json({ vendedor: vendedor, orders: orders });
+});
+
 // Lista de vendedores con estadisticas de pedidos y entregas (solo admin)
 app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT u.id, u.username, u.full_name, u.phone, u.email, u.active," +
-    "       u.vendedor_price_level, u.created_at, u.last_login_at," +
+    "       u.vendedor_price_level, u.is_tercerizado, u.created_at, u.last_login_at," +
     "       COUNT(DISTINCT o.id) AS total_orders," +
     "       COUNT(DISTINCT d.id) AS total_deliveries" +
     "  FROM users u" +

@@ -28,6 +28,11 @@
     ordersBack: document.getElementById("orders-back"),
     ordersBody: document.getElementById("orders-body"),
     ordersTitle: document.getElementById("orders-title"),
+    earningsBtn: document.getElementById("earnings-btn"),
+    earningsDrawer: document.getElementById("earnings-drawer"),
+    earningsClose: document.getElementById("earnings-close"),
+    earningsBack: document.getElementById("earnings-back"),
+    earningsBody: document.getElementById("earnings-body"),
     priceChangesBtn: document.getElementById("price-changes-btn"),
     priceChangesDrawer: document.getElementById("price-changes-drawer"),
     pcClose: document.getElementById("pc-close"),
@@ -132,6 +137,10 @@
     els.userInfo.textContent = (u.fullName || u.username) + " - " + u.levelName + viewing;
     if (els.ordersBtn) {
       els.ordersBtn.textContent = u.level === 99 ? "Todos los pedidos" : "Mis pedidos";
+    }
+    if (els.earningsBtn) {
+      // Solo vendedores (level 5) ven el panel de ganancias
+      els.earningsBtn.hidden = u.level !== 5;
     }
     if (els.adminLink) {
       els.adminLink.hidden = u.level !== 99;
@@ -1173,6 +1182,56 @@
     if (inp) inp.select();
   });
 
+  // ----- Mis ganancias (solo vendedor level 5) -----
+  async function openEarnings() {
+    if (!els.earningsDrawer) return;
+    els.earningsBody.innerHTML = '<p class="muted">Cargando...</p>';
+    openDrawer(els.earningsDrawer);
+    try {
+      const data = await api("/api/vendedor/earnings");
+      renderEarnings(data);
+    } catch (e) {
+      els.earningsBody.innerHTML = '<p class="muted">Error cargando ganancias.</p>';
+    }
+  }
+
+  function renderEarnings(data) {
+    const s = data.summary || {};
+    const orders = data.orders || [];
+    const fmt = (n) => "$" + (Number(n) || 0).toLocaleString("es-AR");
+    let html = '<section class="earn-summary">' +
+      '<div class="earn-card"><div class="earn-label">Pedidos</div><div class="earn-value">' + (s.total_orders || 0) + '</div></div>' +
+      '<div class="earn-card"><div class="earn-label">Entregados</div><div class="earn-value">' + (s.total_delivered || 0) + '</div></div>' +
+      '<div class="earn-card"><div class="earn-label">Vendido</div><div class="earn-value">' + fmt(s.total_sold) + '</div></div>' +
+      '<div class="earn-card"><div class="earn-label">Costo</div><div class="earn-value muted">' + fmt(s.total_cost) + '</div></div>' +
+      '<div class="earn-card earn-card-strong"><div class="earn-label">Ganancia</div><div class="earn-value"><strong>' + fmt(s.total_earning) + '</strong></div></div>' +
+    '</section>';
+    if (!orders.length) {
+      html += '<p class="muted">Todavia no hay pedidos.</p>';
+      els.earningsBody.innerHTML = html;
+      return;
+    }
+    html += '<h4 style="margin:18px 0 8px 0">Detalle por pedido</h4>';
+    html += orders.map((o) => {
+      const cliente = o.client_full_name || o.client_username || ("#" + o.user_id);
+      const date = formatDate(o.created_at);
+      return '<article class="order-card">' +
+        '<header class="order-head">' +
+          '<div>' +
+            '<h4>Pedido #' + o.id + ' <span class="order-status ' + escapeHtml(o.status) + '">' + escapeHtml(o.status) + '</span></h4>' +
+            '<div class="meta">' + date + ' &middot; ' + escapeHtml(cliente) + '</div>' +
+          '</div>' +
+          '<div class="order-total">' +
+            '<div>' + fmt(o.total) + '</div>' +
+            '<div class="muted small">Costo: ' + fmt(o.cost_total) + '</div>' +
+            '<div><strong>Gana: ' + fmt(o.earning_total) + '</strong></div>' +
+          '</div>' +
+        '</header>' +
+      '</article>';
+    }).join("");
+    els.earningsBody.innerHTML = html;
+  }
+
   // ----- Apertura / cierre de los drawers -----
   // El estado "hay un drawer abierto" tambien se refleja como
   // una entrada en el history del navegador, asi el boton "atras"
@@ -1185,6 +1244,7 @@
     els.ordersDrawer.hidden = true;
     if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
     if (els.clientDrawer) els.clientDrawer.hidden = true;
+    if (els.earningsDrawer) els.earningsDrawer.hidden = true;
     if (els.sidebarEl) els.sidebarEl.classList.remove("sidebar-open");
     drawer.hidden = false;
     els.backdrop.hidden = false;
@@ -1199,6 +1259,7 @@
     els.ordersDrawer.hidden = true;
     if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
     if (els.clientDrawer) els.clientDrawer.hidden = true;
+    if (els.earningsDrawer) els.earningsDrawer.hidden = true;
     if (els.sidebarEl) els.sidebarEl.classList.add("sidebar-open");
     els.backdrop.hidden = false;
     if (!drawerHistoryPushed) {
@@ -1211,6 +1272,7 @@
     return !els.cartDrawer.hidden || !els.ordersDrawer.hidden ||
            (els.priceChangesDrawer && !els.priceChangesDrawer.hidden) ||
            (els.clientDrawer && !els.clientDrawer.hidden) ||
+           (els.earningsDrawer && !els.earningsDrawer.hidden) ||
            (els.sidebarEl && els.sidebarEl.classList.contains("sidebar-open"));
   }
 
@@ -1220,6 +1282,7 @@
     els.ordersDrawer.hidden = true;
     if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
     if (els.clientDrawer) els.clientDrawer.hidden = true;
+    if (els.earningsDrawer) els.earningsDrawer.hidden = true;
     if (els.sidebarEl) els.sidebarEl.classList.remove("sidebar-open");
     els.backdrop.hidden = true;
     if (wasOpen && drawerHistoryPushed && !fromPopState) {
@@ -1238,6 +1301,10 @@
   els.ordersBtn.addEventListener("click", openOrders);
   els.ordersClose.addEventListener("click", () => { closeDrawers(); });
   els.ordersBack.addEventListener("click", () => { closeDrawers(); });
+
+  if (els.earningsBtn) els.earningsBtn.addEventListener("click", openEarnings);
+  if (els.earningsClose) els.earningsClose.addEventListener("click", () => { closeDrawers(); });
+  if (els.earningsBack)  els.earningsBack.addEventListener("click",  () => { closeDrawers(); });
 
   if (els.priceChangesBtn) {
     els.priceChangesBtn.addEventListener("click", openPriceChanges);

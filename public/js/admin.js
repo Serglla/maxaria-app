@@ -128,6 +128,15 @@
     vendResetTarget: document.getElementById("vend-reset-target"),
     vendResetMsg: document.getElementById("vend-reset-msg"),
 
+    // Actividad (Ganancias por vendedor)
+    actCount: document.getElementById("act-count"),
+    actTbody: document.getElementById("act-tbody"),
+    actTfoot: document.getElementById("act-tfoot"),
+    actDetailModal: document.getElementById("act-detail-modal"),
+    actDetailTitle: document.getElementById("act-detail-title"),
+    actDetailTbody: document.getElementById("act-detail-tbody"),
+    actDetailTfoot: document.getElementById("act-detail-tfoot"),
+
     // Entregas
     entSearch: document.getElementById("ent-search"),
     entVendFilter: document.getElementById("ent-vend-filter"),
@@ -448,6 +457,7 @@
         else refreshUserSelects();
       }
       if (tab === "vendedores" && !state.vendedoresLoaded) loadVendedores();
+      if (tab === "actividad") loadActividad(); // siempre recargar (datos cambian con cada pedido)
       if (tab === "price-lists") {
         if (!state.priceListsLoaded) loadPriceLists();
         else renderPriceLists();
@@ -674,7 +684,7 @@
   // -------- Vendedores --------
   async function loadVendedores() {
     try {
-      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="9" class="muted">Cargando…</td></tr>';
+      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="10" class="muted">Cargando…</td></tr>';
       state.vendedores = await api("/api/admin/vendedores");
       state.vendedoresLoaded = true;
       renderVendedores();
@@ -695,7 +705,7 @@
     }
     if (els.vendCount) els.vendCount.textContent = list.length + (list.length === 1 ? " vendedor" : " vendedores");
     if (!list.length) {
-      els.vendTbody.innerHTML = '<tr><td colspan="9" class="muted">Sin resultados</td></tr>';
+      els.vendTbody.innerHTML = '<tr><td colspan="10" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.vendTbody.innerHTML = list.map(vendRowHtml).join("");
@@ -713,6 +723,8 @@
       '<td>' +
         '<select class="cell-input" data-field="vendedor_price_level">' + plOpts + '</select>' +
       '</td>' +
+      '<td><label class="cell-toggle" title="Tercerizado: solo ve sus clientes asignados. El vendedor no ve este label.">' +
+        '<input type="checkbox" data-field="is_tercerizado"' + (Number(v.is_tercerizado) === 1 ? " checked" : "") + ' /><span></span></label></td>' +
       '<td><label class="cell-toggle">' +
         '<input type="checkbox" data-field="active"' + (v.active ? " checked" : "") + ' /><span></span></label></td>' +
       '<td class="num muted">' + (v.total_orders || 0) + '</td>' +
@@ -735,6 +747,7 @@
       if (inp.type === "checkbox") value = inp.checked ? 1 : 0;
       else if (field === "vendedor_price_level") value = Number(inp.value);
       else value = inp.value;
+      // is_tercerizado se manda como flag 0/1 al backend (igual que active)
 
       inp.classList.add("saving");
       try {
@@ -843,6 +856,115 @@
       } catch (err) {
         els.vendResetMsg.textContent = err.message;
         els.vendResetMsg.className = "config-msg err";
+      }
+    });
+  }
+
+  // -------- Actividad (ganancias por vendedor) --------
+  function fmtMoney(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR"); }
+
+  async function loadActividad() {
+    if (!els.actTbody) return;
+    els.actTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+    try {
+      const rows = await api("/api/admin/earnings");
+      renderActividad(rows);
+    } catch (e) {
+      els.actTbody.innerHTML = '<tr><td colspan="8" class="muted">Error cargando actividad</td></tr>';
+    }
+  }
+
+  function renderActividad(rows) {
+    if (!rows || !rows.length) {
+      els.actTbody.innerHTML = '<tr><td colspan="8" class="muted">Sin vendedores</td></tr>';
+      els.actTfoot.innerHTML = "";
+      if (els.actCount) els.actCount.textContent = "0 vendedores";
+      return;
+    }
+    if (els.actCount) els.actCount.textContent = rows.length + (rows.length === 1 ? " vendedor" : " vendedores");
+    let tOrders = 0, tDeliv = 0, tSold = 0, tCost = 0, tEarn = 0;
+    els.actTbody.innerHTML = rows.map((r) => {
+      tOrders += Number(r.total_orders) || 0;
+      tDeliv += Number(r.total_delivered) || 0;
+      tSold += Number(r.total_sold) || 0;
+      tCost += Number(r.total_cost) || 0;
+      tEarn += Number(r.total_earning) || 0;
+      const tipo = Number(r.is_tercerizado) === 1
+        ? '<span class="pill pill-warn" title="Solo lo ve el admin">Tercerizado</span>'
+        : '<span class="pill">Propio</span>';
+      const inactive = r.active ? "" : ' class="row-inactive"';
+      return '<tr' + inactive + '>' +
+        '<td>' + escapeHtml(r.full_name || r.username) + ' <span class="muted small">(' + escapeHtml(r.username) + ')</span></td>' +
+        '<td>' + tipo + '</td>' +
+        '<td class="num">' + (Number(r.total_orders) || 0) + '</td>' +
+        '<td class="num muted">' + (Number(r.total_delivered) || 0) + '</td>' +
+        '<td class="num">' + fmtMoney(r.total_sold) + '</td>' +
+        '<td class="num muted">' + fmtMoney(r.total_cost) + '</td>' +
+        '<td class="num"><strong>' + fmtMoney(r.total_earning) + '</strong></td>' +
+        '<td><button class="btn btn-small" data-act="act-detail" data-id="' + r.vendedor_id + '" data-name="' + escapeHtml(r.full_name || r.username) + '" type="button">Ver detalle</button></td>' +
+      '</tr>';
+    }).join("");
+    els.actTfoot.innerHTML =
+      '<tr><th>Totales</th><th></th>' +
+      '<th class="num">' + tOrders + '</th>' +
+      '<th class="num muted">' + tDeliv + '</th>' +
+      '<th class="num">' + fmtMoney(tSold) + '</th>' +
+      '<th class="num muted">' + fmtMoney(tCost) + '</th>' +
+      '<th class="num"><strong>' + fmtMoney(tEarn) + '</strong></th>' +
+      '<th></th></tr>';
+  }
+
+  if (els.actTbody) {
+    els.actTbody.addEventListener("click", async (e) => {
+      const btn = e.target.closest('[data-act="act-detail"]');
+      if (!btn) return;
+      const vid = Number(btn.dataset.id);
+      const name = btn.dataset.name || "";
+      if (els.actDetailTitle) els.actDetailTitle.textContent = "Pedidos de " + name;
+      if (els.actDetailTbody) els.actDetailTbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando…</td></tr>';
+      if (els.actDetailTfoot) els.actDetailTfoot.innerHTML = "";
+      if (els.actDetailModal) els.actDetailModal.hidden = false;
+      try {
+        const data = await api("/api/admin/earnings/" + vid);
+        renderActividadDetail(data.orders || []);
+      } catch (err) {
+        els.actDetailTbody.innerHTML = '<tr><td colspan="7" class="muted">Error</td></tr>';
+      }
+    });
+  }
+
+  function renderActividadDetail(orders) {
+    if (!orders.length) {
+      els.actDetailTbody.innerHTML = '<tr><td colspan="7" class="muted">Sin pedidos</td></tr>';
+      return;
+    }
+    let tTotal = 0, tCost = 0, tEarn = 0;
+    els.actDetailTbody.innerHTML = orders.map((o) => {
+      tTotal += Number(o.total) || 0;
+      tCost += Number(o.cost_total) || 0;
+      tEarn += Number(o.earning_total) || 0;
+      const cliente = o.client_full_name || o.client_username || ("#" + o.user_id);
+      return '<tr>' +
+        '<td>#' + o.id + '</td>' +
+        '<td class="muted small">' + escapeHtml(formatDate(o.created_at)) + '</td>' +
+        '<td>' + escapeHtml(cliente) + '</td>' +
+        '<td>' + escapeHtml(o.status) + '</td>' +
+        '<td class="num">' + fmtMoney(o.total) + '</td>' +
+        '<td class="num muted">' + fmtMoney(o.cost_total) + '</td>' +
+        '<td class="num"><strong>' + fmtMoney(o.earning_total) + '</strong></td>' +
+      '</tr>';
+    }).join("");
+    els.actDetailTfoot.innerHTML =
+      '<tr><th colspan="4">Totales</th>' +
+      '<th class="num">' + fmtMoney(tTotal) + '</th>' +
+      '<th class="num muted">' + fmtMoney(tCost) + '</th>' +
+      '<th class="num"><strong>' + fmtMoney(tEarn) + '</strong></th></tr>';
+  }
+
+  if (els.actDetailModal) {
+    els.actDetailModal.addEventListener("click", (e) => {
+      if (e.target.matches("[data-close]") || e.target === els.actDetailModal) {
+        els.actDetailModal.hidden = true;
       }
     });
   }

@@ -48,6 +48,7 @@
         </label>
         <button id="price-changes-btn" class="btn btn-ghost" type="button" hidden>Ver cambios</button>
         <button id="orders-btn" class="btn btn-ghost" type="button">Mis pedidos</button>
+        <button id="earnings-btn" class="btn btn-ghost" type="button" hidden>Mis ganancias</button>
         <button id="cart-btn" class="btn btn-ghost" type="button">
           Carrito <span id="cart-count" class="badge">0</span>
           <span id="cart-total-top" class="cart-total-top" hidden>$0</span>
@@ -96,6 +97,18 @@
       <button class="btn btn-ghost" id="pc-close" type="button">Cerrar</button>
     </header>
     <div class="drawer-body" id="pc-body">
+      <p class="muted">Cargando…</p>
+    </div>
+  </aside>
+
+  <!-- Drawer ganancias del vendedor -->
+  <aside class="drawer drawer-wide" id="earnings-drawer" hidden>
+    <header class="drawer-head">
+      <button class="drawer-back" id="earnings-back" type="button" aria-label="Volver">←</button>
+      <h3>Mis ganancias</h3>
+      <button class="btn btn-ghost" id="earnings-close" type="button">Cerrar</button>
+    </header>
+    <div class="drawer-body" id="earnings-body">
       <p class="muted">Cargando…</p>
     </div>
   </aside>
