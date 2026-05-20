@@ -443,7 +443,10 @@
       els.panels.forEach((p) => { p.hidden = p.id !== "tab-" + tab; });
       if (tab === "pedidos" && !state.ordersLoaded) loadOrders();
       if (tab === "config" && !state.settingsLoaded) loadSettings();
-      if (tab === "usuarios" && !state.usersLoaded) loadUsers();
+      if (tab === "usuarios") {
+        if (!state.usersLoaded) loadUsers();
+        else refreshUserSelects();
+      }
       if (tab === "vendedores" && !state.vendedoresLoaded) loadVendedores();
       if (tab === "price-lists") {
         if (!state.priceListsLoaded) loadPriceLists();
@@ -481,6 +484,23 @@
     } catch (e) {
       els.userTbody.innerHTML = '<tr><td colspan="13" class="muted">Error cargando usuarios</td></tr>';
     }
+  }
+
+  // Refresca SOLO los caches que llenan los selects de "Vendedor asignado"
+  // y "Lista de precios" de la tabla de Usuarios. Se llama cada vez que el
+  // tab "Usuarios" vuelve a ser activado, asi se ven los vendedores / listas
+  // que pudieron crearse en otras pestanas. No recarga la lista de usuarios.
+  async function refreshUserSelects() {
+    try {
+      const [vendedores, priceLists] = await Promise.all([
+        api("/api/admin/vendedores").catch(() => state.vendedoresActiveCache),
+        api("/api/admin/price-lists").catch(() => state.priceLists),
+      ]);
+      state.vendedoresActiveCache = (vendedores || []).filter((v) => v.active);
+      state.priceLists = priceLists || [];
+      state.priceListsLoaded = true;
+      renderUsers();
+    } catch (_) { /* silencioso: dejamos la tabla como esta */ }
   }
 
   function renderUsers() {
