@@ -30,6 +30,7 @@
         <button class="tab-btn" data-tab="pedidos" type="button">Pedidos</button>
         <button class="tab-btn" data-tab="usuarios" type="button">Usuarios</button>
         <button class="tab-btn admin-only" data-tab="vendedores" type="button">Vendedores</button>
+        <button class="tab-btn admin-only" data-tab="price-lists" type="button">Listas de precios</button>
         <button class="tab-btn admin-only" data-tab="entregas" type="button">Entregas</button>
         <button class="tab-btn admin-only" data-tab="proveedores" type="button">Proveedores</button>
         <button class="tab-btn admin-only" data-tab="compras" type="button">Compras</button>
@@ -127,6 +128,8 @@
               <th>Usuario</th>
               <th>Nombre</th>
               <th>Nivel</th>
+              <th>Vendedor asignado</th>
+              <th>Lista de precios</th>
               <th>Teléfono</th>
               <th>WhatsApp destino</th>
               <th>Contraseña</th>
@@ -137,7 +140,7 @@
               <th>Acciones</th>
             </tr>
           </thead>
-          <tbody id="user-tbody"><tr><td colspan="11" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="user-tbody"><tr><td colspan="13" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -262,6 +265,69 @@
         </table>
       </div>
     </section>
+
+    <!-- ===== TAB LISTAS DE PRECIOS ===== -->
+    <section class="tab-panel" id="tab-price-lists" hidden>
+      <div class="admin-toolbar">
+        <input type="search" id="pl-search" class="admin-search" placeholder="Buscar lista por nombre..." autocomplete="off" />
+        <span class="admin-spacer"></span>
+        <span id="pl-count" class="muted">…</span>
+        <button class="btn btn-primary" id="pl-create-btn" type="button">+ Nueva lista</button>
+      </div>
+      <p class="muted small" style="margin: 4px 0 12px 0">
+        Cada lista parte de una lista base (Minorista, Revendedor, Mayorista, VIP) y le aplica un % de markup.
+        Luego se asigna a un cliente desde la pestaña <strong>Usuarios</strong> (columna "Lista de precios").
+        El cliente ve los precios ya calculados: <code>base × (1 + markup/100)</code>, redondeado.
+      </p>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="pl-table">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Lista base</th>
+              <th class="num">Markup %</th>
+              <th>Activa</th>
+              <th class="num">Clientes</th>
+              <th>Notas</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="pl-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Modal crear lista de precios -->
+    <div class="admin-modal" id="pl-create-modal" hidden>
+      <div class="admin-modal-box">
+        <h3>Nueva lista de precios</h3>
+        <form id="pl-create-form" class="user-form">
+          <label>Nombre <span class="muted">(ej: "Vendedor Norte 15%")</span>
+            <input type="text" name="name" required maxlength="80" autocomplete="off" />
+          </label>
+          <label>Lista base
+            <select name="base_level" required>
+              <option value="minorista">Minorista</option>
+              <option value="revendedor">Revendedor</option>
+              <option value="mayorista" selected>Mayorista</option>
+              <option value="vip">VIP</option>
+              <option value="publico">Público</option>
+            </select>
+          </label>
+          <label>Markup % <span class="muted">(porcentaje de ganancia. Ej: 15 = +15%)</span>
+            <input type="number" name="markup_percent" required step="0.01" min="-90" max="500" value="0" />
+          </label>
+          <label>Notas <span class="muted">(opcional)</span>
+            <input type="text" name="notes" maxlength="300" placeholder="Para que sirve esta lista" />
+          </label>
+          <p id="pl-create-msg" class="config-msg"></p>
+          <div class="admin-modal-foot">
+            <button type="button" class="btn" data-close>Cancelar</button>
+            <button type="submit" class="btn btn-primary">Crear lista</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <!-- ===== TAB ENTREGAS ===== -->
     <section class="tab-panel" id="tab-entregas" hidden>

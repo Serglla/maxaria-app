@@ -187,6 +187,15 @@
     accTbody: document.getElementById("acc-tbody"),
     accReloadBtn: document.getElementById("acc-reload-btn"),
 
+    // Listas de precios
+    plSearch: document.getElementById("pl-search"),
+    plCount: document.getElementById("pl-count"),
+    plTbody: document.getElementById("pl-tbody"),
+    plCreateBtn: document.getElementById("pl-create-btn"),
+    plCreateModal: document.getElementById("pl-create-modal"),
+    plCreateForm: document.getElementById("pl-create-form"),
+    plCreateMsg: document.getElementById("pl-create-msg"),
+
     toast: document.getElementById("toast"),
   };
 
@@ -232,6 +241,11 @@
     // Todos los productos (cache para el buscador de compras)
     allProducts: [],
     allProductsLoaded: false,
+    // Listas de precios personalizadas
+    priceLists: [],
+    priceListsLoaded: false,
+    // Cache de vendedores activos para los selects de "asignar vendedor"
+    vendedoresActiveCache: [],
   };
 
   const LEVEL_NAMES = {
@@ -431,6 +445,10 @@
       if (tab === "config" && !state.settingsLoaded) loadSettings();
       if (tab === "usuarios" && !state.usersLoaded) loadUsers();
       if (tab === "vendedores" && !state.vendedoresLoaded) loadVendedores();
+      if (tab === "price-lists") {
+        if (!state.priceListsLoaded) loadPriceLists();
+        else renderPriceLists();
+      }
       if (tab === "entregas" && !state.entregasLoaded) loadEntregas();
       if (tab === "proveedores" && !state.suppliersLoaded) loadSuppliers();
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
@@ -442,16 +460,26 @@
   // ---------- Usuarios ----------
   async function loadUsers() {
     try {
-      els.userTbody.innerHTML = '<tr><td colspan="9" class="muted">Cargando…</td></tr>';
-      state.users = await api("/api/admin/users");
+      els.userTbody.innerHTML = '<tr><td colspan="13" class="muted">Cargando…</td></tr>';
+      // Cargamos usuarios + vendedores + listas de precios en paralelo:
+      // los dos ultimos llenan los selects de las columnas nuevas.
+      const [users, vendedores, priceLists] = await Promise.all([
+        api("/api/admin/users"),
+        api("/api/admin/vendedores").catch(() => []),
+        api("/api/admin/price-lists").catch(() => []),
+      ]);
+      state.users = users;
       state.usersLoaded = true;
+      state.vendedoresActiveCache = (vendedores || []).filter((v) => v.active);
+      state.priceLists = priceLists || [];
+      state.priceListsLoaded = true;
       // Cargar todas las categorias en cache para el modal de permisos
       if (!state.allCategories.length) {
         try { state.allCategories = await api("/api/categories"); } catch (_) {}
       }
       renderUsers();
     } catch (e) {
-      els.userTbody.innerHTML = '<tr><td colspan="9" class="muted">Error cargando usuarios</td></tr>';
+      els.userTbody.innerHTML = '<tr><td colspan="13" class="muted">Error cargando usuarios</td></tr>';
     }
   }
 
@@ -467,10 +495,33 @@
     }
     els.userCount.textContent = list.length + (list.length === 1 ? " usuario" : " usuarios");
     if (!list.length) {
-      els.userTbody.innerHTML = '<tr><td colspan="9" class="muted">Sin resultados</td></tr>';
+      els.userTbody.innerHTML = '<tr><td colspan="13" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.userTbody.innerHTML = list.map(userRowHtml).join("");
+  }
+
+  // Opciones <option> para el select de "Vendedor asignado" de un cliente.
+  function vendedorOptsHtml(currentId) {
+    let html = '<option value="">— Sin asignar —</option>';
+    state.vendedoresActiveCache.forEach((v) => {
+      const sel = Number(currentId) === Number(v.id) ? " selected" : "";
+      const label = (v.full_name || v.username) + " (" + v.username + ")";
+      html += '<option value="' + v.id + '"' + sel + '>' + escapeHtml(label) + '</option>';
+    });
+    return html;
+  }
+
+  // Opciones <option> para el select de "Lista de precios" de un cliente.
+  function priceListOptsHtml(currentId) {
+    let html = '<option value="">— Por nivel —</option>';
+    state.priceLists.forEach((pl) => {
+      if (!pl.active) return;
+      const sel = Number(currentId) === Number(pl.id) ? " selected" : "";
+      const label = pl.name + " (" + pl.base_level + " +" + pl.markup_percent + "%)";
+      html += '<option value="' + pl.id + '"' + sel + '>' + escapeHtml(label) + '</option>';
+    });
+    return html;
   }
 
   function userRowHtml(u) {
@@ -479,12 +530,23 @@
       '<option value="' + v + '"' + (Number(v) === u.level ? " selected" : "") + '>' + n + '</option>'
     ).join("");
     const lastLogin = u.last_login_at ? formatDate(u.last_login_at) : "—";
+    // Solo clientes (level 1-4) pueden tener vendedor y lista. Para vendedores
+    // (5) y admin (99) mostramos celdas inactivas con texto.
+    const isClient = [1, 2, 3, 4].includes(Number(u.level));
+    const vendCell = isClient
+      ? '<td><select class="cell-input" data-field="assigned_vendedor_id">' + vendedorOptsHtml(u.assigned_vendedor_id) + '</select></td>'
+      : '<td class="muted small-cell">—</td>';
+    const plCell = isClient
+      ? '<td><select class="cell-input" data-field="price_list_id">' + priceListOptsHtml(u.price_list_id) + '</select></td>'
+      : '<td class="muted small-cell">—</td>';
     return '<tr data-id="' + u.id + '"' + (u.active ? '' : ' class="row-inactive"') + '>' +
       '<td class="cell-code">' + escapeHtml(u.username) + (isMe ? ' <span class="muted">(vos)</span>' : '') + '</td>' +
       '<td><input class="cell-input" data-field="full_name" value="' + escapeHtml(u.full_name || "") + '" /></td>' +
       '<td>' +
         '<select class="cell-input cell-level" data-field="level"' + (isMe ? ' title="No podés bajarte de admin a vos mismo"' : '') + '>' + levelOpts + '</select>' +
       '</td>' +
+      vendCell +
+      plCell +
       '<td><input class="cell-input" data-field="phone" value="' + escapeHtml(u.phone || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="whatsapp_number" type="tel" placeholder="ej: 5491112345678" value="' + escapeHtml(u.whatsapp_number || "") + '" /></td>' +
       '<td class="muted small-cell">' + escapeHtml(u.plain_password || "—") + '</td>' +
@@ -761,6 +823,214 @@
       } catch (err) {
         els.vendResetMsg.textContent = err.message;
         els.vendResetMsg.className = "config-msg err";
+      }
+    });
+  }
+
+  // -------- Listas de precios --------
+  async function loadPriceLists() {
+    try {
+      if (els.plTbody) els.plTbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando…</td></tr>';
+      state.priceLists = await api("/api/admin/price-lists");
+      state.priceListsLoaded = true;
+      renderPriceLists();
+    } catch (e) {
+      if (els.plTbody) els.plTbody.innerHTML = '<tr><td colspan="7" class="muted">Error cargando listas</td></tr>';
+    }
+  }
+
+  function renderPriceLists() {
+    if (!els.plTbody) return;
+    const q = (els.plSearch ? els.plSearch.value : "").trim().toLowerCase();
+    let list = state.priceLists;
+    if (q) {
+      list = list.filter((pl) =>
+        (pl.name || "").toLowerCase().includes(q) ||
+        (pl.base_level || "").toLowerCase().includes(q) ||
+        (pl.notes || "").toLowerCase().includes(q)
+      );
+    }
+    if (els.plCount) els.plCount.textContent = list.length + (list.length === 1 ? " lista" : " listas");
+    if (!list.length) {
+      els.plTbody.innerHTML = '<tr><td colspan="7" class="muted">Sin listas. Creá una con el botón "+ Nueva lista".</td></tr>';
+      return;
+    }
+    els.plTbody.innerHTML = list.map(plRowHtml).join("");
+  }
+
+  function plRowHtml(pl) {
+    const baseOpts = ["minorista", "revendedor", "mayorista", "vip", "publico"].map((b) =>
+      '<option value="' + b + '"' + (pl.base_level === b ? " selected" : "") + '>' +
+        b.charAt(0).toUpperCase() + b.slice(1) +
+      '</option>'
+    ).join("");
+    const inUse = (pl.users_count || 0) > 0;
+    const delTitle = inUse
+      ? "No se puede borrar: hay " + pl.users_count + " cliente(s) usando esta lista"
+      : "Borrar lista";
+    return '<tr data-id="' + pl.id + '"' + (pl.active ? '' : ' class="row-inactive"') + '>' +
+      '<td><input class="cell-input" data-field="name" value="' + escapeHtml(pl.name) + '" /></td>' +
+      '<td><select class="cell-input" data-field="base_level">' + baseOpts + '</select></td>' +
+      '<td class="num"><input class="cell-input num" data-field="markup_percent" type="number" step="0.01" min="-90" max="500" value="' + (Number(pl.markup_percent) || 0) + '" style="width:80px;text-align:right" /></td>' +
+      '<td><label class="cell-toggle">' +
+        '<input type="checkbox" data-field="active"' + (pl.active ? " checked" : "") + ' /><span></span></label></td>' +
+      '<td class="num muted">' + (pl.users_count || 0) + '</td>' +
+      '<td><input class="cell-input" data-field="notes" value="' + escapeHtml(pl.notes || "") + '" /></td>' +
+      '<td>' +
+        '<button class="btn btn-small" data-act="pl-preview" data-id="' + pl.id + '" type="button" title="Ver precios calculados">Preview</button> ' +
+        '<button class="btn btn-small btn-danger" data-act="pl-delete" data-id="' + pl.id + '" type="button"' +
+          (inUse ? ' disabled' : '') + ' title="' + escapeHtml(delTitle) + '">Borrar</button>' +
+      '</td>' +
+    '</tr>';
+  }
+
+  // Auto-save al cambiar campos de una lista de precios
+  if (els.plTbody) {
+    els.plTbody.addEventListener("change", async (e) => {
+      const inp = e.target.closest("[data-field]");
+      if (!inp) return;
+      const tr = inp.closest("tr");
+      if (!tr) return;
+      const id = Number(tr.dataset.id);
+      const field = inp.dataset.field;
+      let value;
+      if (inp.type === "checkbox") value = inp.checked ? 1 : 0;
+      else if (field === "markup_percent") value = Number(inp.value);
+      else value = inp.value;
+
+      inp.classList.add("saving");
+      try {
+        const out = await api("/api/admin/price-lists/" + id, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [field]: value }),
+        });
+        const idx = state.priceLists.findIndex((x) => x.id === id);
+        if (idx >= 0) state.priceLists[idx] = out.price_list;
+        inp.classList.remove("saving");
+        inp.classList.add("saved");
+        setTimeout(() => inp.classList.remove("saved"), 1200);
+        if (field === "active") tr.classList.toggle("row-inactive", !out.price_list.active);
+        // Invalidar la cache de la tabla de usuarios para que se vea el nombre nuevo
+        state.usersLoaded = false;
+      } catch (err) {
+        inp.classList.remove("saving");
+        inp.classList.add("error");
+        const orig = state.priceLists.find((x) => x.id === id);
+        if (orig) {
+          if (inp.type === "checkbox") inp.checked = !!orig.active;
+          else inp.value = orig[field] != null ? orig[field] : "";
+        }
+        showToast("Error: " + err.message, "err");
+        setTimeout(() => inp.classList.remove("error"), 2000);
+      }
+    });
+
+    // Click: preview o borrar
+    els.plTbody.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const id = Number(btn.dataset.id);
+      const act = btn.dataset.act;
+
+      if (act === "pl-delete") {
+        if (!confirm("¿Borrar esta lista de precios? Esta acción no se puede deshacer.")) return;
+        try {
+          await api("/api/admin/price-lists/" + id, { method: "DELETE" });
+          state.priceLists = state.priceLists.filter((x) => x.id !== id);
+          state.usersLoaded = false; // refrescar selects en la tabla de usuarios
+          renderPriceLists();
+          showToast("Lista eliminada");
+        } catch (err) {
+          showToast("Error: " + err.message, "err");
+        }
+      } else if (act === "pl-preview") {
+        try {
+          const data = await api("/api/admin/price-lists/" + id + "/preview?limit=30");
+          showPriceListPreview(data);
+        } catch (err) {
+          showToast("Error: " + err.message, "err");
+        }
+      }
+    });
+  }
+
+  function showPriceListPreview(data) {
+    // Modal simple en JS, sin estilos extra: usamos una ventana con un dialog basico.
+    const list = data.list || {};
+    const products = data.products || [];
+    const rows = products.map((p) =>
+      '<tr>' +
+        '<td>' + escapeHtml(p.code || "") + '</td>' +
+        '<td>' + escapeHtml(p.name || "") + '</td>' +
+        '<td class="num muted">' + fmtPrice(p.base_price) + '</td>' +
+        '<td class="num"><strong>' + fmtPrice(p.effective_price) + '</strong></td>' +
+      '</tr>'
+    ).join("");
+
+    const overlay = document.createElement("div");
+    overlay.className = "admin-modal";
+    overlay.style.display = "block";
+    overlay.innerHTML =
+      '<div class="admin-modal-box" style="max-width:680px">' +
+        '<h3>Preview · ' + escapeHtml(list.name || "") + '</h3>' +
+        '<p class="muted small">Base: <strong>' + escapeHtml(list.base_level || "") +
+          '</strong> · Markup: <strong>' + (Number(list.markup_percent) || 0) + '%</strong>' +
+          ' · Mostrando hasta 30 productos.</p>' +
+        '<div class="admin-table-wrap" style="max-height:60vh;overflow:auto">' +
+          '<table class="admin-table">' +
+            '<thead><tr><th>Código</th><th>Producto</th>' +
+              '<th class="num">Precio base</th><th class="num">Precio cliente</th></tr></thead>' +
+            '<tbody>' + (rows || '<tr><td colspan="4" class="muted">Sin productos</td></tr>') + '</tbody>' +
+          '</table>' +
+        '</div>' +
+        '<div class="admin-modal-foot"><button type="button" class="btn btn-primary" data-close-preview>Cerrar</button></div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", (ev) => {
+      if (ev.target === overlay || ev.target.closest("[data-close-preview]")) {
+        overlay.remove();
+      }
+    });
+  }
+
+  if (els.plSearch) els.plSearch.addEventListener("input", debounce(renderPriceLists, 150));
+
+  if (els.plCreateBtn) {
+    els.plCreateBtn.addEventListener("click", () => {
+      if (els.plCreateForm) els.plCreateForm.reset();
+      if (els.plCreateMsg) els.plCreateMsg.textContent = "";
+      if (els.plCreateModal) els.plCreateModal.hidden = false;
+      setTimeout(() => { if (els.plCreateForm) els.plCreateForm.querySelector('[name="name"]').focus(); }, 50);
+    });
+  }
+
+  if (els.plCreateForm) {
+    els.plCreateForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(els.plCreateForm);
+      const body = {
+        name: fd.get("name"),
+        base_level: fd.get("base_level"),
+        markup_percent: Number(fd.get("markup_percent")) || 0,
+        notes: fd.get("notes") || null,
+      };
+      els.plCreateMsg.textContent = "Creando…";
+      els.plCreateMsg.className = "config-msg";
+      try {
+        const out = await api("/api/admin/price-lists", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        state.priceLists.unshift(out.price_list);
+        state.usersLoaded = false; // forzar refresh de selects en Usuarios
+        renderPriceLists();
+        els.plCreateModal.hidden = true;
+        showToast("Lista \"" + out.price_list.name + "\" creada");
+      } catch (err) {
+        els.plCreateMsg.textContent = err.message;
+        els.plCreateMsg.className = "config-msg err";
       }
     });
   }

@@ -462,6 +462,17 @@
   function cartTotal() { let t = 0; state.cart.forEach((it) => (t += it.price * it.qty)); return t; }
   function cartCount() { let n = 0; state.cart.forEach((it) => (n += it.qty)); return n; }
 
+  // True si el usuario es cliente (1-4) y NO tiene vendedor asignado activo
+  // con WhatsApp configurado. En ese caso no se puede enviar pedido.
+  function isClientWithoutVendedor() {
+    if (!state.me) return false;
+    if (![1, 2, 3, 4].includes(Number(state.me.level))) return false;
+    // assignedVendedor solo viene si tiene vendedor activo; hasWhatsapp dice si tiene numero
+    if (!state.me.assignedVendedor) return true;
+    if (!state.me.assignedVendedor.hasWhatsapp) return true;
+    return false;
+  }
+
   function renderCart() {
     const items = Array.from(state.cart.values());
     const total = cartTotal();
@@ -481,9 +492,19 @@
       els.cartSend.disabled = true;
       return;
     }
-    els.cartBody.innerHTML = items.map(cartItemHtml).join("");
+    // Aviso si el cliente no tiene vendedor: no puede enviar el pedido.
+    const sinVendedor = isClientWithoutVendedor();
+    const aviso = sinVendedor
+      ? '<div style="background:#fee2e2;border:1px solid #fecaca;color:#991b1b;' +
+        'padding:10px 12px;border-radius:8px;margin-bottom:10px;font-size:14px">' +
+        '<strong>No tenés un vendedor asignado.</strong><br/>' +
+        'Pedile al administrador que te asigne un vendedor antes de enviar pedidos.' +
+        '</div>'
+      : '';
+    els.cartBody.innerHTML = aviso + items.map(cartItemHtml).join("");
     els.cartTotal.textContent = fmtPrice(total);
-    els.cartSend.disabled = false;
+    els.cartSend.disabled = sinVendedor;
+    els.cartSend.title = sinVendedor ? "No podés enviar: sin vendedor asignado" : "";
     els.cartBody.querySelectorAll("button[data-act]").forEach((btn) => {
       const id = Number(btn.dataset.id);
       const act = btn.dataset.act;
@@ -563,7 +584,14 @@
     if (!state.cart.size) return;
     const phone = (state.me && state.me.whatsapp) || "";
     if (!phone) {
-      alert("No hay numero de WhatsApp configurado.\nPedile al admin que complete WHATSAPP_NUMBER en .env");
+      // Para clientes (1-4): el phone viene del vendedor asignado. Si no hay,
+      // significa que no tiene vendedor o el vendedor no tiene WA cargado.
+      if ([1, 2, 3, 4].includes(Number(state.me && state.me.level))) {
+        alert("No tenés un vendedor asignado (o tu vendedor no tiene WhatsApp configurado).\n" +
+              "Pedile al administrador que te asigne uno.");
+      } else {
+        alert("No hay numero de WhatsApp configurado.");
+      }
       return;
     }
     const message = buildWhatsappMessage();

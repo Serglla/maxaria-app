@@ -111,6 +111,30 @@ try { db.exec("ALTER TABLE orders ADD COLUMN assigned_vendedor_id INTEGER REFERE
 try { db.exec("ALTER TABLE users ADD COLUMN vendedor_price_level INTEGER NOT NULL DEFAULT 1"); } catch (_) {}
 try { db.exec("ALTER TABLE users ADD COLUMN whatsapp_number TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE users ADD COLUMN plain_password TEXT"); } catch (_) {}
+
+// Migracion: Listas de precios personalizadas.
+// - price_lists: lista base (minorista/revendedor/mayorista/vip/publico) + % markup.
+//   El precio efectivo de un producto para una lista X es:
+//      Math.round(products.price_<base_level> * (1 + markup_percent / 100))
+// - users.assigned_vendedor_id: vendedor (level 5) que tiene asignado este cliente.
+//   El pedido del cliente va al WhatsApp del vendedor asignado.
+// - users.price_list_id: lista de precios que ve este cliente.
+//   Si es NULL, el cliente ve los precios segun su `level` como hasta ahora.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS price_lists (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  name TEXT UNIQUE NOT NULL," +
+  "  base_level TEXT NOT NULL DEFAULT 'minorista'," +
+  "  markup_percent REAL NOT NULL DEFAULT 0," +
+  "  active INTEGER NOT NULL DEFAULT 1," +
+  "  notes TEXT," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))," +
+  "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_price_lists_active ON price_lists(active);"
+);
+try { db.exec("ALTER TABLE users ADD COLUMN assigned_vendedor_id INTEGER REFERENCES users(id)"); } catch (_) {}
+try { db.exec("ALTER TABLE users ADD COLUMN price_list_id INTEGER REFERENCES price_lists(id)"); } catch (_) {}
 db.exec(
   "CREATE TABLE IF NOT EXISTS deliveries (" +
   "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -334,6 +358,65 @@ function priceColumnFor(level) {
     default: return "price_minorista";
   }
 }
+
+// Nombres validos de columnas de precio base usadas por las listas personalizadas.
+// El "publico" es opcional, suele venir vacio en el Excel, pero lo aceptamos.
+const PRICE_LIST_BASE_LEVELS = ["minorista", "revendedor", "mayorista", "vip", "publico"];
+function priceColumnForBaseLevel(baseLevel) {
+  const b = String(baseLevel || "").trim().toLowerCase();
+  if (!PRICE_LIST_BASE_LEVELS.includes(b)) return "price_minorista";
+  return "price_" + b;
+}
+
+// Devuelve la "config de precios" efectiva para un cliente (level 1-4 o vendedor
+// atendiendo a un cliente). El resultado define como calcular el precio de un
+// producto para ese cliente:
+//   - Si tiene price_list_id valido: { kind: "list", column, markup_percent, listId }
+//     -> efectivo = round(products.<column> * (1 + markup_percent/100))
+//   - Si no: { kind: "level", column }
+//     -> efectivo = products.<column> directo
+// Para nivel admin/vendedor sin contexto, devolvemos config por nivel.
+function getEffectivePriceConfig(userId, level) {
+  if (userId && [1, 2, 3, 4].includes(Number(level))) {
+    const row = db.prepare(
+      "SELECT pl.id, pl.base_level, pl.markup_percent, pl.active" +
+      "  FROM users u JOIN price_lists pl ON pl.id = u.price_list_id" +
+      "  WHERE u.id = ?"
+    ).get(userId);
+    if (row && row.active) {
+      return {
+        kind: "list",
+        listId: row.id,
+        column: priceColumnForBaseLevel(row.base_level),
+        markup_percent: Number(row.markup_percent) || 0,
+      };
+    }
+  }
+  return { kind: "level", column: priceColumnFor(level) };
+}
+
+// Calcula el precio efectivo aplicando markup si corresponde (siempre entero).
+function computeEffectivePrice(basePrice, config) {
+  const p = Number(basePrice) || 0;
+  if (!config || config.kind !== "list") return p;
+  const m = Number(config.markup_percent) || 0;
+  return Math.round(p * (1 + m / 100));
+}
+
+// SQL expression que devuelve el precio efectivo para una columna de producto
+// dada la config. Para no romper el orden de columnas en SELECTs viejos,
+// devolvemos un objeto: { expr, params } para concatenar al SELECT.
+function priceSqlExpr(config, productAlias) {
+  const a = productAlias || "p";
+  if (!config) return { expr: "0", params: [] };
+  if (config.kind === "list") {
+    return {
+      expr: "CAST(ROUND(" + a + "." + config.column + " * (1 + ? / 100.0)) AS INTEGER)",
+      params: [Number(config.markup_percent) || 0],
+    };
+  }
+  return { expr: a + "." + config.column, params: [] };
+}
 function levelName(level) {
   switch (Number(level)) {
     case 1: return "Minorista";
@@ -447,19 +530,53 @@ app.get("/api/app-info", (req, res) => {
 });
 
 app.get("/api/me", requireLogin, (req, res) => {
+  const level = req.session.level;
   const globalWa = getSetting("whatsapp_number", WHATSAPP_NUMBER || null);
-  const userRow = db.prepare("SELECT whatsapp_number FROM users WHERE id = ?").get(req.session.userId);
-  const userWa = userRow && userRow.whatsapp_number ? String(userRow.whatsapp_number).replace(/[^0-9]/g, "") : null;
-  const wa = userWa || (globalWa ? String(globalWa).replace(/[^0-9]/g, "") : null);
+  const userRow = db.prepare(
+    "SELECT whatsapp_number, assigned_vendedor_id, price_list_id FROM users WHERE id = ?"
+  ).get(req.session.userId);
+  const userWa = userRow && userRow.whatsapp_number
+    ? String(userRow.whatsapp_number).replace(/[^0-9]/g, "") : null;
+  const globalWaClean = globalWa ? String(globalWa).replace(/[^0-9]/g, "") : null;
+
+  // Para clientes (level 1-4): el WhatsApp donde llegan los pedidos es SIEMPRE
+  // el del vendedor asignado. Si no tiene vendedor asignado, no podran enviar
+  // pedidos (el frontend bloquea el boton).
+  // Para admin/vendedor: dejamos el WA personal o el global como referencia.
+  let wa = null;
+  let assignedVendedor = null;
+  if ([1, 2, 3, 4].includes(Number(level))) {
+    if (userRow && userRow.assigned_vendedor_id) {
+      const v = db.prepare(
+        "SELECT id, username, full_name, whatsapp_number FROM users" +
+        "  WHERE id = ? AND active = 1 AND level = 5"
+      ).get(userRow.assigned_vendedor_id);
+      if (v) {
+        const vwa = v.whatsapp_number ? String(v.whatsapp_number).replace(/[^0-9]/g, "") : null;
+        wa = vwa || null;
+        // Para el frontend del catalogo NO exponemos nombre del vendedor
+        // (decision: solo el admin lo ve). Solo si tiene WA podra enviar.
+        assignedVendedor = { id: v.id, hasWhatsapp: !!vwa };
+      }
+    }
+  } else {
+    wa = userWa || globalWaClean;
+  }
+
   const resp = {
     id: req.session.userId, username: req.session.username,
-    fullName: req.session.fullName, level: req.session.level,
-    levelName: levelName(req.session.level),
+    fullName: req.session.fullName, level: level,
+    levelName: levelName(level),
     whatsapp: wa || null,
-    canSeePriceChanges: userCanSeePriceChanges(req.session.level),
+    canSeePriceChanges: userCanSeePriceChanges(level),
     app_name: getAppName(),
   };
-  if (req.session.level === 5) {
+  // Solo lo enviamos para clientes (1-4) para que el frontend sepa si tiene
+  // vendedor asignado y pueda mostrar/bloquear el envio.
+  if ([1, 2, 3, 4].includes(Number(level))) {
+    resp.assignedVendedor = assignedVendedor;
+  }
+  if (level === 5) {
     resp.vendedorClient = req.session.vendedorClientId
       ? { id: req.session.vendedorClientId, name: req.session.vendedorClientName,
           level: req.session.vendedorClientLevel, levelName: levelName(req.session.vendedorClientLevel) }
@@ -657,9 +774,10 @@ app.get("/api/categories", requireLogin, (req, res) => {
 
 app.get("/api/products", requireLogin, (req, res) => {
   // Vendedor sin cliente seleccionado: muestra el catálogo sin precios (noPrice=true).
-  // Vendedor con cliente: usa nivel y restricciones de categoría del cliente.
-  // Admin: puede ver "como otro nivel" via ?as_level.
-  // Resto de usuarios: comportamiento estándar.
+  // Vendedor con cliente: usa nivel + lista de precios del cliente.
+  // Admin: puede ver "como otro nivel" via ?as_level (no aplica lista personalizada).
+  // Resto de usuarios (clientes 1-4): si tienen price_list_id, ven esa lista
+  //   con el % de markup aplicado; si no, ven los precios de su nivel.
   let effectiveLevel = req.session.level;
   let effectiveUserId = req.session.userId;
   let noPrice = false;
@@ -673,11 +791,21 @@ app.get("/api/products", requireLogin, (req, res) => {
     }
   } else if (req.session.level === 99 && req.query.as_level != null) {
     const asLvl = Number(req.query.as_level);
-    if ([1, 2, 3, 4].includes(asLvl)) effectiveLevel = asLvl;
+    if ([1, 2, 3, 4].includes(asLvl)) {
+      effectiveLevel = asLvl;
+      effectiveUserId = null; // admin "viendo como N": ignorar lista personalizada
+    }
   }
 
-  const col = priceColumnFor(effectiveLevel);
-  const priceExpr = noPrice ? "NULL" : "p." + col;
+  // Resolver config de precios (lista personalizada o nivel base)
+  const cfg = getEffectivePriceConfig(effectiveUserId, effectiveLevel);
+  let priceExpr = "NULL";
+  const priceParams = [];
+  if (!noPrice) {
+    const e = priceSqlExpr(cfg, "p");
+    priceExpr = e.expr;
+    priceParams.push(...e.params);
+  }
   // getUserAllowedCategoryIds devuelve null (sin restricción) para level 5 sin cliente
   const allowedIds = getUserAllowedCategoryIds(effectiveUserId, effectiveLevel);
 
@@ -686,7 +814,7 @@ app.get("/api/products", requireLogin, (req, res) => {
     "       p.name, p.image_url, " + priceExpr + " AS price, p.stock" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  WHERE p.active = 1 AND p.stock > 0";
-  const params = [];
+  const params = [...priceParams];
   if (allowedIds !== null && allowedIds.size > 0) {
     const placeholders = Array.from(allowedIds).map(() => "?").join(",");
     sql += " AND p.category_id IN (" + placeholders + ")";
@@ -701,6 +829,7 @@ app.get("/api/products", requireLogin, (req, res) => {
 // ----- Pedidos -----
 app.post("/api/orders", requireLogin, (req, res) => {
   const isVendedor = req.session.level === 5;
+  const isAdmin = req.session.level === 99;
   // Vendedor debe tener un cliente seleccionado para poder hacer pedidos
   if (isVendedor && !req.session.vendedorClientId) {
     return res.status(400).json({ error: "Seleccioná un cliente antes de hacer un pedido" });
@@ -710,14 +839,42 @@ app.post("/api/orders", requireLogin, (req, res) => {
   if (!Array.isArray(items) || items.length === 0)
     return res.status(400).json({ error: "Carrito vacio" });
 
-  // Si es vendedor: el pedido se registra bajo el cliente, con el vendedor asignado
+  // Si es vendedor: el pedido se registra bajo el cliente, con el vendedor asignado.
+  // Si es cliente (level 1-4): el pedido se registra a su nombre, con el
+  // vendedor asignado del cliente (campo users.assigned_vendedor_id).
+  // Si no hay vendedor asignado al cliente, el pedido no se puede enviar.
   const priceLevel = isVendedor ? req.session.vendedorClientLevel : req.session.level;
   const orderUserId = isVendedor ? req.session.vendedorClientId : req.session.userId;
-  const assignedVendedorId = isVendedor ? req.session.userId : null;
+  let assignedVendedorId = isVendedor ? req.session.userId : null;
 
-  const col = priceColumnFor(priceLevel);
+  // Para clientes (no vendedor / no admin): leer el vendedor asignado de la DB.
+  // Si no tiene vendedor activo -> bloquear.
+  if (!isVendedor && !isAdmin && [1, 2, 3, 4].includes(Number(req.session.level))) {
+    const cliRow = db.prepare(
+      "SELECT u.assigned_vendedor_id, v.id AS v_id, v.active AS v_active, v.level AS v_level," +
+      "       v.whatsapp_number AS v_wa" +
+      "  FROM users u LEFT JOIN users v ON v.id = u.assigned_vendedor_id" +
+      "  WHERE u.id = ?"
+    ).get(req.session.userId);
+    if (!cliRow || !cliRow.assigned_vendedor_id || !cliRow.v_id ||
+        !cliRow.v_active || cliRow.v_level !== 5) {
+      return res.status(400).json({
+        error: "No tenés un vendedor asignado. Pedile al admin que te asigne uno antes de enviar pedidos."
+      });
+    }
+    if (!cliRow.v_wa || !String(cliRow.v_wa).replace(/[^0-9]/g, "")) {
+      return res.status(400).json({
+        error: "Tu vendedor no tiene un numero de WhatsApp configurado. Pedile al admin que lo cargue."
+      });
+    }
+    assignedVendedorId = cliRow.assigned_vendedor_id;
+  }
+
+  // Calcular precios usando la config efectiva (lista personalizada o nivel base)
+  const cfg = getEffectivePriceConfig(orderUserId, priceLevel);
   const getProd = db.prepare(
-    "SELECT id, code, name, " + col + " AS price, stock FROM products WHERE id = ? AND active = 1"
+    "SELECT id, code, name, " + cfg.column + " AS base_price, stock" +
+    "  FROM products WHERE id = ? AND active = 1"
   );
 
   const lines = [];
@@ -728,11 +885,12 @@ app.post("/api/orders", requireLogin, (req, res) => {
     if (!id || !qty) continue;
     const p = getProd.get(id);
     if (!p || p.stock <= 0) continue;
-    const subtotal = p.price * qty;
+    const unitPrice = computeEffectivePrice(p.base_price, cfg);
+    const subtotal = unitPrice * qty;
     total += subtotal;
     lines.push({
       product_id: p.id, product_code: p.code, product_name: p.name,
-      quantity: qty, unit_price: p.price, subtotal: subtotal,
+      quantity: qty, unit_price: unitPrice, subtotal: subtotal,
     });
   }
   if (!lines.length)
@@ -781,7 +939,10 @@ app.get("/api/orders", requireLogin, (req, res) => {
   }
 
   if (isVendedor) {
-    // Vendedor solo ve sus pedidos asignados
+    // Vendedor ve:
+    //  - Sus pedidos asignados (orders.assigned_vendedor_id = vendedor)
+    //  - Pedidos de SUS clientes asignados (users.assigned_vendedor_id = vendedor),
+    //    aunque el pedido no tenga vendedor en orders.assigned_vendedor_id.
     const rows = db.prepare(
       "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
       "       u.username, u.full_name," +
@@ -790,9 +951,9 @@ app.get("/api/orders", requireLogin, (req, res) => {
       "  FROM orders o" +
       "  JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN deliveries d ON d.order_id = o.id" +
-      "  WHERE o.assigned_vendedor_id = ?" +
+      "  WHERE o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?" +
       "  ORDER BY o.created_at DESC LIMIT 200"
-    ).all(req.session.userId);
+    ).all(req.session.userId, req.session.userId);
     return res.json(rows);
   }
 
@@ -824,14 +985,15 @@ app.get("/api/orders/:id", requireLogin, (req, res) => {
       "  WHERE o.id = ?"
     ).get(id);
   } else if (isVendedor) {
+    // Vendedor ve detalle si el pedido es suyo o de uno de sus clientes
     order = db.prepare(
       "SELECT o.*, u.username, u.full_name," +
       "       NULL AS vendedor_username, NULL AS vendedor_full_name," +
       "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
       "  FROM orders o JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN deliveries d ON d.order_id = o.id" +
-      "  WHERE o.id = ? AND o.assigned_vendedor_id = ?"
-    ).get(id, req.session.userId);
+      "  WHERE o.id = ? AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"
+    ).get(id, req.session.userId, req.session.userId);
   } else {
     order = db.prepare(
       "SELECT o.*, NULL AS username, NULL AS full_name FROM orders o WHERE o.id = ? AND o.user_id = ?"
@@ -859,10 +1021,14 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
     return res.status(400).json({ error: "Estado invalido. Valores: " + valid.join(", ") });
 
   // Vendedores solo pueden marcar como "entregado" en su pedido asignado
+  // o en pedidos de sus clientes asignados.
   if (isVendedor) {
     if (status !== "entregado")
       return res.status(403).json({ error: "Los vendedores solo pueden marcar pedidos como entregado" });
-    const order = db.prepare("SELECT id FROM orders WHERE id = ? AND assigned_vendedor_id = ?").get(id, req.session.userId);
+    const order = db.prepare(
+      "SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id" +
+      "  WHERE o.id = ? AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"
+    ).get(id, req.session.userId, req.session.userId);
     if (!order) return res.status(404).json({ error: "Pedido no encontrado o no asignado a vos" });
   }
 
@@ -1087,7 +1253,9 @@ function isValidUsername(s) {
 
 app.get("/api/admin/users", requireAdmin, (req, res) => {
   const rows = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at" +
+    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password," +
+    "       level, active, created_at, last_login_at," +
+    "       assigned_vendedor_id, price_list_id, vendedor_price_level" +
     "  FROM users ORDER BY level DESC, username"
   ).all();
   res.json(rows);
@@ -1120,7 +1288,7 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
   ).run(username, hash, password, fullName, phone, whatsappNumber, email, level);
 
   const user = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at FROM users WHERE id = ?"
+    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level FROM users WHERE id = ?"
   ).get(r.lastInsertRowid);
   res.json({ ok: true, user: user });
 });
@@ -1168,6 +1336,37 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
     sets.push("vendedor_price_level = ?");
     vals.push(vpl);
   }
+  if ("assigned_vendedor_id" in b) {
+    // null / 0 / "" desasigna; valor numerico debe existir y ser un vendedor activo
+    const raw = b.assigned_vendedor_id;
+    if (raw === null || raw === "" || raw === 0 || raw === "0") {
+      sets.push("assigned_vendedor_id = ?");
+      vals.push(null);
+    } else {
+      const vid = Number(raw);
+      if (!vid) return res.status(400).json({ error: "Vendedor invalido" });
+      const v = db.prepare("SELECT id FROM users WHERE id = ? AND level = 5 AND active = 1").get(vid);
+      if (!v) return res.status(400).json({ error: "Vendedor no encontrado o inactivo" });
+      if (vid === id) return res.status(400).json({ error: "Un usuario no puede ser su propio vendedor" });
+      sets.push("assigned_vendedor_id = ?");
+      vals.push(vid);
+    }
+  }
+  if ("price_list_id" in b) {
+    // null / 0 / "" elimina la lista personalizada (vuelve a precios por nivel)
+    const raw = b.price_list_id;
+    if (raw === null || raw === "" || raw === 0 || raw === "0") {
+      sets.push("price_list_id = ?");
+      vals.push(null);
+    } else {
+      const plid = Number(raw);
+      if (!plid) return res.status(400).json({ error: "Lista de precios invalida" });
+      const pl = db.prepare("SELECT id FROM price_lists WHERE id = ?").get(plid);
+      if (!pl) return res.status(400).json({ error: "Lista de precios no encontrada" });
+      sets.push("price_list_id = ?");
+      vals.push(plid);
+    }
+  }
   if ("active" in b) {
     const act = b.active ? 1 : 0;
     if (id === req.session.userId && !act)
@@ -1180,7 +1379,7 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   vals.push(id);
   db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
   const user = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at FROM users WHERE id = ?"
+    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level FROM users WHERE id = ?"
   ).get(id);
   res.json({ ok: true, user: user });
 });
@@ -1387,6 +1586,144 @@ app.post("/api/admin/import-excel", requireAdmin, excelUpload.single("file"), (r
   }
 });
 
+// ===== Listas de precios personalizadas =====
+//
+// Cada lista combina una lista base (minorista/revendedor/mayorista/vip/publico)
+// con un porcentaje de markup. El precio efectivo para un cliente asignado a
+// la lista X es:  round(products.price_<base_level> * (1 + markup/100))
+// Las listas se asignan a clientes (level 1-4) via users.price_list_id.
+
+// GET /api/admin/price-lists
+// Devuelve todas las listas + cantidad de clientes asignados a cada una.
+app.get("/api/admin/price-lists", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT pl.id, pl.name, pl.base_level, pl.markup_percent, pl.active, pl.notes," +
+    "       pl.created_at, pl.updated_at," +
+    "       (SELECT COUNT(*) FROM users u WHERE u.price_list_id = pl.id) AS users_count" +
+    "  FROM price_lists pl ORDER BY pl.active DESC, pl.name"
+  ).all();
+  res.json(rows);
+});
+
+// POST /api/admin/price-lists
+// Body: { name, base_level, markup_percent, notes? }
+app.post("/api/admin/price-lists", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || "").trim().slice(0, 80);
+  const base_level = String(b.base_level || "").trim().toLowerCase();
+  const markup_percent = Number(b.markup_percent);
+  const notes = String(b.notes || "").trim().slice(0, 300) || null;
+  if (!name) return res.status(400).json({ error: "Nombre requerido" });
+  if (!PRICE_LIST_BASE_LEVELS.includes(base_level))
+    return res.status(400).json({ error: "Lista base invalida. Valores: " + PRICE_LIST_BASE_LEVELS.join(", ") });
+  if (!isFinite(markup_percent) || markup_percent < -90 || markup_percent > 500)
+    return res.status(400).json({ error: "Markup invalido (debe ser un numero entre -90 y 500)" });
+
+  const exists = db.prepare("SELECT id FROM price_lists WHERE name = ?").get(name);
+  if (exists) return res.status(409).json({ error: "Ya existe una lista con ese nombre" });
+
+  const r = db.prepare(
+    "INSERT INTO price_lists (name, base_level, markup_percent, notes)" +
+    " VALUES (?, ?, ?, ?)"
+  ).run(name, base_level, markup_percent, notes);
+  const row = db.prepare(
+    "SELECT id, name, base_level, markup_percent, active, notes, created_at, updated_at," +
+    "       0 AS users_count FROM price_lists WHERE id = ?"
+  ).get(r.lastInsertRowid);
+  res.json({ ok: true, price_list: row });
+});
+
+// PATCH /api/admin/price-lists/:id
+// Body: cualquier subconjunto de { name, base_level, markup_percent, active, notes }
+app.patch("/api/admin/price-lists/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const exists = db.prepare("SELECT id FROM price_lists WHERE id = ?").get(id);
+  if (!exists) return res.status(404).json({ error: "Lista no encontrada" });
+
+  const b = req.body || {};
+  const sets = [];
+  const vals = [];
+  if ("name" in b) {
+    const v = String(b.name || "").trim().slice(0, 80);
+    if (!v) return res.status(400).json({ error: "Nombre requerido" });
+    const dup = db.prepare("SELECT id FROM price_lists WHERE name = ? AND id != ?").get(v, id);
+    if (dup) return res.status(409).json({ error: "Ya existe otra lista con ese nombre" });
+    sets.push("name = ?"); vals.push(v);
+  }
+  if ("base_level" in b) {
+    const v = String(b.base_level || "").trim().toLowerCase();
+    if (!PRICE_LIST_BASE_LEVELS.includes(v))
+      return res.status(400).json({ error: "Lista base invalida" });
+    sets.push("base_level = ?"); vals.push(v);
+  }
+  if ("markup_percent" in b) {
+    const v = Number(b.markup_percent);
+    if (!isFinite(v) || v < -90 || v > 500)
+      return res.status(400).json({ error: "Markup invalido (entre -90 y 500)" });
+    sets.push("markup_percent = ?"); vals.push(v);
+  }
+  if ("active" in b) {
+    sets.push("active = ?"); vals.push(b.active ? 1 : 0);
+  }
+  if ("notes" in b) {
+    sets.push("notes = ?"); vals.push(String(b.notes || "").trim().slice(0, 300) || null);
+  }
+  if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
+  sets.push("updated_at = datetime('now')");
+  vals.push(id);
+  db.prepare("UPDATE price_lists SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+
+  const row = db.prepare(
+    "SELECT pl.id, pl.name, pl.base_level, pl.markup_percent, pl.active, pl.notes," +
+    "       pl.created_at, pl.updated_at," +
+    "       (SELECT COUNT(*) FROM users u WHERE u.price_list_id = pl.id) AS users_count" +
+    "  FROM price_lists pl WHERE pl.id = ?"
+  ).get(id);
+  res.json({ ok: true, price_list: row });
+});
+
+// DELETE /api/admin/price-lists/:id
+// Solo permitido si no hay clientes asignados.
+app.delete("/api/admin/price-lists/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const exists = db.prepare("SELECT id FROM price_lists WHERE id = ?").get(id);
+  if (!exists) return res.status(404).json({ error: "Lista no encontrada" });
+  const usage = db.prepare("SELECT COUNT(*) AS n FROM users WHERE price_list_id = ?").get(id);
+  if (usage.n > 0) {
+    return res.status(409).json({
+      error: "No se puede borrar: hay " + usage.n + " cliente(s) usando esta lista. " +
+             "Desasignala primero o desactiva la lista."
+    });
+  }
+  db.prepare("DELETE FROM price_lists WHERE id = ?").run(id);
+  res.json({ ok: true });
+});
+
+// GET /api/admin/price-lists/:id/preview
+// Devuelve hasta N productos con sus precios efectivos para esta lista.
+// Util para que el admin "vea" como queda la lista antes de asignarla.
+app.get("/api/admin/price-lists/:id/preview", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const list = db.prepare(
+    "SELECT id, name, base_level, markup_percent FROM price_lists WHERE id = ?"
+  ).get(id);
+  if (!list) return res.status(404).json({ error: "Lista no encontrada" });
+  const col = priceColumnForBaseLevel(list.base_level);
+  const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
+  const products = db.prepare(
+    "SELECT p.id, p.code, p.name, p." + col + " AS base_price," +
+    "       CAST(ROUND(p." + col + " * (1 + ? / 100.0)) AS INTEGER) AS effective_price," +
+    "       p.stock, c.name AS category_name" +
+    "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
+    "  WHERE p.active = 1 AND p.stock > 0" +
+    "  ORDER BY c.sort_order, c.name, p.name LIMIT ?"
+  ).all(Number(list.markup_percent) || 0, limit);
+  res.json({ list: list, products: products });
+});
+
 // ===== Vendedores =====
 
 // Lista de vendedores con estadisticas de pedidos y entregas (solo admin)
@@ -1429,10 +1766,13 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, (req, res) => {
   if (!id) return res.status(400).json({ error: "ID invalido" });
 
   const isAdmin = req.session.level === 99;
-  // Verificar que el pedido existe y (si vendedor) que le esta asignado
+  // Verificar que el pedido existe y (si vendedor) que es suyo o de uno de sus clientes
   const order = isAdmin
     ? db.prepare("SELECT id, status FROM orders WHERE id = ?").get(id)
-    : db.prepare("SELECT id, status FROM orders WHERE id = ? AND assigned_vendedor_id = ?").get(id, req.session.userId);
+    : db.prepare(
+        "SELECT o.id, o.status FROM orders o JOIN users u ON u.id = o.user_id" +
+        "  WHERE o.id = ? AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"
+      ).get(id, req.session.userId, req.session.userId);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado o no asignado a vos" });
 
   const { delivered_to, efectivo_amount, transferencia_amount, notes } = req.body || {};
