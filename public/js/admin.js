@@ -737,13 +737,20 @@
 
   function vendRowHtml(v) {
     const lastLogin = v.last_login_at ? formatDate(v.last_login_at) : "—";
+    // Nivel de costo del vendedor: cuando el tercerizado está en el catálogo
+    // sin cliente seleccionado, ve los productos con el precio de ese nivel
+    // (price_minorista/revendedor/mayorista/vip de products). Es el "costo"
+    // que él paga al admin.
+    const plOpts = [1, 2, 3, 4].map((n) =>
+      '<option value="' + n + '"' + (Number(v.vendedor_price_level) === n ? " selected" : "") + '>' + PRICE_LEVEL_NAMES[n] + '</option>'
+    ).join("");
     return '<tr data-id="' + v.id + '"' + (v.active ? '' : ' class="row-inactive"') + '>' +
       '<td class="cell-code">' + escapeHtml(v.username) + '</td>' +
       '<td><input class="cell-input" data-field="full_name" value="' + escapeHtml(v.full_name || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="phone" value="' + escapeHtml(v.phone || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="whatsapp_number" type="tel" placeholder="ej: 5493442484286" value="' + escapeHtml(v.whatsapp_number || "") + '" title="Numero al que llegan los pedidos de los clientes asignados a este vendedor (formato internacional, sin + ni espacios)." /></td>' +
-      '<td title="Lista que define el COSTO del vendedor. El catálogo le muestra el precio base de esta lista cuando no tiene un cliente seleccionado.">' +
-        '<select class="cell-input" data-field="price_list_id">' + priceListOptsHtml(v.price_list_id) + '</select>' +
+      '<td title="Nivel de costo: el catálogo le muestra los productos con este precio cuando no tiene un cliente seleccionado.">' +
+        '<select class="cell-input" data-field="vendedor_price_level">' + plOpts + '</select>' +
       '</td>' +
       '<td><label class="cell-toggle" title="Tercerizado: solo ve sus clientes asignados. El vendedor no ve este label.">' +
         '<input type="checkbox" data-field="is_tercerizado"' + (Number(v.is_tercerizado) === 1 ? " checked" : "") + ' /><span></span></label></td>' +
@@ -768,10 +775,6 @@
       let value;
       if (inp.type === "checkbox") value = inp.checked ? 1 : 0;
       else if (field === "vendedor_price_level") value = Number(inp.value);
-      else if (field === "price_list_id") {
-        // "" = desasignar (NULL). El endpoint acepta null/""/"0".
-        value = inp.value ? Number(inp.value) : null;
-      }
       else value = inp.value;
       // is_tercerizado se manda como flag 0/1 al backend (igual que active)
 

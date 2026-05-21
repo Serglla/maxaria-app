@@ -1168,20 +1168,21 @@ app.get("/api/products", requireLogin, (req, res) => {
       effectiveLevel = req.session.vendedorClientLevel;
       effectiveUserId = req.session.vendedorClientId;
     } else {
-      // Vendedor sin cliente: ver si tiene lista propia asignada (su costo).
+      // Vendedor sin cliente:
+      //   - Si es tercerizado, muestra catálogo con su COSTO = precio del
+      //     nivel base asignado (users.vendedor_price_level, 1..4). Es uno
+      //     de los niveles base, no una lista personalizada.
+      //   - Si NO es tercerizado, mantiene el comportamiento clásico
+      //     (cartel "Seleccioná un cliente").
+      // Lo leemos de la DB para reflejar cambios del admin sin re-login.
       const vRow = db.prepare(
-        "SELECT pl.base_level, pl.active" +
-        "  FROM users u JOIN price_lists pl ON pl.id = u.price_list_id" +
-        "  WHERE u.id = ?"
-      ).get(req.session.userId);
-      if (vRow && vRow.active) {
-        // Costo = precio base sin markup (kind "level" usa la columna directo).
-        vendorCostCfg = {
-          kind: "level",
-          column: priceColumnForBaseLevel(vRow.base_level),
-        };
+        "SELECT vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
+      ).get(req.session.userId) || {};
+      const vpl = Number(vRow.vendedor_price_level) || 0;
+      if (Number(vRow.is_tercerizado) === 1 && [1, 2, 3, 4].includes(vpl)) {
+        vendorCostCfg = { kind: "level", column: priceColumnFor(vpl) };
       } else {
-        noPrice = true; // sin cliente y sin lista propia: cartel "Seleccioná un cliente"
+        noPrice = true; // vendedor propio sin cliente, o sin nivel: "Seleccioná un cliente"
       }
     }
   } else if (req.session.level === 99 && req.query.as_level != null) {

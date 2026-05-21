@@ -541,16 +541,18 @@ En el detalle de cada pedido del drawer "Mis pedidos", aparecía el botón verde
 
 **Vendedor tercerizado: ver el catálogo con SU COSTO**
 
-Sergio: el tercerizado tiene que poder entrar al catálogo SIN cliente seleccionado y ver los productos con su costo (lo que él le paga al admin). El costo sale de la columna base de la lista de precios asignada al vendedor (la misma que después usan sus clientes con markup).
+Sergio: el tercerizado tiene que poder entrar al catálogo SIN cliente seleccionado y ver los productos con su costo (lo que él le paga al admin). El costo NO es una lista personalizada — es **uno de los niveles base** (minorista/revendedor/mayorista/VIP), o sea la columna `price_<nivel>` de `products`.
 
-Datos: reusamos `users.price_list_id` en la fila del vendedor (level 5). La columna ya existía en el schema pero solo se usaba para clientes (1-4). Nada nuevo en BD.
+Datos: se reactiva el campo legacy `users.vendedor_price_level` (INTEGER 1-4) que ya estaba en el schema. Nada nuevo en BD.
 
-- `server.js` `GET /api/products`: rama vendedor sin cliente nuevo — busca `users.price_list_id` del vendedor logueado; si tiene lista activa, arma `vendorCostCfg = { kind: "level", column: price_<base_level> }` y devuelve los precios usando esa columna directo (sin markup, porque ES el costo). Si no tiene lista propia, `noPrice = true` y se mantiene el comportamiento viejo (cartel "Seleccioná un cliente").
-- `server.js` `GET /api/admin/vendedores`: agregado `u.price_list_id` al SELECT (antes no lo devolvía, por eso el select del admin no podía mostrar el valor cargado).
-- `public/js/app.js` `cardHtml()`: el gate del precio cambió de "noClient ? '—' : precio" a "hasPrice ? precio : '—'". Las acciones (+/qty) siguen ocultas cuando no hay cliente (tercerizado viendo costos no debería agregar al carrito). 
+- `server.js` `GET /api/products`: rama vendedor sin cliente — si `users.is_tercerizado = 1` y tiene `vendedor_price_level` válido (1..4), arma `vendorCostCfg = { kind: "level", column: priceColumnFor(vpl) }` y devuelve los precios con esa columna directo. Para vendedor propio (no tercerizado), mantiene `noPrice = true` (cartel "Seleccioná un cliente"). Se lee de la DB en cada request para que un cambio del admin se vea sin re-login.
+- `server.js` `GET /api/admin/vendedores`: agregado `u.price_list_id` al SELECT (no se usa para esta feature, pero queda disponible para futuro).
+- `public/js/app.js` `cardHtml()`: el gate del precio cambió de "noClient ? '—' : precio" a "hasPrice ? precio : '—'". Las acciones (+/qty) siguen ocultas cuando no hay cliente (tercerizado viendo costos no debería agregar al carrito).
 - `public/js/app.js` barra del vendedor: si es tercerizado y no tiene cliente, el cartel dice **"Viendo tu lista de costos. Seleccioná un cliente para tomar un pedido."** en lugar del genérico "Seleccioná un cliente para ver los precios".
-- `public/js/admin.js` pestaña Vendedores: el HTML ya tenía `<th>Lista de precios</th>` pero `vendRowHtml` renderizaba el viejo select de `vendedor_price_level` (nivel 1-4, legacy). Reemplazado por un select real de `price_list_id` con `priceListOptsHtml(v.price_list_id)`. `loadVendedores()` ahora carga `/api/admin/vendedores` y `/api/admin/price-lists` en paralelo si la cache de listas todavía no está poblada (sin esto, el select aparecería vacío). El auto-save convierte `""` → `null` para desasignar (mismo patrón que en Usuarios).
-- **`vendedor_price_level` queda como columna legacy en BD y se sigue cargando en `req.session.vendedorPriceLevel`**, pero ya no tiene UI de edición. La barra de vendedor sin cliente con costo lo deja sin uso. No se rompe nada (default DB = 1). Si en algún momento se quiere volver a editarlo, hay que sumar otra columna a la tabla.
+- `public/admin.html`: el `<th>` de la pestaña Vendedores ahora dice **"Nivel de costo"** (antes decía "Lista de precios", que confundía con las listas personalizadas del menú Listas).
+- `public/js/admin.js` pestaña Vendedores: `vendRowHtml` mantiene el select de `vendedor_price_level` con las 4 opciones (Minorista/Revendedor/Mayorista/VIP). Auto-save existente cubre el `data-field="vendedor_price_level"` y manda `Number(inp.value)`.
+
+**Confusión que ocurrió y se corrigió**: en una primera pasada se intentó usar `users.price_list_id` (las listas personalizadas del menú Listas) como costo del vendedor. **Es incorrecto**: esas listas son las que el ADMIN crea para sus clientes (vip, mayorista, etc. con markup), no el costo del vendedor. El costo del vendedor es simplemente uno de los niveles base del producto. Se revirtió.
 
 **Final wins, vibe-shift de la regla del WhatsApp**
 
@@ -573,18 +575,18 @@ Durante esta sesión el bash mount Linux mostró archivos en estados distintos a
 
 **Cosas a hacer post-deploy de esta sesión**
 
-1. /admin → Vendedores: asignar la lista L2 (vip, gana 20%) a Dario en la columna "Lista de precios". Si la columna aparece vacía cuando el deploy esté listo, refresca la página: la primera vez `loadVendedores` ya hace el fetch en paralelo de las listas.
+1. /admin → Vendedores: a Dario asignarle el "Nivel de costo" (por ejemplo Mayorista o VIP) — la columna ahora es un select con los 4 niveles. Sin esto, sigue viendo precios pero por default es Minorista (vendedor_price_level=1).
 2. Login como dariocliente: el carrito ya no debería bloquear; el wa.me debería abrirse con el número de Dario (porque Dario sí tiene vendedor asignado y WA). Si Dario no tuviera WA cargado, el cartel sería amarillo "se enviará al WhatsApp principal".
-3. Login como Dario sin cliente seleccionado: catálogo con precios = columna base de L2 (su costo). Barra amarilla "Viendo tu lista de costos".
+3. Login como Dario (tercerizado) sin cliente seleccionado: catálogo con precios = columna `price_<nivel>` según su `vendedor_price_level`. Barra amarilla "Viendo tu lista de costos".
 4. Login como Dario → Mis pedidos: el botón verde "Reenviar por WhatsApp" no aparece en ningún pedido. Seleccionar 3 pedidos → "Enviar unificado al admin" → ahora debería responder OK con `whatsapp_link` y abrir wa.me al número global con el mensaje del unificado.
 
 ### Próximos pasos pendientes (en orden)
 
 1. **Push de la sesión noche 21 may**: archivos cambiados — `server.js`, `public/js/app.js`, `public/js/admin.js`. Desde Windows: `del .git\index.lock` + `git add` + `commit` + `push`. Esperar redeploy en Railway.
 2. Validación post-deploy de esta sesión:
-   - /admin → Vendedores: la columna "Lista de precios" ahora es un select real. Asignarle L2 a Dario (autosave). Refrescar si el select aparece vacío la primera vez.
+   - /admin → Vendedores: la columna "Nivel de costo" tiene un select con Minorista/Revendedor/Mayorista/VIP. Asignarle el nivel correcto a Dario (autosave).
    - Login como dariocliente → carrito: si Dario tiene WA, sigue igual (al WA de Dario). Si Dario no tiene WA, el carrito muestra cartel amarillo y se manda al global. Probar también con un cliente sin vendedor asignado: debería mandar al global sin bloquear.
-   - Login como Dario sin cliente: el catálogo debería mostrar precios = columna base de L2 (su costo), y la barra superior "Viendo tu lista de costos…".
+   - Login como Dario (tercerizado) sin cliente: el catálogo debería mostrar precios = columna del nivel asignado (su costo), y la barra superior "Viendo tu lista de costos…".
    - Login como Dario → Mis pedidos: el botón verde "Reenviar por WhatsApp" no aparece. Seleccionar 3 pedidos → "Enviar unificado al admin" → ahora debería andar y abrir wa.me al global con el unificado.
 3. Validaciones pendientes de sesiones anteriores (todavía relevantes):
    - DevTools → Network → `/api/admin/earnings` → confirmar que `total_sold` y `total_delivered` no estén inflados.
