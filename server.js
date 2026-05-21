@@ -293,6 +293,19 @@ function userCanSeePriceChanges(level) {
 }
 
 // Mapea el nivel a las columnas old_X / new_X de la tabla price_changes.
+// Devuelve las columnas (old/new) de price_changes para un base_level dado.
+// "publico" cae a minorista porque no hay snapshot de publico en price_changes.
+function priceChangeColsForBaseLevel(baseLevel) {
+  switch (String(baseLevel || "").toLowerCase()) {
+    case "revendedor": return { old: "old_revendedor", new: "new_revendedor" };
+    case "mayorista":  return { old: "old_mayorista",  new: "new_mayorista"  };
+    case "vip":        return { old: "old_vip",        new: "new_vip"        };
+    case "minorista":
+    case "publico":
+    default:           return { old: "old_minorista",  new: "new_minorista"  };
+  }
+}
+
 function priceChangeCols(level) {
   switch (Number(level)) {
     case 1: return { old: "old_minorista",  new: "new_minorista"  };
@@ -760,6 +773,16 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     return res.status(403).json({ error: "No tenés acceso a esta sección" });
   }
 
+  // Resolver el "cliente target": para vendedor con cliente seleccionado,
+  // es el cliente atendido. Para cliente puro (1-4) es el propio usuario.
+  // Admin sin as_level: el propio admin (no aplica lista personalizada).
+  let targetUserId = req.session.userId;
+  let targetLevel = level;
+  if (level === 5 && req.session.vendedorClientId) {
+    targetUserId = req.session.vendedorClientId;
+    targetLevel = Number(req.session.vendedorClientLevel) || 1;
+  }
+
   // Admin puede mirar como otro nivel (igual que /api/products).
   // Vendedor (nivel 5): si tiene cliente seleccionado, ve los cambios
   // segun el nivel del cliente; si no, segun su vendedor_price_level.
@@ -782,14 +805,45 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     "  FROM price_updates ORDER BY id DESC LIMIT 10"
   ).all();
 
+  // Resolver lista personalizada del target (cliente).
+  // Si tiene price_list_id, usamos sus columnas base y aplicamos la ganancia.
+  // El admin se queda con priceChangeCols(effectiveLevel) tradicional (sin lista).
+  const useListConfig = level !== 99;
+  const cfg = useListConfig ? getEffectivePriceConfig(targetUserId, effectiveLevel) : { kind: "level" };
+  let cols;
+  let listInfo = null; // { id, name, base_level, markup_percent } cuando aplica
+  let markup = 0;
+  if (cfg.kind === "list") {
+    const baseLevel = String(cfg.column || "").replace(/^price_/, "");
+    cols = priceChangeColsForBaseLevel(baseLevel);
+    markup = Number(cfg.markup_percent) || 0;
+    const lrow = db.prepare(
+      "SELECT id, name, base_level, markup_percent FROM price_lists WHERE id = ?"
+    ).get(cfg.listId);
+    if (lrow) listInfo = lrow;
+  } else {
+    cols = priceChangeCols(effectiveLevel);
+  }
+  // Si en algun momento el margen es invalido (>=100), caemos al precio base
+  // para no devolver negativos. Reportamos eso al cliente como markup=0.
+  const applyMarkup = (v) => {
+    if (v == null) return null;
+    if (markup === 0) return Math.round(Number(v) || 0);
+    const denom = 1 - markup / 100;
+    if (denom <= 0) return Math.round(Number(v) || 0);
+    return Math.round((Number(v) || 0) / denom);
+  };
+
   if (!updates.length) {
-    return res.json({ updates: [], level: effectiveLevel, levelName: levelName(effectiveLevel) });
+    return res.json({
+      updates: [], level: effectiveLevel,
+      levelName: listInfo ? listInfo.name : levelName(effectiveLevel),
+      listName: listInfo ? listInfo.name : null,
+    });
   }
 
   // Categorías permitidas para este usuario (null = ve todas)
   const allowedCats = getUserAllowedCategoryIds(req.session.userId, level);
-
-  const cols = priceChangeCols(effectiveLevel);
   const rowsStmt = db.prepare(
     "SELECT pc.product_id, pc.code, pc.name, pc.is_new," +
     "       COALESCE(pc.is_reingreso, 0) AS is_reingreso," +
@@ -820,8 +874,10 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
       // Productos inactivos no se muestran en ninguna seccion
       if (!r.active) continue;
 
-      const newP = Number(r.new_price) || 0;
-      const oldP = r.old_price == null ? null : Number(r.old_price);
+      // Aplicamos la formula de ganancia limpia si el cliente tiene lista
+      // personalizada. Si no, applyMarkup es identidad (markup=0).
+      const newP = applyMarkup(r.new_price) || 0;
+      const oldP = r.old_price == null ? null : applyMarkup(r.old_price);
 
       // Reingresos: vuelven de stock 0 — se muestran igual aunque ahora tengan stock
       if (r.is_reingreso) {
@@ -876,7 +932,8 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
   res.json({
     updates: result,
     level: effectiveLevel,
-    levelName: levelName(effectiveLevel),
+    levelName: listInfo ? listInfo.name : levelName(effectiveLevel),
+    listName: listInfo ? listInfo.name : null,
   });
 });
 
