@@ -356,11 +356,19 @@
       state.isAdmin = (me.level === 99);
       state.products = prods;
       populateCategoryFilter(prods);
-      els.userInfo.textContent = (me.fullName || me.username) + " - " + me.levelName;
-      // Nombre dinamico de la app
+      // Mostrar solo el nombre; si coincide con el rol (ej. usuario "Administrador"
+      // con nivel "Administrador"), no repetir. El rol queda como tooltip.
+      {
+        const nombre = me.fullName || me.username || "";
+        const role = me.levelName || "";
+        const showRole = role && nombre.toLowerCase() !== role.toLowerCase();
+        els.userInfo.textContent = showRole ? (nombre + " · " + role) : nombre;
+        els.userInfo.title = role;
+      }
+      // Nombre dinamico de la app (el "Admin" es redundante: el usuario ya esta en /admin)
       if (me.app_name) {
         const brandEl = document.getElementById("topbar-brand-name");
-        if (brandEl) brandEl.textContent = me.app_name + " · Admin";
+        if (brandEl) brandEl.textContent = me.app_name;
         document.getElementById("page-title").textContent = me.app_name + " · Admin";
       }
       // Ocultar tabs exclusivos del admin si el usuario es vendedor
@@ -1506,7 +1514,7 @@
         els.cfgAppName.value = out.app_name || "";
         // Actualizar el nombre en el topbar en tiempo real
         const brandEl = document.getElementById("topbar-brand-name");
-        if (brandEl) brandEl.textContent = out.app_name + " · Admin";
+        if (brandEl) brandEl.textContent = out.app_name;
         document.getElementById("page-title").textContent = out.app_name + " · Admin";
         els.cfgAppNameMsg.textContent = "✓ Guardado";
         els.cfgAppNameMsg.className = "config-msg ok";
@@ -3075,7 +3083,6 @@
       cell.innerHTML = '<span class="muted err">Error: ' + escapeHtml(err.message) + '</span>';
     }
   }
-
   if (els.accSearch) els.accSearch.addEventListener("input", debounce(renderAccounts, 150));
   if (els.accReloadBtn) {
     els.accReloadBtn.addEventListener("click", () => {
