@@ -526,7 +526,9 @@
 
   function renderUsers() {
     const q = els.userSearch.value.trim().toLowerCase();
-    let list = state.users;
+    // La tabla de Usuarios solo muestra clientes (niveles 1-4). Los vendedores
+    // se ven y editan en su propia pestaña; los admins por CLI.
+    let list = state.users.filter((u) => [1, 2, 3, 4].includes(Number(u.level)));
     if (q) {
       list = list.filter((u) =>
         (u.username || "").toLowerCase().includes(q) ||
@@ -1337,20 +1339,11 @@
     });
   }
 
-  // Mostrar/ocultar campo de lista de precios al seleccionar nivel Vendedor
-  const userCreateLevel = document.getElementById("user-create-level");
-  const userCreateVendRow = document.getElementById("user-create-vend-row");
-  if (userCreateLevel && userCreateVendRow) {
-    userCreateLevel.addEventListener("change", () => {
-      userCreateVendRow.style.display = userCreateLevel.value === "5" ? "" : "none";
-    });
-  }
-
-  // Crear usuario
+  // Crear usuario (solo clientes 1-4 desde aca; los vendedores se crean
+  // desde su pestaña dedicada y los admins desde CLI)
   els.userCreateBtn.addEventListener("click", () => {
     els.userCreateForm.reset();
     els.userCreateMsg.textContent = "";
-    if (userCreateVendRow) userCreateVendRow.style.display = "none";
     els.userCreateModal.hidden = false;
     setTimeout(() => els.userCreateForm.querySelector('[name="username"]').focus(), 50);
   });
@@ -1359,6 +1352,11 @@
     e.preventDefault();
     const fd = new FormData(els.userCreateForm);
     const level = Number(fd.get("level"));
+    if (![1, 2, 3, 4].includes(level)) {
+      els.userCreateMsg.textContent = "Desde aca solo se pueden crear clientes (niveles 1-4).";
+      els.userCreateMsg.className = "config-msg err";
+      return;
+    }
     const body = {
       username: fd.get("username"),
       password: fd.get("password"),
@@ -1376,21 +1374,6 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      // Si es vendedor, guardar también el nivel de precio
-      if (level === 5) {
-        const vpl = Number(fd.get("vendedor_price_level")) || 1;
-        if (vpl !== 1) {
-          try {
-            await api("/api/admin/users/" + out.user.id, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ vendedor_price_level: vpl }),
-            });
-          } catch (_) {}
-        }
-        // Refrescar la lista de vendedores también
-        state.vendedoresLoaded = false;
-      }
       state.users.unshift(out.user);
       renderUsers();
       els.userCreateModal.hidden = true;

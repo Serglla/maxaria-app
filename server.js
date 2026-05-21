@@ -1671,6 +1671,11 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
     return res.status(400).json({ error: "La contrasena debe tener al menos 6 caracteres" });
   if (!VALID_LEVELS.includes(level))
     return res.status(400).json({ error: "Nivel invalido. Valores: " + VALID_LEVELS.join(", ") });
+  // Por API solo se pueden crear clientes (1-4) y vendedores (5). Los admins
+  // se crean por CLI (npm run create-admin) para evitar escalada por error
+  // desde la interfaz web.
+  if (level === 99)
+    return res.status(403).json({ error: "Los administradores se crean desde la linea de comandos (npm run create-admin)." });
 
   const exists = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
   if (exists) return res.status(409).json({ error: "Ese usuario ya existe" });
