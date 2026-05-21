@@ -589,8 +589,10 @@ app.get("/api/me", requireLogin, (req, res) => {
   const globalWaClean = globalWa ? String(globalWa).replace(/[^0-9]/g, "") : null;
 
   // Reglas de destino del WhatsApp para el catalogo:
-  //   - Cliente (level 1-4): SIEMPRE el WhatsApp del vendedor asignado. Si no
-  //     tiene vendedor activo o el vendedor no tiene WA, el frontend bloquea.
+  //   - Cliente (level 1-4): si tiene vendedor asignado activo CON WA, va al WA
+  //     del vendedor. Si no tiene vendedor o el vendedor no tiene WA cargado,
+  //     fallback al WhatsApp global de la empresa (los precios siguen siendo los
+  //     que correspondan por nivel o lista personalizada).
   //   - Vendedor (level 5): SIEMPRE el WhatsApp global de la app (los pedidos
   //     que el vendedor toma a nombre de un cliente van a la empresa, no a su
   //     numero personal).
@@ -607,10 +609,14 @@ app.get("/api/me", requireLogin, (req, res) => {
         const vwa = v.whatsapp_number ? String(v.whatsapp_number).replace(/[^0-9]/g, "") : null;
         wa = vwa || null;
         // Para el frontend del catalogo NO exponemos nombre del vendedor
-        // (decision: solo el admin lo ve). Solo si tiene WA podra enviar.
+        // (decision: solo el admin lo ve). hasWhatsapp dice si el vendedor
+        // tiene numero cargado (caso contrario el frontend muestra fallback).
         assignedVendedor = { id: v.id, hasWhatsapp: !!vwa };
       }
     }
+    // Fallback: si no hay vendedor activo o el vendedor no tiene WA, el pedido
+    // se manda al numero global de la empresa.
+    if (!wa) wa = globalWaClean;
   } else if (Number(level) === 5) {
     wa = globalWaClean;
   } else {
@@ -1207,33 +1213,25 @@ app.post("/api/orders", requireLogin, (req, res) => {
 
   // Si es vendedor: el pedido se registra bajo el cliente, con el vendedor asignado.
   // Si es cliente (level 1-4): el pedido se registra a su nombre, con el
-  // vendedor asignado del cliente (campo users.assigned_vendedor_id).
-  // Si no hay vendedor asignado al cliente, el pedido no se puede enviar.
+  // vendedor asignado del cliente (campo users.assigned_vendedor_id) si existe.
+  // Si el cliente no tiene vendedor activo, se acepta igual el pedido y queda
+  // sin asignar; el frontend manda el WhatsApp al numero global de la empresa.
   const priceLevel = isVendedor ? req.session.vendedorClientLevel : req.session.level;
   const orderUserId = isVendedor ? req.session.vendedorClientId : req.session.userId;
   let assignedVendedorId = isVendedor ? req.session.userId : null;
 
-  // Para clientes (no vendedor / no admin): leer el vendedor asignado de la DB.
-  // Si no tiene vendedor activo -> bloquear.
+  // Para clientes (no vendedor / no admin): si tienen vendedor activo, lo
+  // dejamos en orders.assigned_vendedor_id para trazabilidad. Si no, NULL.
   if (!isVendedor && !isAdmin && [1, 2, 3, 4].includes(Number(req.session.level))) {
     const cliRow = db.prepare(
-      "SELECT u.assigned_vendedor_id, v.id AS v_id, v.active AS v_active, v.level AS v_level," +
-      "       v.whatsapp_number AS v_wa" +
+      "SELECT u.assigned_vendedor_id, v.id AS v_id, v.active AS v_active, v.level AS v_level" +
       "  FROM users u LEFT JOIN users v ON v.id = u.assigned_vendedor_id" +
       "  WHERE u.id = ?"
     ).get(req.session.userId);
-    if (!cliRow || !cliRow.assigned_vendedor_id || !cliRow.v_id ||
-        !cliRow.v_active || cliRow.v_level !== 5) {
-      return res.status(400).json({
-        error: "No tenés un vendedor asignado. Pedile al admin que te asigne uno antes de enviar pedidos."
-      });
+    if (cliRow && cliRow.assigned_vendedor_id && cliRow.v_id &&
+        cliRow.v_active && cliRow.v_level === 5) {
+      assignedVendedorId = cliRow.assigned_vendedor_id;
     }
-    if (!cliRow.v_wa || !String(cliRow.v_wa).replace(/[^0-9]/g, "")) {
-      return res.status(400).json({
-        error: "Tu vendedor no tiene un numero de WhatsApp configurado. Pedile al admin que lo cargue."
-      });
-    }
-    assignedVendedorId = cliRow.assigned_vendedor_id;
   }
 
   // Calcular precios usando la config efectiva (lista personalizada o nivel base).
@@ -2663,4 +2661,6 @@ app.use((req, res) => res.status(404).send("No encontrado"));
 
 app.listen(PORT, () => {
   console.log("Maxaria escuchando en http://localhost:" + PORT + "  (" + NODE_ENV + ")");
+});
+aria escuchando en http://localhost:" + PORT + "  (" + NODE_ENV + ")");
 });

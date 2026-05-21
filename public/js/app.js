@@ -472,7 +472,8 @@
   function cartCount() { let n = 0; state.cart.forEach((it) => (n += it.qty)); return n; }
 
   // True si el usuario es cliente (1-4) y NO tiene vendedor asignado activo
-  // con WhatsApp configurado. En ese caso no se puede enviar pedido.
+  // con WhatsApp configurado. En ese caso el pedido se envia al WhatsApp
+  // global de la empresa en lugar del numero del vendedor (no bloquea).
   function isClientWithoutVendedor() {
     if (!state.me) return false;
     if (![1, 2, 3, 4].includes(Number(state.me.level))) return false;
@@ -501,19 +502,26 @@
       els.cartSend.disabled = true;
       return;
     }
-    // Aviso si el cliente no tiene vendedor: no puede enviar el pedido.
+    // Aviso si el cliente no tiene vendedor: el pedido se envia al WhatsApp
+    // principal de la empresa (no bloquea el envio).
     const sinVendedor = isClientWithoutVendedor();
-    const aviso = sinVendedor
-      ? '<div style="background:#fee2e2;border:1px solid #fecaca;color:#991b1b;' +
+    const tienePhone = !!(state.me && state.me.whatsapp);
+    const aviso = sinVendedor && tienePhone
+      ? '<div style="background:#fef3c7;border:1px solid #fde68a;color:#92400e;' +
         'padding:10px 12px;border-radius:8px;margin-bottom:10px;font-size:14px">' +
-        '<strong>No tenés un vendedor asignado.</strong><br/>' +
-        'Pedile al administrador que te asigne un vendedor antes de enviar pedidos.' +
+        'Tu pedido se enviará al WhatsApp principal de la empresa.' +
         '</div>'
-      : '';
+      : (sinVendedor && !tienePhone
+        ? '<div style="background:#fee2e2;border:1px solid #fecaca;color:#991b1b;' +
+          'padding:10px 12px;border-radius:8px;margin-bottom:10px;font-size:14px">' +
+          '<strong>No hay número de WhatsApp configurado.</strong><br/>' +
+          'Pedile al administrador que cargue el WhatsApp principal de la empresa.' +
+          '</div>'
+        : '');
     els.cartBody.innerHTML = aviso + items.map(cartItemHtml).join("");
     els.cartTotal.textContent = fmtPrice(total);
-    els.cartSend.disabled = sinVendedor;
-    els.cartSend.title = sinVendedor ? "No podés enviar: sin vendedor asignado" : "";
+    els.cartSend.disabled = sinVendedor && !tienePhone;
+    els.cartSend.title = (sinVendedor && !tienePhone) ? "No hay número de WhatsApp configurado" : "";
     els.cartBody.querySelectorAll("button[data-act]").forEach((btn) => {
       const id = Number(btn.dataset.id);
       const act = btn.dataset.act;
@@ -593,11 +601,11 @@
     if (!state.cart.size) return;
     const phone = (state.me && state.me.whatsapp) || "";
     if (!phone) {
-      // Para clientes (1-4): el phone viene del vendedor asignado. Si no hay,
-      // significa que no tiene vendedor o el vendedor no tiene WA cargado.
+      // Para clientes (1-4): el phone viene del vendedor asignado o, si no hay,
+      // del WhatsApp global de la empresa. Si tampoco hay global, no hay destino.
       if ([1, 2, 3, 4].includes(Number(state.me && state.me.level))) {
-        alert("No tenés un vendedor asignado (o tu vendedor no tiene WhatsApp configurado).\n" +
-              "Pedile al administrador que te asigne uno.");
+        alert("No hay número de WhatsApp configurado.\n" +
+              "Pedile al administrador que cargue el WhatsApp principal de la empresa.");
       } else {
         alert("No hay numero de WhatsApp configurado.");
       }
