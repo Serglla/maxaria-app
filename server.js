@@ -736,13 +736,16 @@ app.post("/api/vendedor/dispatch", requireLogin, (req, res) => {
 
   // Validar que cada pedido pertenezca al vendedor (asignado al pedido o al cliente),
   // no sea ya un unificado y no haya sido absorbido por otro unificado.
-  const candidateOrders = db.prepare(
+  const candidateStmt = db.prepare(
     "SELECT o.id, o.status, o.is_unified, o.unified_parent_id, o.user_id," +
     "       u.username AS client_username, u.full_name AS client_full_name" +
     "  FROM orders o JOIN users u ON u.id = o.user_id" +
     "  WHERE o.id IN (" + placeholders + ")" +
     "    AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"
-  ).all.apply(null, uniqueIds.concat([req.session.userId, req.session.userId]));
+  );
+  const candidateOrders = candidateStmt.all.apply(
+    candidateStmt, uniqueIds.concat([req.session.userId, req.session.userId])
+  );
 
   if (candidateOrders.length !== uniqueIds.length) {
     return res.status(403).json({
@@ -761,10 +764,11 @@ app.post("/api/vendedor/dispatch", requireLogin, (req, res) => {
   }
 
   // Traer todos los items de los pedidos seleccionados.
-  const allItems = db.prepare(
+  const itemsStmt = db.prepare(
     "SELECT product_id, product_code, product_name, quantity, unit_price, vendedor_cost_unit" +
     "  FROM order_items WHERE order_id IN (" + placeholders + ")"
-  ).all.apply(null, uniqueIds);
+  );
+  const allItems = itemsStmt.all.apply(itemsStmt, uniqueIds);
 
   if (!allItems.length)
     return res.status(400).json({ error: "Los pedidos seleccionados no tienen items" });
