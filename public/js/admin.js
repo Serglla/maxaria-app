@@ -697,12 +697,23 @@
   // -------- Vendedores --------
   async function loadVendedores() {
     try {
-      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="10" class="muted">Cargando…</td></tr>';
-      state.vendedores = await api("/api/admin/vendedores");
+      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="11" class="muted">Cargando…</td></tr>';
+      // Listas de precios necesarias para el select "Lista de precios" en cada fila.
+      // Se cargan en paralelo si todavía no están en cache.
+      const [vendedores, priceLists] = await Promise.all([
+        api("/api/admin/vendedores"),
+        state.priceListsLoaded ? Promise.resolve(state.priceLists) :
+          api("/api/admin/price-lists").catch(() => []),
+      ]);
+      state.vendedores = vendedores || [];
+      if (!state.priceListsLoaded) {
+        state.priceLists = priceLists || [];
+        state.priceListsLoaded = true;
+      }
       state.vendedoresLoaded = true;
       renderVendedores();
     } catch (e) {
-      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="9" class="muted">Error cargando vendedores</td></tr>';
+      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="11" class="muted">Error cargando vendedores</td></tr>';
     }
   }
 
@@ -726,16 +737,13 @@
 
   function vendRowHtml(v) {
     const lastLogin = v.last_login_at ? formatDate(v.last_login_at) : "—";
-    const plOpts = [1, 2, 3, 4].map((n) =>
-      '<option value="' + n + '"' + (Number(v.vendedor_price_level) === n ? " selected" : "") + '>' + PRICE_LEVEL_NAMES[n] + '</option>'
-    ).join("");
     return '<tr data-id="' + v.id + '"' + (v.active ? '' : ' class="row-inactive"') + '>' +
       '<td class="cell-code">' + escapeHtml(v.username) + '</td>' +
       '<td><input class="cell-input" data-field="full_name" value="' + escapeHtml(v.full_name || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="phone" value="' + escapeHtml(v.phone || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="whatsapp_number" type="tel" placeholder="ej: 5493442484286" value="' + escapeHtml(v.whatsapp_number || "") + '" title="Numero al que llegan los pedidos de los clientes asignados a este vendedor (formato internacional, sin + ni espacios)." /></td>' +
-      '<td>' +
-        '<select class="cell-input" data-field="vendedor_price_level">' + plOpts + '</select>' +
+      '<td title="Lista que define el COSTO del vendedor. El catálogo le muestra el precio base de esta lista cuando no tiene un cliente seleccionado.">' +
+        '<select class="cell-input" data-field="price_list_id">' + priceListOptsHtml(v.price_list_id) + '</select>' +
       '</td>' +
       '<td><label class="cell-toggle" title="Tercerizado: solo ve sus clientes asignados. El vendedor no ve este label.">' +
         '<input type="checkbox" data-field="is_tercerizado"' + (Number(v.is_tercerizado) === 1 ? " checked" : "") + ' /><span></span></label></td>' +
@@ -760,6 +768,10 @@
       let value;
       if (inp.type === "checkbox") value = inp.checked ? 1 : 0;
       else if (field === "vendedor_price_level") value = Number(inp.value);
+      else if (field === "price_list_id") {
+        // "" = desasignar (NULL). El endpoint acepta null/""/"0".
+        value = inp.value ? Number(inp.value) : null;
+      }
       else value = inp.value;
       // is_tercerizado se manda como flag 0/1 al backend (igual que active)
 

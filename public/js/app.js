@@ -270,9 +270,14 @@
       document.getElementById("vb-change-btn").addEventListener("click", openClientPicker);
     } else {
       els.vendedorBar.className = "vendedor-bar vendedor-bar-no-client";
+      // Tercerizado: ya ve su lista de costos. El cartel cambia para indicarlo.
+      const esTercerizado = !!(state.me && state.me.restrictedToAssigned);
+      const msg = esTercerizado
+        ? 'Viendo tu lista de costos. Seleccioná un cliente para tomar un pedido.'
+        : 'Seleccioná un cliente para ver los precios del catálogo';
       els.vendedorBar.innerHTML =
         '<div class="vendedor-bar-inner">' +
-          '<span>Seleccioná un cliente para ver los precios del catálogo</span>' +
+          '<span>' + msg + '</span>' +
           '<button class="vb-select-btn" id="vb-select-btn" type="button">Seleccionar cliente</button>' +
         '</div>';
       document.getElementById("vb-select-btn").addEventListener("click", openClientPicker);
@@ -383,9 +388,13 @@
       : '<div class="muted" style="font-size:12px;padding:8px;text-align:center">Sin foto</div>';
     const inCart = state.cart.has(p.id);
     const noClient = state.me && state.me.level === 5 && !state.vendedorClient;
-    const priceHtml = noClient
-      ? '<div class="card-price card-price-none">—</div>'
-      : '<div class="card-price">' + fmtPrice(p.price) + '</div>';
+    // Si el vendedor no tiene cliente seleccionado, no puede agregar al carrito.
+    // El precio: si viene del server (p.ej. tercerizado viendo su costo), se muestra;
+    // si el server devolvio null/0, mostramos guion.
+    const hasPrice = p.price != null && Number(p.price) > 0;
+    const priceHtml = hasPrice
+      ? '<div class="card-price">' + fmtPrice(p.price) + '</div>'
+      : '<div class="card-price card-price-none">—</div>';
     const actionsHtml = noClient
       ? '<div class="card-actions-none"></div>'
       : '<div class="card-actions" data-id="' + p.id + '">' + cardActionHtml(p.id) + '</div>';
@@ -1141,7 +1150,10 @@
         : "";
 
       const phone = (state.me && state.me.whatsapp) || "";
-      const reenviarBtn = phone
+      // Vendedor tercerizado: no muestra el boton de reenviar individual.
+      // Sus pedidos se mandan al admin agrupados via "Enviar unificado al admin".
+      const esTercerizado = !!(state.me && state.me.restrictedToAssigned);
+      const reenviarBtn = (phone && !esTercerizado)
         ? '<button class="btn-reenviar" type="button">Reenviar por WhatsApp</button>'
         : "";
 

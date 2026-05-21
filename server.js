@@ -1149,7 +1149,11 @@ app.get("/api/categories", requireLogin, (req, res) => {
 });
 
 app.get("/api/products", requireLogin, (req, res) => {
-  // Vendedor sin cliente seleccionado: muestra el catálogo sin precios (noPrice=true).
+  // Vendedor sin cliente seleccionado:
+  //   - Si tiene users.price_list_id asignada (caso tipico: tercerizado),
+  //     muestra el catalogo con su COSTO = columna base de la lista directo
+  //     (sin aplicar markup).
+  //   - Si no tiene lista propia, muestra el catalogo sin precios (noPrice=true).
   // Vendedor con cliente: usa nivel + lista de precios del cliente.
   // Admin: puede ver "como otro nivel" via ?as_level (no aplica lista personalizada).
   // Resto de usuarios (clientes 1-4): si tienen price_list_id, ven esa lista
@@ -1157,13 +1161,28 @@ app.get("/api/products", requireLogin, (req, res) => {
   let effectiveLevel = req.session.level;
   let effectiveUserId = req.session.userId;
   let noPrice = false;
+  let vendorCostCfg = null; // override para vendedor sin cliente con lista propia
 
   if (req.session.level === 5) {
     if (req.session.vendedorClientId) {
       effectiveLevel = req.session.vendedorClientLevel;
       effectiveUserId = req.session.vendedorClientId;
     } else {
-      noPrice = true; // level 5 sin cliente: sin precios, sin restricciones de categoría
+      // Vendedor sin cliente: ver si tiene lista propia asignada (su costo).
+      const vRow = db.prepare(
+        "SELECT pl.base_level, pl.active" +
+        "  FROM users u JOIN price_lists pl ON pl.id = u.price_list_id" +
+        "  WHERE u.id = ?"
+      ).get(req.session.userId);
+      if (vRow && vRow.active) {
+        // Costo = precio base sin markup (kind "level" usa la columna directo).
+        vendorCostCfg = {
+          kind: "level",
+          column: priceColumnForBaseLevel(vRow.base_level),
+        };
+      } else {
+        noPrice = true; // sin cliente y sin lista propia: cartel "Seleccioná un cliente"
+      }
     }
   } else if (req.session.level === 99 && req.query.as_level != null) {
     const asLvl = Number(req.query.as_level);
@@ -1173,8 +1192,8 @@ app.get("/api/products", requireLogin, (req, res) => {
     }
   }
 
-  // Resolver config de precios (lista personalizada o nivel base)
-  const cfg = getEffectivePriceConfig(effectiveUserId, effectiveLevel);
+  // Resolver config de precios (lista personalizada, costo del vendedor, o nivel base)
+  const cfg = vendorCostCfg || getEffectivePriceConfig(effectiveUserId, effectiveLevel);
   let priceExpr = "NULL";
   const priceParams = [];
   if (!noPrice) {
@@ -2221,7 +2240,8 @@ app.get("/api/admin/earnings/:vendedorId", requireAdmin, (req, res) => {
 app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT u.id, u.username, u.full_name, u.phone, u.whatsapp_number, u.email, u.active," +
-    "       u.vendedor_price_level, u.is_tercerizado, u.created_at, u.last_login_at," +
+    "       u.vendedor_price_level, u.price_list_id, u.is_tercerizado," +
+    "       u.created_at, u.last_login_at," +
     "       COUNT(DISTINCT o.id) AS total_orders," +
     "       COUNT(DISTINCT d.id) AS total_deliveries" +
     "  FROM users u" +
