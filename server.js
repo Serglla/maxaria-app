@@ -224,6 +224,17 @@ try { db.exec("ALTER TABLE orders ADD COLUMN stock_discounted INTEGER NOT NULL D
 try { db.exec("ALTER TABLE users ADD COLUMN is_tercerizado INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 try { db.exec("ALTER TABLE order_items ADD COLUMN vendedor_cost_unit INTEGER"); } catch (_) {}
 
+// Migracion: Pedido unificado del vendedor tercerizado.
+// - orders.is_unified: flag 0/1. Si vale 1, este pedido es el "consolidado"
+//   que el vendedor tercerizado le envio al admin agrupando varios pedidos
+//   de sus clientes en uno solo. No cuenta para ganancias (sino se contaria
+//   dos veces) y no participa de la UI normal de pedidos del cliente.
+// - orders.unified_parent_id: para los pedidos individuales que fueron
+//   absorbidos por un unificado, apunta a su pedido padre. Sirve para
+//   evitar doble descuento de stock cuando se entreguen las dos puntas.
+try { db.exec("ALTER TABLE orders ADD COLUMN is_unified INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+try { db.exec("ALTER TABLE orders ADD COLUMN unified_parent_id INTEGER REFERENCES orders(id)"); } catch (_) {}
+
 function getSetting(key, fallback) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   if (row && row.value != null) return row.value;
@@ -680,6 +691,174 @@ app.post("/api/vendedor/select-client", requireLogin, (req, res) => {
   return res.json({ ok: true, client: null });
 });
 
+// Despachar (enviar al admin) un pedido unificado del vendedor tercerizado.
+// El vendedor tercerizado selecciona varios pedidos de sus clientes; este
+// endpoint agrupa los items por producto, crea un pedido nuevo "unificado"
+// con el costo base (lo que el admin le cobra al tercerizado), marca los
+// originales como "enviado" + unified_parent_id apuntando al nuevo, y
+// devuelve un link wa.me al numero global de la empresa.
+// El pedido unificado:
+//   - tiene is_unified = 1 (excluido de ganancias para no contar doble)
+//   - tiene user_id = assigned_vendedor_id = vendedor (es "suyo")
+//   - lleva precios base ponderados (suma_subtotal / suma_quantity)
+app.post("/api/vendedor/dispatch", requireLogin, (req, res) => {
+  if (req.session.level !== 5)
+    return res.status(403).json({ error: "Solo vendedores" });
+  const me = db.prepare(
+    "SELECT id, full_name, username, is_tercerizado FROM users WHERE id = ?"
+  ).get(req.session.userId) || {};
+  if (Number(me.is_tercerizado) !== 1) {
+    return res.status(403).json({
+      error: "Solo vendedores tercerizados pueden enviar pedidos unificados"
+    });
+  }
+
+  const rawIds = (req.body && Array.isArray(req.body.order_ids)) ? req.body.order_ids : [];
+  const orderIds = rawIds.map(function (n) { return Number(n); })
+    .filter(function (n) { return n > 0; });
+  if (!orderIds.length)
+    return res.status(400).json({ error: "Tenes que seleccionar al menos un pedido" });
+  // dedupe
+  const uniqueIds = Array.from(new Set(orderIds));
+
+  const placeholders = uniqueIds.map(function () { return "?"; }).join(",");
+
+  // Validar que cada pedido pertenezca al vendedor (asignado al pedido o al cliente),
+  // no sea ya un unificado y no haya sido absorbido por otro unificado.
+  const candidateOrders = db.prepare(
+    "SELECT o.id, o.status, o.is_unified, o.unified_parent_id, o.user_id," +
+    "       u.username AS client_username, u.full_name AS client_full_name" +
+    "  FROM orders o JOIN users u ON u.id = o.user_id" +
+    "  WHERE o.id IN (" + placeholders + ")" +
+    "    AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"
+  ).all.apply(null, uniqueIds.concat([req.session.userId, req.session.userId]));
+
+  if (candidateOrders.length !== uniqueIds.length) {
+    return res.status(403).json({
+      error: "Alguno de los pedidos no te pertenece o no existe"
+    });
+  }
+  for (const o of candidateOrders) {
+    if (o.is_unified)
+      return res.status(400).json({ error: "El pedido #" + o.id + " ya es un pedido unificado" });
+    if (o.unified_parent_id)
+      return res.status(400).json({ error: "El pedido #" + o.id + " ya fue agrupado en otro envio" });
+    if (o.status === "cancelado")
+      return res.status(400).json({ error: "El pedido #" + o.id + " esta cancelado" });
+    if (o.status === "entregado")
+      return res.status(400).json({ error: "El pedido #" + o.id + " ya esta entregado" });
+  }
+
+  // Traer todos los items de los pedidos seleccionados.
+  const allItems = db.prepare(
+    "SELECT product_id, product_code, product_name, quantity, unit_price, vendedor_cost_unit" +
+    "  FROM order_items WHERE order_id IN (" + placeholders + ")"
+  ).all.apply(null, uniqueIds);
+
+  if (!allItems.length)
+    return res.status(400).json({ error: "Los pedidos seleccionados no tienen items" });
+
+  // Agrupar por product_id. El precio base por unidad sale del snapshot
+  // vendedor_cost_unit (lo que el admin le cobra al tercerizado por ese item
+  // segun la lista personalizada del cliente al momento del pedido).
+  // Si el item no tiene snapshot (cliente sin lista), usamos unit_price como
+  // fallback -> precio que pago el cliente. Si dos pedidos pidieron el mismo
+  // producto con precios base distintos, hacemos promedio ponderado.
+  const grouped = new Map();
+  for (const it of allItems) {
+    const key = it.product_id || ("code:" + it.product_code);
+    const cost = (it.vendedor_cost_unit != null) ? Number(it.vendedor_cost_unit) : Number(it.unit_price);
+    const qty = Number(it.quantity) || 0;
+    const g = grouped.get(key);
+    if (g) {
+      g.quantity += qty;
+      g.subtotal_base += cost * qty;
+    } else {
+      grouped.set(key, {
+        product_id: it.product_id,
+        product_code: it.product_code,
+        product_name: it.product_name,
+        quantity: qty,
+        subtotal_base: cost * qty,
+      });
+    }
+  }
+
+  const lines = [];
+  let total = 0;
+  for (const g of grouped.values()) {
+    const unit = g.quantity > 0 ? Math.round(g.subtotal_base / g.quantity) : 0;
+    const subtotal = unit * g.quantity;
+    total += subtotal;
+    lines.push({
+      product_id: g.product_id,
+      product_code: g.product_code,
+      product_name: g.product_name,
+      quantity: g.quantity,
+      unit_price: unit,
+      subtotal: subtotal,
+    });
+  }
+
+  // Crear el pedido unificado y marcar los originales.
+  let unifiedId;
+  db.transaction(function () {
+    const notesStr = "Unificado de " + uniqueIds.length + " pedido(s): #" + uniqueIds.join(", #");
+    const r = db.prepare(
+      "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id, is_unified, created_at)" +
+      " VALUES (?, 'pendiente', ?, ?, ?, 1, datetime('now'))"
+    ).run(req.session.userId, total, notesStr, req.session.userId);
+    unifiedId = r.lastInsertRowid;
+    const insertItem = db.prepare(
+      "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?, NULL)"
+    );
+    for (const l of lines) {
+      insertItem.run(unifiedId, l.product_id, l.product_code, l.product_name,
+                     l.quantity, l.unit_price, l.subtotal);
+    }
+    const updOrig = db.prepare(
+      "UPDATE orders SET status = 'enviado', unified_parent_id = ? WHERE id = ?"
+    );
+    for (const oid of uniqueIds) updOrig.run(unifiedId, oid);
+  })();
+
+  // Armar el mensaje y link de WhatsApp al numero global de la empresa.
+  const globalWaRaw = getSetting("whatsapp_number", WHATSAPP_NUMBER || "");
+  const globalWa = String(globalWaRaw || "").replace(/[^0-9]/g, "");
+  let whatsappLink = null;
+  let whatsappMessage = null;
+  if (globalWa) {
+    const fmt = function (n) {
+      return "$" + Number(n || 0).toLocaleString("es-AR", { maximumFractionDigits: 0 });
+    };
+    const meName = me.full_name || me.username || "vendedor";
+    const headerLines = [
+      "*Pedido unificado #" + unifiedId + " - " + meName + "*",
+      "Agrupa " + uniqueIds.length + " pedido(s): #" + uniqueIds.join(", #"),
+      "",
+    ];
+    const bodyLines = lines.map(function (l) {
+      return "- " + l.quantity + " x " + l.product_name +
+        " (" + (l.product_code || "") + ")" +
+        " @ " + fmt(l.unit_price) + " = " + fmt(l.subtotal);
+    });
+    const footerLines = ["", "Total: " + fmt(total)];
+    whatsappMessage = headerLines.concat(bodyLines, footerLines).join("\n");
+    whatsappLink = "https://wa.me/" + globalWa + "?text=" + encodeURIComponent(whatsappMessage);
+  }
+
+  res.json({
+    ok: true,
+    unified_order_id: unifiedId,
+    total: total,
+    items_count: lines.length,
+    grouped_order_ids: uniqueIds,
+    whatsapp_link: whatsappLink,
+    whatsapp_message: whatsappMessage,
+  });
+});
+
 // Ganancias del vendedor (solo level 5).
 // Devuelve los pedidos visibles para el vendedor con su ganancia calculada como
 // SUM(unit_price - vendedor_cost_unit) * quantity sobre los items que tienen
@@ -703,7 +882,7 @@ app.get("/api/vendedor/earnings", requireLogin, (req, res) => {
     "  FROM orders o" +
     "  JOIN users u ON u.id = o.user_id" +
     "  LEFT JOIN order_items oi ON oi.order_id = o.id" +
-    "  WHERE o.status != 'cancelado'" +
+    "  WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
     "    AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)" +
     "  GROUP BY o.id" +
     "  ORDER BY o.created_at DESC"
@@ -1135,6 +1314,7 @@ app.get("/api/orders", requireLogin, (req, res) => {
       "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
       "       u.username, u.full_name," +
       "       o.assigned_vendedor_id, NULL AS vendedor_username, NULL AS vendedor_full_name," +
+      "       o.is_unified, o.unified_parent_id," +
       "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
       "  FROM orders o" +
       "  JOIN users u ON u.id = o.user_id" +
@@ -1222,43 +1402,56 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
 
   // Leer el pedido antes de actualizar para conocer estado anterior
   const order = db.prepare(
-    "SELECT id, status, stock_discounted, total, user_id FROM orders WHERE id = ?"
+    "SELECT id, status, stock_discounted, total, user_id, unified_parent_id, is_unified FROM orders WHERE id = ?"
   ).get(id);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
 
   const prevStatus = order.status;
+  // Los pedidos individuales que ya fueron absorbidos por un unificado NO
+  // descuentan stock por su cuenta: el descuento se hace una sola vez cuando
+  // el admin entrega el pedido unificado padre.
+  const skipStock = order.unified_parent_id != null;
 
   db.transaction(() => {
     db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
 
     // Al marcar "entregado": descontar stock y generar debito en cuenta corriente
     if (status === "entregado" && prevStatus !== "entregado" && !order.stock_discounted) {
-      const items = db.prepare(
-        "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
-      ).all(id);
-      const updStock = db.prepare(
-        "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?"
-      );
-      for (const it of items) {
-        if (it.product_id) updStock.run(it.quantity, it.product_id);
+      if (!skipStock) {
+        const items = db.prepare(
+          "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
+        ).all(id);
+        const updStock = db.prepare(
+          "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?"
+        );
+        for (const it of items) {
+          if (it.product_id) updStock.run(it.quantity, it.product_id);
+        }
       }
-      db.prepare(
-        "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
-        " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
-      ).run(order.user_id, order.total, "Pedido #" + id, id);
+      // El pedido unificado no genera debito en cuenta corriente del vendedor
+      // (es solo un consolidado para el admin); los hijos individuales si lo
+      // siguen generando contra la cuenta del cliente final.
+      if (!order.is_unified) {
+        db.prepare(
+          "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+          " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
+        ).run(order.user_id, order.total, "Pedido #" + id, id);
+      }
       db.prepare("UPDATE orders SET stock_discounted = 1 WHERE id = ?").run(id);
     }
 
     // Al cancelar: devolver stock y eliminar el movimiento de debito del pedido
     if (status === "cancelado" && prevStatus !== "cancelado" && order.stock_discounted) {
-      const items = db.prepare(
-        "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
-      ).all(id);
-      const retStock = db.prepare(
-        "UPDATE products SET stock = stock + ? WHERE id = ?"
-      );
-      for (const it of items) {
-        if (it.product_id) retStock.run(it.quantity, it.product_id);
+      if (!skipStock) {
+        const items = db.prepare(
+          "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
+        ).all(id);
+        const retStock = db.prepare(
+          "UPDATE products SET stock = stock + ? WHERE id = ?"
+        );
+        for (const it of items) {
+          if (it.product_id) retStock.run(it.quantity, it.product_id);
+        }
       }
       db.prepare(
         "DELETE FROM account_movements WHERE order_id = ? AND type = 'debit'"
@@ -1951,7 +2144,7 @@ app.get("/api/admin/earnings", requireAdmin, (req, res) => {
     "    FROM users v" +
     "    JOIN orders o ON (o.assigned_vendedor_id = v.id OR" +
     "                      o.user_id IN (SELECT id FROM users WHERE assigned_vendedor_id = v.id))" +
-    "   WHERE v.level = 5 AND o.status != 'cancelado'" +
+    "   WHERE v.level = 5 AND o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
     ")," +
     "order_agg AS (" +
     "  SELECT vendedor_id," +
@@ -2004,7 +2197,7 @@ app.get("/api/admin/earnings/:vendedorId", requireAdmin, (req, res) => {
     "  FROM orders o" +
     "  JOIN users u ON u.id = o.user_id" +
     "  LEFT JOIN order_items oi ON oi.order_id = o.id" +
-    "  WHERE o.status != 'cancelado'" +
+    "  WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
     "    AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)" +
     "  GROUP BY o.id" +
     "  ORDER BY o.created_at DESC"

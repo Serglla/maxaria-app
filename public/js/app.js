@@ -953,6 +953,9 @@
 
   async function openOrders() {
     const isAdmin = state.me && state.me.level === 99;
+    // Vendedor tercerizado: puede agrupar pedidos pendientes de sus clientes
+    // y mandarlos al admin como un unico pedido unificado.
+    const isTerc = !!(state.me && state.me.level === 5 && state.me.restrictedToAssigned);
     els.ordersTitle.textContent = isAdmin ? "Todos los pedidos" : "Mis pedidos";
     els.ordersBody.innerHTML = '<p class="muted">Cargando...</p>';
     openDrawer(els.ordersDrawer);
@@ -962,26 +965,129 @@
         els.ordersBody.innerHTML = '<p class="muted">Todavia no hay pedidos.</p>';
         return;
       }
-      els.ordersBody.innerHTML = orders.map((o) => orderCardHtml(o, isAdmin)).join("");
+      const header = isTerc ? renderDispatchBar(orders) : "";
+      els.ordersBody.innerHTML =
+        header +
+        '<div class="orders-cards">' +
+          orders.map((o) => orderCardHtml(o, isAdmin, isTerc)).join("") +
+        '</div>';
       els.ordersBody.querySelectorAll(".order-card").forEach((card) => {
-        card.querySelector(".order-head").addEventListener("click", () => {
+        card.querySelector(".order-head").addEventListener("click", (ev) => {
+          // No abrir detalle si el click vino del checkbox
+          if (ev.target && ev.target.closest && ev.target.closest(".dispatch-cb")) return;
           toggleOrderDetail(card, Number(card.dataset.id));
         });
       });
+      if (isTerc) wireDispatchControls();
     } catch (e) {
       els.ordersBody.innerHTML = '<p class="muted">Error cargando pedidos.</p>';
     }
   }
 
-  function orderCardHtml(o, isAdmin) {
+  // Pedidos elegibles para agrupar: ni cancelados, ni entregados, ni ya unificados,
+  // ni ya absorbidos por otro unificado.
+  function isDispatchable(o) {
+    if (!o) return false;
+    if (Number(o.is_unified) === 1) return false;
+    if (o.unified_parent_id) return false;
+    if (o.status === "cancelado") return false;
+    if (o.status === "entregado") return false;
+    return true;
+  }
+
+  function renderDispatchBar(orders) {
+    const elegibles = orders.filter(isDispatchable).length;
+    return (
+      '<div class="dispatch-bar">' +
+        '<div class="dispatch-hint">' +
+          'Marca los pedidos de tus clientes que quieras enviarle al admin como un solo pedido unificado. ' +
+          'El mensaje se manda al numero principal de la empresa y suma las cantidades por articulo.' +
+        '</div>' +
+        '<div class="dispatch-actions">' +
+          '<span class="dispatch-count" id="dispatch-count">0 seleccionados</span>' +
+          '<button class="btn btn-primary" id="dispatch-send" type="button" disabled>' +
+            'Enviar unificado al admin' +
+          '</button>' +
+        '</div>' +
+        (elegibles === 0
+          ? '<div class="dispatch-empty muted">No hay pedidos pendientes para agrupar.</div>'
+          : "") +
+      '</div>'
+    );
+  }
+
+  function wireDispatchControls() {
+    const countEl = document.getElementById("dispatch-count");
+    const sendBtn = document.getElementById("dispatch-send");
+    if (!countEl || !sendBtn) return;
+
+    function refreshCount() {
+      const ids = selectedDispatchIds();
+      countEl.textContent = ids.length + " seleccionado" + (ids.length === 1 ? "" : "s");
+      sendBtn.disabled = ids.length === 0;
+    }
+    els.ordersBody.querySelectorAll(".dispatch-cb").forEach((cb) => {
+      cb.addEventListener("change", refreshCount);
+      cb.addEventListener("click", (e) => e.stopPropagation());
+    });
+    sendBtn.addEventListener("click", () => doDispatch(sendBtn));
+    refreshCount();
+  }
+
+  function selectedDispatchIds() {
+    return Array.from(els.ordersBody.querySelectorAll(".dispatch-cb:checked"))
+      .map((cb) => Number(cb.dataset.id))
+      .filter((n) => n > 0);
+  }
+
+  async function doDispatch(btn) {
+    const ids = selectedDispatchIds();
+    if (!ids.length) return;
+    if (!confirm("Vas a unificar " + ids.length + " pedido(s) y mandarlo al admin. Despues los originales quedan marcados como 'enviado'. Seguir?")) return;
+    btn.disabled = true;
+    const prevText = btn.textContent;
+    btn.textContent = "Enviando...";
+    try {
+      const res = await api("/api/vendedor/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order_ids: ids }),
+      });
+      if (res && res.whatsapp_link) {
+        window.open(res.whatsapp_link, "_blank");
+      } else {
+        alert("Pedido unificado creado (#" + res.unified_order_id + ") pero falta configurar el numero principal de WhatsApp en /admin > Configuracion.");
+      }
+      // Refrescar la lista
+      await openOrders();
+    } catch (e) {
+      alert((e && e.message) || "Error al enviar el pedido unificado");
+      btn.disabled = false;
+      btn.textContent = prevText;
+    }
+  }
+
+  function orderCardHtml(o, isAdmin, isTerc) {
     const date = formatDate(o.created_at);
-    const who = isAdmin && o.username
+    const who = (isAdmin || isTerc) && o.username
       ? ' <span class="meta"> - ' + escapeHtml(o.full_name || o.username) + '</span>'
       : "";
-    return '<article class="order-card" data-id="' + o.id + '">' +
+    const tags = [];
+    if (Number(o.is_unified) === 1) tags.push('<span class="order-tag tag-unified">unificado</span>');
+    if (o.unified_parent_id) tags.push('<span class="order-tag tag-grouped">agrupado en #' + Number(o.unified_parent_id) + '</span>');
+    const tagsHtml = tags.length ? ' ' + tags.join(" ") : "";
+
+    const dispatchCb = isTerc && isDispatchable(o)
+      ? '<label class="dispatch-cb-wrap" title="Incluir en pedido unificado">' +
+          '<input type="checkbox" class="dispatch-cb" data-id="' + o.id + '">' +
+        '</label>'
+      : (isTerc ? '<span class="dispatch-cb-placeholder"></span>' : "");
+
+    return '<article class="order-card' + (isTerc ? ' with-dispatch' : '') + '" data-id="' + o.id + '">' +
       '<header class="order-head" title="Click para ver el detalle">' +
+        dispatchCb +
         '<div>' +
-          '<h4>Pedido #' + o.id + ' <span class="order-status ' + escapeHtml(o.status) + '">' + escapeHtml(o.status) + '</span></h4>' +
+          '<h4>Pedido #' + o.id + ' <span class="order-status ' + escapeHtml(o.status) + '">' + escapeHtml(o.status) + '</span>' + tagsHtml + '</h4>' +
           '<div class="meta">' + date + who + '</div>' +
         '</div>' +
         '<div class="order-total">' + fmtPrice(o.total) + '</div>' +
@@ -1222,7 +1328,6 @@
             '<div class="meta">' + date + ' &middot; ' + escapeHtml(cliente) + '</div>' +
           '</div>' +
           '<div class="order-total">' +
-            '<div>' + fmt(o.total) + '</div>' +
             '<div class="muted small">Costo: ' + fmt(o.cost_total) + '</div>' +
             '<div><strong>Gana: ' + fmt(o.earning_total) + '</strong></div>' +
           '</div>' +

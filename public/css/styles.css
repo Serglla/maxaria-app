@@ -491,6 +491,73 @@ button { font: inherit; cursor: pointer; }
 .order-status.preparando  { background: #e0e7ff; color: #3730a3; }
 .order-status.entregado   { background: #d1fae5; color: #065f46; }
 .order-status.cancelado   { background: #fee2e2; color: #991b1b; }
+.order-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+.order-tag.tag-unified { background: #ede9fe; color: #5b21b6; }
+.order-tag.tag-grouped { background: #fef9c3; color: #854d0e; }
+
+/* Pedido unificado: barra superior del drawer "Mis pedidos" para el vendedor tercerizado */
+.dispatch-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dispatch-hint {
+  font-size: 13px;
+  color: #78350f;
+  line-height: 1.4;
+}
+.dispatch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.dispatch-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #92400e;
+}
+.dispatch-empty {
+  font-size: 12px;
+}
+.dispatch-cb-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px 0 0;
+}
+.dispatch-cb {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+.dispatch-cb-placeholder {
+  display: inline-block;
+  width: 24px;
+}
+.order-card.with-dispatch .order-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+}
 .order-total {
   font-weight: 700;
   color: #1e3a8a;
@@ -1997,8 +2064,6 @@ button { font: inherit; cursor: pointer; }
 .pur-prod-result-item {
   padding: 8px 12px;
   cursor: pointer;
-  font-size: 13px;
-  border-bottom: 1px solid #f3f4f6;
 }
 .pur-prod-result-item:last-child { border-bottom: none; }
 .pur-prod-result-item:hover { background: #eff6ff; }
