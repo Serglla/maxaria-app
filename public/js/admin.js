@@ -718,7 +718,7 @@
     }
     if (els.vendCount) els.vendCount.textContent = list.length + (list.length === 1 ? " vendedor" : " vendedores");
     if (!list.length) {
-      els.vendTbody.innerHTML = '<tr><td colspan="10" class="muted">Sin resultados</td></tr>';
+      els.vendTbody.innerHTML = '<tr><td colspan="11" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.vendTbody.innerHTML = list.map(vendRowHtml).join("");
@@ -733,6 +733,7 @@
       '<td class="cell-code">' + escapeHtml(v.username) + '</td>' +
       '<td><input class="cell-input" data-field="full_name" value="' + escapeHtml(v.full_name || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="phone" value="' + escapeHtml(v.phone || "") + '" /></td>' +
+      '<td><input class="cell-input" data-field="whatsapp_number" type="tel" placeholder="ej: 5493442484286" value="' + escapeHtml(v.whatsapp_number || "") + '" title="Numero al que llegan los pedidos de los clientes asignados a este vendedor (formato internacional, sin + ni espacios)." /></td>' +
       '<td>' +
         '<select class="cell-input" data-field="vendedor_price_level">' + plOpts + '</select>' +
       '</td>' +
@@ -819,6 +820,7 @@
         level: 5,
         vendedor_price_level: Number(fd.get("vendedor_price_level")) || 1,
         phone: fd.get("phone"),
+        whatsapp_number: fd.get("whatsapp_number") || null,
         email: fd.get("email"),
       };
       els.vendCreateMsg.textContent = "Creando…";
@@ -3066,6 +3068,7 @@
       cell.innerHTML = '<span class="muted err">Error: ' + escapeHtml(err.message) + '</span>';
     }
   }
+
   if (els.accSearch) els.accSearch.addEventListener("input", debounce(renderAccounts, 150));
   if (els.accReloadBtn) {
     els.accReloadBtn.addEventListener("click", () => {

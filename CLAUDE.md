@@ -174,7 +174,7 @@ maxaria_app/
 
 **price_lists** — `id`, `name UNIQUE`, `base_level` ('minorista'|'revendedor'|'mayorista'|'vip'|'publico'), `markup_percent` (REAL, -90 a 500), `active`, `notes`, `created_at`, `updated_at`. Precio efectivo de un cliente con `price_list_id = X`: `round(products.price_<base_level> × (1 + markup_percent/100))`, entero. Una lista solo se puede borrar si `users_count = 0`.
 
-**orders** — `id`, `user_id`, `status` (pendiente/enviado/preparando/entregado/cancelado), `total`, `notes`, `whatsapp_sent_at`, `assigned_vendedor_id`, `stock_discounted` (flag), `created_at`
+**orders** — `id`, `user_id`, `status` (pendiente/enviado/preparando/entregado/cancelado), `total`, `notes`, `whatsapp_sent_at`, `assigned_vendedor_id`, `stock_discounted` (flag), `is_unified` (flag 0/1: pedido consolidado del vendedor tercerizado), `unified_parent_id` (FK soft a `orders.id`: en los pedidos individuales que fueron agrupados, apunta al unificado), `created_at`
 
 **order_items** — `id`, `order_id` (CASCADE), `product_id`, `product_code`, `product_name` (snapshots), `quantity`, `unit_price`, `subtotal`
 
@@ -226,6 +226,9 @@ maxaria_app/
 **Vendedor (level 5)**
 - `GET /api/clients` — clientes (level 1-4) para elegir
 - `POST /api/vendedor/select-client` — guarda el cliente en sesión
+- `POST /api/vendedor/dispatch` (solo vendedor con `is_tercerizado=1`) — recibe `{ order_ids: [...] }`, agrupa items por producto con precio base ponderado, crea pedido unificado (`is_unified=1`), marca originales como `status='enviado'` + `unified_parent_id`, devuelve `whatsapp_link` al número global de la empresa
+- `GET /api/vendedor/earnings` — resumen y detalle de ganancias (excluye unificados)
+- `GET /api/vendedor/earnings/:orderId` — items con ganancia
 
 **Entregas**
 - `POST /api/orders/:id/deliver` (requireVendedorOrAdmin) — registrar entrega
@@ -421,13 +424,81 @@ Así, `precio_venta − markup_percent% del precio_venta = base`. Ejemplo: base 
 
 **`.env.example`** — documenta `DB_PATH`, `EXCEL_PATH`, `BACKUP_KEEP`, `SEED_ON_EMPTY`.
 
+### Bugfix Actividad + Pedido unificado del tercerizado + Polish del admin (21 mayo 2026)
+
+
+**Bug fix en `/api/admin/earnings`**
+- Síntoma: en la pestaña Actividad, columnas `total_orders`, `total_delivered` y `total_sold` salían infladas. Ej: "Sergio vendedor" mostraba 2 pedidos pero 25 entregados y $10.597.260 vendido, total general $11.338.682.
+- Causa: el query hacía `LEFT JOIN order_items oi ON oi.order_id = o.id` y después calculaba `SUM(o.total)` y `SUM(CASE WHEN o.status='entregado'...)` en la misma agregación. El join multiplica cada fila de pedido por la cantidad de líneas, inflando totales.
+- Fix: reescrito con 3 CTEs. `order_vendedor` arma pares `(vendedor_id, order_id)` con `DISTINCT` para que el OR del vínculo (assigned al pedido o al cliente) tampoco duplique. `order_agg` cuenta pedidos / entregados / suma total sin tocar items. `item_agg` agrega cost / earning desde `order_items`. Después `LEFT JOIN` ambos contra `users` (level 5). Costo y ganancia ya eran correctos antes porque dependen de items por definición; el bug afectaba solo a las columnas que no debían depender de items.
+- Validado contra `/tmp/maxaria.db` (sqlite3 vía pysqlite3): la query nueva devuelve 1 pedido / 1 entregado / $7.482 vendido donde la vieja devolvía 1 / 2 / $14.964 (duplicado por 2 items).
+
+**Pedido unificado del vendedor tercerizado**
+Motivo: los clientes de un vendedor tercerizado mandan pedidos al WhatsApp del tercerizado (igual que antes), pero el tercerizado necesita pasar esos pedidos al admin como UN solo pedido consolidado por el número principal de la empresa, sumando cantidades por producto.
+
+Schema (migraciones idempotentes al arranque en `server.js`):
+- `orders.is_unified` (INTEGER NOT NULL DEFAULT 0). Flag 1 = pedido consolidado del tercerizado.
+- `orders.unified_parent_id` (INTEGER, FK soft a `orders.id`). En cada pedido individual absorbido, apunta al padre. Permite trazabilidad y evitar doble descuento de stock.
+
+Endpoint nuevo `POST /api/vendedor/dispatch` (solo level 5 con `is_tercerizado=1`):
+- Body: `{ order_ids: [...] }`.
+- Valida que cada pedido pertenezca al vendedor (`o.assigned_vendedor_id = me` OR `users.assigned_vendedor_id = me`), no esté ya unificado, agrupado, cancelado ni entregado.
+- Agrupa items por `product_id`. Precio base por unidad = promedio ponderado de `order_items.vendedor_cost_unit` (el costo que el admin le cobra al tercerizado según la lista personalizada del cliente al momento del pedido). Si algún item no tiene snapshot (cliente sin lista), usa `unit_price` como fallback.
+- Crea pedido nuevo en `orders` con `is_unified=1`, `user_id = assigned_vendedor_id = vendedor.id`, status='pendiente', items consolidados con precios base.
+- Marca cada original con `status='enviado'` + `unified_parent_id = nuevo_id`.
+- Devuelve `{ ok, unified_order_id, total, items_count, whatsapp_link, whatsapp_message }`. El link va a `wa.me/<settings.whatsapp_number>?text=<mensaje>` con header "Pedido unificado #X - <vendedor>", listado de items con cantidades sumadas y total.
+
+Ajustes en queries existentes:
+- `/api/admin/earnings`, `/api/admin/earnings/:vendedorId` y `/api/vendedor/earnings`: agregan `AND COALESCE(o.is_unified,0) = 0` para no contar el unificado doble.
+- `PATCH /api/orders/:id`: si el pedido tiene `unified_parent_id != NULL`, NO descuenta stock al pasar a "entregado" (lo descuenta el padre cuando el admin entrega el unificado) ni lo devuelve al cancelar. El pedido unificado tampoco genera débito en cuenta corriente (los hijos sí, contra la cuenta del cliente final).
+- `GET /api/orders` (vendedor): devuelve `is_unified` y `unified_parent_id` para que el frontend filtre.
+
+UI frontend (`public/js/app.js` + `public/css/styles.css`):
+- En el drawer "Mis pedidos" del catálogo, cuando el usuario es vendedor tercerizado (usa `restrictedToAssigned` que ya venía en `/api/me`):
+  - Barra amarilla sticky arriba con instrucciones, contador de seleccionados y botón "Enviar unificado al admin" (deshabilitado hasta tildar algo).
+  - Checkbox a la izquierda de cada pedido elegible (no unificado, no agrupado, no cancelado/entregado).
+  - Badges visuales: `tag-unified` (violeta "unificado") en el consolidado y `tag-grouped` (amarillo "agrupado en #X") en los hijos.
+- Al confirmar: POST `/api/vendedor/dispatch`, abre `whatsapp_link` en pestaña nueva con `window.open(...)`, recarga la lista.
+
+Decisiones de diseño consultadas a Sergio:
+- Cliente del tercerizado sigue enviando por WhatsApp al tercerizado (no cambia el flujo del cliente).
+- Selección de pedidos a agrupar: checkboxes manuales (no "todos los pendientes" automático).
+- Pedidos originales pasan a `status='enviado'` (no se borran, queda referencia via `unified_parent_id`).
+- El unificado lleva **precio base** (costo del admin para el tercerizado).
+- UI en el drawer del catálogo (no en /admin) porque ahí es donde el vendedor ve sus pedidos.
+- WhatsApp destino: el número global de `settings.whatsapp_number`.
+
+**Polish del header del admin**
+- Brand: ya no dice "<App> · Admin", solo "<App>". El contexto de /admin queda claro por la URL.
+- `user-info`: si `fullName` == `levelName` (caso "Administrador - Administrador"), muestra solo uno. El rol queda como tooltip. Separador pasó de " - " a " · ".
+- Tipografía compactada solo en `.admin-page`: brand 18px → 15px, sub 12px → 11px, tabs 14px → 12.5px con `white-space: nowrap` y `overflow-x: auto` para que "Listas de precios" no se corte en dos líneas, altura del topbar 56px → 48px, botones más chicos (padding 5/10, font 12.5px).
+
+**Separación de "Crear usuario" vs "Crear vendedor"**
+Sergio detectó la redundancia: tanto la pestaña Usuarios como Vendedores tenían sus formularios de creación, y la lista de Usuarios mezclaba clientes, vendedores y admins.
+
+- Pestaña **Usuarios**: el form `+ Crear usuario` ahora solo permite niveles 1-4 (Minorista/Revendedor/Mayorista/VIP). Saqué las opciones de Vendedor y Administrador, y eliminé la lógica de `vendedor_price_level` y del row dinámico que aparecía al elegir Vendedor. Nota al usuario debajo del select aclarando dónde se crean los otros niveles.
+- La tabla de Usuarios filtra `level BETWEEN 1 AND 4` en el render (frontend). Los vendedores ya no aparecen acá; se ven y editan exclusivamente en su pestaña. Los admins tampoco se ven.
+- Pestaña **Vendedores**: sin cambios, sigue creando con `level=5` vía `/api/admin/users`.
+- Server: `POST /api/admin/users` ahora rechaza `level=99` con 403 ("los administradores se crean desde la línea de comandos"). Level 5 sigue aceptado porque el endpoint es usado por el form de Vendedores.
+- `state.users` en admin.js sigue conteniendo TODOS los usuarios (lo usan selects de "Vendedor asignado" y similares). Solo el render visual de la tabla está filtrado, no el array fuente.
+
+**Truncamientos durante el dev (sesión 21 mayo)**
+- El bug ya conocido volvió a aparecer ~7 veces en esta sesión: `server.js` (3 veces), `app.js`, `styles.css` (2 veces), `admin.js`, `CLAUDE.md`.
+- Caso nuevo: `admin.js` quedó con bytes nulos (`\0`) padding al final, no truncado a mitad de línea. Detectado con `node --check` ("Invalid or unexpected token" en línea posterior al EOF lógico). Limpiado con `tr -d '\000'` y `cp` a destino.
+- Workaround general sigue siendo: `head -n N <archivo>` + `git show HEAD:<archivo> | sed -n 'M,$p'` + `node --check` para confirmar.
+- En el sandbox Linux, `rm` y `mv` a veces fallan con "Operation not permitted" — usar `cp /tmp/x archivo` + `: > archivo.tmp` para vaciar archivos huérfanos.
+- Mitigación residual: hay un `public/js/admin.js.tmp` vacío que quedó huérfano. No interfiere con nada; conviene borrarlo desde Windows.
+
 ### Próximos pasos pendientes (en orden)
 
-1. **Push + deploy a Railway** de los cambios de la sesión 20 mayo (vendedor tercerizado, panel Actividad, ganancia sobre venta, lista en Ver cambios). Verificar volumen montado en `DB_PATH` antes. Después del deploy, validar con DevTools que `/api/price-changes` devuelva `listName`.
-2. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
-3. **Backups externos automáticos**: rclone a B2/S3/Drive.
-4. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
-5. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
+1. **Push + deploy a Railway** de los cambios de las sesiones 20 y 21 mayo (vendedor tercerizado, panel Actividad, ganancia sobre venta, lista en Ver cambios, fix bug Actividad, pedido unificado, polish admin, separación Usuarios/Vendedores). Verificar volumen montado en `DB_PATH` antes. Verificar que `settings.whatsapp_number` esté cargado (sino el botón "Enviar unificado al admin" muestra alert pidiendo configurarlo).
+2. Validación post-deploy:
+   - DevTools → Network → `/api/admin/earnings` → confirmar que `total_sold` y `total_delivered` ya no estén inflados.
+   - Probar el flujo de unificado con un usuario tercerizado (Dario).
+3. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
+4. **Backups externos automáticos**: rclone a B2/S3/Drive.
+5. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
+6. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
 
 ### Objetivo de negocio
 Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.

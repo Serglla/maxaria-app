@@ -588,10 +588,13 @@ app.get("/api/me", requireLogin, (req, res) => {
     ? String(userRow.whatsapp_number).replace(/[^0-9]/g, "") : null;
   const globalWaClean = globalWa ? String(globalWa).replace(/[^0-9]/g, "") : null;
 
-  // Para clientes (level 1-4): el WhatsApp donde llegan los pedidos es SIEMPRE
-  // el del vendedor asignado. Si no tiene vendedor asignado, no podran enviar
-  // pedidos (el frontend bloquea el boton).
-  // Para admin/vendedor: dejamos el WA personal o el global como referencia.
+  // Reglas de destino del WhatsApp para el catalogo:
+  //   - Cliente (level 1-4): SIEMPRE el WhatsApp del vendedor asignado. Si no
+  //     tiene vendedor activo o el vendedor no tiene WA, el frontend bloquea.
+  //   - Vendedor (level 5): SIEMPRE el WhatsApp global de la app (los pedidos
+  //     que el vendedor toma a nombre de un cliente van a la empresa, no a su
+  //     numero personal).
+  //   - Admin (99): WA personal o global como referencia (no envia pedidos).
   let wa = null;
   let assignedVendedor = null;
   if ([1, 2, 3, 4].includes(Number(level))) {
@@ -608,6 +611,8 @@ app.get("/api/me", requireLogin, (req, res) => {
         assignedVendedor = { id: v.id, hasWhatsapp: !!vwa };
       }
     }
+  } else if (Number(level) === 5) {
+    wa = globalWaClean;
   } else {
     wa = userWa || globalWaClean;
   }
@@ -2213,7 +2218,7 @@ app.get("/api/admin/earnings/:vendedorId", requireAdmin, (req, res) => {
 // Lista de vendedores con estadisticas de pedidos y entregas (solo admin)
 app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
   const rows = db.prepare(
-    "SELECT u.id, u.username, u.full_name, u.phone, u.email, u.active," +
+    "SELECT u.id, u.username, u.full_name, u.phone, u.whatsapp_number, u.email, u.active," +
     "       u.vendedor_price_level, u.is_tercerizado, u.created_at, u.last_login_at," +
     "       COUNT(DISTINCT o.id) AS total_orders," +
     "       COUNT(DISTINCT d.id) AS total_deliveries" +
@@ -2651,6 +2656,15 @@ app.use((req, res, next) => {
   } else if (req.path === "/manifest.json") {
     res.setHeader("Cache-Control", "public, max-age=300");
   }
+  next();
+});
+app.use(express.static(path.join(__dirname, "public"), { index: false }));
+app.use((req, res) => res.status(404).send("No encontrado"));
+
+app.listen(PORT, () => {
+  console.log("Maxaria escuchando en http://localhost:" + PORT + "  (" + NODE_ENV + ")");
+});
+
   next();
 });
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
