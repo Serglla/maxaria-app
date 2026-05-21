@@ -2662,5 +2662,3 @@ app.use((req, res) => res.status(404).send("No encontrado"));
 app.listen(PORT, () => {
   console.log("Maxaria escuchando en http://localhost:" + PORT + "  (" + NODE_ENV + ")");
 });
-aria escuchando en http://localhost:" + PORT + "  (" + NODE_ENV + ")");
-});
