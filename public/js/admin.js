@@ -449,6 +449,9 @@
       if (btn.disabled) return;
       const tab = btn.dataset.tab;
       els.tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
+      // Sacar el focus para que el browser no muestre el outline azul
+      // sobre el tab anterior (el "doble seleccionado" visual).
+      try { btn.blur(); } catch (_) {}
       els.panels.forEach((p) => { p.hidden = p.id !== "tab-" + tab; });
       if (tab === "pedidos" && !state.ordersLoaded) loadOrders();
       if (tab === "config" && !state.settingsLoaded) loadSettings();

@@ -933,6 +933,11 @@ button { font: inherit; cursor: pointer; }
   font-weight: 700;
 }
 .tab-btn:disabled { opacity: .35; cursor: not-allowed; }
+/* Quitar el outline azul del browser al hacer click con mouse. Lo dejamos
+   visible solo con focus-visible (navegacion por teclado) para no perder
+   accesibilidad. */
+.tab-btn:focus { outline: none; }
+.tab-btn:focus-visible { outline: 2px solid #fbbf2488; outline-offset: 2px; }
 
 .admin-main {
   padding: 16px 20px 60px;
