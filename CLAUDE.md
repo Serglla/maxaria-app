@@ -308,7 +308,7 @@ maxaria_app/
 ## Estado del proyecto e historial técnico
 
 ### Branch actual de trabajo
-`multi-instancia` — feature de vendedor por cliente + listas de precios sin commitear aún al momento de esta nota (20 mayo 2026). Próximo push: rama `multi-instancia`.
+`multi-instancia` — incluye: vendedor por cliente, listas de precios personalizadas, vendedor tercerizado, panel de Actividad (admin) + Mis ganancias (vendedor), ganancia sobre venta en la fórmula, listas personalizadas en "Ver cambios". Al cierre del 20 mayo 2026 los cambios están en disco local, pendientes de `git add/commit/push` y deploy en Railway.
 
 ### Vendedor por cliente + Listas de precios personalizadas (mayo 2026)
 
@@ -320,9 +320,16 @@ maxaria_app/
 **Helpers en server.js**
 - `PRICE_LIST_BASE_LEVELS = ["minorista","revendedor","mayorista","vip","publico"]`.
 - `priceColumnForBaseLevel(baseLevel)` — devuelve `"price_<base>"`.
+- `priceChangeColsForBaseLevel(baseLevel)` — devuelve `{ old, new }` para usar las columnas correctas de `price_changes` cuando se aplica una lista. `publico` cae a `minorista` (no hay snapshot de público).
 - `getEffectivePriceConfig(userId, level)` — devuelve `{ kind: "list", column, markup_percent, listId }` si el cliente tiene `price_list_id` válido y activo, sino `{ kind: "level", column }`.
-- `computeEffectivePrice(basePrice, config)` — aplica markup y redondea a entero.
-- `priceSqlExpr(config, alias)` — devuelve `{ expr, params }` para usar en SELECT inline.
+- `computeEffectivePrice(basePrice, config)` — aplica la fórmula de **ganancia sobre venta** (ver más abajo) y redondea a entero.
+- `priceSqlExpr(config, alias)` — devuelve `{ expr, params }` para usar en SELECT inline (con la fórmula nueva).
+
+**IMPORTANTE — Fórmula de precios:** El nombre `markup_percent` se mantuvo por compatibilidad histórica pero **NO es un markup sobre el costo**: ahora representa la **ganancia limpia del vendedor sobre el precio final**. Fórmula:
+```
+precio_venta = round(base / (1 - markup_percent / 100))
+```
+Así, `precio_venta − markup_percent% del precio_venta = base`. Ejemplo: base $1000 con 10% → vende a $1111 (gana $111 limpios sobre la venta). El rango válido es `-90..95` (antes era `-90..500`); con 100% sería división por cero. El cambio se hizo en mayo 2026 a pedido de Sergio para que el % sea la ganancia que él se queda como vendedor.
 
 **Reglas del flujo**
 - Cuando un cliente envía pedido, el WhatsApp del link `wa.me` es **siempre** el del vendedor asignado (`users.whatsapp_number` del vendedor). Si no hay vendedor activo o no tiene WA, el server devuelve 400 con mensaje claro y el botón "Enviar" del catálogo queda deshabilitado.
@@ -345,30 +352,82 @@ maxaria_app/
 
 **Cosa rara durante el dev:** Edits grandes en archivos grandes (server.js ~1900 líneas, admin.js ~2700 líneas, app.js ~1200 líneas) truncaban el archivo al final sin warning. Pasó 3 veces. Workaround usado: detectar con `node --check`, ubicar la última línea íntegra con `grep`, y reconstruir con `head -n N <archivo>` + `git show HEAD:<archivo> | sed -n 'M,$p'`. Para futuros refactors grandes en estos archivos, conviene partirlos o usar Edits más chicos.
 
+### Vendedor tercerizado + Panel de Actividad + Ganancia sobre venta (20 mayo 2026, sesión noche)
+
+**Schema (migración idempotente al arranque)**
+- `users.is_tercerizado` (INTEGER NOT NULL DEFAULT 0). Flag 0/1 para marcar vendedores tercerizados.
+- `order_items.vendedor_cost_unit` (INTEGER, nullable). Snapshot del precio "base" (columna `price_<base_level>` de la lista del cliente) al momento del pedido. NULL = el cliente no tenía lista personalizada → no hay ganancia diferencial.
+
+**Vendedor tercerizado (clase especial de level 5)**
+- Solo el admin ve la denominación "tercerizado". Para el vendedor, todo es transparente: simplemente ve menos clientes.
+- En `/api/clients`: si el vendedor logueado tiene `is_tercerizado = 1`, solo devuelve clientes con `assigned_vendedor_id = me`. Vendedores propios siguen viendo todos.
+- En `POST /api/vendedor/select-client`: si es tercerizado, valida que el cliente sea suyo (403 si no).
+- En `/api/me`: para level 5 devuelve `restrictedToAssigned` (no expone el nombre "tercerizado" al vendedor).
+- Admin maneja el flag desde la pestaña Vendedores → columna "Tercerizado" (checkbox con auto-save).
+
+**Endpoints nuevos de ganancias**
+- `GET /api/vendedor/earnings` (level 5): resumen + detalle por pedido para el vendedor logueado. Calcula sum(unit_price − vendedor_cost_unit) × quantity sobre los items con snapshot. Excluye cancelados.
+- `GET /api/vendedor/earnings/:orderId`: items de un pedido con ganancia por línea.
+- `GET /api/admin/earnings`: agregado por vendedor con tipo (propio/tercerizado), pedidos, entregados, vendido, costo, ganancia.
+- `GET /api/admin/earnings/:vendedorId`: detalle de pedidos del vendedor con ganancia por pedido.
+
+**Snapshot del costo en creación/edición de pedidos**
+- `POST /api/orders`: al armar el pedido, si el cliente tiene `price_list_id`, se guarda `vendedor_cost_unit = round(price_<base_level>)` por item. Si no tiene lista, NULL.
+- `PUT /api/admin/orders/:id/items`: al editar items desde admin, recalcula el snapshot con la lista actual del cliente.
+- La ganancia se calcula siempre como `(unit_price − vendedor_cost_unit) × quantity` sobre items con snapshot. Items sin snapshot aportan 0.
+
+**Frontend admin**
+- Pestaña nueva **Actividad** en `admin.html` (entre Vendedores y Listas de precios): tabla con vendedor / tipo (chip "Propio" o "Tercerizado") / pedidos / entregados / total vendido / costo / ganancia + totales al pie. Botón "Ver detalle" abre modal con los pedidos individuales de ese vendedor.
+- Pestaña Vendedores: columna nueva "Tercerizado" con checkbox. Colspan ajustado de 9 a 10.
+- `loadActividad()` siempre recarga (datos cambian con cada pedido, no cachear).
+
+**Frontend catálogo (vendedor)**
+- Botón nuevo "Mis ganancias" en el header de `index.html`, visible solo para level 5 (`renderUser()` hace `els.earningsBtn.hidden = u.level !== 5`).
+- Drawer `#earnings-drawer` con tarjetas-resumen (pedidos / entregados / vendido / costo / ganancia) + detalle por pedido con cliente, total, costo y ganancia.
+- Integrado con el sistema existente de drawers.
+
+**Listas personalizadas en "Ver cambios" (/api/price-changes)**
+- Cuando el cliente target tiene `price_list_id`, el endpoint usa las columnas viejas/nuevas según `base_level` de la lista (via `priceChangeColsForBaseLevel`), aplica la fórmula de ganancia sobre venta a old/new, y devuelve `listName` con el nombre de la lista.
+- El frontend ya usa `data.levelName` como header → muestra "LISTA L1" cuando aplica.
+
+**Bug visual del tab activo (sesión 20 mayo)**
+- Después de cambiar de tab, el browser dejaba el outline azul (`:focus`) pegado en el tab anterior. Fix en `styles.css`: hover/active solo a tabs `:not(.active)`; `:focus { outline: none }`; `:focus:not(:focus-visible) { background: transparent }`; el tab activo mantiene amarillo; el ring de teclado se preserva con `:focus-visible`. Además `admin.js` hace `btn.blur()` en el click handler.
+
+**Deploy en Railway**
+- Proyecto corre en Railway (instancia `maxaria-app-production`). Reinicio NO se hace localmente — push a GitHub dispara redeploy automático.
+- Si la branch de Railway no es la branch de trabajo (ej: `multi-instancia`), mergear a la branch de deploy primero.
+- Verificar volumen montado para `DB_PATH` ANTES de deployar, sino cada deploy borra la base.
+- Verificación post-deploy: DevTools → Network → `/api/price-changes` → si la respuesta tiene `listName`, código nuevo OK. Si solo `levelName` y `level`, código viejo.
+
+**Truncamientos durante el dev (sesión 20 mayo)**
+- El bug de truncamiento mencionado antes en `server.js`/`admin.js`/`app.js` también afecta a `styles.css` y `CLAUDE.md`. Volvió a pasar 7 veces en esta sesión.
+- Patrón: archivo se corta a mitad de línea hacia el final. `node --check` detecta JS rotos.
+- Workaround: `head -n N` + `git show HEAD:<archivo> | sed -n 'M,$p'` + verificación.
+- Mitigación futura: evitar Edits grandes en estos archivos.
+
 ### Hardening del arranque (branch multi-instancia, mayo 2026)
 
 **`scripts/boot.js`**
-- Variable `SEED_ON_EMPTY` (default `false` en producción, `true` en desarrollo). Si la DB no existe y `SEED_ON_EMPTY=false`, aborta con banner de error `!!!` claro en stderr en lugar de re-seedear silenciosamente.
-- Rama schema-only: si `SEED_ON_EMPTY=true` y no hay Excel disponible, crea la base desde `schema.sql` y genera un usuario `admin` con password aleatoria de 14 caracteres alfanuméricos (alfabeto sin `0/O/I/l/1` para facilitar dictado por teléfono). La password se imprime una sola vez en stdout con banner visible.
-- Banner consolidado de estado antes de levantar el server: ruta, estado (existente/creada ahora), tamaño, conteos de productos/usuarios/pedidos, último backup, flag efímera.
+- Variable `SEED_ON_EMPTY` (default `false` en producción, `true` en desarrollo). Si la DB no existe y `SEED_ON_EMPTY=false`, aborta con banner de error en stderr.
+- Rama schema-only: si `SEED_ON_EMPTY=true` y no hay Excel disponible, crea la base desde `schema.sql` y genera un usuario `admin` con password aleatoria de 14 caracteres alfanuméricos.
+- Banner consolidado de estado antes de levantar el server: ruta, estado, tamaño, conteos, último backup, flag efímera.
 
 **`scripts/excel_helper.js`** — `resolveExcelPath` respeta jerarquía estricta:
-- Argumento explícito → valida que exista, lanza `Error` si no (uso programático)
-- `EXCEL_PATH` seteada → usa solo esa, sin caer a fallbacks; si no existe, loguea `WARNING` y retorna `null`
-- Sin env var ni argumento → busca en `data/` y `../` (fallbacks de desarrollo)
+- Argumento explícito → valida que exista, lanza `Error` si no
+- `EXCEL_PATH` seteada → usa solo esa, sin fallbacks
+- Sin env var ni argumento → busca en `data/` y `../`
 
-**`scripts/create-admin.js`** — respeta `process.env.DB_PATH` (antes tenía la ruta hardcodeada a `data/maxaria.db`, lo que rompía `npm run create-admin` en producción con volumen externo).
+**`scripts/create-admin.js`** — respeta `process.env.DB_PATH` (antes hardcodeado).
 
-**`.env.example`** — documenta `DB_PATH`, `EXCEL_PATH`, `BACKUP_KEEP`, `SEED_ON_EMPTY` con comentarios explicando cuándo usar cada una.
-
-**Bugs encontrados durante el testing:** `DB_PATH` hardcodeado en `create-admin.js` y `resolveExcelPath` con fallback silencioso peligroso (en producción podía usar un Excel viejo de `../` sin ningún aviso). Lección: validar siempre con código real antes de containerizar.
+**`.env.example`** — documenta `DB_PATH`, `EXCEL_PATH`, `BACKUP_KEEP`, `SEED_ON_EMPTY`.
 
 ### Próximos pasos pendientes (en orden)
 
-1. **Containerización**: Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, Caddyfile con HTTPS automático, `add-client.sh`, README de despliegue. Plan decidido, no implementado.
-2. **Backups externos automáticos**: rclone a B2/S3/Drive.
-3. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
-4. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
+1. **Push + deploy a Railway** de los cambios de la sesión 20 mayo (vendedor tercerizado, panel Actividad, ganancia sobre venta, lista en Ver cambios). Verificar volumen montado en `DB_PATH` antes. Después del deploy, validar con DevTools que `/api/price-changes` devuelva `listName`.
+2. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
+3. **Backups externos automáticos**: rclone a B2/S3/Drive.
+4. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
+5. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
 
 ### Objetivo de negocio
 Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.

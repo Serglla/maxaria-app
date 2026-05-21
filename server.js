@@ -1940,23 +1940,47 @@ app.get("/api/admin/price-lists/:id/preview", requireAdmin, (req, res) => {
 // momento del pedido). Items sin snapshot aportan 0 a la ganancia.
 // Excluye pedidos cancelados. Solo admin.
 app.get("/api/admin/earnings", requireAdmin, (req, res) => {
+  // OJO: el join con order_items multiplica filas por la cantidad de items.
+  // Por eso separamos la agregacion de pedidos (total_orders/delivered/sold)
+  // de la de items (total_cost/earning) en dos CTEs distintas, usando
+  // DISTINCT en el par (vendedor, pedido) para que el OR del vinculo
+  // pedido->vendedor no duplique.
   const rows = db.prepare(
+    "WITH order_vendedor AS (" +
+    "  SELECT DISTINCT v.id AS vendedor_id, o.id AS order_id, o.status, o.total" +
+    "    FROM users v" +
+    "    JOIN orders o ON (o.assigned_vendedor_id = v.id OR" +
+    "                      o.user_id IN (SELECT id FROM users WHERE assigned_vendedor_id = v.id))" +
+    "   WHERE v.level = 5 AND o.status != 'cancelado'" +
+    ")," +
+    "order_agg AS (" +
+    "  SELECT vendedor_id," +
+    "         COUNT(*) AS total_orders," +
+    "         SUM(CASE WHEN status = 'entregado' THEN 1 ELSE 0 END) AS total_delivered," +
+    "         SUM(total) AS total_sold" +
+    "    FROM order_vendedor GROUP BY vendedor_id" +
+    ")," +
+    "item_agg AS (" +
+    "  SELECT ov.vendedor_id," +
+    "         SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+    "                  THEN oi.vendedor_cost_unit * oi.quantity ELSE 0 END) AS total_cost," +
+    "         SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+    "                  THEN (oi.unit_price - oi.vendedor_cost_unit) * oi.quantity ELSE 0 END) AS total_earning" +
+    "    FROM order_vendedor ov" +
+    "    JOIN order_items oi ON oi.order_id = ov.order_id" +
+    "   GROUP BY ov.vendedor_id" +
+    ") " +
     "SELECT v.id AS vendedor_id, v.username, v.full_name, v.active, v.is_tercerizado," +
-    "       COUNT(DISTINCT o.id) AS total_orders," +
-    "       COALESCE(SUM(CASE WHEN o.status = 'entregado' THEN 1 ELSE 0 END), 0) AS total_delivered," +
-    "       COALESCE(SUM(o.total), 0) AS total_sold," +
-    "       COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
-    "                         THEN oi.vendedor_cost_unit * oi.quantity ELSE 0 END), 0) AS total_cost," +
-    "       COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
-    "                         THEN (oi.unit_price - oi.vendedor_cost_unit) * oi.quantity ELSE 0 END), 0) AS total_earning" +
+    "       COALESCE(oa.total_orders, 0) AS total_orders," +
+    "       COALESCE(oa.total_delivered, 0) AS total_delivered," +
+    "       COALESCE(oa.total_sold, 0) AS total_sold," +
+    "       COALESCE(ia.total_cost, 0) AS total_cost," +
+    "       COALESCE(ia.total_earning, 0) AS total_earning" +
     "  FROM users v" +
-    "  LEFT JOIN orders o ON (o.assigned_vendedor_id = v.id OR" +
-    "                         o.user_id IN (SELECT id FROM users WHERE assigned_vendedor_id = v.id))" +
-    "                        AND o.status != 'cancelado'" +
-    "  LEFT JOIN order_items oi ON oi.order_id = o.id" +
-    "  WHERE v.level = 5" +
-    "  GROUP BY v.id" +
-    "  ORDER BY total_earning DESC, v.username"
+    "  LEFT JOIN order_agg oa ON oa.vendedor_id = v.id" +
+    "  LEFT JOIN item_agg ia ON ia.vendedor_id = v.id" +
+    " WHERE v.level = 5" +
+    " ORDER BY total_earning DESC, v.username"
   ).all();
   res.json(rows);
 });
