@@ -926,7 +926,10 @@ button { font: inherit; cursor: pointer; }
   cursor: pointer;
   transition: background .15s ease, color .15s ease;
 }
-.tab-btn:hover:not(:disabled) { background: rgba(255,255,255,.1); color: #fff; }
+/* Hover/focus/active solo se aplican a tabs NO seleccionados, asi el
+   tab activo nunca queda "doble destacado" (amarillo + halo azul). */
+.tab-btn:hover:not(:disabled):not(.active) { background: rgba(255,255,255,.1); color: #fff; }
+.tab-btn:active:not(:disabled):not(.active) { background: rgba(255,255,255,.15); }
 .tab-btn.active {
   background: #fbbf24;
   color: #111827;
@@ -937,6 +940,8 @@ button { font: inherit; cursor: pointer; }
    visible solo con focus-visible (navegacion por teclado) para no perder
    accesibilidad. */
 .tab-btn:focus { outline: none; }
+.tab-btn:focus:not(:focus-visible) { background: transparent; }
+.tab-btn.active:focus:not(:focus-visible) { background: #fbbf24; }
 .tab-btn:focus-visible { outline: 2px solid #fbbf2488; outline-offset: 2px; }
 
 .admin-main {
@@ -2024,8 +2029,6 @@ button { font: inherit; cursor: pointer; }
 .acc-balance-badge {
   display: inline-block;
   padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 13px;
   font-weight: 600;
 }
 .acc-balance-pos {
