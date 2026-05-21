@@ -489,16 +489,110 @@ Sergio detectó la redundancia: tanto la pestaña Usuarios como Vendedores tení
 - En el sandbox Linux, `rm` y `mv` a veces fallan con "Operation not permitted" — usar `cp /tmp/x archivo` + `: > archivo.tmp` para vaciar archivos huérfanos.
 - Mitigación residual: hay un `public/js/admin.js.tmp` vacío que quedó huérfano. No interfiere con nada; conviene borrarlo desde Windows.
 
+### Fix WhatsApp del vendedor + regla de destino unificada (21 mayo 2026, sesión tarde)
+
+**Bug reportado por Sergio:** un cliente (dariocliente, level 1) asignado al vendedor tercerizado Dario, al enviar un pedido por WhatsApp, terminaba abriendo `wa.me/<global>` en vez del WA de Dario. Pasó en producción (Railway, deploy ya con el código de tercerizado del 21 may).
+
+**Causa raíz (doble):**
+1. El campo `users.whatsapp_number` del vendedor Dario estaba en NULL. La pestaña Vendedores del admin **nunca tuvo columna `whatsapp_number`** — solo `phone`, etiquetado como "Teléfono". Y el form "+ Crear vendedor" tenía el `<input name="whatsapp_number">` en el HTML pero el handler de `admin.js` **no lo leía del FormData**, así que aunque lo escribieras, se mandaba el POST sin él. Resultado: desde la UI nunca se le pudo cargar WA a ningún vendedor. Sergio había cargado el número en la columna "Teléfono" pensando que era el WhatsApp; eso es `users.phone`, que el server ignora.
+2. Para complicar, `/api/me` para level 5 (vendedor) caía a `wa = userWa || globalWaClean`. Si el vendedor algún día tuviera WA personal cargado, el pedido del vendedor iría a su propio número, no al de la empresa.
+
+**Regla nueva (consultada y confirmada por Sergio):**
+- Cliente (1-4) con vendedor asignado → SIEMPRE `wa.me/<whatsapp_number del vendedor>`. Si el vendedor no tiene WA, el frontend bloquea el envío con cartel rojo.
+- Vendedor (5) tomando pedido a nombre de un cliente desde el catálogo → SIEMPRE `wa.me/<global>` (la empresa recibe los pedidos que toman los vendedores).
+- Pedido unificado del tercerizado (`POST /api/vendedor/dispatch`) → SIEMPRE `wa.me/<global>` (ya estaba así).
+
+**Cambios en `server.js`:**
+- `/api/me`: rama nueva `else if (Number(level) === 5) { wa = globalWaClean; }` antes del else genérico. La rama de clientes (1-4) queda intacta. Comentarios actualizados con la regla.
+- `/api/admin/vendedores`: el SELECT ahora incluye `u.whatsapp_number` (sin esto, la nueva columna del admin queda vacía aunque haya valor cargado).
+
+**Cambios en `public/admin.html`:**
+- Pestaña Vendedores: nueva `<th title="...">WhatsApp</th>` entre Teléfono y Lista de precios. Colspan del placeholder "Cargando…" pasado de 10 a 11.
+
+**Cambios en `public/js/admin.js`:**
+- `vendRowHtml`: nueva celda con `<input type="tel" data-field="whatsapp_number" placeholder="ej: 5493442484286" title="...">`. El handler de auto-save existente (`els.vendTbody.addEventListener("change", ...)`) ya cubre cualquier `[data-field]`, así que no hizo falta tocar la lógica de guardado.
+- Colspan "Sin resultados" → 11.
+- Submit del form "+ Crear vendedor": se agregó `whatsapp_number: fd.get("whatsapp_number") || null` al body del POST (el input ya estaba en el HTML, era bug latente).
+
+**Workaround inmediato cuando el deploy esté listo:** ir a /admin → Vendedores → cargar el WA de Dario en la columna nueva (autoguarda al perder foco). Los próximos vendedores que se den de alta también pueden completar el WA en el modal de creación.
+
+**Truncamientos en esta sesión:** volvieron a pasar — `server.js` (perdió las últimas 4 líneas: middlewares static, 404 y app.listen), `public/js/admin.js` (perdió las últimas 13 líneas: handlers de accReload + logout + bootstrap), `public/admin.html` (perdió las últimas 5 líneas: toast + script + cierre html). Detectados con `node --check` y comparación `wc -l` actual vs `git show HEAD:<archivo> | wc -l`. Reconstruidos con `head -n N` + `cat >> archivo << EOF` desde HEAD.
+
+**Sandbox Linux con git roto:** durante el push intentado desde el subagente, el `.git/index` quedó corrupto ("bad signature 0x00000000") y `.git/index.lock` huérfano. El sandbox no permite `rm` sobre archivos en `.git/` ("Operation not permitted") — sí permite truncar con `: > archivo` pero no eliminar. Como git se niega a operar mientras existe `index.lock`, no se pudo hacer commit/push desde el sandbox. **El commit/push se hace desde Windows** con `Remove-Item .git\index.lock -ErrorAction SilentlyContinue` + `git add` + `commit` + `push` normales.
+
+### Clientes sin vendedor + dispatch arreglado + tercerizado ve su costo (21 mayo 2026, sesión noche)
+
+**Regla nueva: clientes sin vendedor envían al WhatsApp global**
+
+Antes: cliente (level 1-4) sin vendedor asignado o con vendedor sin WA → frontend bloqueaba el envío con cartel rojo. Sergio pidió cambiar: si no hay vendedor, el pedido va al WhatsApp principal de la empresa con la lista de precios que le corresponda al cliente (por nivel o por lista personalizada, sin cambios en pricing).
+
+- `server.js` `/api/me` rama clientes (1-4): si no hay vendedor activo o el vendedor no tiene `whatsapp_number`, `wa` cae a `globalWaClean` en vez de quedar `null`. `assignedVendedor` sigue exponiendo `{ id, hasWhatsapp }` para que el frontend sepa el estado.
+- `server.js` `POST /api/orders`: se eliminaron los dos `res.status(400)` (sin vendedor / sin WA). Si el cliente tiene vendedor activo válido, se guarda en `orders.assigned_vendedor_id` para trazabilidad; si no, queda NULL y el pedido se acepta igual.
+- `public/js/app.js` `renderCart()`: el cartel rojo "No tenés un vendedor asignado" se reemplazó por un aviso amarillo suave **"Tu pedido se enviará al WhatsApp principal de la empresa."** El botón "Enviar" solo se deshabilita si tampoco hay WA global (caso degenerado).
+- `public/js/app.js` `sendCart()`: el alert ahora pide "cargá el WhatsApp principal de la empresa", no "pedile al admin un vendedor".
+
+**Fix Error 500 en `POST /api/vendedor/dispatch` (pedido unificado del tercerizado)**
+
+Sergio probó por primera vez el flujo de unificado (Dario seleccionó 3 pedidos y le dio Enviar). Server respondía 500. Causa: dos statements preparados con la forma `db.prepare(...).all.apply(null, args)`. En `better-sqlite3` los métodos `.all/.run/.get` requieren `this = el statement`; pasar `null` los hace crashear con TypeError → 500. Fix: guardar el statement en una variable y usar `.all.apply(stmt, args)`. Las dos correcciones están en líneas que arman `candidateStmt` y `itemsStmt`. El bug existió desde que se creó el endpoint — esta fue la primera prueba real.
+
+**Vendedor tercerizado: ocultar "Reenviar por WhatsApp" individual**
+
+En el detalle de cada pedido del drawer "Mis pedidos", aparecía el botón verde "Reenviar por WhatsApp". Para tercerizados no tiene sentido (su flujo es solo el unificado al admin). `public/js/app.js` `toggleOrderDetail()`: agregado check `esTercerizado = state.me.restrictedToAssigned`; el botón solo se renderiza si `phone && !esTercerizado`.
+
+**Vendedor tercerizado: ver el catálogo con SU COSTO**
+
+Sergio: el tercerizado tiene que poder entrar al catálogo SIN cliente seleccionado y ver los productos con su costo (lo que él le paga al admin). El costo sale de la columna base de la lista de precios asignada al vendedor (la misma que después usan sus clientes con markup).
+
+Datos: reusamos `users.price_list_id` en la fila del vendedor (level 5). La columna ya existía en el schema pero solo se usaba para clientes (1-4). Nada nuevo en BD.
+
+- `server.js` `GET /api/products`: rama vendedor sin cliente nuevo — busca `users.price_list_id` del vendedor logueado; si tiene lista activa, arma `vendorCostCfg = { kind: "level", column: price_<base_level> }` y devuelve los precios usando esa columna directo (sin markup, porque ES el costo). Si no tiene lista propia, `noPrice = true` y se mantiene el comportamiento viejo (cartel "Seleccioná un cliente").
+- `server.js` `GET /api/admin/vendedores`: agregado `u.price_list_id` al SELECT (antes no lo devolvía, por eso el select del admin no podía mostrar el valor cargado).
+- `public/js/app.js` `cardHtml()`: el gate del precio cambió de "noClient ? '—' : precio" a "hasPrice ? precio : '—'". Las acciones (+/qty) siguen ocultas cuando no hay cliente (tercerizado viendo costos no debería agregar al carrito). 
+- `public/js/app.js` barra del vendedor: si es tercerizado y no tiene cliente, el cartel dice **"Viendo tu lista de costos. Seleccioná un cliente para tomar un pedido."** en lugar del genérico "Seleccioná un cliente para ver los precios".
+- `public/js/admin.js` pestaña Vendedores: el HTML ya tenía `<th>Lista de precios</th>` pero `vendRowHtml` renderizaba el viejo select de `vendedor_price_level` (nivel 1-4, legacy). Reemplazado por un select real de `price_list_id` con `priceListOptsHtml(v.price_list_id)`. `loadVendedores()` ahora carga `/api/admin/vendedores` y `/api/admin/price-lists` en paralelo si la cache de listas todavía no está poblada (sin esto, el select aparecería vacío). El auto-save convierte `""` → `null` para desasignar (mismo patrón que en Usuarios).
+- **`vendedor_price_level` queda como columna legacy en BD y se sigue cargando en `req.session.vendedorPriceLevel`**, pero ya no tiene UI de edición. La barra de vendedor sin cliente con costo lo deja sin uso. No se rompe nada (default DB = 1). Si en algún momento se quiere volver a editarlo, hay que sumar otra columna a la tabla.
+
+**Final wins, vibe-shift de la regla del WhatsApp**
+
+Después de este combo, la regla de destino del WhatsApp en el catálogo queda:
+- Cliente (1-4) con vendedor activo + WA → al WA del vendedor (sin cambios).
+- Cliente (1-4) sin vendedor o vendedor sin WA → al WA global (cambio nuevo, antes bloqueaba).
+- Vendedor (5) tomando pedido a nombre de un cliente → al WA global (sin cambios).
+- Pedido unificado del tercerizado (`/api/vendedor/dispatch`) → al WA global (sin cambios).
+
+**Lección sobre el bash mount del sandbox vs el filesystem Windows**
+
+Durante esta sesión el bash mount Linux mostró archivos en estados distintos al filesystem real de Windows (lag/cache del bind mount). Pasó dos veces y la segunda casi mete un commit roto:
+
+1. `node --check server.js` desde bash → "Unexpected token" cortado a mitad de string al final.
+2. `tail -c` confirmó el corte en el mount.
+3. Hice `printf >> server.js` para "reparar" el supuesto truncamiento.
+4. Resultado: appended texto a un archivo que en Windows YA estaba completo, dejando líneas duplicadas. Eso sí se commiteó y rompió el deploy en Railway con `Unexpected token '}'` y después con `Unexpected identifier` (la línea `aria escuchando...` huérfana).
+
+**Regla nueva:** para verificar el final de cualquier archivo Windows, **usar `Read` tool, no `tail`/`xxd` por bash**. El bash sirve para `node --check` siempre y cuando primero hagas `Read` para confirmar el contenido. Si bash reporta un error que no condice con lo que ves en Read, es porque el mount está stale — no tocar el archivo basándose en el bash.
+
+**Cosas a hacer post-deploy de esta sesión**
+
+1. /admin → Vendedores: asignar la lista L2 (vip, gana 20%) a Dario en la columna "Lista de precios". Si la columna aparece vacía cuando el deploy esté listo, refresca la página: la primera vez `loadVendedores` ya hace el fetch en paralelo de las listas.
+2. Login como dariocliente: el carrito ya no debería bloquear; el wa.me debería abrirse con el número de Dario (porque Dario sí tiene vendedor asignado y WA). Si Dario no tuviera WA cargado, el cartel sería amarillo "se enviará al WhatsApp principal".
+3. Login como Dario sin cliente seleccionado: catálogo con precios = columna base de L2 (su costo). Barra amarilla "Viendo tu lista de costos".
+4. Login como Dario → Mis pedidos: el botón verde "Reenviar por WhatsApp" no aparece en ningún pedido. Seleccionar 3 pedidos → "Enviar unificado al admin" → ahora debería responder OK con `whatsapp_link` y abrir wa.me al número global con el mensaje del unificado.
+
 ### Próximos pasos pendientes (en orden)
 
-1. **Push + deploy a Railway** de los cambios de las sesiones 20 y 21 mayo (vendedor tercerizado, panel Actividad, ganancia sobre venta, lista en Ver cambios, fix bug Actividad, pedido unificado, polish admin, separación Usuarios/Vendedores). Verificar volumen montado en `DB_PATH` antes. Verificar que `settings.whatsapp_number` esté cargado (sino el botón "Enviar unificado al admin" muestra alert pidiendo configurarlo).
-2. Validación post-deploy:
-   - DevTools → Network → `/api/admin/earnings` → confirmar que `total_sold` y `total_delivered` ya no estén inflados.
-   - Probar el flujo de unificado con un usuario tercerizado (Dario).
-3. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
-4. **Backups externos automáticos**: rclone a B2/S3/Drive.
-5. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
-6. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
+1. **Push de la sesión noche 21 may**: archivos cambiados — `server.js`, `public/js/app.js`, `public/js/admin.js`. Desde Windows: `del .git\index.lock` + `git add` + `commit` + `push`. Esperar redeploy en Railway.
+2. Validación post-deploy de esta sesión:
+   - /admin → Vendedores: la columna "Lista de precios" ahora es un select real. Asignarle L2 a Dario (autosave). Refrescar si el select aparece vacío la primera vez.
+   - Login como dariocliente → carrito: si Dario tiene WA, sigue igual (al WA de Dario). Si Dario no tiene WA, el carrito muestra cartel amarillo y se manda al global. Probar también con un cliente sin vendedor asignado: debería mandar al global sin bloquear.
+   - Login como Dario sin cliente: el catálogo debería mostrar precios = columna base de L2 (su costo), y la barra superior "Viendo tu lista de costos…".
+   - Login como Dario → Mis pedidos: el botón verde "Reenviar por WhatsApp" no aparece. Seleccionar 3 pedidos → "Enviar unificado al admin" → ahora debería andar y abrir wa.me al global con el unificado.
+3. Validaciones pendientes de sesiones anteriores (todavía relevantes):
+   - DevTools → Network → `/api/admin/earnings` → confirmar que `total_sold` y `total_delivered` no estén inflados.
+   - DevTools → Network → `/api/me` con dariocliente logueado → `whatsapp` debe ser el número de Dario; `assignedVendedor.hasWhatsapp = true`.
+4. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
+5. **Backups externos automáticos**: rclone a B2/S3/Drive.
+6. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
+7. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
 
 ### Objetivo de negocio
 Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.
