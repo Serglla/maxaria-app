@@ -2669,7 +2669,31 @@ app.get("/api/admin/accounts/:userId", requireAdmin, (req, res) => {
 });
 
 // ====== Generador de catálogo en PDF ======
-app.post("/api/admin/catalog/pdf", requireAdmin, (req, res) => {
+// Carga una imagen de producto: si es URL externa la descarga; si es ruta local la lee del disco.
+// Devuelve un Buffer o null si no se puede cargar.
+async function loadProductImage(imageUrl) {
+  if (!imageUrl) return null;
+  try {
+    const clean = imageUrl.split("?")[0];
+    if (clean.startsWith("http://") || clean.startsWith("https://")) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 6000);
+      const resp = await fetch(clean, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!resp.ok) return null;
+      return Buffer.from(await resp.arrayBuffer());
+    }
+    // Ruta local: /images/products/nombre.jpg
+    const fname = decodeURIComponent(clean.split("/").pop());
+    const fpath = path.join(PRODUCT_IMAGES_DIR, fname);
+    if (fs.existsSync(fpath)) return fs.readFileSync(fpath);
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   const body = req.body || {};
   const pConf = body.priceConfig || {};
   const categoryIds = (Array.isArray(body.categoryIds) && body.categoryIds.length > 0)
@@ -2734,6 +2758,13 @@ app.post("/api/admin/catalog/pdf", requireAdmin, (req, res) => {
   const appRow = db.prepare("SELECT value FROM settings WHERE key = 'app_name'").get();
   const appName = (appRow && appRow.value) || "Catálogo";
 
+  // Pre-descargar imágenes en paralelo (URLs externas o archivos locales)
+  const uniqueUrls = [...new Set(rows.filter((r) => r.image_url).map((r) => r.image_url))];
+  const imgCache = new Map();
+  await Promise.all(uniqueUrls.map(async (url) => {
+    imgCache.set(url, await loadProductImage(url));
+  }));
+
   // Generar PDF
   const doc = new PDFDocument({ size: "A4", margin: 0, autoFirstPage: true });
   res.setHeader("Content-Type", "application/pdf");
@@ -2797,19 +2828,16 @@ app.post("/api/admin/catalog/pdf", requireAdmin, (req, res) => {
 
       // Imagen
       const ix = cx + CPAD, iy = cardY + (CH - ISIZ) / 2;
-      if (p.image_url) {
-        const fname = decodeURIComponent((p.image_url.split("?")[0]).split("/").pop());
-        const ipath = path.join(PRODUCT_IMAGES_DIR, fname);
-        let imgOk = false;
-        if (fs.existsSync(ipath)) {
-          try {
-            doc.image(ipath, ix, iy, { fit: [ISIZ, ISIZ], align: "center", valign: "center" });
-            imgOk = true;
-          } catch (_) {}
+      const imgBuf = p.image_url ? imgCache.get(p.image_url) : null;
+      if (imgBuf) {
+        try {
+          doc.image(imgBuf, ix, iy, { fit: [ISIZ, ISIZ], align: "center", valign: "center" });
+        } catch (_) {
+          // Formato no soportado por pdfkit (ej. WebP): placeholder
+          doc.rect(ix, iy, ISIZ, ISIZ).fillColor("#e5e7eb").fill();
         }
-        if (!imgOk) doc.rect(ix, iy, ISIZ, ISIZ).fillColor("#f3f4f6").fill();
       } else {
-        doc.rect(ix, iy, ISIZ, ISIZ).fillColor("#f3f4f6").fill();
+        doc.rect(ix, iy, ISIZ, ISIZ).fillColor("#e5e7eb").fill();
       }
 
       // Texto: empieza después de la imagen
