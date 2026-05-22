@@ -884,7 +884,7 @@
           '<h4 class="pc-section-title pc-reingreso-title">Reingresos <span class="muted">(' + reingresos.length + ')</span></h4>' +
           '<table class="pc-table">' +
             '<thead><tr><th>Código</th><th>Producto</th><th class="num">Precio</th></tr></thead>' +
-            '<tbody>' + pcRowsWithCategoryHeaders(reingresos, pcReingresoRowHtml) + '</tbody>' +
+            '<tbody>' + pcRowsWithCategoryHeaders(reingresos, pcReingresoRowHtml, 3, ['Precio']) + '</tbody>' +
           '</table>';
       }
 
@@ -900,7 +900,7 @@
               '<th class="num">Anterior</th><th class="num">Nuevo</th>' +
               '<th class="num">Var.</th>' +
             '</tr></thead>' +
-            '<tbody>' + pcRowsWithCategoryHeaders(cambios, pcRowHtml, 5) + '</tbody>' +
+            '<tbody>' + pcRowsWithCategoryHeaders(cambios, pcRowHtml, 5, ['Anterior', 'Nuevo', 'Var.']) + '</tbody>' +
           '</table>';
       }
 
@@ -910,7 +910,7 @@
           '<h4 class="pc-section-title">Productos nuevos <span class="muted">(' + nuevos.length + ')</span></h4>' +
           '<table class="pc-table">' +
             '<thead><tr><th>Código</th><th>Producto</th><th class="num">Precio</th></tr></thead>' +
-            '<tbody>' + pcRowsWithCategoryHeaders(nuevos, pcNewRowHtml) + '</tbody>' +
+            '<tbody>' + pcRowsWithCategoryHeaders(nuevos, pcNewRowHtml, 3, ['Precio']) + '</tbody>' +
           '</table>';
       }
 
@@ -920,15 +920,25 @@
     return html;
   }
 
-  // Inserta filas de encabezado de categoría cada vez que cambia la categoría
-  function pcRowsWithCategoryHeaders(items, rowFn, colSpan) {
+  // Inserta filas de encabezado de categoría cada vez que cambia la categoría.
+  // subHeaders: array opcional de strings con etiquetas de columna que se muestran
+  // alineadas a la derecha del separador (ej: ['Anterior', 'Nuevo', 'Var.']).
+  function pcRowsWithCategoryHeaders(items, rowFn, colSpan, subHeaders) {
     colSpan = colSpan || 3;
     var html = "";
     var lastCat = null;
     items.forEach(function(item) {
       var cat = item.category_name || "Sin categoría";
       if (cat !== lastCat) {
-        html += '<tr class="pc-cat-header"><td colspan="' + colSpan + '">' + escapeHtml(cat) + '</td></tr>';
+        if (subHeaders && subHeaders.length) {
+          var catColSpan = colSpan - subHeaders.length;
+          var extraHtml = subHeaders.map(function(h) {
+            return '<td class="pc-cat-sub">' + escapeHtml(h) + '</td>';
+          }).join('');
+          html += '<tr class="pc-cat-header"><td colspan="' + catColSpan + '">' + escapeHtml(cat) + '</td>' + extraHtml + '</tr>';
+        } else {
+          html += '<tr class="pc-cat-header"><td colspan="' + colSpan + '">' + escapeHtml(cat) + '</td></tr>';
+        }
         lastCat = cat;
       }
       html += rowFn(item);

@@ -580,21 +580,57 @@ Durante esta sesión el bash mount Linux mostró archivos en estados distintos a
 3. Login como Dario (tercerizado) sin cliente seleccionado: catálogo con precios = columna `price_<nivel>` según su `vendedor_price_level`. Barra amarilla "Viendo tu lista de costos".
 4. Login como Dario → Mis pedidos: el botón verde "Reenviar por WhatsApp" no aparece en ningún pedido. Seleccionar 3 pedidos → "Enviar unificado al admin" → ahora debería responder OK con `whatsapp_link` y abrir wa.me al número global con el mensaje del unificado.
 
+### Catálogo PDF (22 mayo 2026)
+
+**Funcionalidad**: el admin puede generar un catálogo en PDF desde la pestaña Productos, con botón "📄 Catálogo PDF".
+
+**Dependencias nuevas**: `pdfkit ^0.18.0` + `sharp ^0.34.5` en package.json. Sharp convierte cualquier formato de imagen (WebP, AVIF, GIF, PNG, JPEG) a PNG antes de pasarlo a pdfkit. Después de actualizar package.json correr `npm install` desde Windows para instalar los binarios nativos de sharp para la plataforma correcta.
+
+**Endpoint**: `POST /api/admin/catalog/pdf` (requireAdmin, async). Body:
+- `priceConfig`: `{ type: "level", level: "minorista"|"revendedor"|"mayorista"|"vip"|"publico" }` o `{ type: "list", listId: N }`
+- `categoryIds`: array de IDs (vacío = todas las categorías)
+- `targetUserId`: ID del usuario/vendedor cuyo WA usar (0 = solo descargar)
+- `includePriceChanges`: boolean — si true, agrega sección de cambios al inicio
+
+**Helpers en server.js**:
+- `loadProductImage(imageUrl)`: descarga la imagen (URL externa o ruta local `/images/products/...`), la convierte a PNG con sharp y devuelve Buffer. Timeout 8s. Retorna null si falla.
+- `pLimit(fns, concurrency)`: ejecuta array de funciones async con concurrencia máxima. Se usa con concurrencia 15 para no disparar rate-limiting del CDN (imágenes en yourfiles.cloud).
+
+**Importante**: las imágenes de productos están almacenadas como URLs externas en yourfiles.cloud (no como archivos locales). La función `loadProductImage` las descarga en paralelo antes de generar el PDF.
+
+**Formato del PDF**:
+- A4, doble columna, márgenes 30pt
+- Encabezado: nombre de la app + lista de precios + fecha + "Solo productos en stock"
+- Por categoría: banner azul oscuro (`#1e3a5f`) con nombre en mayúsculas
+- Tarjeta de producto (100pt alto): imagen 80×80pt a la izquierda, nombre + código + descripción + precio destacado (ámbar `#d97706`) a la derecha
+- Pie de página con cantidad total de productos
+
+**Sección de cambios de precio** (si `includePriceChanges = true`):
+- Se genera ANTES del catálogo (páginas propias)
+- Consulta el último `price_updates` + sus `price_changes`
+- Items en doble columna, agrupados por categoría
+- Tarjeta de 52pt: nombre (hasta 2 líneas, `height: 22pt`), código en `iy+28`, badge NUEVO/REINGRESO en `iy+38`
+- Precio anterior (gris pequeño) + precio nuevo (rojo si subió, verde si bajó) en lado derecho
+- La columna de precio usada (old_/new_) depende del nivel base del catálogo; si es NULL cae a minorista como fallback
+- Al terminar los cambios, salto de página y empieza el catálogo
+
+**Frontend — modal** (`admin.html` + `admin.js`):
+- Categorías en grilla CSS de 3 columnas (no lista vertical)
+- Checkbox "Incluir últimos cambios de precio" alineado a la izquierda con div wrapper (no label centrado)
+- Select de WhatsApp destino con optgroups "Clientes con WhatsApp" y "Vendedores con WhatsApp"
+- On submit: fetch POST → respuesta como blob → descarga automática → si hay `X-Whatsapp` header abre wa.me con mensaje pre-cargado "Hola [nombre], te mando el catálogo..."
+- El nombre del destino viene en header `X-Whatsapp-Name` codificado en base64
+
+**Flujo WhatsApp**: el PDF siempre se descarga. Si el admin eligió un contacto, se abre el chat de WhatsApp con mensaje pre-cargado para que adjunte el PDF manualmente (wa.me no soporta envío de archivos automático).
+
+**Bug conocido del bash mount (confirmado en esta sesión)**: `node --check` desde bash reporta errores en archivos que en realidad están correctos (mount stale). Regla: verificar siempre con `Read` tool antes de actuar. Si bash y Read difieren, confiar en Read.
+
 ### Próximos pasos pendientes (en orden)
 
-1. **Push de la sesión noche 21 may**: archivos cambiados — `server.js`, `public/js/app.js`, `public/js/admin.js`. Desde Windows: `del .git\index.lock` + `git add` + `commit` + `push`. Esperar redeploy en Railway.
-2. Validación post-deploy de esta sesión:
-   - /admin → Vendedores: la columna "Nivel de costo" tiene un select con Minorista/Revendedor/Mayorista/VIP. Asignarle el nivel correcto a Dario (autosave).
-   - Login como dariocliente → carrito: si Dario tiene WA, sigue igual (al WA de Dario). Si Dario no tiene WA, el carrito muestra cartel amarillo y se manda al global. Probar también con un cliente sin vendedor asignado: debería mandar al global sin bloquear.
-   - Login como Dario (tercerizado) sin cliente: el catálogo debería mostrar precios = columna del nivel asignado (su costo), y la barra superior "Viendo tu lista de costos…".
-   - Login como Dario → Mis pedidos: el botón verde "Reenviar por WhatsApp" no aparece. Seleccionar 3 pedidos → "Enviar unificado al admin" → ahora debería andar y abrir wa.me al global con el unificado.
-3. Validaciones pendientes de sesiones anteriores (todavía relevantes):
-   - DevTools → Network → `/api/admin/earnings` → confirmar que `total_sold` y `total_delivered` no estén inflados.
-   - DevTools → Network → `/api/me` con dariocliente logueado → `whatsapp` debe ser el número de Dario; `assignedVendedor.hasWhatsapp = true`.
-4. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
-5. **Backups externos automáticos**: rclone a B2/S3/Drive.
-6. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
-7. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
+1. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
+2. **Backups externos automáticos**: rclone a B2/S3/Drive.
+3. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
+4. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
 
 ### Objetivo de negocio
 Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.
