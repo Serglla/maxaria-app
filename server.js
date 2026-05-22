@@ -2892,86 +2892,108 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
         doc.moveTo(MX, cy).lineTo(MX + UW, cy).strokeColor("#d1d5db").lineWidth(0.5).stroke();
         cy += 12;
 
-        // Layout de items de cambio: doble columna, tarjetas compactas
-        // ICH = 52pt: nombre (hasta 2 líneas, ~22pt) + código (10pt) + badge opcional (10pt)
-        const ICH = 52;
-        const ICGAPV = 4;
-        const ICGAPH = 10;
-        const ICW = (UW - ICGAPH) / 2;
-        // Ancho del bloque de texto izquierdo (nombre + código)
-        const ICW_TXT = ICW * 0.60;
-        // Ancho del bloque de precio derecho
-        const ICW_PRC = ICW * 0.38 - 4;
-        const ICW_PRX = ICW * 0.62;   // X relativa al inicio de la tarjeta para el precio
+        // Layout de items: una fila por producto, ancho completo
+        // Columnas: Código | Nombre + Descripción | Precio anterior | Precio nuevo | % cambio
+        const IRH = 36;    // row height
+        const IRGAP = 1;   // gap entre filas (casi ninguno, aspecto de tabla)
 
-        let iCol = 0;
-        const iColX = (c) => MX + c * (ICW + ICGAPH);
+        // Posiciones X absolutas de cada columna
+        const IC_CODE  = MX + 8;           // código
+        const IC_CW    = 42;               // ancho código
+        const IC_NAME  = MX + 58;          // nombre + descripción
+        const IC_NW    = 220;              // ancho nombre
+        const IC_OLD   = MX + 58 + 220 + 10; // precio anterior (right-aligned dentro de 75pt)
+        const IC_OLDW  = 75;
+        const IC_NEW   = IC_OLD + IC_OLDW + 6; // precio nuevo
+        const IC_NEWW  = 85;
+        const IC_PCT   = IC_NEW + IC_NEWW + 6; // porcentaje
+        const IC_PCTW  = UW - (IC_PCT - MX) - 8;
 
-        function iFlush() { if (iCol === 1) { iCol = 0; cy += ICH + ICGAPV; } }
         function iChkPage() {
-          if (cy + ICH > PH - MB) { doc.addPage(); cy = MY; iCol = 0; }
+          if (cy + IRH > PH - MB) { doc.addPage(); cy = MY; }
         }
 
         for (const cat of chgByCat) {
-          iFlush();
           iChkPage();
+          // Header categoría full-width
           doc.rect(MX, cy, UW, 22).fill(CBLU);
           doc.font("Helvetica-Bold").fontSize(10).fillColor("#ffffff")
              .text(cat.name.toUpperCase(), MX + 10, cy + 6, { width: UW - 20, lineBreak: false });
-          cy += 22 + 6;
+          cy += 22 + 3;
 
-          for (const item of cat.items) {
-            if (iCol === 0) iChkPage();
-            const ix2 = iColX(iCol), iy2 = cy;
+          cat.items.forEach((item, idx) => {
+            iChkPage();
+            const ry = cy;
 
+            // Fila con fondo alternado
             const isNew = item.is_new || item.is_reingreso;
-            const cardFill = isNew ? "#fffbeb" : "#fafafa";
-            doc.rect(ix2, iy2, ICW, ICH).fillAndStroke(cardFill, "#e5e7eb");
+            const rowFill = isNew ? "#fffbeb" : (idx % 2 === 0 ? "#ffffff" : "#f8fafc");
+            doc.rect(MX, ry, UW, IRH).fillColor(rowFill).fill();
+            // Línea separadora inferior
+            doc.moveTo(MX, ry + IRH).lineTo(MX + UW, ry + IRH)
+               .strokeColor("#e5e7eb").lineWidth(0.4).stroke();
 
             const oldP = applyMkp(item.old_price, item.new_minorista);
             const newP = applyMkp(item.new_price, item.new_minorista);
             const diff = newP - oldP;
             const diffColor = diff > 0 ? "#dc2626" : diff < 0 ? "#059669" : CGRY;
 
-            // ── Lado izquierdo: nombre (2 líneas max) → código → badge ──
-            // Nombre: permitimos 2 líneas (height 22pt) para que no tape el código
+            // ── Código (centrado verticalmente) ──
+            doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
+               .text((item.code || "—"), IC_CODE, ry + 14, { width: IC_CW, lineBreak: false });
+
+            // ── Nombre + Descripción ──
+            const nm3 = (item.name || "");
             doc.font("Helvetica-Bold").fontSize(9).fillColor(CDRK)
-               .text((item.name || ""), ix2 + 6, iy2 + 5,
-                 { width: ICW_TXT, lineBreak: true, height: 22 });
+               .text(nm3, IC_NAME, ry + 5, { width: IC_NW, lineBreak: true, height: 13 });
 
-            // Código: posición fija en iy2+28, siempre debajo de las 2 líneas posibles
-            doc.font("Helvetica").fontSize(7).fillColor(CGRY)
-               .text((item.code || ""), ix2 + 6, iy2 + 28,
-                 { width: ICW_TXT, lineBreak: false });
+            if (item.description) {
+              const ds3 = item.description.length > 60 ? item.description.slice(0, 58) + "…" : item.description;
+              doc.font("Helvetica").fontSize(7).fillColor(CGRY)
+                 .text(ds3, IC_NAME, ry + 19, { width: IC_NW, lineBreak: false });
+            }
 
-            // Badge nuevo/reingreso
+            // Badge nuevo/reingreso (en lugar de descripción)
             if (item.is_new) {
-              doc.rect(ix2 + 6, iy2 + 38, 32, 9).fill("#2563eb");
+              doc.rect(IC_NAME, ry + 19, 30, 9).fill("#2563eb");
               doc.font("Helvetica-Bold").fontSize(6).fillColor("#fff")
-                 .text("NUEVO", ix2 + 8, iy2 + 40, { lineBreak: false });
+                 .text("NUEVO", IC_NAME + 2, ry + 21, { lineBreak: false });
             } else if (item.is_reingreso) {
-              doc.rect(ix2 + 6, iy2 + 38, 44, 9).fill("#7c3aed");
+              doc.rect(IC_NAME, ry + 19, 42, 9).fill("#7c3aed");
               doc.font("Helvetica-Bold").fontSize(6).fillColor("#fff")
-                 .text("REINGRESO", ix2 + 8, iy2 + 40, { lineBreak: false });
+                 .text("REINGRESO", IC_NAME + 2, ry + 21, { lineBreak: false });
             }
 
-            // ── Lado derecho: precio anterior (pequeño/gris) + precio nuevo (grande/color) ──
-            const prX = ix2 + ICW_PRX;
+            // ── Precio anterior ──
             if (oldP && !item.is_new && !item.is_reingreso) {
-              doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
-                 .text(fmtP(oldP), prX, iy2 + 10, { width: ICW_PRC, align: "right", lineBreak: false });
-              doc.font("Helvetica-Bold").fontSize(11).fillColor(diffColor)
-                 .text(fmtP(newP), prX, iy2 + 24, { width: ICW_PRC, align: "right", lineBreak: false });
-            } else {
-              doc.font("Helvetica-Bold").fontSize(11).fillColor(CAMT)
-                 .text(fmtP(newP), prX, iy2 + 18, { width: ICW_PRC, align: "right", lineBreak: false });
+              doc.font("Helvetica").fontSize(8).fillColor(CGRY)
+                 .text(fmtP(oldP), IC_OLD, ry + 13, { width: IC_OLDW, align: "right", lineBreak: false });
             }
 
-            iCol++;
-            if (iCol === 2) { iCol = 0; cy += ICH + ICGAPV; }
-          }
+            // ── Precio nuevo ──
+            const priceColor = (item.is_new || item.is_reingreso) ? CAMT : diffColor;
+            doc.font("Helvetica-Bold").fontSize(11).fillColor(priceColor)
+               .text(fmtP(newP), IC_NEW, ry + 11, { width: IC_NEWW, align: "right", lineBreak: false });
+
+            // ── % de cambio ──
+            if (!item.is_new && !item.is_reingreso && oldP) {
+              const pct = ((diff / oldP) * 100);
+              const pctStr = (pct > 0 ? "+" : "") + pct.toFixed(1) + "%";
+              doc.font("Helvetica-Bold").fontSize(9).fillColor(diffColor)
+                 .text(pctStr, IC_PCT, ry + 13, { width: IC_PCTW, align: "right", lineBreak: false });
+            } else if (item.is_new) {
+              doc.font("Helvetica-Bold").fontSize(7.5).fillColor("#2563eb")
+                 .text("NUEVO", IC_PCT, ry + 14, { width: IC_PCTW, align: "right", lineBreak: false });
+            } else if (item.is_reingreso) {
+              doc.font("Helvetica-Bold").fontSize(7.5).fillColor("#7c3aed")
+                 .text("REINGR.", IC_PCT, ry + 14, { width: IC_PCTW, align: "right", lineBreak: false });
+            }
+
+            cy += IRH + IRGAP;
+          });
+
+          cy += 6; // espacio extra entre categorías
         }
-        iFlush();
 
         // Salto de página antes del catálogo
         doc.addPage();
