@@ -2918,10 +2918,22 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
 
         for (const cat of chgByCat) {
           iChkPage();
-          // Header categoría full-width
+          // Header categoría full-width con headers de columna en blanco
           doc.rect(MX, cy, UW, 22).fill(CBLU);
+          // Nombre de la categoría (acotado para no pisar los headers de columna)
           doc.font("Helvetica-Bold").fontSize(10).fillColor("#ffffff")
-             .text(cat.name.toUpperCase(), MX + 10, cy + 6, { width: UW - 20, lineBreak: false });
+             .text(cat.name.toUpperCase(), MX + 10, cy + 6,
+               { width: IC_OLD - MX - 14, lineBreak: false, ellipsis: true });
+          // Headers de columna en blanco, alineados con las columnas de cada fila
+          doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff")
+             .text("Precio viejo", IC_OLD, cy + 7,
+               { width: IC_OLDW, align: "right", lineBreak: false });
+          doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff")
+             .text("Precio nuevo", IC_NEW, cy + 7,
+               { width: IC_NEWW, align: "right", lineBreak: false });
+          doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff")
+             .text("% cambio", IC_PCT, cy + 7,
+               { width: IC_PCTW, align: "right", lineBreak: false });
           cy += 22 + 3;
 
           cat.items.forEach((item, idx) => {
