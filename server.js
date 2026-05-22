@@ -2841,22 +2841,28 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
 
     if (lastUpdate) {
       const chgRows = db.prepare(
-        "SELECT pc.code, pc.name, pc.is_new, pc.is_reingreso," +
+        "SELECT pc.code, pc.name," +
+        "       COALESCE(pc.is_new, 0) AS is_new," +
+        "       COALESCE(pc.is_reingreso, 0) AS is_reingreso," +
         "       pc." + oldCol + " AS old_price, pc." + newCol + " AS new_price," +
-        "       COALESCE(c.name,'Sin categoría') AS cat_name, COALESCE(c.sort_order,999) AS cat_sort" +
+        "       pc.new_minorista," +
+        "       COALESCE(c.name,'Sin categoría') AS cat_name," +
+        "       COALESCE(c.sort_order, 999) AS cat_sort" +
         "  FROM price_changes pc" +
         "  LEFT JOIN products pr ON pr.id = pc.product_id" +
         "  LEFT JOIN categories c ON c.id = pr.category_id" +
-        "  WHERE pc.update_id = ? AND (pc." + oldCol + " IS NOT NULL OR pc." + newCol + " IS NOT NULL)" +
+        "  WHERE pc.update_id = ?" +
         "  ORDER BY cat_sort, cat_name, pc.name"
       ).all(lastUpdate.id);
 
       if (chgRows.length) {
         // Aplicar markup si corresponde (lista personalizada)
-        function applyMkp(v) {
-          if (markup === null) return Number(v) || 0;
+        function applyMkp(v, fallback) {
+          // Si la columna pedida es NULL, usar minorista como fallback
+          const base = (v !== null && v !== undefined) ? Number(v) : Number(fallback || 0);
+          if (markup === null) return base;
           const d = 1 - markup / 100;
-          return d > 0 ? Math.round((Number(v) || 0) / d) : (Number(v) || 0);
+          return d > 0 ? Math.round(base / d) : base;
         }
 
         // Agrupar por categoría
@@ -2917,8 +2923,8 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
             const cardFill = isNew ? "#fffbeb" : "#fafafa";
             doc.rect(ix2, iy2, ICW, ICH).fillAndStroke(cardFill, "#e5e7eb");
 
-            const oldP = applyMkp(item.old_price);
-            const newP = applyMkp(item.new_price);
+            const oldP = applyMkp(item.old_price, item.new_minorista);
+            const newP = applyMkp(item.new_price, item.new_minorista);
             const diff = newP - oldP;
             const diffColor = diff > 0 ? "#dc2626" : diff < 0 ? "#059669" : CGRY;
 
