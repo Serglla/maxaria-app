@@ -2719,6 +2719,7 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
     ? body.categoryIds.map(Number) : [];
   const targetUserId = Number(body.targetUserId) || 0;
   const includePriceChanges = !!body.includePriceChanges;
+  const withImages = body.withImages !== false; // default true
 
   // Config de precios
   const lvlMap = {
@@ -2779,14 +2780,16 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   const appName = (appRow && appRow.value) || "Catálogo";
 
   // Pre-descargar imágenes con concurrencia limitada (evita rate-limiting del CDN)
-  const uniqueUrls = [...new Set(rows.filter((r) => r.image_url).map((r) => r.image_url))];
   const imgCache = new Map();
-  await pLimit(
-    uniqueUrls.map((url) => async () => {
-      imgCache.set(url, await loadProductImage(url));
-    }),
-    15  // máximo 15 descargas simultáneas
-  );
+  if (withImages) {
+    const uniqueUrls = [...new Set(rows.filter((r) => r.image_url).map((r) => r.image_url))];
+    await pLimit(
+      uniqueUrls.map((url) => async () => {
+        imgCache.set(url, await loadProductImage(url));
+      }),
+      15  // máximo 15 descargas simultáneas
+    );
+  }
 
   // Generar PDF
   const doc = new PDFDocument({ size: "A4", margin: 0, autoFirstPage: true });
@@ -2804,8 +2807,8 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   const UW = PW - MX * 2;
   const CGAP = 10;
   const CW = (UW - CGAP) / 2;   // ancho columna
-  const CH = 100, CGAPV = 6;    // alto tarjeta, gap vertical entre filas
-  const ISIZ = 80;               // tamaño imagen
+  const CH = withImages ? 100 : 30, CGAPV = withImages ? 6 : 2;
+  const ISIZ = 80;               // tamaño imagen (solo cuando withImages=true)
   const CPAD = 8;
 
   const CBLU = "#1e3a5f", CAMT = "#d97706", CGRY = "#6b7280", CDRK = "#111827";
@@ -3025,53 +3028,70 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
        .text(cat.name.toUpperCase(), MX + 10, cy + 7, { width: UW - 20, lineBreak: false });
     cy += 26 + 8;
 
+    let pIdx = 0;
     for (const p of cat.products) {
       if (col === 0) chkPage(CH);
       const cx = colX(col);
       const cardY = cy;
 
-      // Borde y fondo de tarjeta
-      doc.rect(cx, cardY, CW, CH).fillAndStroke("#fafafa", "#e5e7eb");
-      doc.lineWidth(0.5);
+      if (withImages) {
+        // ── Tarjeta con imagen ──────────────────────────────────────────────
+        doc.rect(cx, cardY, CW, CH).fillAndStroke("#fafafa", "#e5e7eb");
+        doc.lineWidth(0.5);
 
-      // Imagen
-      const ix = cx + CPAD, iy = cardY + (CH - ISIZ) / 2;
-      const imgBuf = p.image_url ? imgCache.get(p.image_url) : null;
-      if (imgBuf) {
-        try {
-          doc.image(imgBuf, ix, iy, { fit: [ISIZ, ISIZ], align: "center", valign: "center" });
-        } catch (_) {
-          // Formato no soportado por pdfkit (ej. WebP): placeholder
+        const ix = cx + CPAD, iy = cardY + (CH - ISIZ) / 2;
+        const imgBuf = p.image_url ? imgCache.get(p.image_url) : null;
+        if (imgBuf) {
+          try {
+            doc.image(imgBuf, ix, iy, { fit: [ISIZ, ISIZ], align: "center", valign: "center" });
+          } catch (_) {
+            doc.rect(ix, iy, ISIZ, ISIZ).fillColor("#e5e7eb").fill();
+          }
+        } else {
           doc.rect(ix, iy, ISIZ, ISIZ).fillColor("#e5e7eb").fill();
         }
-      } else {
-        doc.rect(ix, iy, ISIZ, ISIZ).fillColor("#e5e7eb").fill();
-      }
 
-      // Texto: empieza después de la imagen
-      const tx = cx + CPAD + ISIZ + 7;
-      const tw = CW - CPAD - ISIZ - 7 - CPAD;
+        const tx = cx + CPAD + ISIZ + 7;
+        const tw = CW - CPAD - ISIZ - 7 - CPAD;
 
-      // Nombre (max ~45 chars para que entre en 2 líneas)
-      const nm = (p.pname || "").length > 46 ? (p.pname || "").slice(0, 44) + "…" : (p.pname || "");
-      doc.font("Helvetica-Bold").fontSize(10).fillColor(CDRK)
-         .text(nm, tx, cardY + 8, { width: tw, lineBreak: true, height: 24 });
-
-      // Código
-      doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
-         .text("Cód: " + (p.code || "—"), tx, cardY + 33, { width: tw, lineBreak: false });
-
-      // Descripción (max ~68 chars)
-      if (p.description) {
-        const ds = p.description.length > 68 ? p.description.slice(0, 66) + "…" : p.description;
+        const nm = (p.pname || "").length > 46 ? (p.pname || "").slice(0, 44) + "…" : (p.pname || "");
+        doc.font("Helvetica-Bold").fontSize(10).fillColor(CDRK)
+           .text(nm, tx, cardY + 8, { width: tw, lineBreak: true, height: 24 });
         doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
-           .text(ds, tx, cardY + 45, { width: tw, lineBreak: true, height: 18 });
+           .text("Cód: " + (p.code || "—"), tx, cardY + 33, { width: tw, lineBreak: false });
+        if (p.description) {
+          const ds = p.description.length > 68 ? p.description.slice(0, 66) + "…" : p.description;
+          doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
+             .text(ds, tx, cardY + 45, { width: tw, lineBreak: true, height: 18 });
+        }
+        doc.font("Helvetica-Bold").fontSize(15).fillColor(CAMT)
+           .text(fmtP(p.price), tx, cardY + CH - 23, { width: tw, lineBreak: false });
+
+      } else {
+        // ── Fila compacta sin imagen ────────────────────────────────────────
+        const rowFill = Math.floor(pIdx / 2) % 2 === 0 ? "#ffffff" : "#f8fafc";
+        doc.rect(cx, cardY, CW, CH).fillColor(rowFill).fill();
+        doc.moveTo(cx, cardY + CH).lineTo(cx + CW, cardY + CH)
+           .strokeColor("#e5e7eb").lineWidth(0.4).stroke();
+
+        const LP = cx + CPAD;
+        const codeW = 36, priceW = 68;
+        const nameW = CW - CPAD * 2 - codeW - priceW - 10;
+        const rowMid = cardY + 10;
+
+        doc.font("Helvetica").fontSize(7).fillColor(CGRY)
+           .text(p.code || "—", LP, rowMid, { width: codeW, lineBreak: false });
+
+        const nm2 = (p.pname || "").length > 55 ? (p.pname || "").slice(0, 53) + "…" : (p.pname || "");
+        doc.font("Helvetica-Bold").fontSize(9).fillColor(CDRK)
+           .text(nm2, LP + codeW + 5, rowMid, { width: nameW, lineBreak: false });
+
+        doc.font("Helvetica-Bold").fontSize(9.5).fillColor(CAMT)
+           .text(fmtP(p.price), cx + CW - CPAD - priceW, rowMid,
+             { width: priceW, align: "right", lineBreak: false });
       }
 
-      // Precio (destacado, abajo a la derecha de la tarjeta)
-      doc.font("Helvetica-Bold").fontSize(15).fillColor(CAMT)
-         .text(fmtP(p.price), tx, cardY + CH - 23, { width: tw, lineBreak: false });
-
+      pIdx++;
       col++;
       if (col === 2) { col = 0; cy += CH + CGAPV; }
     }
