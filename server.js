@@ -3042,7 +3042,13 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
 
     let pIdx = 0;
     for (const p of cat.products) {
-      if (col === 0) chkPage(CH);
+      if (col === 0) {
+        chkPage(CH);
+        // Divisor azul vertical entre las dos columnas, a la altura de esta fila
+        const dvX = MX + CW + CGAP / 2;
+        doc.moveTo(dvX, cy).lineTo(dvX, cy + CH)
+           .strokeColor(CBLU).lineWidth(1).stroke();
+      }
       const cx = colX(col);
       const cardY = cy;
 
