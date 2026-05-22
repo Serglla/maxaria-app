@@ -2893,10 +2893,17 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
         cy += 12;
 
         // Layout de items de cambio: doble columna, tarjetas compactas
-        const ICH = 38;       // alto de cada item
-        const ICGAPV = 4;     // gap vertical entre items
-        const ICGAPH = 10;    // gap horizontal entre columnas
+        // ICH = 52pt: nombre (hasta 2 líneas, ~22pt) + código (10pt) + badge opcional (10pt)
+        const ICH = 52;
+        const ICGAPV = 4;
+        const ICGAPH = 10;
         const ICW = (UW - ICGAPH) / 2;
+        // Ancho del bloque de texto izquierdo (nombre + código)
+        const ICW_TXT = ICW * 0.60;
+        // Ancho del bloque de precio derecho
+        const ICW_PRC = ICW * 0.38 - 4;
+        const ICW_PRX = ICW * 0.62;   // X relativa al inicio de la tarjeta para el precio
+
         let iCol = 0;
         const iColX = (c) => MX + c * (ICW + ICGAPH);
 
@@ -2908,7 +2915,6 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
         for (const cat of chgByCat) {
           iFlush();
           iChkPage();
-          // Header categoría (compacto)
           doc.rect(MX, cy, UW, 22).fill(CBLU);
           doc.font("Helvetica-Bold").fontSize(10).fillColor("#ffffff")
              .text(cat.name.toUpperCase(), MX + 10, cy + 6, { width: UW - 20, lineBreak: false });
@@ -2918,7 +2924,6 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
             if (iCol === 0) iChkPage();
             const ix2 = iColX(iCol), iy2 = cy;
 
-            // Fondo y borde
             const isNew = item.is_new || item.is_reingreso;
             const cardFill = isNew ? "#fffbeb" : "#fafafa";
             doc.rect(ix2, iy2, ICW, ICH).fillAndStroke(cardFill, "#e5e7eb");
@@ -2928,33 +2933,38 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
             const diff = newP - oldP;
             const diffColor = diff > 0 ? "#dc2626" : diff < 0 ? "#059669" : CGRY;
 
-            // Nombre + código
-            const nm2 = (item.name || "").length > 38 ? (item.name || "").slice(0, 36) + "…" : (item.name || "");
+            // ── Lado izquierdo: nombre (2 líneas max) → código → badge ──
+            // Nombre: permitimos 2 líneas (height 22pt) para que no tape el código
             doc.font("Helvetica-Bold").fontSize(9).fillColor(CDRK)
-               .text(nm2, ix2 + 6, iy2 + 5, { width: ICW * 0.62, lineBreak: false });
+               .text((item.name || ""), ix2 + 6, iy2 + 5,
+                 { width: ICW_TXT, lineBreak: true, height: 22 });
+
+            // Código: posición fija en iy2+28, siempre debajo de las 2 líneas posibles
             doc.font("Helvetica").fontSize(7).fillColor(CGRY)
-               .text((item.code || ""), ix2 + 6, iy2 + 17, { width: ICW * 0.62, lineBreak: false });
+               .text((item.code || ""), ix2 + 6, iy2 + 28,
+                 { width: ICW_TXT, lineBreak: false });
 
             // Badge nuevo/reingreso
             if (item.is_new) {
-              doc.rect(ix2 + 6, iy2 + 25, 32, 9).fill("#2563eb");
-              doc.font("Helvetica-Bold").fontSize(6).fillColor("#fff").text("NUEVO", ix2 + 8, iy2 + 27, { lineBreak: false });
+              doc.rect(ix2 + 6, iy2 + 38, 32, 9).fill("#2563eb");
+              doc.font("Helvetica-Bold").fontSize(6).fillColor("#fff")
+                 .text("NUEVO", ix2 + 8, iy2 + 40, { lineBreak: false });
             } else if (item.is_reingreso) {
-              doc.rect(ix2 + 6, iy2 + 25, 42, 9).fill("#7c3aed");
-              doc.font("Helvetica-Bold").fontSize(6).fillColor("#fff").text("REINGRESO", ix2 + 8, iy2 + 27, { lineBreak: false });
+              doc.rect(ix2 + 6, iy2 + 38, 44, 9).fill("#7c3aed");
+              doc.font("Helvetica-Bold").fontSize(6).fillColor("#fff")
+                 .text("REINGRESO", ix2 + 8, iy2 + 40, { lineBreak: false });
             }
 
-            // Precios (derecha)
-            const prX = ix2 + ICW * 0.63;
-            const prW = ICW * 0.37 - 6;
+            // ── Lado derecho: precio anterior (pequeño/gris) + precio nuevo (grande/color) ──
+            const prX = ix2 + ICW_PRX;
             if (oldP && !item.is_new && !item.is_reingreso) {
               doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
-                 .text(fmtP(oldP), prX, iy2 + 5, { width: prW, align: "right", lineBreak: false });
-              doc.font("Helvetica-Bold").fontSize(10).fillColor(diffColor)
-                 .text(fmtP(newP), prX, iy2 + 17, { width: prW, align: "right", lineBreak: false });
+                 .text(fmtP(oldP), prX, iy2 + 10, { width: ICW_PRC, align: "right", lineBreak: false });
+              doc.font("Helvetica-Bold").fontSize(11).fillColor(diffColor)
+                 .text(fmtP(newP), prX, iy2 + 24, { width: ICW_PRC, align: "right", lineBreak: false });
             } else {
-              doc.font("Helvetica-Bold").fontSize(10).fillColor(CAMT)
-                 .text(fmtP(newP), prX, iy2 + 12, { width: prW, align: "right", lineBreak: false });
+              doc.font("Helvetica-Bold").fontSize(11).fillColor(CAMT)
+                 .text(fmtP(newP), prX, iy2 + 18, { width: ICW_PRC, align: "right", lineBreak: false });
             }
 
             iCol++;
