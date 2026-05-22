@@ -215,6 +215,7 @@
     catalogCatsLoading: document.getElementById("catalog-cats-loading"),
     catalogCatsAll: document.getElementById("catalog-cats-all"),
     catalogCatsNone: document.getElementById("catalog-cats-none"),
+    catalogIncludeChanges: document.getElementById("catalog-include-changes"),
     catalogWaSelect: document.getElementById("catalog-wa-select"),
     catalogMsg: document.getElementById("catalog-msg"),
     catalogGenerateBtn: document.getElementById("catalog-generate-btn"),
@@ -3227,12 +3228,13 @@
       const categoryIds = allChecked ? [] : checkedCats;
 
       const targetUserId = Number(els.catalogWaSelect.value) || 0;
+      const includePriceChanges = els.catalogIncludeChanges ? els.catalogIncludeChanges.checked : false;
 
       try {
         const response = await fetch("/api/admin/catalog/pdf", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ priceConfig, categoryIds, targetUserId }),
+          body: JSON.stringify({ priceConfig, categoryIds, targetUserId, includePriceChanges }),
         });
 
         if (response.status === 401) { location.href = "/login"; return; }

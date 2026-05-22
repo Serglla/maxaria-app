@@ -2718,6 +2718,7 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   const categoryIds = (Array.isArray(body.categoryIds) && body.categoryIds.length > 0)
     ? body.categoryIds.map(Number) : [];
   const targetUserId = Number(body.targetUserId) || 0;
+  const includePriceChanges = !!body.includePriceChanges;
 
   // Config de precios
   const lvlMap = {
@@ -2815,12 +2816,159 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   function chkPage(h) { if (cy + h > PH - MB) { doc.addPage(); cy = MY; col = 0; } }
   function fmtP(n) { return "$" + Math.round(n || 0).toLocaleString("es-AR"); }
 
-  // Encabezado primera página
+  const hoy = new Date().toLocaleDateString("es-AR",
+    { day: "2-digit", month: "long", year: "numeric" });
+
+  // ── Sección de cambios de precio (páginas iniciales) ──────────────────────
+  if (includePriceChanges) {
+    // Determinar columnas de old/new según el nivel base del catálogo
+    const chgLvlKey = (function () {
+      if (pConf.type === "list" && pConf.listId) {
+        const lst2 = db.prepare("SELECT base_level FROM price_lists WHERE id = ?").get(Number(pConf.listId));
+        return (lst2 && lst2.base_level) || "minorista";
+      }
+      return pConf.level || "minorista";
+    })();
+    // price_changes guarda old_/new_ para minorista/revendedor/mayorista/vip
+    // publico no tiene columnas propias → cae a minorista
+    const chgKey = ["revendedor", "mayorista", "vip"].includes(chgLvlKey) ? chgLvlKey : "minorista";
+    const oldCol = "old_" + chgKey, newCol = "new_" + chgKey;
+
+    const lastUpdate = db.prepare(
+      "SELECT pu.id, pu.created_at, pu.products_changed, pu.products_new, pu.products_reingreso" +
+      "  FROM price_updates pu ORDER BY pu.id DESC LIMIT 1"
+    ).get();
+
+    if (lastUpdate) {
+      const chgRows = db.prepare(
+        "SELECT pc.code, pc.name, pc.is_new, pc.is_reingreso," +
+        "       pc." + oldCol + " AS old_price, pc." + newCol + " AS new_price," +
+        "       COALESCE(c.name,'Sin categoría') AS cat_name, COALESCE(c.sort_order,999) AS cat_sort" +
+        "  FROM price_changes pc" +
+        "  LEFT JOIN products pr ON pr.id = pc.product_id" +
+        "  LEFT JOIN categories c ON c.id = pr.category_id" +
+        "  WHERE pc.update_id = ? AND (pc." + oldCol + " IS NOT NULL OR pc." + newCol + " IS NOT NULL)" +
+        "  ORDER BY cat_sort, cat_name, pc.name"
+      ).all(lastUpdate.id);
+
+      if (chgRows.length) {
+        // Aplicar markup si corresponde (lista personalizada)
+        function applyMkp(v) {
+          if (markup === null) return Number(v) || 0;
+          const d = 1 - markup / 100;
+          return d > 0 ? Math.round((Number(v) || 0) / d) : (Number(v) || 0);
+        }
+
+        // Agrupar por categoría
+        const chgByCat = [];
+        const chgCatMap = new Map();
+        for (const r of chgRows) {
+          if (!chgCatMap.has(r.cat_name)) {
+            chgCatMap.set(r.cat_name, chgByCat.length);
+            chgByCat.push({ name: r.cat_name, items: [] });
+          }
+          chgByCat[chgCatMap.get(r.cat_name)].items.push(r);
+        }
+
+        // Encabezado de la sección de cambios
+        doc.font("Helvetica-Bold").fontSize(18).fillColor(CBLU)
+           .text("Cambios de Precio", MX, cy, { width: UW, align: "center" });
+        cy += 26;
+        const chgDate = new Date(lastUpdate.created_at.replace(" ", "T") + "Z")
+          .toLocaleDateString("es-AR", { day: "2-digit", month: "long", year: "numeric" });
+        doc.font("Helvetica").fontSize(9).fillColor(CGRY)
+           .text(
+             chgRows.length + " productos   ·   Actualización del " + chgDate +
+             "   ·   Precios: " + priceLabel,
+             MX, cy, { width: UW, align: "center" }
+           );
+        cy += 16;
+        doc.moveTo(MX, cy).lineTo(MX + UW, cy).strokeColor("#d1d5db").lineWidth(0.5).stroke();
+        cy += 12;
+
+        // Layout de items de cambio: doble columna, tarjetas compactas
+        const ICH = 38;       // alto de cada item
+        const ICGAPV = 4;     // gap vertical entre items
+        const ICGAPH = 10;    // gap horizontal entre columnas
+        const ICW = (UW - ICGAPH) / 2;
+        let iCol = 0;
+        const iColX = (c) => MX + c * (ICW + ICGAPH);
+
+        function iFlush() { if (iCol === 1) { iCol = 0; cy += ICH + ICGAPV; } }
+        function iChkPage() {
+          if (cy + ICH > PH - MB) { doc.addPage(); cy = MY; iCol = 0; }
+        }
+
+        for (const cat of chgByCat) {
+          iFlush();
+          iChkPage();
+          // Header categoría (compacto)
+          doc.rect(MX, cy, UW, 22).fill(CBLU);
+          doc.font("Helvetica-Bold").fontSize(10).fillColor("#ffffff")
+             .text(cat.name.toUpperCase(), MX + 10, cy + 6, { width: UW - 20, lineBreak: false });
+          cy += 22 + 6;
+
+          for (const item of cat.items) {
+            if (iCol === 0) iChkPage();
+            const ix2 = iColX(iCol), iy2 = cy;
+
+            // Fondo y borde
+            const isNew = item.is_new || item.is_reingreso;
+            const cardFill = isNew ? "#fffbeb" : "#fafafa";
+            doc.rect(ix2, iy2, ICW, ICH).fillAndStroke(cardFill, "#e5e7eb");
+
+            const oldP = applyMkp(item.old_price);
+            const newP = applyMkp(item.new_price);
+            const diff = newP - oldP;
+            const diffColor = diff > 0 ? "#dc2626" : diff < 0 ? "#059669" : CGRY;
+
+            // Nombre + código
+            const nm2 = (item.name || "").length > 38 ? (item.name || "").slice(0, 36) + "…" : (item.name || "");
+            doc.font("Helvetica-Bold").fontSize(9).fillColor(CDRK)
+               .text(nm2, ix2 + 6, iy2 + 5, { width: ICW * 0.62, lineBreak: false });
+            doc.font("Helvetica").fontSize(7).fillColor(CGRY)
+               .text((item.code || ""), ix2 + 6, iy2 + 17, { width: ICW * 0.62, lineBreak: false });
+
+            // Badge nuevo/reingreso
+            if (item.is_new) {
+              doc.rect(ix2 + 6, iy2 + 25, 32, 9).fill("#2563eb");
+              doc.font("Helvetica-Bold").fontSize(6).fillColor("#fff").text("NUEVO", ix2 + 8, iy2 + 27, { lineBreak: false });
+            } else if (item.is_reingreso) {
+              doc.rect(ix2 + 6, iy2 + 25, 42, 9).fill("#7c3aed");
+              doc.font("Helvetica-Bold").fontSize(6).fillColor("#fff").text("REINGRESO", ix2 + 8, iy2 + 27, { lineBreak: false });
+            }
+
+            // Precios (derecha)
+            const prX = ix2 + ICW * 0.63;
+            const prW = ICW * 0.37 - 6;
+            if (oldP && !item.is_new && !item.is_reingreso) {
+              doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
+                 .text(fmtP(oldP), prX, iy2 + 5, { width: prW, align: "right", lineBreak: false });
+              doc.font("Helvetica-Bold").fontSize(10).fillColor(diffColor)
+                 .text(fmtP(newP), prX, iy2 + 17, { width: prW, align: "right", lineBreak: false });
+            } else {
+              doc.font("Helvetica-Bold").fontSize(10).fillColor(CAMT)
+                 .text(fmtP(newP), prX, iy2 + 12, { width: prW, align: "right", lineBreak: false });
+            }
+
+            iCol++;
+            if (iCol === 2) { iCol = 0; cy += ICH + ICGAPV; }
+          }
+        }
+        iFlush();
+
+        // Salto de página antes del catálogo
+        doc.addPage();
+        cy = MY;
+        col = 0;
+      }
+    }
+  }
+
+  // Encabezado primera página del catálogo
   doc.font("Helvetica-Bold").fontSize(22).fillColor(CBLU)
      .text(appName, MX, cy, { width: UW, align: "center" });
   cy += 30;
-  const hoy = new Date().toLocaleDateString("es-AR",
-    { day: "2-digit", month: "long", year: "numeric" });
   doc.font("Helvetica").fontSize(9).fillColor(CGRY)
      .text("Precios: " + priceLabel + "   ·   " + hoy + "   ·   Solo productos en stock",
        MX, cy, { width: UW, align: "center" });
