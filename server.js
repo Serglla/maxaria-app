@@ -12,6 +12,7 @@ const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const { readExcelBuffer } = require("./scripts/excel_helper");
 const { importPrices } = require("./scripts/import-prices");
+const PDFDocument = require("pdfkit");
 
 const ENV_PATH = path.join(__dirname, ".env");
 if (fs.existsSync(ENV_PATH)) {
@@ -2665,6 +2666,188 @@ app.get("/api/admin/accounts/:userId", requireAdmin, (req, res) => {
     "  FROM account_movements WHERE user_id = ?"
   ).get(userId);
   res.json({ user: user, movements: movements, balance: balance.balance });
+});
+
+// ====== Generador de catálogo en PDF ======
+app.post("/api/admin/catalog/pdf", requireAdmin, (req, res) => {
+  const body = req.body || {};
+  const pConf = body.priceConfig || {};
+  const categoryIds = (Array.isArray(body.categoryIds) && body.categoryIds.length > 0)
+    ? body.categoryIds.map(Number) : [];
+  const targetUserId = Number(body.targetUserId) || 0;
+
+  // Config de precios
+  const lvlMap = {
+    minorista: "price_minorista", revendedor: "price_revendedor",
+    mayorista: "price_mayorista", vip: "price_vip", publico: "price_publico",
+  };
+  let priceCol = "price_minorista", priceLabel = "Minorista", markup = null;
+  if (pConf.type === "list" && pConf.listId) {
+    const lst = db.prepare("SELECT * FROM price_lists WHERE id = ? AND active = 1").get(Number(pConf.listId));
+    if (!lst) return res.status(400).json({ error: "Lista de precios no encontrada o inactiva" });
+    priceCol = priceColumnForBaseLevel(lst.base_level);
+    markup = Number(lst.markup_percent) || 0;
+    priceLabel = lst.name;
+  } else {
+    priceCol = lvlMap[pConf.level] || "price_minorista";
+    const lk = pConf.level || "minorista";
+    priceLabel = lk.charAt(0).toUpperCase() + lk.slice(1);
+  }
+
+  // WA destino
+  let targetWa = "", targetName = "";
+  if (targetUserId) {
+    const tu = db.prepare("SELECT full_name, username, whatsapp_number FROM users WHERE id = ?").get(targetUserId);
+    if (tu) {
+      targetWa = (tu.whatsapp_number || "").replace(/\D/g, "");
+      targetName = tu.full_name || tu.username || "";
+    }
+  }
+
+  // Productos en stock agrupados por categoría
+  const catCond = categoryIds.length
+    ? " AND c.id IN (" + categoryIds.map(() => "?").join(",") + ")" : "";
+  const rows = db.prepare(
+    "SELECT p.id, p.code, p.name AS pname, p.description, p.image_url," +
+    "       p." + priceCol + " AS base_price," +
+    "       c.id AS cat_id, c.name AS cat_name" +
+    "  FROM products p JOIN categories c ON c.id = p.category_id" +
+    "  WHERE p.stock > 0 AND p.active = 1" + catCond +
+    "  ORDER BY c.sort_order, c.name, p.name"
+  ).all(...categoryIds);
+
+  const byCategory = [];
+  const catMap = new Map();
+  for (const r of rows) {
+    let price = Number(r.base_price) || 0;
+    if (markup !== null) {
+      const d = 1 - markup / 100;
+      if (d > 0) price = Math.round(price / d);
+    }
+    if (!catMap.has(r.cat_id)) {
+      catMap.set(r.cat_id, byCategory.length);
+      byCategory.push({ name: r.cat_name, products: [] });
+    }
+    byCategory[catMap.get(r.cat_id)].products.push(Object.assign({}, r, { price }));
+  }
+
+  const appRow = db.prepare("SELECT value FROM settings WHERE key = 'app_name'").get();
+  const appName = (appRow && appRow.value) || "Catálogo";
+
+  // Generar PDF
+  const doc = new PDFDocument({ size: "A4", margin: 0, autoFirstPage: true });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition",
+    "attachment; filename=\"catalogo-" + new Date().toISOString().slice(0, 10) + ".pdf\"");
+  res.setHeader("Access-Control-Expose-Headers", "X-Whatsapp,X-Whatsapp-Name");
+  if (targetWa)   res.setHeader("X-Whatsapp", targetWa);
+  if (targetName) res.setHeader("X-Whatsapp-Name", Buffer.from(targetName).toString("base64"));
+  doc.pipe(res);
+
+  // Layout constantes
+  const PW = 595.28, PH = 841.89;
+  const MX = 30, MY = 44, MB = 36;
+  const UW = PW - MX * 2;
+  const CGAP = 10;
+  const CW = (UW - CGAP) / 2;   // ancho columna
+  const CH = 100, CGAPV = 6;    // alto tarjeta, gap vertical entre filas
+  const ISIZ = 80;               // tamaño imagen
+  const CPAD = 8;
+
+  const CBLU = "#1e3a5f", CAMT = "#d97706", CGRY = "#6b7280", CDRK = "#111827";
+
+  let cy = MY, col = 0;
+  const colX = (c) => MX + c * (CW + CGAP);
+  function flushCol() { if (col === 1) { col = 0; cy += CH + CGAPV; } }
+  function chkPage(h) { if (cy + h > PH - MB) { doc.addPage(); cy = MY; col = 0; } }
+  function fmtP(n) { return "$" + Math.round(n || 0).toLocaleString("es-AR"); }
+
+  // Encabezado primera página
+  doc.font("Helvetica-Bold").fontSize(22).fillColor(CBLU)
+     .text(appName, MX, cy, { width: UW, align: "center" });
+  cy += 30;
+  const hoy = new Date().toLocaleDateString("es-AR",
+    { day: "2-digit", month: "long", year: "numeric" });
+  doc.font("Helvetica").fontSize(9).fillColor(CGRY)
+     .text("Precios: " + priceLabel + "   ·   " + hoy + "   ·   Solo productos en stock",
+       MX, cy, { width: UW, align: "center" });
+  cy += 18;
+  doc.moveTo(MX, cy).lineTo(MX + UW, cy).strokeColor("#d1d5db").lineWidth(0.5).stroke();
+  cy += 14;
+
+  // Categorías y productos
+  for (const cat of byCategory) {
+    flushCol();
+    chkPage(32 + CH);
+
+    // Header categoría
+    doc.rect(MX, cy, UW, 26).fill(CBLU);
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("#ffffff")
+       .text(cat.name.toUpperCase(), MX + 10, cy + 7, { width: UW - 20, lineBreak: false });
+    cy += 26 + 8;
+
+    for (const p of cat.products) {
+      if (col === 0) chkPage(CH);
+      const cx = colX(col);
+      const cardY = cy;
+
+      // Borde y fondo de tarjeta
+      doc.rect(cx, cardY, CW, CH).fillAndStroke("#fafafa", "#e5e7eb");
+      doc.lineWidth(0.5);
+
+      // Imagen
+      const ix = cx + CPAD, iy = cardY + (CH - ISIZ) / 2;
+      if (p.image_url) {
+        const fname = decodeURIComponent((p.image_url.split("?")[0]).split("/").pop());
+        const ipath = path.join(PRODUCT_IMAGES_DIR, fname);
+        let imgOk = false;
+        if (fs.existsSync(ipath)) {
+          try {
+            doc.image(ipath, ix, iy, { fit: [ISIZ, ISIZ], align: "center", valign: "center" });
+            imgOk = true;
+          } catch (_) {}
+        }
+        if (!imgOk) doc.rect(ix, iy, ISIZ, ISIZ).fillColor("#f3f4f6").fill();
+      } else {
+        doc.rect(ix, iy, ISIZ, ISIZ).fillColor("#f3f4f6").fill();
+      }
+
+      // Texto: empieza después de la imagen
+      const tx = cx + CPAD + ISIZ + 7;
+      const tw = CW - CPAD - ISIZ - 7 - CPAD;
+
+      // Nombre (max ~45 chars para que entre en 2 líneas)
+      const nm = (p.pname || "").length > 46 ? (p.pname || "").slice(0, 44) + "…" : (p.pname || "");
+      doc.font("Helvetica-Bold").fontSize(10).fillColor(CDRK)
+         .text(nm, tx, cardY + 8, { width: tw, lineBreak: true, height: 24 });
+
+      // Código
+      doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
+         .text("Cód: " + (p.code || "—"), tx, cardY + 33, { width: tw, lineBreak: false });
+
+      // Descripción (max ~68 chars)
+      if (p.description) {
+        const ds = p.description.length > 68 ? p.description.slice(0, 66) + "…" : p.description;
+        doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
+           .text(ds, tx, cardY + 45, { width: tw, lineBreak: true, height: 18 });
+      }
+
+      // Precio (destacado, abajo a la derecha de la tarjeta)
+      doc.font("Helvetica-Bold").fontSize(15).fillColor(CAMT)
+         .text(fmtP(p.price), tx, cardY + CH - 23, { width: tw, lineBreak: false });
+
+      col++;
+      if (col === 2) { col = 0; cy += CH + CGAPV; }
+    }
+  }
+  flushCol();
+
+  // Pie de página (solo última página)
+  const totalProds = byCategory.reduce((s, c) => s + c.products.length, 0);
+  doc.font("Helvetica").fontSize(8).fillColor(CGRY)
+     .text(totalProds + " productos · Generado " + hoy, MX, PH - 24, { width: UW, align: "center" });
+
+  try { doc.end(); } catch (_) {}
 });
 
 app.get("/healthz", (req, res) => res.json({ ok: true, ts: Date.now() }));

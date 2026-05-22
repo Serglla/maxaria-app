@@ -82,6 +82,7 @@
           📥 Subir Excel
           <input type="file" id="excel-file" accept=".xlsx,.xls" hidden />
         </label>
+        <button class="btn" id="catalog-btn" type="button" title="Generar catálogo en PDF con lista de precios a elección">📄 Catálogo PDF</button>
       </div>
 
       <div class="admin-table-wrap">
@@ -886,6 +887,53 @@
       </form>
     </div>
   </div>
+  <!-- Modal catálogo PDF -->
+  <div class="admin-modal" id="catalog-modal" hidden>
+    <div class="admin-modal-box" style="max-width:540px">
+      <h3>📄 Generar catálogo PDF</h3>
+      <form id="catalog-form" class="user-form">
+
+        <label>Lista de precios
+          <select id="catalog-price-select" name="price" required>
+            <optgroup label="Niveles base">
+              <option value="level:minorista">Minorista</option>
+              <option value="level:revendedor">Revendedor</option>
+              <option value="level:mayorista">Mayorista</option>
+              <option value="level:vip">VIP</option>
+              <option value="level:publico">Precio público</option>
+            </optgroup>
+            <optgroup label="Listas personalizadas" id="catalog-price-lists-group">
+              <!-- se llena dinámicamente -->
+            </optgroup>
+          </select>
+        </label>
+
+        <label style="margin-bottom:4px">Categorías a incluir <span class="muted">(todas marcadas = catálogo completo)</span></label>
+        <div id="catalog-cats-wrap" style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">
+          <span class="muted" id="catalog-cats-loading">Cargando categorías…</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button type="button" class="btn" id="catalog-cats-all" style="font-size:12px;padding:3px 10px">✔ Todas</button>
+          <button type="button" class="btn" id="catalog-cats-none" style="font-size:12px;padding:3px 10px">✘ Ninguna</button>
+        </div>
+
+        <label style="margin-top:8px">Enviar por WhatsApp a
+          <select id="catalog-wa-select" name="wa_target">
+            <option value="">Solo descargar (sin abrir WhatsApp)</option>
+            <!-- se llena dinámicamente -->
+          </select>
+        </label>
+        <p class="muted" style="font-size:12px;margin-top:2px">El PDF se descarga automáticamente. Si elegís un contacto, se abre el chat de WhatsApp para que lo adjuntés.</p>
+
+        <p id="catalog-msg" class="config-msg" style="min-height:18px"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="catalog-generate-btn">📄 Generar PDF</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 

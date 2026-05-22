@@ -205,6 +205,20 @@
     plCreateForm: document.getElementById("pl-create-form"),
     plCreateMsg: document.getElementById("pl-create-msg"),
 
+    // Catálogo PDF
+    catalogBtn: document.getElementById("catalog-btn"),
+    catalogModal: document.getElementById("catalog-modal"),
+    catalogForm: document.getElementById("catalog-form"),
+    catalogPriceSelect: document.getElementById("catalog-price-select"),
+    catalogPriceListsGroup: document.getElementById("catalog-price-lists-group"),
+    catalogCatsWrap: document.getElementById("catalog-cats-wrap"),
+    catalogCatsLoading: document.getElementById("catalog-cats-loading"),
+    catalogCatsAll: document.getElementById("catalog-cats-all"),
+    catalogCatsNone: document.getElementById("catalog-cats-none"),
+    catalogWaSelect: document.getElementById("catalog-wa-select"),
+    catalogMsg: document.getElementById("catalog-msg"),
+    catalogGenerateBtn: document.getElementById("catalog-generate-btn"),
+
     toast: document.getElementById("toast"),
   };
 
@@ -3097,6 +3111,168 @@
     try { await fetch("/logout", { method: "POST" }); }
     finally { location.href = "/login"; }
   });
+
+  // ---------- catálogo PDF ----------
+  async function openCatalogModal() {
+    els.catalogMsg.textContent = "";
+    els.catalogMsg.className = "config-msg";
+    els.catalogGenerateBtn.disabled = false;
+    els.catalogGenerateBtn.textContent = "📄 Generar PDF";
+
+    // Poblar listas personalizadas en el select de precios
+    els.catalogPriceListsGroup.innerHTML = "";
+    const lists = state.priceListsLoaded ? state.priceLists
+      : await api("/api/admin/price-lists").catch(() => []);
+    if (!state.priceListsLoaded) { state.priceLists = lists; state.priceListsLoaded = true; }
+    const activeLists = lists.filter((l) => l.active);
+    if (activeLists.length) {
+      activeLists.forEach((l) => {
+        const opt = document.createElement("option");
+        opt.value = "list:" + l.id;
+        opt.textContent = l.name;
+        els.catalogPriceListsGroup.appendChild(opt);
+      });
+    } else {
+      els.catalogPriceListsGroup.innerHTML = "<option disabled>No hay listas activas</option>";
+    }
+
+    // Poblar categorías (checkboxes)
+    if (!state.allCategories.length) {
+      try { state.allCategories = await api("/api/categories"); } catch (_) {}
+    }
+    if (els.catalogCatsLoading) els.catalogCatsLoading.remove();
+    els.catalogCatsWrap.innerHTML = "";
+    state.allCategories.forEach((c) => {
+      const lbl = document.createElement("label");
+      lbl.style.cssText = "display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px";
+      lbl.innerHTML =
+        '<input type="checkbox" data-cat-id="' + c.id + '" checked style="width:15px;height:15px"> ' +
+        escapeHtml(c.name);
+      els.catalogCatsWrap.appendChild(lbl);
+    });
+
+    // Poblar select de WhatsApp destino (usuarios + vendedores con WA)
+    els.catalogWaSelect.innerHTML = '<option value="">Solo descargar (sin abrir WhatsApp)</option>';
+    const allUsers = state.usersLoaded ? state.users : await api("/api/admin/users").catch(() => []);
+    if (!state.usersLoaded) { state.users = allUsers; state.usersLoaded = true; }
+    const vends = state.vendedoresLoaded ? state.vendedores : await api("/api/admin/vendedores").catch(() => []);
+    if (!state.vendedoresLoaded) { state.vendedores = vends; state.vendedoresLoaded = true; }
+
+    const waUsers = allUsers.filter((u) => u.active && u.whatsapp_number);
+    const waVends = vends.filter((v) => v.active && v.whatsapp_number);
+
+    if (waUsers.length) {
+      const grpU = document.createElement("optgroup");
+      grpU.label = "Clientes con WhatsApp";
+      waUsers.forEach((u) => {
+        const o = document.createElement("option");
+        o.value = u.id;
+        o.textContent = (u.full_name || u.username) + " (" + u.whatsapp_number + ")";
+        grpU.appendChild(o);
+      });
+      els.catalogWaSelect.appendChild(grpU);
+    }
+    if (waVends.length) {
+      const grpV = document.createElement("optgroup");
+      grpV.label = "Vendedores con WhatsApp";
+      waVends.forEach((v) => {
+        const o = document.createElement("option");
+        o.value = v.id;
+        o.textContent = (v.full_name || v.username) + " (" + v.whatsapp_number + ")";
+        grpV.appendChild(o);
+      });
+      els.catalogWaSelect.appendChild(grpV);
+    }
+
+    els.catalogModal.hidden = false;
+  }
+
+  if (els.catalogBtn) {
+    els.catalogBtn.addEventListener("click", openCatalogModal);
+  }
+
+  if (els.catalogCatsAll) {
+    els.catalogCatsAll.addEventListener("click", () => {
+      els.catalogCatsWrap.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = true; });
+    });
+  }
+  if (els.catalogCatsNone) {
+    els.catalogCatsNone.addEventListener("click", () => {
+      els.catalogCatsWrap.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+    });
+  }
+
+  if (els.catalogForm) {
+    els.catalogForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      els.catalogMsg.textContent = "";
+      els.catalogMsg.className = "config-msg";
+      els.catalogGenerateBtn.disabled = true;
+      els.catalogGenerateBtn.textContent = "Generando…";
+
+      // Armar priceConfig
+      const priceVal = els.catalogPriceSelect.value; // "level:minorista" | "list:5"
+      let priceConfig;
+      if (priceVal.startsWith("list:")) {
+        priceConfig = { type: "list", listId: Number(priceVal.split(":")[1]) };
+      } else {
+        priceConfig = { type: "level", level: priceVal.split(":")[1] || "minorista" };
+      }
+
+      // Categorías seleccionadas (vacío = todas)
+      const checkedCats = Array.from(
+        els.catalogCatsWrap.querySelectorAll("input[type=checkbox]:checked")
+      ).map((cb) => Number(cb.dataset.catId));
+      const allChecked = checkedCats.length === state.allCategories.length;
+      const categoryIds = allChecked ? [] : checkedCats;
+
+      const targetUserId = Number(els.catalogWaSelect.value) || 0;
+
+      try {
+        const response = await fetch("/api/admin/catalog/pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ priceConfig, categoryIds, targetUserId }),
+        });
+
+        if (response.status === 401) { location.href = "/login"; return; }
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          throw new Error(err.error || "Error " + response.status);
+        }
+
+        // Descargar el PDF
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "catalogo-" + new Date().toISOString().slice(0, 10) + ".pdf";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+
+        // Abrir WhatsApp si hay destino
+        const wa = response.headers.get("X-Whatsapp");
+        const nameB64 = response.headers.get("X-Whatsapp-Name");
+        const name = nameB64 ? decodeURIComponent(atob(nameB64).split("").map((c) =>
+          "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)).join("")) : "";
+        if (wa) {
+          const msg = "Hola" + (name ? " " + name : "") +
+            ", te mando el catálogo de precios. Lo encontrás adjunto 📄";
+          window.open("https://wa.me/" + wa + "?text=" + encodeURIComponent(msg), "_blank");
+        }
+
+        els.catalogModal.hidden = true;
+        showToast("✅ PDF generado y descargado" + (wa ? " · WhatsApp abierto" : ""));
+      } catch (err) {
+        els.catalogMsg.textContent = "Error: " + err.message;
+        els.catalogMsg.className = "config-msg err";
+      } finally {
+        els.catalogGenerateBtn.disabled = false;
+        els.catalogGenerateBtn.textContent = "📄 Generar PDF";
+      }
+    });
+  }
 
   bootstrap();
 })();
