@@ -2669,28 +2669,47 @@ app.get("/api/admin/accounts/:userId", requireAdmin, (req, res) => {
 });
 
 // ====== Generador de catálogo en PDF ======
-// Carga una imagen de producto: si es URL externa la descarga; si es ruta local la lee del disco.
-// Devuelve un Buffer o null si no se puede cargar.
+// Carga una imagen de producto y la convierte a PNG via sharp
+// (soporta JPEG, PNG, WebP, AVIF, GIF, etc. — todo lo que pdfkit no acepta nativamente).
+// Devuelve un Buffer PNG o null si no se puede cargar/convertir.
 async function loadProductImage(imageUrl) {
   if (!imageUrl) return null;
   try {
     const clean = imageUrl.split("?")[0];
+    let rawBuf;
     if (clean.startsWith("http://") || clean.startsWith("https://")) {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 6000);
+      const timer = setTimeout(() => ctrl.abort(), 8000);
       const resp = await fetch(clean, { signal: ctrl.signal });
       clearTimeout(timer);
       if (!resp.ok) return null;
-      return Buffer.from(await resp.arrayBuffer());
+      rawBuf = Buffer.from(await resp.arrayBuffer());
+    } else {
+      const fname = decodeURIComponent(clean.split("/").pop());
+      const fpath = path.join(PRODUCT_IMAGES_DIR, fname);
+      if (!fs.existsSync(fpath)) return null;
+      rawBuf = fs.readFileSync(fpath);
     }
-    // Ruta local: /images/products/nombre.jpg
-    const fname = decodeURIComponent(clean.split("/").pop());
-    const fpath = path.join(PRODUCT_IMAGES_DIR, fname);
-    if (fs.existsSync(fpath)) return fs.readFileSync(fpath);
-    return null;
+    // Convertir a PNG para que pdfkit lo acepte siempre, sin importar el formato original
+    const sharp = require("sharp");
+    return await sharp(rawBuf).png().toBuffer();
   } catch (_) {
     return null;
   }
+}
+
+// Ejecuta un array de funciones async con concurrencia máxima N
+async function pLimit(fns, concurrency) {
+  const results = new Array(fns.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < fns.length) {
+      const i = idx++;
+      results[i] = await fns[i]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, fns.length) }, worker));
+  return results;
 }
 
 app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
@@ -2758,12 +2777,15 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   const appRow = db.prepare("SELECT value FROM settings WHERE key = 'app_name'").get();
   const appName = (appRow && appRow.value) || "Catálogo";
 
-  // Pre-descargar imágenes en paralelo (URLs externas o archivos locales)
+  // Pre-descargar imágenes con concurrencia limitada (evita rate-limiting del CDN)
   const uniqueUrls = [...new Set(rows.filter((r) => r.image_url).map((r) => r.image_url))];
   const imgCache = new Map();
-  await Promise.all(uniqueUrls.map(async (url) => {
-    imgCache.set(url, await loadProductImage(url));
-  }));
+  await pLimit(
+    uniqueUrls.map((url) => async () => {
+      imgCache.set(url, await loadProductImage(url));
+    }),
+    15  // máximo 15 descargas simultáneas
+  );
 
   // Generar PDF
   const doc = new PDFDocument({ size: "A4", margin: 0, autoFirstPage: true });
