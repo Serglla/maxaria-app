@@ -55,7 +55,8 @@
   };
 
   const LEVEL_NAMES = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
-  const LS_VIEW_AS_LEVEL = "maxaria.viewAsLevel"; // solo admin
+  const LS_VIEW_AS_LEVEL    = "maxaria.viewAsLevel";    // solo admin
+  const LS_VENDEDOR_CLIENT  = "maxaria.vendedorClient"; // solo vendedor (level 5)
 
   const state = {
     me: null, categories: [], products: [], cat: "all", query: "",
@@ -110,8 +111,29 @@
         state.viewAsLevel = loadViewAsLevel();
       }
       if (me.level === 5) {
-        // Recuperar cliente seleccionado en sesión previa y cargar lista de clientes
         state.vendedorClient = me.vendedorClient || null;
+        // Si el servidor no tiene el cliente en sesión (reload, reinicio del server, etc.),
+        // intentar recuperarlo del localStorage.
+        if (!state.vendedorClient) {
+          try {
+            const saved = JSON.parse(localStorage.getItem(LS_VENDEDOR_CLIENT));
+            if (saved && saved.id) {
+              state.vendedorClient = saved;
+              // Resinc con el servidor si hay conexión, para que POST /api/orders
+              // sepa a qué cliente pertenece el pedido.
+              if (navigator.onLine) {
+                fetch("/api/vendedor/select-client", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ client_id: saved.id }),
+                }).catch(() => {});
+              }
+            }
+          } catch (_) {}
+        } else {
+          // Servidor tiene el cliente: mantener localStorage sincronizado.
+          try { localStorage.setItem(LS_VENDEDOR_CLIENT, JSON.stringify(state.vendedorClient)); } catch (_) {}
+        }
         state.clients = await api("/api/clients");
       }
       const [cats, prods] = await Promise.all([
@@ -360,6 +382,24 @@
       ids.forEach(refreshCardForProduct);
     }
     try {
+      // Offline: saltear el POST al servidor (no se puede guardar sesión sin red).
+      // Los GET de productos y categorías salen del cache del Service Worker.
+      if (!navigator.onLine) {
+        state.vendedorClient = { id: client.id, name: client.full_name || client.username,
+                                 level: client.level, levelName: client.levelName };
+        try { localStorage.setItem(LS_VENDEDOR_CLIENT, JSON.stringify(state.vendedorClient)); } catch (_) {}
+        state.cat = "all";
+        state.query = "";
+        if (els.search) els.search.value = "";
+        const [cats, prods] = await Promise.all([api("/api/categories"), api("/api/products")]);
+        state.categories = cats;
+        state.products = prods;
+        closeDrawers();
+        renderVendedorBar();
+        renderCategories();
+        renderProducts();
+        return;
+      }
       await api("/api/vendedor/select-client", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -367,6 +407,7 @@
       });
       state.vendedorClient = { id: client.id, name: client.full_name || client.username,
                                level: client.level, levelName: client.levelName };
+      try { localStorage.setItem(LS_VENDEDOR_CLIENT, JSON.stringify(state.vendedorClient)); } catch (_) {}
       state.cat = "all";
       state.query = "";
       if (els.search) els.search.value = "";
@@ -1375,6 +1416,7 @@
   }
 
   els.logoutBtn.addEventListener("click", async () => {
+    try { localStorage.removeItem(LS_VENDEDOR_CLIENT); } catch (_) {}
     try { await fetch("/logout", { method: "POST" }); }
     finally { location.href = "/login"; }
   });
