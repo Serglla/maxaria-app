@@ -381,30 +381,9 @@
       renderCart();
       ids.forEach(refreshCardForProduct);
     }
-    try {
-      // Offline: saltear el POST al servidor (no se puede guardar sesión sin red).
-      // Los GET de productos y categorías salen del cache del Service Worker.
-      if (!navigator.onLine) {
-        state.vendedorClient = { id: client.id, name: client.full_name || client.username,
-                                 level: client.level, levelName: client.levelName };
-        try { localStorage.setItem(LS_VENDEDOR_CLIENT, JSON.stringify(state.vendedorClient)); } catch (_) {}
-        state.cat = "all";
-        state.query = "";
-        if (els.search) els.search.value = "";
-        const [cats, prods] = await Promise.all([api("/api/categories"), api("/api/products")]);
-        state.categories = cats;
-        state.products = prods;
-        closeDrawers();
-        renderVendedorBar();
-        renderCategories();
-        renderProducts();
-        return;
-      }
-      await api("/api/vendedor/select-client", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: client.id }),
-      });
+    // Aplica el cliente elegido en el estado local y recarga catálogo desde cache/red.
+    // Se usa tanto en el flujo normal como en el fallback offline.
+    async function applyClientLocally() {
       state.vendedorClient = { id: client.id, name: client.full_name || client.username,
                                level: client.level, levelName: client.levelName };
       try { localStorage.setItem(LS_VENDEDOR_CLIENT, JSON.stringify(state.vendedorClient)); } catch (_) {}
@@ -418,8 +397,32 @@
       renderVendedorBar();
       renderCategories();
       renderProducts();
+    }
+    try {
+      // navigator.onLine es poco confiable (true con WiFi sin internet),
+      // así que intentamos el POST y si falla por red usamos el fallback offline.
+      if (!navigator.onLine) {
+        await applyClientLocally();
+        return;
+      }
+      await api("/api/vendedor/select-client", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: client.id }),
+      });
+      await applyClientLocally();
     } catch (e) {
-      alert("Error al seleccionar cliente: " + (e.message || "Error desconocido"));
+      // TypeError = error de red (Failed to fetch, sin conexión real).
+      // En ese caso cargamos el catálogo desde el cache del Service Worker.
+      if (e instanceof TypeError) {
+        try {
+          await applyClientLocally();
+        } catch (e2) {
+          alert("Sin conexión y no hay catálogo guardado. Abrí la app con internet al menos una vez.");
+        }
+      } else {
+        alert("Error al seleccionar cliente: " + (e.message || "Error desconocido"));
+      }
     }
   }
 
@@ -742,8 +745,8 @@
       flashOrderSaved(out.order.id);
     } catch (e) {
       if (popup && !popup.closed) popup.close();
-      // Si se cortó la conexión durante el envío, guardar offline en lugar de alertar
-      if (!navigator.onLine || e instanceof TypeError) {
+      // TypeError = error de red (Failed to fetch), con o sin navigator.onLine.
+      if (e instanceof TypeError) {
         saveCartOffline(phone);
         return;
       }
