@@ -606,6 +606,36 @@
     return lines.join("\n");
   }
 
+  // Guarda el carrito actual como pedido offline (sin conexión)
+  function saveCartOffline(phone) {
+    if (!window.OfflineMode) { alert("Sin conexión para enviar el pedido."); return; }
+    const apiItems  = Array.from(state.cart.values()).map((it) => ({ id: it.id, qty: it.qty }));
+    const snapshot  = Array.from(state.cart.values());
+    const notes     = (els.cartNotes && els.cartNotes.value.trim()) || null;
+    window.OfflineMode.saveCart({
+      apiItems:       apiItems,
+      cartSnapshot:   snapshot,
+      notes:          notes,
+      me: {
+        id: state.me.id, username: state.me.username, fullName: state.me.fullName,
+        levelName: state.me.levelName, app_name: state.me.app_name,
+      },
+      vendedorClient: state.vendedorClient,
+      phone:          phone,
+      total:          cartTotal(),
+      message:        buildWhatsappMessage(),
+    }).then(function () {
+      const clearedIds = Array.from(state.cart.keys());
+      state.cart.clear();
+      if (els.cartNotes) els.cartNotes.value = "";
+      renderCart();
+      clearedIds.forEach(refreshCardForProduct);
+      closeDrawers();
+    }).catch(function () {
+      alert("No se pudo guardar el pedido sin conexión. Intentá de nuevo.");
+    });
+  }
+
   async function sendCart() {
     if (!state.cart.size) return;
     const phone = (state.me && state.me.whatsapp) || "";
@@ -620,6 +650,12 @@
       }
       return;
     }
+    // Sin conexión: guardar el pedido offline en lugar de intentar la red
+    if (!navigator.onLine) {
+      saveCartOffline(phone);
+      return;
+    }
+
     const message = buildWhatsappMessage();
 
     // Abrimos la ventana YA, dentro del user-gesture del click,
@@ -665,6 +701,11 @@
       flashOrderSaved(out.order.id);
     } catch (e) {
       if (popup && !popup.closed) popup.close();
+      // Si se cortó la conexión durante el envío, guardar offline en lugar de alertar
+      if (!navigator.onLine || e instanceof TypeError) {
+        saveCartOffline(phone);
+        return;
+      }
       console.error(e);
       alert("Error de conexion al enviar el pedido");
     } finally {
@@ -987,17 +1028,37 @@
     els.ordersBody.innerHTML = '<p class="muted">Cargando...</p>';
     openDrawer(els.ordersDrawer);
     try {
-      const orders = await api("/api/orders");
-      if (!orders.length) {
+      const [orders, pendingOrders] = await Promise.all([
+        api("/api/orders"),
+        window.OfflineMode ? window.OfflineMode.getAll() : Promise.resolve([]),
+      ]);
+      if (!orders.length && !pendingOrders.length) {
         els.ordersBody.innerHTML = '<p class="muted">Todavia no hay pedidos.</p>';
         return;
+      }
+      // Pedidos guardados offline (sin conexión previa)
+      let pendingHtml = "";
+      if (pendingOrders.length) {
+        pendingHtml =
+          '<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:10px;' +
+          'padding:10px 14px;margin-bottom:12px;">' +
+          '<div style="font-weight:700;color:#92400e;margin-bottom:6px">⏳ ' +
+          pendingOrders.length + ' pedido' + (pendingOrders.length > 1 ? 's' : '') +
+          ' sin enviar — ' +
+          (navigator.onLine ? 'enviando…' : 'se enviarán cuando vuelva internet') +
+          '</div>' +
+          pendingOrders.map(pendingOrderCardHtml).join("") +
+          '</div>';
       }
       const header = isTerc ? renderDispatchBar(orders) : "";
       els.ordersBody.innerHTML =
         header +
-        '<div class="orders-cards">' +
-          orders.map((o) => orderCardHtml(o, isAdmin, isTerc)).join("") +
-        '</div>';
+        pendingHtml +
+        (orders.length
+          ? '<div class="orders-cards">' +
+              orders.map((o) => orderCardHtml(o, isAdmin, isTerc)).join("") +
+            '</div>'
+          : "");
       els.ordersBody.querySelectorAll(".order-card").forEach((card) => {
         card.querySelector(".order-head").addEventListener("click", (ev) => {
           // No abrir detalle si el click vino del checkbox
@@ -1092,6 +1153,35 @@
       btn.disabled = false;
       btn.textContent = prevText;
     }
+  }
+
+  function pendingOrderCardHtml(p) {
+    const d = new Date(p.timestamp);
+    const date = isNaN(d.getTime()) ? "" : d.toLocaleString("es-AR", {
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+    const who = p.vendedorClient ? " &middot; " + escapeHtml(p.vendedorClient.name) : "";
+    const items = p.cartSnapshot || [];
+    const rows = items.map(function(it) {
+      return '<div style="font-size:13px;color:#374151">' +
+        it.qty + " × " + escapeHtml(it.name || "") +
+        ' <span style="color:#6b7280">(' + fmtPrice(it.price) + ' c/u)</span>' +
+      '</div>';
+    }).join("");
+    return '<article style="background:#fff;border:1px solid #fde68a;border-radius:8px;' +
+      'padding:10px 12px;margin-bottom:8px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
+        '<div>' +
+          '<strong style="font-size:14px">Pedido pendiente</strong>' +
+          ' <span style="background:#f59e0b;color:#fff;font-size:11px;font-weight:700;' +
+          'padding:2px 6px;border-radius:4px">SIN ENVIAR</span>' +
+          '<div style="color:#6b7280;font-size:12px;margin-top:2px">' + date + who + '</div>' +
+        '</div>' +
+        '<div style="font-weight:700;color:#0f172a">' + fmtPrice(p.total) + '</div>' +
+      '</div>' +
+      (rows ? '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #fde68a">' + rows + '</div>' : '') +
+    '</article>';
   }
 
   function orderCardHtml(o, isAdmin, isTerc) {

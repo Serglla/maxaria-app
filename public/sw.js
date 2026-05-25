@@ -1,18 +1,20 @@
 /* Maxaria — Service Worker
  *
  * Estrategia:
- *  - Navegaciones HTML (login, catalogo, admin)     → network-first, fallback al cache
- *  - Assets estáticos en /public (CSS, JS, íconos)  → stale-while-revalidate
- *  - Imágenes de producto en /images/products       → cache-first con TTL implícito
- *  - APIs /api/*, /login, /logout                   → no se cachean nunca (siempre red)
+ *  - Datos de la API (me, categories, products, clients)  → network-first, fallback al cache
+ *  - Navegaciones HTML (login, catalogo, admin)            → network-first, fallback al cache
+ *  - Assets estáticos en /public (CSS, JS, íconos)        → stale-while-revalidate
+ *  - Imágenes de producto en /images/products             → cache-first con TTL implícito
+ *  - Resto de /api/* y /logout                            → siempre red, sin cache
  *
  * Versionar CACHE_VERSION fuerza la invalidación de caches viejos al hacer deploy.
  */
 
-const CACHE_VERSION = "maxaria-v1";
+const CACHE_VERSION = "maxaria-v2";
 const STATIC_CACHE  = CACHE_VERSION + "-static";
 const PAGES_CACHE   = CACHE_VERSION + "-pages";
 const IMAGES_CACHE  = CACHE_VERSION + "-images";
+const DATA_CACHE    = CACHE_VERSION + "-data";
 
 // Archivos que precacheamos al instalar (shell de la app)
 const PRECACHE_URLS = [
@@ -20,18 +22,34 @@ const PRECACHE_URLS = [
   "/css/styles.css",
   "/js/app.js",
   "/js/admin.js",
+  "/js/offline.js",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/icon-maskable-512.png",
   "/icons/apple-touch-icon.png",
 ];
 
+// Endpoints de API que se cachean para uso offline (GET únicamente)
+// Se usan con estrategia network-first: si hay red se actualiza el cache;
+// si no hay red, se sirve la última versión cacheada.
+const CACHEABLE_API_PREFIXES = [
+  "/api/me",
+  "/api/categories",
+  "/api/products",
+  "/api/clients",
+  "/api/price-changes",
+];
+
+function isCacheableApiUrl(pathname) {
+  return CACHEABLE_API_PREFIXES.some(function (prefix) {
+    return pathname === prefix || pathname.startsWith(prefix + "?");
+  });
+}
+
 // ---------- install: precache del shell ----------
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) =>
-      // addAll es atómico: si falla uno, no se cachea ninguno.
-      // Usamos add() en loop para tolerar archivos que no existan todavía.
       Promise.all(
         PRECACHE_URLS.map((url) =>
           cache.add(new Request(url, { cache: "reload" })).catch(() => {})
@@ -62,7 +80,13 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // recursos externos: dejarlos pasar
 
-  // 1) APIs y auth: siempre red, nunca cache
+  // 1) Datos de API cacheables → network-first con fallback al cache
+  if (isCacheableApiUrl(url.pathname)) {
+    event.respondWith(networkFirst(req, DATA_CACHE));
+    return;
+  }
+
+  // 2) Resto de APIs, auth y health → siempre red, nunca cache
   if (
     url.pathname.startsWith("/api/") ||
     url.pathname === "/login" ||
@@ -72,19 +96,19 @@ self.addEventListener("fetch", (event) => {
     return; // sin respondWith → comportamiento default del browser
   }
 
-  // 2) Navegaciones HTML → network-first
+  // 3) Navegaciones HTML → network-first
   if (req.mode === "navigate" || req.headers.get("accept")?.includes("text/html")) {
     event.respondWith(networkFirst(req, PAGES_CACHE));
     return;
   }
 
-  // 3) Imágenes de producto → cache-first
+  // 4) Imágenes de producto → cache-first
   if (url.pathname.startsWith("/images/products/")) {
     event.respondWith(cacheFirst(req, IMAGES_CACHE));
     return;
   }
 
-  // 4) Resto (CSS, JS, íconos, manifest) → stale-while-revalidate
+  // 5) Resto (CSS, JS, íconos, manifest) → stale-while-revalidate
   event.respondWith(staleWhileRevalidate(req, STATIC_CACHE));
 });
 
@@ -98,7 +122,7 @@ async function networkFirst(req, cacheName) {
   } catch {
     const cached = await cache.match(req);
     if (cached) return cached;
-    // Último recurso: pantalla de login cacheada (la mayoría de las navs van ahí)
+    // Último recurso para navegaciones
     const fallback = await cache.match("/login");
     if (fallback) return fallback;
     return new Response(

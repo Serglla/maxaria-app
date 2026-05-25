@@ -625,6 +625,29 @@ Durante esta sesión el bash mount Linux mostró archivos en estados distintos a
 
 **Bug conocido del bash mount (confirmado en esta sesión)**: `node --check` desde bash reporta errores en archivos que en realidad están correctos (mount stale). Regla: verificar siempre con `Read` tool antes de actuar. Si bash y Read difieren, confiar en Read.
 
+### Catálogo PDF — mejoras visuales y cache busting (22 mayo 2026, sesión tarde)
+
+Tres ajustes al catálogo PDF reportados por Sergio:
+
+**1. Headers de columna en el banner azul de la sección de cambios**
+- Antes: el banner azul de cada categoría en la sección "Cambios de Precio" solo mostraba el nombre de la categoría.
+- Ahora: el banner tiene tres labels blancos a la derecha alineados con las columnas de cada tarjeta: **"Precio viejo"**, **"Precio nuevo"** y **"% cambio"**.
+- Implementación (`server.js`, dentro del `for (const cat of chgByCat)` en la sección `if (includePriceChanges)`): después del `doc.rect(MX, cy, UW, 22).fill(CBLU)` se dibuja el nombre de la categoría con `width: IC_OLD - MX - 14` y `ellipsis: true` (para que se acorte si pisa los headers), y luego tres `doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff").text(...)` en posiciones `IC_OLD`, `IC_NEW`, `IC_PCT` con `align: "right"`. Las constantes `IC_*` ya estaban definidas arriba en el mismo bloque.
+
+**2. Divisor azul vertical entre las dos columnas del catálogo**
+- En la sección del catálogo (no la de cambios), al inicio de cada fila (`col === 0`) se dibuja una línea vertical azul (color `CBLU = "#1e3a5f"`, `lineWidth: 1`) en `x = MX + CW + CGAP / 2`, desde `cy` hasta `cy + CH`. Funciona en ambas variantes (con y sin imágenes) porque CH cambia automáticamente según `withImages`.
+- Se dibuja por fila (no por categoría completa) para que el divisor también aparezca cuando hay salto de página en medio de una categoría.
+
+**3. Cache busting del `admin.js`**
+- Bug reportado: la opción "Incluir imágenes de producto" del modal Catálogo PDF "no funcionaba", aunque el código del flag `withImages` estaba implementado correctamente en `server.js` (línea ~2722, `body.withImages !== false`), `admin.html` (checkbox `#catalog-with-images` checked por default) y `admin.js` (línea ~3233, lee `els.catalogWithImages.checked`).
+- Causa probable: navegador cacheando una versión vieja del `admin.js` sin la lógica del checkbox.
+- Fix: cambié el `<script src>` del final de `admin.html` de `/js/admin.js` a `/js/admin.js?v=20260522c`. **Regla nueva**: cada vez que se modifique `admin.js` o `app.js` y se quiera asegurar que el browser traiga la nueva versión, hay que bumpear el query string (`?v=YYYYMMDD<letra>`). Sin esto, los users con la página abierta o con caché agresivo siguen viendo el JS viejo y reportan "no funciona" sobre features que ya están deployadas.
+
+**Bug del bash mount — re-confirmado y persistente**
+- En esta sesión volvió a pasar: después de editar `server.js`, `node --check` desde bash reportaba `SyntaxError: Unexpected end of input` en una línea que estaba completa en Windows. `Read` confirmó que el archivo terminaba bien con `app.listen(PORT, ...)`. El error de bash es un mount stale del bind mount Linux que NO se sincroniza inmediatamente con los cambios de las file tools (Read/Write/Edit operan sobre el filesystem real de Windows, bash ve una versión cacheada del mount).
+- Confirma la regla de CLAUDE.md: **NO tocar el archivo basándose en el error de bash**. Usar `Read` como fuente de verdad. Si bash y Read difieren, confiar SIEMPRE en Read.
+- El error de bash persiste incluso después de `sleep 2`; no es cuestión de timing corto.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
