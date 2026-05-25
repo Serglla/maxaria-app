@@ -1072,8 +1072,10 @@
     els.ordersBody.innerHTML = '<p class="muted">Cargando...</p>';
     openDrawer(els.ordersDrawer);
     try {
+      // Si /api/orders falla por red (offline), usar array vacío y mostrar
+      // igual los pedidos guardados en IndexedDB.
       const [orders, pendingOrders] = await Promise.all([
-        api("/api/orders"),
+        api("/api/orders").catch((e) => (e instanceof TypeError ? [] : Promise.reject(e))),
         window.OfflineMode ? window.OfflineMode.getAll() : Promise.resolve([]),
       ]);
       if (!orders.length && !pendingOrders.length) {
