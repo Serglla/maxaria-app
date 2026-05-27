@@ -2328,11 +2328,17 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, (req, res) => {
   if (!id) return res.status(400).json({ error: "ID invalido" });
 
   const isAdmin = req.session.level === 99;
-  // Verificar que el pedido existe y (si vendedor) que es suyo o de uno de sus clientes
+  // Verificar que el pedido existe y (si vendedor) que es suyo o de uno de sus clientes.
+  // Traemos los campos necesarios para descuento de stock y movimiento de cuenta corriente.
   const order = isAdmin
-    ? db.prepare("SELECT id, status FROM orders WHERE id = ?").get(id)
+    ? db.prepare(
+        "SELECT id, status, stock_discounted, total, user_id, assigned_vendedor_id," +
+        "       unified_parent_id, is_unified FROM orders WHERE id = ?"
+      ).get(id)
     : db.prepare(
-        "SELECT o.id, o.status FROM orders o JOIN users u ON u.id = o.user_id" +
+        "SELECT o.id, o.status, o.stock_discounted, o.total, o.user_id, o.assigned_vendedor_id," +
+        "       o.unified_parent_id, o.is_unified" +
+        "  FROM orders o JOIN users u ON u.id = o.user_id" +
         "  WHERE o.id = ? AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"
       ).get(id, req.session.userId, req.session.userId);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado o no asignado a vos" });
@@ -2345,11 +2351,16 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, (req, res) => {
   const transferencia = Math.max(0, Number(transferencia_amount) || 0);
 
   const vendedorId = isAdmin
-    ? (db.prepare("SELECT assigned_vendedor_id FROM orders WHERE id = ?").get(id).assigned_vendedor_id || req.session.userId)
+    ? (order.assigned_vendedor_id || req.session.userId)
     : req.session.userId;
   const notesStr = notes ? String(notes).trim().slice(0, 500) : null;
 
   const existing = db.prepare("SELECT id FROM deliveries WHERE order_id = ?").get(id);
+  // Los pedidos individuales absorbidos por un unificado no descuentan stock
+  // (lo hace el padre al ser entregado). Misma regla que en PATCH /api/orders/:id.
+  const skipStock = order.unified_parent_id != null;
+  const prevStatus = order.status;
+
   let deliveryId;
   db.transaction(() => {
     if (existing) {
@@ -2367,6 +2378,34 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, (req, res) => {
     }
     // Marcar el pedido como entregado automaticamente
     db.prepare("UPDATE orders SET status = 'entregado' WHERE id = ?").run(id);
+
+    // Si el pedido aun no estaba entregado y no se descuento stock previamente,
+    // hacer el descuento de stock + debito en cuenta corriente. Misma logica que
+    // PATCH /api/orders/:id status='entregado'. Si la entrega ya existia
+    // (existing != null), entonces prevStatus ya era 'entregado' y stock_discounted = 1,
+    // por lo que esta rama no se ejecuta -> no hay doble descuento al editar.
+    if (prevStatus !== "entregado" && !order.stock_discounted) {
+      if (!skipStock) {
+        const items = db.prepare(
+          "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
+        ).all(id);
+        const updStock = db.prepare(
+          "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?"
+        );
+        for (const it of items) {
+          if (it.product_id) updStock.run(it.quantity, it.product_id);
+        }
+      }
+      // El pedido unificado no genera debito (es solo el consolidado para el admin);
+      // los hijos individuales si generan debito contra la cuenta del cliente final.
+      if (!order.is_unified) {
+        db.prepare(
+          "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+          " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
+        ).run(order.user_id, order.total, "Pedido #" + id, id);
+      }
+      db.prepare("UPDATE orders SET stock_discounted = 1 WHERE id = ?").run(id);
+    }
   })();
 
   res.json({ ok: true, delivery_id: deliveryId, order_id: id });
