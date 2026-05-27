@@ -2220,3 +2220,202 @@ button { font: inherit; cursor: pointer; }
   body > * { display: none !important; }
   #budget-print-area { display: block !important; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+   Pagina de Ventas (/ventas) — layout standalone, reemplaza al overlay
+   que vivia en el catalogo.
+   ───────────────────────────────────────────────────────────────────── */
+.ventas-page {
+  /* Resetea el grid del catalog-page: aca no hay sidebar, es solo topbar + main */
+  display: block;
+  min-height: 100vh;
+  background: #f8fafc;
+}
+.ventas-main {
+  padding: 18px 16px 60px;
+}
+.ventas-wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 18px 22px;
+  box-shadow: 0 4px 14px rgba(15,23,42,.04);
+}
+.ventas-header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.ventas-title { font-size: 16px; font-weight: 700; color: #0f172a; }
+.ventas-number { font-size: 13px; }
+.ventas-spacer { flex: 1; }
+.ventas-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.ventas-toolbar .admin-search { flex: 1; min-width: 180px; }
+.ventas-toolbar .btn-primary { white-space: nowrap; }
+
+.ventas-table-wrap { overflow-x: auto; }
+.ventas-table,
+.ventas-items-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ventas-table thead tr,
+.ventas-items-table thead tr {
+  background: #f1f5f9;
+  text-align: left;
+}
+.ventas-table th,
+.ventas-items-table th { padding: 8px 10px; font-weight: 600; color: #334155; }
+.ventas-table td { padding: 9px 10px; border-bottom: 1px solid #f1f5f9; }
+.ventas-items-table td { padding: 5px 8px; }
+.ventas-row { cursor: pointer; }
+.ventas-row:hover td { background: #f8fafc; }
+
+.ventas-items-section { margin-bottom: 14px; }
+.ventas-items-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.ventas-items-head strong { font-size: 13px; }
+
+.ventas-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+  margin-bottom: 14px;
+}
+.ventas-form-grid label { display: block; font-size: 13px; color: #334155; }
+
+.ventas-footer-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: start;
+}
+.ventas-footer-grid label { display: block; font-size: 13px; color: #334155; }
+.ventas-notes {
+  width: 100%;
+  margin-top: 4px;
+  resize: vertical;
+  font-size: 13px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+}
+.ventas-totals-box {
+  min-width: 240px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+}
+.ventas-totals-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.ventas-pct-input {
+  width: 54px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  text-align: right;
+}
+.ventas-grand-total {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 16px;
+  font-weight: 700;
+}
+.ventas-grand-total span:last-child { color: #d97706; }
+.ventas-action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+  align-items: center;
+}
+
+/* Picker en pagina de ventas (reusa estilos pero queda autocontenido) */
+.ventas-page .picker-panel {
+  background: #fff;
+  border-radius: 12px;
+  max-width: 700px;
+  width: calc(100% - 32px);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 50px rgba(0,0,0,.25);
+  margin: auto;
+}
+.ventas-page .picker-head {
+  padding: 14px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ventas-page .picker-close-x {
+  margin-left: auto;
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: #6b7280;
+}
+.ventas-page .picker-search-wrap {
+  padding: 8px 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.ventas-page .picker-search-wrap input {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.ventas-page .picker-body { flex: 1; overflow-y: auto; }
+.ventas-page .picker-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ventas-page .picker-table thead { position: sticky; top: 0; background: #fff; z-index: 1; }
+.ventas-page .picker-table thead tr { background: #f1f5f9; text-align: left; }
+.ventas-page .picker-table th,
+.ventas-page .picker-table td { padding: 6px 8px; }
+.ventas-page .picker-foot {
+  padding: 12px 20px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Mobile: la pagina de ventas se hace 100% ancho y la grid 1 columna */
+@media (max-width: 720px) {
+  .ventas-main { padding: 12px 8px 60px; }
+  .ventas-wrap { padding: 14px 12px; border-radius: 8px; }
+  .ventas-form-grid { grid-template-columns: 1fr; }
+  .ventas-footer-grid { grid-template-columns: 1fr; }
+  .ventas-totals-box { min-width: 0; width: 100%; box-sizing: border-box; }
+  .ventas-action-row .btn { font-size: 13px; padding: 8px 12px; }
+}

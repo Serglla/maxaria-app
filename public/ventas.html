@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title id="page-title">Ventas</title>
+  <link rel="stylesheet" href="/css/styles.css?v=20260527b" />
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Maxaria" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <script src="/js/pwa.js" defer></script>
+</head>
+<body class="catalog-page ventas-page">
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-brand">
+        <strong id="topbar-brand-name">Ventas</strong>
+        <span class="topbar-sub" id="user-info">…</span>
+      </div>
+
+      <div class="topbar-actions">
+        <a class="btn btn-ghost" href="/catalogo">← Catálogo</a>
+        <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="ventas-main">
+    <div class="ventas-wrap">
+
+      <div class="ventas-header-row">
+        <span class="ventas-title" id="budget-form-title">Presupuestos</span>
+        <span id="budget-form-number" class="muted ventas-number"></span>
+        <span class="ventas-spacer"></span>
+        <span id="budget-status-badge" class="budget-badge budget-badge--borrador" hidden>Borrador</span>
+      </div>
+
+      <!-- Lista de presupuestos (vista inicial) -->
+      <div id="budget-list-view">
+        <div class="ventas-toolbar">
+          <input type="search" id="budget-search" class="admin-search" placeholder="Buscar presupuesto…" autocomplete="off" />
+          <select id="budget-filter-status" class="admin-select">
+            <option value="all">Todos los estados</option>
+            <option value="borrador">Borrador</option>
+            <option value="enviado">Enviado</option>
+            <option value="aceptado">Aceptado</option>
+            <option value="cancelado">Cancelado</option>
+          </select>
+          <button type="button" class="btn btn-primary" id="new-budget-btn">+ Nuevo</button>
+        </div>
+        <div class="ventas-table-wrap">
+          <table class="ventas-table">
+            <thead>
+              <tr>
+                <th>N°</th>
+                <th>Fecha</th>
+                <th>Cliente</th>
+                <th style="text-align:right">Total</th>
+                <th>Estado</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="budgets-tbody">
+              <tr><td colspan="6" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Formulario de presupuesto (vista edición) -->
+      <div id="budget-form-view" hidden>
+        <button type="button" class="btn" id="budget-back-btn" style="font-size:12px;margin-bottom:12px">← Volver a la lista</button>
+        <form id="budget-form" autocomplete="off">
+          <div class="ventas-form-grid">
+            <label>
+              Cliente
+              <select id="budget-client" class="admin-select" style="width:100%;margin-top:4px">
+                <option value="">Consumidor final</option>
+              </select>
+            </label>
+            <label>
+              Forma de pago
+              <select id="budget-payment" class="admin-select" style="width:100%;margin-top:4px">
+                <option value="Efectivo">Efectivo</option>
+                <option value="Transferencia">Transferencia</option>
+                <option value="Cheque">Cheque</option>
+                <option value="Tarjeta de crédito">Tarjeta de crédito</option>
+                <option value="Tarjeta de débito">Tarjeta de débito</option>
+                <option value="Cuenta corriente">Cuenta corriente</option>
+                <option value="Mercado Pago">Mercado Pago</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="ventas-items-section">
+            <div class="ventas-items-head">
+              <strong>Artículos</strong>
+              <button type="button" class="btn btn-primary" id="budget-add-product-btn" style="font-size:12px;padding:5px 12px">+ Agregar productos</button>
+            </div>
+            <div class="ventas-table-wrap">
+              <table class="ventas-items-table">
+                <thead>
+                  <tr>
+                    <th style="width:90px">Código</th>
+                    <th>Artículo</th>
+                    <th style="width:70px;text-align:right">Cant.</th>
+                    <th style="width:110px;text-align:right">Precio unit.</th>
+                    <th style="width:70px;text-align:right">Desc%</th>
+                    <th style="width:120px;text-align:right">Subtotal</th>
+                    <th style="width:36px"></th>
+                  </tr>
+                </thead>
+                <tbody id="budget-items-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="ventas-footer-grid">
+            <label>
+              Observaciones
+              <textarea id="budget-notes" rows="3" class="ventas-notes" placeholder="Notas internas, condiciones, validez…"></textarea>
+            </label>
+            <div class="ventas-totals-box">
+              <div class="ventas-totals-row">
+                <span class="muted">Subtotal</span><span id="budget-subtotal-disp">$ 0</span>
+              </div>
+              <div class="ventas-totals-row">
+                <span class="muted">Descuento</span>
+                <input type="number" id="budget-discount" min="0" max="99" step="0.5" value="0" class="ventas-pct-input" />
+                <span class="muted">%</span>
+                <span style="margin-left:auto" id="budget-discount-disp">— $ 0</span>
+              </div>
+              <div class="ventas-totals-row">
+                <span class="muted">Recargo</span>
+                <input type="number" id="budget-surcharge" min="0" max="99" step="0.5" value="0" class="ventas-pct-input" />
+                <span class="muted">%</span>
+                <span style="margin-left:auto" id="budget-surcharge-disp">+ $ 0</span>
+              </div>
+              <div class="ventas-grand-total">
+                <span>TOTAL</span>
+                <span id="budget-total-disp">$ 0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="ventas-action-row">
+            <button type="button" class="btn" id="budget-print-btn" style="font-size:12px">🖨 Imprimir</button>
+            <button type="button" class="btn" data-status="cancelado" style="font-size:12px;color:#ef4444;border-color:#ef4444" id="budget-cancel-btn">✕ Cancelar</button>
+            <button type="button" class="btn" data-status="aceptado" style="font-size:12px;color:#16a34a;border-color:#16a34a" id="budget-accept-btn">✔ Aceptado</button>
+            <span style="flex:1"></span>
+            <button type="button" class="btn" id="budget-save-draft-btn">💾 Guardar borrador</button>
+            <button type="submit" class="btn btn-primary" id="budget-send-btn">📤 Guardar y enviar</button>
+          </div>
+        </form>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- MODAL: Selección de productos (catálogo) -->
+  <div id="product-picker-modal" class="admin-modal" hidden style="z-index:1300">
+    <div class="picker-panel">
+      <div class="picker-head">
+        <strong>Seleccionar productos</strong>
+        <button type="button" id="picker-close-btn" class="picker-close-x">✕</button>
+      </div>
+      <div class="picker-search-wrap">
+        <input type="search" id="picker-search" placeholder="Buscar por nombre o código…" autocomplete="off" />
+      </div>
+      <div class="picker-body">
+        <table class="picker-table">
+          <thead>
+            <tr>
+              <th style="width:32px"><input type="checkbox" id="picker-check-all" title="Seleccionar todos" /></th>
+              <th style="width:48px"></th>
+              <th>Artículo</th>
+              <th style="width:100px;text-align:right">Precio</th>
+              <th style="width:60px;text-align:right">Stock</th>
+            </tr>
+          </thead>
+          <tbody id="picker-tbody">
+            <tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="picker-foot">
+        <span id="picker-selected-count" class="muted" style="font-size:13px">0 seleccionados</span>
+        <span style="flex:1"></span>
+        <button type="button" class="btn" id="picker-cancel-btn">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="picker-confirm-btn" disabled>Agregar seleccionados</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/ventas.js?v=20260527b"></script>
+</body>
+</html>

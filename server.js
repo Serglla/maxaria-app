@@ -1634,6 +1634,12 @@ app.get("/admin", requireVendedorOrAdmin, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
 
+// ===== Pagina de Ventas / Presupuestos =====
+// Reemplaza al overlay que vivia dentro del catalogo. Admin y vendedores.
+app.get("/ventas", requireVendedorOrAdmin, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "ventas.html"));
+});
+
 // Lista completa de productos (admin ve TODOS, incluso sin stock o inactivos)
 app.get("/api/admin/products", requireAdmin, (req, res) => {
   const sql =
