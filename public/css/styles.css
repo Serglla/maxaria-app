@@ -2163,6 +2163,9 @@ button { font: inherit; cursor: pointer; }
   margin: auto;
 }
 
+/* El picker de productos tiene que aparecer encima del overlay del presupuesto */
+#product-picker-modal { z-index: 1300; }
+
 /* Badges de estado del presupuesto */
 .budget-badge {
   display: inline-block;
