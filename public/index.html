@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Catálogo</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260527h" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260527i" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -38,7 +38,16 @@
       <!-- Nombre del usuario actual (después del buscador, antes de los botones primarios) -->
       <span id="topbar-user" class="topbar-user" title=""></span>
 
-      <!-- Botones secundarios dentro de un menú hamburguesa (☰).
+      <!-- Botones primarios de acción -->
+      <div class="topbar-actions topbar-actions-primary">
+        <button id="venta-btn" class="btn btn-primary" hidden type="button">🧾 Venta</button>
+        <button id="cart-btn" class="btn btn-ghost" type="button">
+          🛒 Carrito <span id="cart-count" class="badge">0</span>
+          <span id="cart-total-top" class="cart-total-top" hidden>$0</span>
+        </button>
+      </div>
+
+      <!-- Menú hamburguesa (☰) al final del topbar.
            Click en el botón despliega el menú; click afuera o ESC lo cierra. -->
       <div class="topbar-menu-wrap topbar-actions-secondary">
         <button id="topbar-menu-btn" class="topbar-menu-btn" type="button"
@@ -72,15 +81,6 @@
             <span class="topbar-menu-item-icon">🚪</span> Salir
           </button>
         </div>
-      </div>
-
-      <!-- Botones primarios de acción: van abajo en mobile (fila 3) -->
-      <div class="topbar-actions topbar-actions-primary">
-        <button id="venta-btn" class="btn btn-primary" hidden type="button">🧾 Venta</button>
-        <button id="cart-btn" class="btn btn-ghost" type="button">
-          🛒 Carrito <span id="cart-count" class="badge">0</span>
-          <span id="cart-total-top" class="cart-total-top" hidden>$0</span>
-        </button>
       </div>
     </div>
   </header>
@@ -194,6 +194,6 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="/js/offline.js"></script>
-  <script src="/js/app.js?v=20260527h"></script>
+  <script src="/js/app.js?v=20260527i"></script>
 </body>
 </html>
