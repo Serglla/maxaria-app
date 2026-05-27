@@ -53,9 +53,10 @@
     clientClose: document.getElementById("client-close"),
     clientBack: document.getElementById("client-back"),
     clientBody: document.getElementById("client-body"),
-    topbarMenuBtn: document.getElementById("topbar-menu-btn"),
-    topbarMenu:    document.getElementById("topbar-menu"),
-    topbarUser:    document.getElementById("topbar-user"),
+    topbarMenuBtn:  document.getElementById("topbar-menu-btn"),
+    topbarMenu:     document.getElementById("topbar-menu"),
+    topbarUser:     document.getElementById("topbar-user"),
+    topbarMenuUserName: document.getElementById("topbar-menu-user-name"),
   };
 
   const LEVEL_NAMES = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
@@ -177,11 +178,16 @@
     if (els.userInfo) els.userInfo.textContent = "";
     // Chip con el nombre del usuario al lado del buscador (solo nombre,
     // sin rol, para que entre cómodo). El rol se ve en el menú/contexto.
+    // En mobile el chip está hidden por CSS; el nombre se ve en el dropdown.
+    const fullName = u.fullName || u.username || "";
+    const nameWithRole = fullName + (u.levelName ? " · " + u.levelName : "");
     if (els.topbarUser) {
-      const name = u.fullName || u.username || "";
-      els.topbarUser.textContent = name;
-      // El title queda con nombre + rol para ver el contexto en hover.
-      els.topbarUser.title = name + (u.levelName ? " · " + u.levelName : "");
+      els.topbarUser.textContent = fullName;
+      els.topbarUser.title = nameWithRole;
+    }
+    // Header del menú dropdown: muestra nombre + rol siempre visible al abrir.
+    if (els.topbarMenuUserName) {
+      els.topbarMenuUserName.textContent = nameWithRole;
     }
     if (els.ordersBtn) {
       els.ordersBtn.textContent = u.level === 99 ? "Todos los pedidos" : "Mis pedidos";

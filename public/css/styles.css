@@ -250,6 +250,32 @@ button { font: inherit; cursor: pointer; }
 }
 .topbar-user:empty { display: none; }
 
+/* Header del menú hamburguesa con nombre del usuario.
+   En mobile el chip .topbar-user se oculta por espacio: este header
+   es donde se identifica al usuario logueado. */
+.topbar-menu-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  margin: -6px -6px 6px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+  border-radius: 10px 10px 0 0;
+  font-size: 13px;
+  color: #1f2937;
+  font-weight: 600;
+}
+.topbar-menu-user-icon { font-size: 18px; }
+.topbar-menu-user-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar-menu-user:empty,
+.topbar-menu-user .topbar-menu-user-name:empty { display: none; }
+
 /* "Ver como" dentro del menú: queda como un row con label + select.
    El select usa estilo normal (fondo blanco, color oscuro). */
 .topbar-menu .level-switcher {
@@ -1061,14 +1087,10 @@ button { font: inherit; cursor: pointer; }
     font-size: 15px;
   }
 
-  /* En mobile el chip del usuario se hace muy compacto (solo icono o nombre cortito) */
-  .topbar-user {
-    padding: 5px 8px;
-    font-size: 12px;
-    max-width: 90px;
-    gap: 4px;
-  }
-  .topbar-user::before { font-size: 12px; }
+  /* En mobile el chip del usuario se oculta del topbar para liberar espacio
+     y que entre todo en una fila (brand + primarios + ☰). El nombre se ve
+     en el header del dropdown del menú hamburguesa cuando se abre. */
+  .topbar-user { display: none; }
 
   /* Botones primarios compactos: emoji + nada de texto largo */
   .topbar-actions-primary { gap: 6px; }
