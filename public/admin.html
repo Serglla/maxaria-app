@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260527k" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -21,25 +21,12 @@
 
   <header class="topbar">
     <div class="topbar-inner">
+      <button id="admin-sidebar-toggle" class="admin-sidebar-toggle" type="button" aria-label="Abrir menú">☰</button>
       <div class="topbar-brand">
         <strong id="topbar-brand-name">Admin</strong>
         <span class="topbar-sub" id="user-info">…</span>
       </div>
-      <nav class="admin-tabs">
-        <button class="tab-btn active" data-tab="productos" type="button">Productos</button>
-        <button class="tab-btn" data-tab="pedidos" type="button">Pedidos</button>
-        <button class="tab-btn" data-tab="usuarios" type="button">Usuarios</button>
-        <button class="tab-btn admin-only" data-tab="vendedores" type="button">Vendedores</button>
-        <button class="tab-btn admin-only" data-tab="actividad" type="button">Actividad</button>
-        <button class="tab-btn admin-only" data-tab="price-lists" type="button">Listas de precios</button>
-        <button class="tab-btn admin-only" data-tab="entregas" type="button">Entregas</button>
-        <button class="tab-btn admin-only" data-tab="proveedores" type="button">Proveedores</button>
-        <button class="tab-btn admin-only" data-tab="compras" type="button">Compras</button>
-        <button class="tab-btn admin-only" data-tab="pagos" type="button">Pagos</button>
-        <button class="tab-btn admin-only" data-tab="cuentas" type="button">Cuentas</button>
-        <button class="tab-btn admin-only" data-tab="config" type="button">Configuración</button>
-        <button class="tab-btn admin-only" data-tab="venta" type="button" id="tab-btn-venta">Venta</button>
-      </nav>
+      <span style="flex:1"></span>
       <div class="topbar-actions">
         <a class="btn btn-ghost" href="/catalogo">Catálogo</a>
         <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
@@ -53,6 +40,84 @@
     <span id="db-warning-text">Tu base de datos está en una ruta efímera y se va a borrar en el próximo deploy.</span>
     <button type="button" id="db-warning-details" class="db-warning-link">Ver detalles</button>
   </div>
+
+  <div class="admin-layout">
+
+    <!-- Sidebar lateral con secciones agrupadas. En mobile se convierte en
+         drawer deslizable desde la izquierda (abre con el botón ☰ del header). -->
+    <aside id="admin-sidebar" class="admin-sidebar">
+      <div class="admin-sidebar-mobile-head">
+        <strong>Menú</strong>
+        <button id="admin-sidebar-close" class="admin-sidebar-close" type="button" aria-label="Cerrar">✕</button>
+      </div>
+      <nav class="admin-sidebar-nav admin-tabs">
+        <div class="admin-sidebar-group">
+          <div class="admin-sidebar-group-title">Catálogo</div>
+          <button class="tab-btn admin-sidebar-item active" data-tab="productos" type="button">
+            <span class="admin-sidebar-item-icon">📦</span>Productos
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="price-lists" type="button">
+            <span class="admin-sidebar-item-icon">🏷️</span>Listas de precios
+          </button>
+        </div>
+
+        <div class="admin-sidebar-group">
+          <div class="admin-sidebar-group-title">Operaciones</div>
+          <button class="tab-btn admin-sidebar-item" data-tab="pedidos" type="button">
+            <span class="admin-sidebar-item-icon">📋</span>Pedidos
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="entregas" type="button">
+            <span class="admin-sidebar-item-icon">🚚</span>Entregas
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="venta" type="button" id="tab-btn-venta">
+            <span class="admin-sidebar-item-icon">🧾</span>Venta
+          </button>
+        </div>
+
+        <div class="admin-sidebar-group">
+          <div class="admin-sidebar-group-title">Personas</div>
+          <button class="tab-btn admin-sidebar-item" data-tab="usuarios" type="button">
+            <span class="admin-sidebar-item-icon">👥</span>Usuarios
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="vendedores" type="button">
+            <span class="admin-sidebar-item-icon">🧑‍💼</span>Vendedores
+          </button>
+        </div>
+
+        <div class="admin-sidebar-group">
+          <div class="admin-sidebar-group-title">Reportes</div>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="actividad" type="button">
+            <span class="admin-sidebar-item-icon">📊</span>Actividad
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="pagos" type="button">
+            <span class="admin-sidebar-item-icon">💵</span>Pagos
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="cuentas" type="button">
+            <span class="admin-sidebar-item-icon">📈</span>Cuentas
+          </button>
+        </div>
+
+        <div class="admin-sidebar-group">
+          <div class="admin-sidebar-group-title">Compras</div>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="proveedores" type="button">
+            <span class="admin-sidebar-item-icon">🏪</span>Proveedores
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="compras" type="button">
+            <span class="admin-sidebar-item-icon">📥</span>Compras
+          </button>
+        </div>
+
+        <div class="admin-sidebar-group">
+          <div class="admin-sidebar-group-title">Sistema</div>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="config" type="button">
+            <span class="admin-sidebar-item-icon">⚙️</span>Configuración
+          </button>
+        </div>
+      </nav>
+    </aside>
+
+    <!-- Fondo oscuro para el drawer en mobile -->
+    <div id="admin-sidebar-backdrop" class="admin-sidebar-backdrop" hidden></div>
 
   <main class="admin-main">
 
@@ -552,6 +617,8 @@
     </section>
 
   </main>
+
+  </div><!-- /admin-layout -->
 
   <!-- Modal imagen de producto -->
   <div class="admin-modal" id="img-modal" hidden>
@@ -1152,6 +1219,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260526d"></script>
+  <script src="/js/admin.js?v=20260527k"></script>
 </body>
 </html>

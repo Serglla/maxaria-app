@@ -31,6 +31,11 @@
     logoutBtn: document.getElementById("logout-btn"),
     tabBtns: document.querySelectorAll(".tab-btn"),
     panels: document.querySelectorAll(".tab-panel"),
+    // Sidebar (mobile drawer)
+    sidebarEl: document.getElementById("admin-sidebar"),
+    sidebarToggle: document.getElementById("admin-sidebar-toggle"),
+    sidebarClose: document.getElementById("admin-sidebar-close"),
+    sidebarBackdrop: document.getElementById("admin-sidebar-backdrop"),
 
     // Productos
     prodSearch: document.getElementById("prod-search"),
@@ -467,6 +472,26 @@
     });
   }
 
+  // ---------- Sidebar drawer (mobile) ----------
+  function openAdminSidebar() {
+    if (!els.sidebarEl) return;
+    els.sidebarEl.classList.add("open");
+    if (els.sidebarBackdrop) els.sidebarBackdrop.hidden = false;
+  }
+  function closeAdminSidebar() {
+    if (!els.sidebarEl) return;
+    els.sidebarEl.classList.remove("open");
+    if (els.sidebarBackdrop) els.sidebarBackdrop.hidden = true;
+  }
+  if (els.sidebarToggle)   els.sidebarToggle.addEventListener("click", openAdminSidebar);
+  if (els.sidebarClose)    els.sidebarClose.addEventListener("click", closeAdminSidebar);
+  if (els.sidebarBackdrop) els.sidebarBackdrop.addEventListener("click", closeAdminSidebar);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && els.sidebarEl && els.sidebarEl.classList.contains("open")) {
+      closeAdminSidebar();
+    }
+  });
+
   // ---------- tabs ----------
   els.tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -476,6 +501,8 @@
       // Sacar el focus para que el browser no muestre el outline azul
       // sobre el tab anterior (el "doble seleccionado" visual).
       try { btn.blur(); } catch (_) {}
+      // En mobile, cerrar el drawer del sidebar al elegir una sección
+      closeAdminSidebar();
       els.panels.forEach((p) => { p.hidden = p.id !== "tab-" + tab; });
       if (tab === "pedidos" && !state.ordersLoaded) loadOrders();
       if (tab === "config" && !state.settingsLoaded) loadSettings();

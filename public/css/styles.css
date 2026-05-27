@@ -1165,15 +1165,106 @@ button { font: inherit; cursor: pointer; }
 .admin-page .topbar-sub { font-size: 11px; opacity: .85; }
 .admin-page .btn { padding: 5px 10px; font-size: 12.5px; }
 
-.admin-tabs {
+/* ─────────── Layout admin: sidebar lateral + main ─────────── */
+.admin-layout {
   display: flex;
-  gap: 2px;
-  flex: 1;
-  justify-content: center;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  align-items: stretch;
+  min-height: calc(100vh - 48px);
+}
+
+.admin-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: #1e3a8a;
+  color: #c7d2fe;
+  padding: 14px 0 24px;
+  position: sticky;
+  top: 48px;
+  height: calc(100vh - 48px);
+  overflow-y: auto;
   scrollbar-width: thin;
 }
+.admin-sidebar-mobile-head { display: none; }
+.admin-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  /* Anular las reglas de .admin-tabs (horizontal con scroll) que se mantienen
+     por compatibilidad con el JS legacy. Acá el nav es columna vertical. */
+  gap: 0;
+  flex: none;
+  justify-content: flex-start;
+  overflow: visible;
+}
+.admin-sidebar-group {
+  padding: 0 10px;
+  margin-bottom: 12px;
+}
+.admin-sidebar-group-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: rgba(199, 210, 254, .55);
+  padding: 8px 12px 4px;
+}
+.admin-sidebar-item {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px !important;
+  border-radius: 6px;
+  text-align: left;
+  background: transparent;
+  color: #c7d2fe;
+  font-size: 13.5px !important;
+  font-weight: 500;
+  border: 0;
+  cursor: pointer;
+  margin-bottom: 1px;
+  white-space: nowrap;
+  transition: background .12s ease, color .12s ease;
+}
+.admin-sidebar-item:hover:not(:disabled):not(.active) {
+  background: rgba(255,255,255,.08);
+  color: #fff;
+}
+.admin-sidebar-item.active {
+  background: #fbbf24;
+  color: #111827;
+  font-weight: 700;
+}
+.admin-sidebar-item-icon { font-size: 16px; flex-shrink: 0; width: 20px; text-align: center; }
+.admin-sidebar-item:disabled { opacity: .35; cursor: not-allowed; }
+.admin-sidebar-item:focus { outline: none; }
+.admin-sidebar-item:focus-visible { outline: 2px solid #fbbf2488; outline-offset: -2px; }
+
+/* Botón ☰ del topbar para abrir el sidebar en mobile. Oculto en desktop. */
+.admin-sidebar-toggle {
+  display: none;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,.25);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Backdrop del drawer en mobile (oculto en desktop) */
+.admin-sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.4);
+  z-index: 35;
+}
+.admin-sidebar-backdrop:not([hidden]) { display: block; }
+
+/* Reglas legacy de .admin-tabs / .tab-btn que NO son sidebar-items:
+   se mantienen por si algún código viejo las usa pero el sidebar usa
+   las reglas .admin-sidebar-item. La nav del sidebar ya anula display/flex. */
 .tab-btn {
   background: transparent;
   color: #c7d2fe;
@@ -1186,28 +1277,65 @@ button { font: inherit; cursor: pointer; }
   cursor: pointer;
   transition: background .15s ease, color .15s ease;
 }
-/* Hover/focus/active solo se aplican a tabs NO seleccionados, asi el
-   tab activo nunca queda "doble destacado" (amarillo + halo azul). */
 .tab-btn:hover:not(:disabled):not(.active) { background: rgba(255,255,255,.1); color: #fff; }
 .tab-btn:active:not(:disabled):not(.active) { background: rgba(255,255,255,.15); }
-.tab-btn.active {
-  background: #fbbf24;
-  color: #111827;
-  font-weight: 700;
-}
+.tab-btn.active { background: #fbbf24; color: #111827; font-weight: 700; }
 .tab-btn:disabled { opacity: .35; cursor: not-allowed; }
-/* Quitar el outline azul del browser al hacer click con mouse. Lo dejamos
-   visible solo con focus-visible (navegacion por teclado) para no perder
-   accesibilidad. */
 .tab-btn:focus { outline: none; }
 .tab-btn:focus:not(:focus-visible) { background: transparent; }
 .tab-btn.active:focus:not(:focus-visible) { background: #fbbf24; }
 .tab-btn:focus-visible { outline: 2px solid #fbbf2488; outline-offset: 2px; }
 
 .admin-main {
+  flex: 1;
+  min-width: 0;
   padding: 16px 20px 60px;
   max-width: 1500px;
   margin: 0 auto;
+}
+
+/* ─────────── Sidebar admin en mobile: pasa a drawer ─────────── */
+@media (max-width: 900px) {
+  .admin-sidebar-toggle { display: inline-flex; align-items: center; justify-content: center; }
+  .admin-layout { display: block; }
+  .admin-main { margin: 0; padding: 14px 12px 60px; }
+  .admin-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    height: 100vh;
+    width: 260px;
+    max-width: 85vw;
+    z-index: 40;
+    box-shadow: 8px 0 24px rgba(0,0,0,.25);
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    padding-top: 0;
+  }
+  .admin-sidebar.open { transform: translateX(0); }
+  .admin-sidebar-mobile-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255,255,255,.12);
+    margin-bottom: 8px;
+  }
+  .admin-sidebar-mobile-head strong {
+    color: #fff;
+    font-size: 14px;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+  }
+  .admin-sidebar-close {
+    background: transparent;
+    border: 0;
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+  }
 }
 
 .admin-toolbar {
@@ -1601,8 +1729,9 @@ button { font: inherit; cursor: pointer; }
 }
 
 @media (max-width: 720px) {
-  .admin-tabs { order: 3; flex: 1 0 100%; justify-content: flex-start; overflow-x: auto; }
-  .admin-page .topbar-inner { flex-wrap: wrap; height: auto; padding: 10px 16px; }
+  /* En mobile el topbar admin se mantiene en una sola fila (sin tabs adentro
+     porque ahora están en el sidebar drawer). */
+  .admin-page .topbar-inner { padding: 8px 14px; }
   .admin-table { min-width: 900px; font-size: 12px; }
 }
 
