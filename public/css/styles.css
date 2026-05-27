@@ -1031,10 +1031,14 @@ button { font: inherit; cursor: pointer; }
   .sidebar-title { display: none; }
   .cat-toggle-btn { display: inline-flex; }
 
-  /* En mobile mantenemos la fila única, achicamos elementos para que entren */
+  /* En mobile el topbar pasa a 2 filas: fila 1 con todo (brand, user,
+     primarios, menú) y fila 2 con el buscador a ancho completo, que
+     queda muy chico si se queda apretado en la fila 1. */
   .topbar-inner {
     padding: 8px 10px;
     gap: 6px;
+    flex-wrap: wrap;
+    row-gap: 8px;
   }
   .topbar-brand strong { font-size: 14px; }
   .topbar-brand .topbar-sub { display: none; }
@@ -1046,11 +1050,15 @@ button { font: inherit; cursor: pointer; }
   /* Dropdown del menú al ancho de la pantalla */
   .topbar-menu { min-width: 240px; max-width: calc(100vw - 24px); }
 
-  /* Buscador más compacto */
-  .topbar-search { min-width: 80px; }
+  /* Fila 2: buscador a ancho completo */
+  .topbar-search {
+    flex: 1 0 100%;
+    order: 10;
+    min-width: 0;
+  }
   .topbar-search input {
-    padding: 7px 10px;
-    font-size: 14px;
+    padding: 10px 12px;
+    font-size: 15px;
   }
 
   /* En mobile el chip del usuario se hace muy compacto (solo icono o nombre cortito) */
