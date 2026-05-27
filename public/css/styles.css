@@ -219,9 +219,36 @@ button { font: inherit; cursor: pointer; }
   box-sizing: border-box;
 }
 .topbar-menu-item:hover { background: #f3f4f6; }
+/* El atributo `hidden` tiene que pisar el `display: flex` del item, sino
+   los items hidden seguirian visibles. */
+.topbar-menu-item[hidden] { display: none; }
 .topbar-menu-item-icon { font-size: 16px; line-height: 1; width: 20px; text-align: center; }
 .topbar-menu-item-danger { color: #dc2626; }
 .topbar-menu-item-danger:hover { background: #fee2e2; }
+
+/* Nombre del usuario en el topbar (al lado del buscador) */
+.topbar-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 12px;
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topbar-user::before {
+  content: "👤";
+  font-size: 14px;
+}
+.topbar-user:empty { display: none; }
 
 /* "Ver como" dentro del menú: queda como un row con label + select.
    El select usa estilo normal (fondo blanco, color oscuro). */
@@ -1025,6 +1052,15 @@ button { font: inherit; cursor: pointer; }
     padding: 7px 10px;
     font-size: 14px;
   }
+
+  /* En mobile el chip del usuario se hace muy compacto (solo icono o nombre cortito) */
+  .topbar-user {
+    padding: 5px 8px;
+    font-size: 12px;
+    max-width: 90px;
+    gap: 4px;
+  }
+  .topbar-user::before { font-size: 12px; }
 
   /* Botones primarios compactos: emoji + nada de texto largo */
   .topbar-actions-primary { gap: 6px; }

@@ -55,6 +55,7 @@
     clientBody: document.getElementById("client-body"),
     topbarMenuBtn: document.getElementById("topbar-menu-btn"),
     topbarMenu:    document.getElementById("topbar-menu"),
+    topbarUser:    document.getElementById("topbar-user"),
   };
 
   const LEVEL_NAMES = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
@@ -174,6 +175,14 @@
     // El sub "Administrador - Administrador (viendo como VIP)" se ocultó del
     // topbar (decisión 27 may 2026): ya se ve el contexto en otros lugares.
     if (els.userInfo) els.userInfo.textContent = "";
+    // Chip con el nombre del usuario al lado del buscador (solo nombre,
+    // sin rol, para que entre cómodo). El rol se ve en el menú/contexto.
+    if (els.topbarUser) {
+      const name = u.fullName || u.username || "";
+      els.topbarUser.textContent = name;
+      // El title queda con nombre + rol para ver el contexto en hover.
+      els.topbarUser.title = name + (u.levelName ? " · " + u.levelName : "");
+    }
     if (els.ordersBtn) {
       els.ordersBtn.textContent = u.level === 99 ? "Todos los pedidos" : "Mis pedidos";
     }
