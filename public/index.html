@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Catálogo</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260527b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260527c" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -35,9 +35,9 @@
         />
       </div>
 
-      <div class="topbar-actions">
+      <!-- Botones secundarios: van junto al brand en la fila 1 (mobile) -->
+      <div class="topbar-actions topbar-actions-secondary">
         <a id="admin-link" class="btn btn-ghost" href="/admin" hidden>Admin</a>
-        <button id="venta-btn" class="btn btn-primary" hidden type="button" style="font-size:13px">🧾 Venta</button>
         <label id="level-switcher" class="level-switcher" hidden>
           Ver como:
           <select id="level-select" class="level-select" aria-label="Ver lista de precios como">
@@ -50,11 +50,16 @@
         <button id="price-changes-btn" class="btn btn-ghost" type="button" hidden>Ver cambios</button>
         <button id="orders-btn" class="btn btn-ghost" type="button">Mis pedidos</button>
         <button id="earnings-btn" class="btn btn-ghost" type="button" hidden>Mis ganancias</button>
+        <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
+      </div>
+
+      <!-- Botones primarios de acción: van abajo en mobile (fila 3) -->
+      <div class="topbar-actions topbar-actions-primary">
+        <button id="venta-btn" class="btn btn-primary" hidden type="button">🧾 Venta</button>
         <button id="cart-btn" class="btn btn-ghost" type="button">
-          Carrito <span id="cart-count" class="badge">0</span>
+          🛒 Carrito <span id="cart-count" class="badge">0</span>
           <span id="cart-total-top" class="cart-total-top" hidden>$0</span>
         </button>
-        <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
       </div>
     </div>
   </header>
@@ -168,6 +173,6 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="/js/offline.js"></script>
-  <script src="/js/app.js?v=20260527b"></script>
+  <script src="/js/app.js?v=20260527c"></script>
 </body>
 </html>

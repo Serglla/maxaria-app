@@ -886,11 +886,11 @@ button { font: inherit; cursor: pointer; }
   .sidebar-title { display: none; }
   .cat-toggle-btn { display: inline-flex; }
 
-  /* En mobile:
-     - Brand + boton Salir en la primera fila (Salir queda anclado a la derecha).
-     - Buscador en una segunda fila ocupando todo el ancho.
-     - Resto de botones de accion en una tercera fila con scroll horizontal
-       si no entran todos (mejor que esconder o que se corten visualmente). */
+  /* En mobile la topbar se distribuye en 3 filas:
+       Fila 1: brand + botones secundarios (Mis pedidos, Mis ganancias, etc + Salir)
+       Fila 2: buscador (ancho completo)
+       Fila 3: botones primarios (Venta + Carrito) ancho completo, grandes
+     Los secundarios usan scroll horizontal si no entran al lado del brand. */
   .topbar-inner {
     flex-wrap: wrap;
     height: auto;
@@ -899,8 +899,33 @@ button { font: inherit; cursor: pointer; }
     row-gap: 8px;
   }
   .topbar-brand { flex-shrink: 0; order: 1; }
-  .topbar-search {
+  .topbar-brand .topbar-sub { display: none; }
+
+  /* Fila 1: botones secundarios al lado del brand, scrollables si no entran */
+  .topbar-actions-secondary {
     order: 2;
+    flex: 1;
+    min-width: 0;
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    justify-content: flex-end;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbar-actions-secondary::-webkit-scrollbar { display: none; }
+  .topbar-actions-secondary > * { flex-shrink: 0; }
+  .topbar-actions-secondary .btn {
+    white-space: nowrap;
+    font-size: 12px;
+    padding: 5px 9px;
+  }
+
+  /* Fila 2: buscador */
+  .topbar-search {
+    order: 3;
     flex: 1 0 100%;
     max-width: none;
   }
@@ -908,21 +933,47 @@ button { font: inherit; cursor: pointer; }
     padding: 10px 12px;
     font-size: 15px;
   }
-  .topbar-brand .topbar-sub { display: none; }
 
-  .topbar-actions {
-    order: 3;
+  /* Fila 3: acciones primarias (Venta + Carrito) bien grandes y centrados */
+  .topbar-actions-primary {
+    order: 4;
     flex: 1 0 100%;
+    display: flex;
+    gap: 10px;
+    align-items: stretch;
     margin-left: 0;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 2px;
-    /* Oculta scrollbar visual: en mobile no aporta y come 6-8px de alto */
-    scrollbar-width: none;
   }
-  .topbar-actions::-webkit-scrollbar { display: none; }
-  .topbar-actions > * { flex-shrink: 0; }
-  .topbar-actions .btn { white-space: nowrap; }
+  .topbar-actions-primary .btn {
+    flex: 1;
+    font-size: 15px;
+    padding: 11px 14px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .topbar-actions-primary #cart-btn { gap: 6px; }
+  .topbar-actions-primary .badge {
+    background: rgba(255,255,255,.25);
+    color: #fff;
+  }
+  .topbar-actions-primary .cart-total-top {
+    font-size: 14px;
+    padding: 2px 8px;
+  }
+  /* En mobile el carrito (ghost por default) toma el look primary
+     para que los dos botones de la fila 3 se vean uniformes */
+  .topbar-actions-primary #cart-btn {
+    background: #2563eb;
+    color: #fff;
+    border-color: #2563eb;
+  }
+  .topbar-actions-primary #cart-btn:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+  }
 
   /* Drawer ocupa el ancho completo de la pantalla (left+right en lugar de width
      evita que la regla 'width: 360px' base siga ganando por specificity) */
