@@ -29,8 +29,36 @@ if (fs.existsSync(ENV_PATH)) {
 }
 
 const PORT = Number(process.env.PORT) || 3000;
-const SESSION_SECRET = process.env.SESSION_SECRET || "dev-secret-cambiame";
 const NODE_ENV = process.env.NODE_ENV || "development";
+
+// SESSION_SECRET: requerido en produccion. Si no esta seteado o es uno de los
+// valores de ejemplo conocidos, abortamos el arranque para evitar que el server
+// firme cookies con un secreto predecible (cualquiera podria forjar sesiones).
+// En desarrollo permitimos un fallback pero mostramos warning bien visible.
+const INSECURE_SECRETS = new Set([
+  "dev-secret-cambiame",
+  "cambiar-esto-por-algo-largo-y-aleatorio",
+]);
+let SESSION_SECRET = process.env.SESSION_SECRET;
+if (!SESSION_SECRET || INSECURE_SECRETS.has(SESSION_SECRET)) {
+  if (NODE_ENV === "production") {
+    console.error("");
+    console.error("!".repeat(60));
+    console.error("!! FATAL: SESSION_SECRET no configurada o con valor de ejemplo.");
+    console.error("!! En produccion es obligatoria una clave aleatoria fuerte.");
+    console.error("!! Genera una con:");
+    console.error("!!   node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"");
+    console.error("!! y configurala como variable de entorno SESSION_SECRET.");
+    console.error("!".repeat(60));
+    console.error("");
+    process.exit(1);
+  }
+  console.warn("");
+  console.warn("[server] WARNING: SESSION_SECRET no configurada — usando fallback de desarrollo.");
+  console.warn("[server] No deployes asi: en produccion el server abortara.");
+  console.warn("");
+  SESSION_SECRET = "dev-secret-cambiame";
+}
 const WHATSAPP_NUMBER = (process.env.WHATSAPP_NUMBER || "").replace(/[^0-9]/g, "");
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "maxaria.db");
