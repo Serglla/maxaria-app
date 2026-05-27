@@ -510,7 +510,13 @@
         if (!state.usersLoaded) loadUsers();
         else refreshUserSelects();
       }
-      if (tab === "vendedores" && !state.vendedoresLoaded) loadVendedores();
+      if (tab === "vendedores") {
+        // loadOrders también carga vendedores y setea vendedoresLoaded=true
+        // sin renderizar; por eso si ya hay datos llamamos a renderVendedores
+        // explícitamente (sino el tbody queda con "Cargando…" inicial).
+        if (!state.vendedoresLoaded) loadVendedores();
+        else renderVendedores();
+      }
       if (tab === "actividad") loadActividad(); // siempre recargar (datos cambian con cada pedido)
       if (tab === "price-lists") {
         if (!state.priceListsLoaded) loadPriceLists();
