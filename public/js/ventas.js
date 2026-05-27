@@ -288,14 +288,14 @@
   async function vPopulateClients() {
     if (!vEls.client) return;
     try {
-      // /api/admin/users requiere admin. Si es vendedor (level 5), no devuelve
-      // la lista; en ese caso el select queda solo con "Consumidor final".
-      const r = await fetch("/api/admin/users");
+      // /api/clients ya devuelve solo level 1-4 activos, y respeta el filtro
+      // para vendedor tercerizado (solo sus clientes asignados). Tanto admin
+      // como vendedores pueden consultarlo desde el rework de mayo 2026.
+      const r = await fetch("/api/clients");
       if (!r.ok) return;
-      const users = await r.json();
-      const clients = (users || []).filter((u) => u.level >= 1 && u.level <= 4 && u.active);
+      const clients = await r.json();
       vEls.client.innerHTML = '<option value="">Consumidor final</option>' +
-        clients.map((u) => '<option value="' + u.id + '">' + vEsc(u.full_name || u.username) + '</option>').join("");
+        (clients || []).map((u) => '<option value="' + u.id + '">' + vEsc(u.full_name || u.username) + '</option>').join("");
     } catch (_) {}
   }
 

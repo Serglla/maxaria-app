@@ -731,17 +731,23 @@ app.get("/api/me", requireLogin, (req, res) => {
 // Lista de clientes (level 1-4) para que un vendedor (level 5) pueda elegir
 // a quién está atendiendo. Solo accesible por vendedores.
 app.get("/api/clients", requireLogin, (req, res) => {
-  if (req.session.level !== 5) return res.status(403).json({ error: "Solo vendedores" });
-  // Si el vendedor es tercerizado, solo ve los clientes que tiene asignados.
-  // Los vendedores propios siguen viendo todos los clientes activos.
-  const me = db.prepare("SELECT is_tercerizado FROM users WHERE id = ?").get(req.session.userId) || {};
+  const level = req.session.level;
+  if (level !== 5 && level !== 99) {
+    return res.status(403).json({ error: "Solo vendedores o admin" });
+  }
+  // - Admin: ve todos los clientes activos (lo usa /ventas para armar presupuestos).
+  // - Vendedor propio: ve todos los clientes activos.
+  // - Vendedor tercerizado: solo los clientes que tiene asignados.
   let sql =
     "SELECT id, username, full_name, level FROM users" +
     "  WHERE level IN (1,2,3,4) AND active = 1";
   const params = [];
-  if (Number(me.is_tercerizado) === 1) {
-    sql += " AND assigned_vendedor_id = ?";
-    params.push(req.session.userId);
+  if (level === 5) {
+    const me = db.prepare("SELECT is_tercerizado FROM users WHERE id = ?").get(req.session.userId) || {};
+    if (Number(me.is_tercerizado) === 1) {
+      sql += " AND assigned_vendedor_id = ?";
+      params.push(req.session.userId);
+    }
   }
   sql += " ORDER BY full_name, username";
   const rows = db.prepare(sql).all(...params);
