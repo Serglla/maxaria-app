@@ -236,6 +236,55 @@ try { db.exec("ALTER TABLE order_items ADD COLUMN vendedor_cost_unit INTEGER"); 
 try { db.exec("ALTER TABLE orders ADD COLUMN is_unified INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 try { db.exec("ALTER TABLE orders ADD COLUMN unified_parent_id INTEGER REFERENCES orders(id)"); } catch (_) {}
 
+// Migracion: Presupuestos / Ventas.
+// - budgets: cabecera del presupuesto (cliente, vendedor, totales, estado).
+// - budget_items: lineas del presupuesto (producto, cantidad, precio, descuento).
+// El numero de presupuesto se genera automaticamente con formato NNNN-XXXXXXXX.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS budgets (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  number TEXT UNIQUE NOT NULL," +
+  "  client_id INTEGER REFERENCES users(id)," +
+  "  client_name TEXT NOT NULL DEFAULT 'Consumidor final'," +
+  "  vendedor_id INTEGER REFERENCES users(id)," +
+  "  payment_method TEXT NOT NULL DEFAULT 'Efectivo'," +
+  "  currency TEXT NOT NULL DEFAULT 'ARS'," +
+  "  discount_percent REAL NOT NULL DEFAULT 0," +
+  "  surcharge_percent REAL NOT NULL DEFAULT 0," +
+  "  subtotal INTEGER NOT NULL DEFAULT 0," +
+  "  total INTEGER NOT NULL DEFAULT 0," +
+  "  notes TEXT," +
+  "  status TEXT NOT NULL DEFAULT 'borrador'," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))," +
+  "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_budgets_client   ON budgets(client_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_budgets_vendedor ON budgets(vendedor_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_budgets_status   ON budgets(status);" +
+  "CREATE TABLE IF NOT EXISTS budget_items (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  budget_id INTEGER NOT NULL REFERENCES budgets(id) ON DELETE CASCADE," +
+  "  product_id INTEGER REFERENCES products(id)," +
+  "  product_code TEXT NOT NULL DEFAULT ''," +
+  "  product_name TEXT NOT NULL DEFAULT ''," +
+  "  quantity REAL NOT NULL DEFAULT 1," +
+  "  unit_price INTEGER NOT NULL DEFAULT 0," +
+  "  discount_percent REAL NOT NULL DEFAULT 0," +
+  "  subtotal INTEGER NOT NULL DEFAULT 0" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_bi_budget ON budget_items(budget_id);"
+);
+
+// Helper: genera el proximo numero de presupuesto en formato 0001-00000001.
+function nextBudgetNumber() {
+  const row = db.prepare(
+    "SELECT number FROM budgets ORDER BY id DESC LIMIT 1"
+  ).get();
+  if (!row) return "0001-00000001";
+  const seq = parseInt(row.number.split("-")[1] || "0", 10) + 1;
+  return "0001-" + String(seq).padStart(8, "0");
+}
+
 function getSetting(key, fallback) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   if (row && row.value != null) return row.value;
@@ -3122,6 +3171,190 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
      .text(totalProds + " productos · Generado " + hoy, MX, PH - 24, { width: UW, align: "center" });
 
   try { doc.end(); } catch (_) {}
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Presupuestos / Ventas
+// Accesibles para admin (99) y vendedores (5). Los vendedores solo ven sus
+// propios presupuestos; el admin ve todos.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Helper: verifica que el usuario tenga permiso sobre un presupuesto
+function canAccessBudget(user, budget) {
+  if (Number(user.level) === 99) return true;
+  return Number(budget.vendedor_id) === Number(user.id);
+}
+
+// GET /api/budgets — lista (filtrada por vendedor si level 5)
+app.get("/api/budgets", requireVendedorOrAdmin, (req, res) => {
+  const u = req.session.user;
+  const isAdmin = Number(u.level) === 99;
+  const rows = db.prepare(
+    "SELECT b.id, b.number, b.client_name, b.payment_method, b.currency," +
+    "       b.discount_percent, b.surcharge_percent, b.subtotal, b.total," +
+    "       b.status, b.notes, b.created_at, b.updated_at," +
+    "       v.full_name AS vendedor_name," +
+    "       u.full_name AS client_full_name" +
+    "  FROM budgets b" +
+    "  LEFT JOIN users v ON v.id = b.vendedor_id" +
+    "  LEFT JOIN users u ON u.id = b.client_id" +
+    (isAdmin ? "" : "  WHERE b.vendedor_id = @uid") +
+    "  ORDER BY b.id DESC"
+  ).all(isAdmin ? {} : { uid: u.id });
+  res.json(rows);
+});
+
+// GET /api/budgets/:id — detalle con items
+app.get("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
+  const u = req.session.user;
+  const budget = db.prepare(
+    "SELECT b.*, v.full_name AS vendedor_name, cl.full_name AS client_full_name" +
+    "  FROM budgets b" +
+    "  LEFT JOIN users v ON v.id = b.vendedor_id" +
+    "  LEFT JOIN users cl ON cl.id = b.client_id" +
+    "  WHERE b.id = ?"
+  ).get(req.params.id);
+  if (!budget) return res.status(404).json({ error: "No encontrado" });
+  if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
+  const items = db.prepare(
+    "SELECT bi.*, p.image_url FROM budget_items bi" +
+    "  LEFT JOIN products p ON p.id = bi.product_id" +
+    "  WHERE bi.budget_id = ? ORDER BY bi.id"
+  ).all(budget.id);
+  res.json({ ...budget, items });
+});
+
+// POST /api/budgets — crear presupuesto
+app.post("/api/budgets", requireVendedorOrAdmin, (req, res) => {
+  const u = req.session.user;
+  const b = req.body || {};
+  const vendedorId = Number(u.level) === 99 ? (b.vendedor_id || u.id) : u.id;
+  const clientId = b.client_id ? Number(b.client_id) : null;
+  const clientName = b.client_name || "Consumidor final";
+  const payMethod = b.payment_method || "Efectivo";
+  const currency = b.currency || "ARS";
+  const discountPct = Number(b.discount_percent) || 0;
+  const surchargePct = Number(b.surcharge_percent) || 0;
+  const notes = b.notes || null;
+  const items = Array.isArray(b.items) ? b.items : [];
+
+  // Calcular totales
+  let subtotal = 0;
+  const computedItems = items.map((it) => {
+    const qty = Number(it.quantity) || 1;
+    const price = Number(it.unit_price) || 0;
+    const disc = Number(it.discount_percent) || 0;
+    const sub = Math.round(qty * price * (1 - disc / 100));
+    subtotal += sub;
+    return { ...it, quantity: qty, unit_price: price, discount_percent: disc, subtotal: sub };
+  });
+  const afterDiscount = Math.round(subtotal * (1 - discountPct / 100));
+  const total = Math.round(afterDiscount * (1 + surchargePct / 100));
+  const number = nextBudgetNumber();
+
+  const insertBudget = db.transaction(() => {
+    const r = db.prepare(
+      "INSERT INTO budgets (number, client_id, client_name, vendedor_id, payment_method, currency," +
+      "  discount_percent, surcharge_percent, subtotal, total, notes, status)" +
+      "  VALUES (?,?,?,?,?,?,?,?,?,?,?,'borrador')"
+    ).run(number, clientId, clientName, vendedorId, payMethod, currency,
+          discountPct, surchargePct, subtotal, total, notes);
+    const bid = r.lastInsertRowid;
+    const insItem = db.prepare(
+      "INSERT INTO budget_items (budget_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +
+      "  VALUES (?,?,?,?,?,?,?,?)"
+    );
+    for (const it of computedItems) {
+      insItem.run(bid, it.product_id || null, it.product_code || "", it.product_name || "",
+                  it.quantity, it.unit_price, it.discount_percent, it.subtotal);
+    }
+    return bid;
+  });
+
+  try {
+    const bid = insertBudget();
+    res.json({ ok: true, id: bid, number });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/budgets/:id — actualizar presupuesto completo
+app.put("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
+  const u = req.session.user;
+  const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
+  if (!budget) return res.status(404).json({ error: "No encontrado" });
+  if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
+
+  const b = req.body || {};
+  const clientId = b.client_id ? Number(b.client_id) : null;
+  const clientName = b.client_name || "Consumidor final";
+  const payMethod = b.payment_method || "Efectivo";
+  const currency = b.currency || "ARS";
+  const discountPct = Number(b.discount_percent) || 0;
+  const surchargePct = Number(b.surcharge_percent) || 0;
+  const notes = b.notes || null;
+  const items = Array.isArray(b.items) ? b.items : [];
+
+  let subtotal = 0;
+  const computedItems = items.map((it) => {
+    const qty = Number(it.quantity) || 1;
+    const price = Number(it.unit_price) || 0;
+    const disc = Number(it.discount_percent) || 0;
+    const sub = Math.round(qty * price * (1 - disc / 100));
+    subtotal += sub;
+    return { ...it, quantity: qty, unit_price: price, discount_percent: disc, subtotal: sub };
+  });
+  const afterDiscount = Math.round(subtotal * (1 - discountPct / 100));
+  const total = Math.round(afterDiscount * (1 + surchargePct / 100));
+
+  const updateBudget = db.transaction(() => {
+    db.prepare(
+      "UPDATE budgets SET client_id=?, client_name=?, payment_method=?, currency=?," +
+      "  discount_percent=?, surcharge_percent=?, subtotal=?, total=?, notes=?," +
+      "  updated_at=datetime('now') WHERE id=?"
+    ).run(clientId, clientName, payMethod, currency, discountPct, surchargePct,
+          subtotal, total, notes, budget.id);
+    db.prepare("DELETE FROM budget_items WHERE budget_id = ?").run(budget.id);
+    const insItem = db.prepare(
+      "INSERT INTO budget_items (budget_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +
+      "  VALUES (?,?,?,?,?,?,?,?)"
+    );
+    for (const it of computedItems) {
+      insItem.run(budget.id, it.product_id || null, it.product_code || "", it.product_name || "",
+                  it.quantity, it.unit_price, it.discount_percent, it.subtotal);
+    }
+  });
+
+  try {
+    updateBudget();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/budgets/:id/status — cambiar estado
+app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, (req, res) => {
+  const u = req.session.user;
+  const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
+  if (!budget) return res.status(404).json({ error: "No encontrado" });
+  if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
+  const VALID = ["borrador", "enviado", "aceptado", "cancelado"];
+  const status = req.body.status;
+  if (!VALID.includes(status)) return res.status(400).json({ error: "Estado invalido" });
+  db.prepare("UPDATE budgets SET status=?, updated_at=datetime('now') WHERE id=?").run(status, budget.id);
+  res.json({ ok: true });
+});
+
+// DELETE /api/budgets/:id
+app.delete("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
+  const u = req.session.user;
+  const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
+  if (!budget) return res.status(404).json({ error: "No encontrado" });
+  if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
+  db.prepare("DELETE FROM budgets WHERE id = ?").run(budget.id);
+  res.json({ ok: true });
 });
 
 app.get("/healthz", (req, res) => res.json({ ok: true, ts: Date.now() }));

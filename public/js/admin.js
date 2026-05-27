@@ -494,6 +494,10 @@
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "cuentas" && !state.accountsLoaded) loadAccounts();
+      if (tab === "venta") {
+        if (!bState.loaded) loadBudgets();
+        else renderBudgets();
+      }
     });
   });
 
@@ -3277,6 +3281,605 @@
       }
     });
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PRESUPUESTOS / VENTA
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Referencias a los elementos del DOM de Venta
+  const bEls = {
+    search:         document.getElementById("budget-search"),
+    filterStatus:   document.getElementById("budget-filter-status"),
+    newBtn:         document.getElementById("new-budget-btn"),
+    tbody:          document.getElementById("budgets-tbody"),
+    overlay:        document.getElementById("budget-overlay"),
+    formTitle:      document.getElementById("budget-form-title"),
+    formNumber:     document.getElementById("budget-form-number"),
+    statusBadge:    document.getElementById("budget-status-badge"),
+    closeBtn:       document.getElementById("budget-close-btn"),
+    form:           document.getElementById("budget-form"),
+    client:         document.getElementById("budget-client"),
+    vendedorRow:    document.getElementById("budget-vendedor-row"),
+    vendedor:       document.getElementById("budget-vendedor"),
+    payment:        document.getElementById("budget-payment"),
+    itemsTbody:     document.getElementById("budget-items-tbody"),
+    emptyRow:       document.getElementById("budget-empty-row"),
+    notes:          document.getElementById("budget-notes"),
+    subtotalDisp:   document.getElementById("budget-subtotal-disp"),
+    discount:       document.getElementById("budget-discount"),
+    discountDisp:   document.getElementById("budget-discount-disp"),
+    surcharge:      document.getElementById("budget-surcharge"),
+    surchargeDisp:  document.getElementById("budget-surcharge-disp"),
+    totalDisp:      document.getElementById("budget-total-disp"),
+    printBtn:       document.getElementById("budget-print-btn"),
+    cancelBtn:      document.getElementById("budget-cancel-btn"),
+    acceptBtn:      document.getElementById("budget-accept-btn"),
+    saveDraftBtn:   document.getElementById("budget-save-draft-btn"),
+    sendBtn:        document.getElementById("budget-send-btn"),
+    addProductBtn:  document.getElementById("budget-add-product-btn"),
+    picker:         document.getElementById("product-picker-modal"),
+    pickerSearch:   document.getElementById("picker-search"),
+    pickerCheckAll: document.getElementById("picker-check-all"),
+    pickerTbody:    document.getElementById("picker-tbody"),
+    pickerCount:    document.getElementById("picker-selected-count"),
+    pickerConfirm:  document.getElementById("picker-confirm-btn"),
+  };
+
+  // Sub-estado de presupuestos
+  const bState = {
+    list: [],
+    loaded: false,
+    editingId: null,       // null = nuevo, número = editando
+    editingStatus: "borrador",
+    items: [],             // items del formulario actual [{product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal}]
+    allProducts: [],       // cache para el picker
+    productsLoaded: false,
+  };
+
+  const BUDGET_STATUS_LABELS = {
+    borrador: "Borrador", enviado: "Enviado", aceptado: "Aceptado", cancelado: "Cancelado",
+  };
+  const BUDGET_STATUS_BADGE = {
+    borrador: "budget-badge--borrador", enviado: "budget-badge--enviado",
+    aceptado: "budget-badge--aceptado", cancelado: "budget-badge--cancelado",
+  };
+
+  // --- helpers ---
+  function budgetBadgeHtml(status) {
+    const lbl = BUDGET_STATUS_LABELS[status] || status;
+    const cls = BUDGET_STATUS_BADGE[status] || "";
+    return '<span class="budget-badge ' + cls + '">' + escapeHtml(lbl) + '</span>';
+  }
+
+  function budgetRecalc() {
+    let subtotal = 0;
+    bState.items.forEach((it) => {
+      const qty = Number(it.quantity) || 1;
+      const price = Number(it.unit_price) || 0;
+      const disc = Number(it.discount_percent) || 0;
+      it.subtotal = Math.round(qty * price * (1 - disc / 100));
+      subtotal += it.subtotal;
+    });
+    const discPct = Number(bEls.discount.value) || 0;
+    const surPct  = Number(bEls.surcharge.value) || 0;
+    const afterDisc = Math.round(subtotal * (1 - discPct / 100));
+    const total = Math.round(afterDisc * (1 + surPct / 100));
+    const discAmt = subtotal - afterDisc;
+    const surAmt  = total - afterDisc;
+    bEls.subtotalDisp.textContent = fmtPrice(subtotal);
+    bEls.discountDisp.textContent = discPct > 0 ? "— " + fmtPrice(discAmt) : "— $0";
+    bEls.surchargeDisp.textContent = surPct > 0 ? "+ " + fmtPrice(surAmt) : "+ $0";
+    bEls.totalDisp.textContent = fmtPrice(total);
+  }
+
+  function budgetRenderItems() {
+    if (!bState.items.length) {
+      bEls.itemsTbody.innerHTML =
+        '<tr id="budget-empty-row"><td colspan="7" class="muted" style="text-align:center;padding:18px;font-style:italic">' +
+        'Sin artículos. Usá "+ Agregar productos" para empezar.</td></tr>';
+      budgetRecalc();
+      return;
+    }
+    bEls.itemsTbody.innerHTML = bState.items.map((it, idx) => {
+      const sub = fmtPrice(it.subtotal || 0);
+      return '<tr data-idx="' + idx + '">' +
+        '<td style="padding:5px 8px"><input type="text" value="' + escapeHtml(it.product_code) + '"' +
+          ' data-field="product_code" style="width:80px" /></td>' +
+        '<td style="padding:5px 8px"><input type="text" value="' + escapeHtml(it.product_name) + '"' +
+          ' data-field="product_name" /></td>' +
+        '<td style="padding:5px 8px;text-align:right">' +
+          '<input type="number" value="' + escapeHtml(it.quantity) + '" min="0.01" step="1"' +
+          ' data-field="quantity" style="width:60px;text-align:right" /></td>' +
+        '<td style="padding:5px 8px;text-align:right">' +
+          '<input type="number" value="' + escapeHtml(it.unit_price) + '" min="0" step="1"' +
+          ' data-field="unit_price" style="width:90px;text-align:right" /></td>' +
+        '<td style="padding:5px 8px;text-align:right">' +
+          '<input type="number" value="' + escapeHtml(it.discount_percent) + '" min="0" max="100" step="0.5"' +
+          ' data-field="discount_percent" style="width:58px;text-align:right" /></td>' +
+        '<td style="padding:5px 8px;text-align:right;font-weight:500">' + escapeHtml(sub) + '</td>' +
+        '<td style="padding:5px 8px;text-align:center">' +
+          '<button type="button" class="btn-row-del" data-del-idx="' + idx + '" title="Eliminar" ' +
+          'style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px">✕</button>' +
+        '</td>' +
+      '</tr>';
+    }).join("");
+    budgetRecalc();
+  }
+
+  // Escuchar cambios en la tabla de items
+  if (bEls.itemsTbody) {
+    bEls.itemsTbody.addEventListener("input", (e) => {
+      const tr = e.target.closest("tr[data-idx]");
+      if (!tr) return;
+      const idx = Number(tr.dataset.idx);
+      const field = e.target.dataset.field;
+      if (!field || idx >= bState.items.length) return;
+      bState.items[idx][field] = field === "product_code" || field === "product_name"
+        ? e.target.value : Number(e.target.value) || 0;
+      // Recalcular subtotal de esta fila y totales
+      const it = bState.items[idx];
+      it.subtotal = Math.round((Number(it.quantity)||1) * (Number(it.unit_price)||0) * (1 - (Number(it.discount_percent)||0) / 100));
+      // Actualizar celda de subtotal sin re-renderizar toda la tabla
+      const cells = tr.querySelectorAll("td");
+      if (cells[5]) cells[5].textContent = fmtPrice(it.subtotal);
+      budgetRecalc();
+    });
+    bEls.itemsTbody.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-del-idx]");
+      if (!btn) return;
+      const idx = Number(btn.dataset.delIdx);
+      bState.items.splice(idx, 1);
+      budgetRenderItems();
+    });
+  }
+
+  if (bEls.discount) bEls.discount.addEventListener("input", budgetRecalc);
+  if (bEls.surcharge) bEls.surcharge.addEventListener("input", budgetRecalc);
+
+  // --- Cargar lista de presupuestos ---
+  async function loadBudgets() {
+    try {
+      if (bEls.tbody) bEls.tbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>';
+      const data = await api("/api/budgets");
+      bState.list = data || [];
+      bState.loaded = true;
+      renderBudgets();
+    } catch (e) {
+      if (bEls.tbody) bEls.tbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">Error: ' + escapeHtml(e.message) + '</td></tr>';
+    }
+  }
+
+  function renderBudgets() {
+    if (!bEls.tbody) return;
+    const q = (bEls.search ? bEls.search.value.trim().toLowerCase() : "");
+    const stFilter = bEls.filterStatus ? bEls.filterStatus.value : "all";
+    let list = bState.list;
+    if (q) list = list.filter((b) =>
+      (b.number || "").toLowerCase().includes(q) ||
+      (b.client_name || "").toLowerCase().includes(q) ||
+      (b.vendedor_name || "").toLowerCase().includes(q));
+    if (stFilter !== "all") list = list.filter((b) => b.status === stFilter);
+    if (!list.length) {
+      bEls.tbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">Sin presupuestos.</td></tr>';
+      return;
+    }
+    bEls.tbody.innerHTML = list.map((b) => {
+      return '<tr style="cursor:pointer" data-budget-id="' + b.id + '">' +
+        '<td style="padding:7px 10px;font-weight:600">' + escapeHtml(b.number) + '</td>' +
+        '<td style="padding:7px 10px">' + formatDate(b.created_at) + '</td>' +
+        '<td style="padding:7px 10px">' + escapeHtml(b.client_name) + '</td>' +
+        '<td style="padding:7px 10px">' + escapeHtml(b.vendedor_name || "—") + '</td>' +
+        '<td style="padding:7px 10px">' + escapeHtml(b.payment_method) + '</td>' +
+        '<td style="padding:7px 10px;text-align:right;font-weight:600">' + fmtPrice(b.total) + '</td>' +
+        '<td style="padding:7px 10px">' + budgetBadgeHtml(b.status) + '</td>' +
+        '<td style="padding:7px 10px;text-align:right">' +
+          '<button type="button" class="btn" style="font-size:12px;padding:3px 10px" data-open-budget="' + b.id + '">Abrir</button>' +
+        '</td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  // Click en una fila o en el botón "Abrir"
+  if (bEls.tbody) {
+    bEls.tbody.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-open-budget]");
+      if (btn) { openBudgetForm(Number(btn.dataset.openBudget)); return; }
+      const tr = e.target.closest("tr[data-budget-id]");
+      if (tr) openBudgetForm(Number(tr.dataset.budgetId));
+    });
+  }
+  if (bEls.search) bEls.search.addEventListener("input", debounce(renderBudgets, 200));
+  if (bEls.filterStatus) bEls.filterStatus.addEventListener("change", renderBudgets);
+
+  // --- Abrir formulario ---
+  async function openBudgetForm(id) {
+    bState.editingId = id || null;
+    bState.items = [];
+    bState.editingStatus = "borrador";
+
+    // Poblar clientes
+    await populateBudgetClients();
+
+    // Admin ve select de vendedor; vendedor no
+    if (bEls.vendedorRow) bEls.vendedorRow.hidden = !state.isAdmin;
+    if (state.isAdmin) await populateBudgetVendedores();
+
+    if (id) {
+      // Editar existente
+      try {
+        const data = await api("/api/budgets/" + id);
+        bState.editingStatus = data.status;
+        if (bEls.formTitle) bEls.formTitle.textContent = "Presupuesto #" + data.number;
+        if (bEls.formNumber) bEls.formNumber.textContent = data.number;
+        if (bEls.client) bEls.client.value = data.client_id || "";
+        if (bEls.vendedor && state.isAdmin) bEls.vendedor.value = data.vendedor_id || "";
+        if (bEls.payment) bEls.payment.value = data.payment_method || "Efectivo";
+        if (bEls.discount) bEls.discount.value = data.discount_percent || 0;
+        if (bEls.surcharge) bEls.surcharge.value = data.surcharge_percent || 0;
+        if (bEls.notes) bEls.notes.value = data.notes || "";
+        bState.items = (data.items || []).map((it) => ({
+          product_id: it.product_id,
+          product_code: it.product_code,
+          product_name: it.product_name,
+          quantity: it.quantity,
+          unit_price: it.unit_price,
+          discount_percent: it.discount_percent,
+          subtotal: it.subtotal,
+        }));
+      } catch (e) {
+        showToast("Error cargando presupuesto: " + e.message, true);
+        return;
+      }
+    } else {
+      // Nuevo
+      if (bEls.formTitle) bEls.formTitle.textContent = "Nuevo presupuesto";
+      if (bEls.formNumber) bEls.formNumber.textContent = "";
+      if (bEls.client) bEls.client.value = "";
+      if (bEls.vendedor && state.isAdmin) bEls.vendedor.value = state.me ? state.me.id : "";
+      if (bEls.payment) bEls.payment.value = "Efectivo";
+      if (bEls.discount) bEls.discount.value = 0;
+      if (bEls.surcharge) bEls.surcharge.value = 0;
+      if (bEls.notes) bEls.notes.value = "";
+    }
+
+    // Estado badge y visibilidad de acciones
+    budgetUpdateStatusUI();
+    budgetRenderItems();
+
+    if (bEls.overlay) bEls.overlay.hidden = false;
+  }
+
+  function budgetUpdateStatusUI() {
+    const st = bState.editingStatus;
+    if (bEls.statusBadge) {
+      bEls.statusBadge.className = "budget-badge " + (BUDGET_STATUS_BADGE[st] || "budget-badge--borrador");
+      bEls.statusBadge.textContent = BUDGET_STATUS_LABELS[st] || st;
+    }
+    const isFinal = st === "cancelado" || st === "aceptado";
+    // Deshabilitar edición si está en estado final
+    [bEls.saveDraftBtn, bEls.sendBtn, bEls.addProductBtn, bEls.discount, bEls.surcharge].forEach((el) => {
+      if (el) el.disabled = isFinal;
+    });
+    if (bEls.cancelBtn) bEls.cancelBtn.hidden = isFinal;
+    if (bEls.acceptBtn) bEls.acceptBtn.hidden = st === "aceptado" || st === "cancelado";
+  }
+
+  async function populateBudgetClients() {
+    if (!bEls.client) return;
+    // Usar cache de users si está disponible, sino fetch rápido
+    let clients = state.users.filter((u) => u.level >= 1 && u.level <= 4 && u.active);
+    if (!clients.length && !state.usersLoaded) {
+      try { const all = await api("/api/admin/users"); clients = (all || []).filter((u) => u.level >= 1 && u.level <= 4 && u.active); } catch (_) {}
+    }
+    bEls.client.innerHTML = '<option value="">Consumidor final</option>' +
+      clients.map((u) => '<option value="' + u.id + '">' + escapeHtml(u.full_name || u.username) + '</option>').join("");
+  }
+
+  async function populateBudgetVendedores() {
+    if (!bEls.vendedor) return;
+    let vends = state.vendedoresActiveCache.length ? state.vendedoresActiveCache :
+      (state.vendedores.filter ? state.vendedores.filter((v) => v.active) : []);
+    if (!vends.length) {
+      try { const all = await api("/api/admin/vendedores"); vends = (all || []).filter((v) => v.active); } catch (_) {}
+    }
+    bEls.vendedor.innerHTML = vends.map((v) =>
+      '<option value="' + v.id + '">' + escapeHtml(v.full_name || v.username) + '</option>'
+    ).join("");
+  }
+
+  // --- Guardar ---
+  async function saveBudget(targetStatus) {
+    const clientId = bEls.client ? (bEls.client.value ? Number(bEls.client.value) : null) : null;
+    // Nombre del cliente: buscar en el select o usar "Consumidor final"
+    const clientName = clientId
+      ? (bEls.client.options[bEls.client.selectedIndex] || {}).text || "Consumidor final"
+      : "Consumidor final";
+    const vendedorId = state.isAdmin && bEls.vendedor ? (Number(bEls.vendedor.value) || null) : null;
+    const payMethod = bEls.payment ? bEls.payment.value : "Efectivo";
+    const discPct = Number(bEls.discount ? bEls.discount.value : 0) || 0;
+    const surPct = Number(bEls.surcharge ? bEls.surcharge.value : 0) || 0;
+    const notes = bEls.notes ? bEls.notes.value.trim() : "";
+    const status = targetStatus || "borrador";
+
+    const body = {
+      client_id: clientId,
+      client_name: clientName,
+      vendedor_id: vendedorId,
+      payment_method: payMethod,
+      currency: "ARS",
+      discount_percent: discPct,
+      surcharge_percent: surPct,
+      notes: notes,
+      status: status,
+      items: bState.items,
+    };
+
+    try {
+      let result;
+      if (bState.editingId) {
+        // También actualizar el status si se pasó uno
+        result = await api("/api/budgets/" + bState.editingId, { method: "PUT", body: JSON.stringify(body) });
+        if (status !== bState.editingStatus) {
+          await api("/api/budgets/" + bState.editingId + "/status", {
+            method: "PATCH", body: JSON.stringify({ status }),
+          });
+          bState.editingStatus = status;
+        }
+      } else {
+        result = await api("/api/budgets", { method: "POST", body: JSON.stringify(body) });
+        bState.editingId = result.id;
+        if (bEls.formTitle) bEls.formTitle.textContent = "Presupuesto #" + result.number;
+        if (bEls.formNumber) bEls.formNumber.textContent = result.number;
+      }
+      bState.editingStatus = status;
+      budgetUpdateStatusUI();
+      showToast("✅ Presupuesto guardado");
+      // Recargar la lista en segundo plano
+      loadBudgets();
+    } catch (e) {
+      showToast("Error: " + e.message, true);
+    }
+  }
+
+  // Botones de guardar
+  if (bEls.saveDraftBtn) {
+    bEls.saveDraftBtn.addEventListener("click", () => saveBudget("borrador"));
+  }
+  if (bEls.form) {
+    bEls.form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      saveBudget("enviado");
+    });
+  }
+  // Botones de cambio de estado
+  if (bEls.cancelBtn) {
+    bEls.cancelBtn.addEventListener("click", async () => {
+      if (!bState.editingId) return;
+      if (!confirm("¿Cancelar este presupuesto?")) return;
+      try {
+        await api("/api/budgets/" + bState.editingId + "/status", { method: "PATCH", body: JSON.stringify({ status: "cancelado" }) });
+        bState.editingStatus = "cancelado";
+        budgetUpdateStatusUI();
+        showToast("Presupuesto cancelado");
+        loadBudgets();
+      } catch (e) { showToast("Error: " + e.message, true); }
+    });
+  }
+  if (bEls.acceptBtn) {
+    bEls.acceptBtn.addEventListener("click", async () => {
+      if (!bState.editingId) { await saveBudget("aceptado"); return; }
+      try {
+        await api("/api/budgets/" + bState.editingId + "/status", { method: "PATCH", body: JSON.stringify({ status: "aceptado" }) });
+        bState.editingStatus = "aceptado";
+        budgetUpdateStatusUI();
+        showToast("✅ Presupuesto aceptado");
+        loadBudgets();
+      } catch (e) { showToast("Error: " + e.message, true); }
+    });
+  }
+
+  // Cerrar overlay
+  if (bEls.closeBtn) {
+    bEls.closeBtn.addEventListener("click", () => {
+      if (bEls.overlay) bEls.overlay.hidden = true;
+    });
+  }
+
+  // Nuevo presupuesto
+  if (bEls.newBtn) {
+    bEls.newBtn.addEventListener("click", () => openBudgetForm(null));
+  }
+
+  // Imprimir
+  if (bEls.printBtn) {
+    bEls.printBtn.addEventListener("click", () => {
+      // Armar una ventana de impresión simple
+      const num = bEls.formNumber ? bEls.formNumber.textContent : "Nuevo";
+      const clientText = bEls.client ? (bEls.client.options[bEls.client.selectedIndex] || {}).text || "Consumidor final" : "Consumidor final";
+      const payText = bEls.payment ? bEls.payment.value : "";
+      const discPct = bEls.discount ? bEls.discount.value : 0;
+      const surPct = bEls.surcharge ? bEls.surcharge.value : 0;
+      const notes = bEls.notes ? bEls.notes.value : "";
+      const date = new Date().toLocaleDateString("es-AR");
+      const appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
+
+      let subtotal = 0;
+      bState.items.forEach((it) => { subtotal += Number(it.subtotal) || 0; });
+      const afterDisc = Math.round(subtotal * (1 - Number(discPct) / 100));
+      const total = Math.round(afterDisc * (1 + Number(surPct) / 100));
+
+      const rows = bState.items.map((it) => {
+        return "<tr>" +
+          "<td>" + escapeHtml(it.product_code) + "</td>" +
+          "<td>" + escapeHtml(it.product_name) + "</td>" +
+          "<td style='text-align:right'>" + escapeHtml(String(it.quantity)) + "</td>" +
+          "<td style='text-align:right'>$" + Number(it.unit_price).toLocaleString("es-AR") + "</td>" +
+          (Number(it.discount_percent) ? "<td style='text-align:right'>" + it.discount_percent + "%</td>" : "<td>—</td>") +
+          "<td style='text-align:right;font-weight:600'>$" + Number(it.subtotal).toLocaleString("es-AR") + "</td>" +
+          "</tr>";
+      }).join("");
+
+      const html = "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
+        "<title>Presupuesto " + num + "</title>" +
+        "<style>body{font-family:sans-serif;font-size:13px;margin:24px}" +
+        "h1{font-size:18px}table{width:100%;border-collapse:collapse;margin-top:12px}" +
+        "th,td{padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:left}" +
+        "th{background:#f1f5f9;font-size:12px;color:#6b7280}" +
+        ".total-box{margin-top:12px;text-align:right;font-size:14px}" +
+        ".grand-total{font-size:18px;font-weight:700;color:#d97706}</style>" +
+        "</head><body>" +
+        "<h1>" + escapeHtml(appName) + " — Presupuesto N° " + escapeHtml(num) + "</h1>" +
+        "<p><strong>Fecha:</strong> " + date + " &nbsp; <strong>Cliente:</strong> " + escapeHtml(clientText) +
+        " &nbsp; <strong>Pago:</strong> " + escapeHtml(payText) + "</p>" +
+        "<table><thead><tr><th>Cód.</th><th>Artículo</th><th>Cant.</th><th>Precio</th><th>Desc%</th><th>Subtotal</th></tr></thead>" +
+        "<tbody>" + rows + "</tbody></table>" +
+        "<div class='total-box'>" +
+        (Number(discPct) ? "<div>Descuento " + discPct + "%: — $" + (subtotal - afterDisc).toLocaleString("es-AR") + "</div>" : "") +
+        (Number(surPct) ? "<div>Recargo " + surPct + "%: + $" + (total - afterDisc).toLocaleString("es-AR") + "</div>" : "") +
+        "<div class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</div>" +
+        "</div>" +
+        (notes ? "<p style='margin-top:16px;color:#6b7280'><em>" + escapeHtml(notes) + "</em></p>" : "") +
+        "</body></html>";
+      const w = window.open("", "_blank");
+      if (w) { w.document.write(html); w.document.close(); w.print(); }
+    });
+  }
+
+  // ─────── PRODUCT PICKER ───────
+
+  async function loadPickerProducts() {
+    if (bState.productsLoaded && bState.allProducts.length) return;
+    try {
+      // Usamos el endpoint admin de productos para tener todos con precios
+      const data = await api("/api/admin/products");
+      bState.allProducts = data || [];
+      bState.productsLoaded = true;
+    } catch (_) {}
+  }
+
+  function renderPickerList(filter) {
+    if (!bEls.pickerTbody) return;
+    let list = bState.allProducts.filter((p) => p.active);
+    if (filter) {
+      const q = filter.trim().toLowerCase();
+      list = list.filter((p) =>
+        (p.name || "").toLowerCase().includes(q) ||
+        (p.code || "").toLowerCase().includes(q) ||
+        (p.category_name || "").toLowerCase().includes(q));
+    }
+    if (!list.length) {
+      bEls.pickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Sin resultados</td></tr>';
+      return;
+    }
+    bEls.pickerTbody.innerHTML = list.map((p) => {
+      const img = p.image_url
+        ? '<img src="' + escapeHtml(p.image_url) + '" style="width:36px;height:36px;object-fit:cover;border-radius:4px" loading="lazy" />'
+        : '<span style="display:inline-block;width:36px;height:36px;background:#f3f4f6;border-radius:4px;line-height:36px;text-align:center;color:#9ca3af;font-size:18px">📦</span>';
+      return '<tr data-prod-id="' + p.id + '">' +
+        '<td style="padding:6px 8px"><input type="checkbox" class="picker-cb" data-prod-id="' + p.id + '" /></td>' +
+        '<td style="padding:6px 8px">' + img + '</td>' +
+        '<td style="padding:6px 8px">' +
+          '<div style="font-weight:500">' + escapeHtml(p.name) + '</div>' +
+          '<div class="muted" style="font-size:11px">' + escapeHtml(p.code || "") + (p.category_name ? " · " + escapeHtml(p.category_name) : "") + '</div>' +
+        '</td>' +
+        '<td style="padding:6px 8px;text-align:right">' + fmtPrice(p.price_minorista) + '</td>' +
+        '<td style="padding:6px 8px;text-align:right;color:' + (p.stock > 0 ? "#059669" : "#9ca3af") + '">' + (p.stock || 0) + '</td>' +
+        '</tr>';
+    }).join("");
+  }
+
+  function pickerUpdateCount() {
+    if (!bEls.pickerTbody || !bEls.pickerCount) return;
+    const n = bEls.pickerTbody.querySelectorAll(".picker-cb:checked").length;
+    bEls.pickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados");
+    if (bEls.pickerConfirm) bEls.pickerConfirm.disabled = n === 0;
+  }
+
+  if (bEls.picker) {
+    bEls.picker.addEventListener("change", (e) => {
+      if (e.target.classList.contains("picker-cb") || e.target.id === "picker-check-all") {
+        if (e.target.id === "picker-check-all") {
+          bEls.pickerTbody.querySelectorAll(".picker-cb").forEach((cb) => { cb.checked = e.target.checked; });
+        }
+        pickerUpdateCount();
+      }
+    });
+    // Cerrar con botón [data-close] dentro del picker
+    bEls.picker.addEventListener("click", (e) => {
+      if (e.target.closest("[data-close]")) {
+        bEls.picker.hidden = true;
+      }
+    });
+  }
+
+  if (bEls.pickerSearch) {
+    bEls.pickerSearch.addEventListener("input", debounce((e) => {
+      renderPickerList(e.target.value);
+      pickerUpdateCount();
+    }, 200));
+  }
+
+  if (bEls.pickerConfirm) {
+    bEls.pickerConfirm.addEventListener("click", () => {
+      const checked = bEls.pickerTbody ? bEls.pickerTbody.querySelectorAll(".picker-cb:checked") : [];
+      checked.forEach((cb) => {
+        const prodId = Number(cb.dataset.prodId);
+        const prod = bState.allProducts.find((p) => p.id === prodId);
+        if (!prod) return;
+        // Si el producto ya está en la lista, incrementar cantidad
+        const existing = bState.items.find((it) => it.product_id === prodId);
+        if (existing) {
+          existing.quantity += 1;
+          existing.subtotal = Math.round(existing.quantity * existing.unit_price * (1 - existing.discount_percent / 100));
+        } else {
+          bState.items.push({
+            product_id: prod.id,
+            product_code: prod.code || "",
+            product_name: prod.name || "",
+            quantity: 1,
+            unit_price: prod.price_minorista || 0,
+            discount_percent: 0,
+            subtotal: prod.price_minorista || 0,
+          });
+        }
+      });
+      bEls.picker.hidden = true;
+      if (bEls.pickerSearch) bEls.pickerSearch.value = "";
+      if (bEls.pickerCheckAll) bEls.pickerCheckAll.checked = false;
+      budgetRenderItems();
+    });
+  }
+
+  // Botón "Agregar productos" abre el picker
+  if (bEls.addProductBtn) {
+    bEls.addProductBtn.addEventListener("click", async () => {
+      if (!bEls.picker) return;
+      // Cargar productos si no están en caché
+      if (!bState.productsLoaded) {
+        if (bEls.pickerTbody) bEls.pickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Cargando…</td></tr>';
+        await loadPickerProducts();
+      }
+      if (bEls.pickerSearch) bEls.pickerSearch.value = "";
+      if (bEls.pickerCheckAll) bEls.pickerCheckAll.checked = false;
+      renderPickerList("");
+      pickerUpdateCount();
+      bEls.picker.hidden = false;
+    });
+  }
+
+  // ─────── Registro de la tab en el handler de tabs ───────
+  // El handler original de tabs ya está registrado arriba. Extendemos
+  // la lógica para la tab "venta" sin tocar el handler existente.
+  els.tabBtns.forEach((btn) => {
+    if (btn.dataset.tab === "venta") {
+      const originalHandler = btn.onclick;
+      btn.addEventListener("click", () => {
+        if (!bState.loaded) loadBudgets();
+      });
+    }
+  });
+
+  // ─────── Fin PRESUPUESTOS / VENTA ───────
 
   bootstrap();
 })();

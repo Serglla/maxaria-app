@@ -38,6 +38,7 @@
         <button class="tab-btn admin-only" data-tab="pagos" type="button">Pagos</button>
         <button class="tab-btn admin-only" data-tab="cuentas" type="button">Cuentas</button>
         <button class="tab-btn admin-only" data-tab="config" type="button">Configuración</button>
+        <button class="tab-btn" data-tab="venta" type="button" id="tab-btn-venta">Venta</button>
       </nav>
       <div class="topbar-actions">
         <a class="btn btn-ghost" href="/catalogo">Catálogo</a>
@@ -950,9 +951,207 @@
     </div>
   </div>
 
+  <!-- ===== TAB VENTA ===== -->
+  <section class="tab-panel" id="tab-venta" hidden>
+    <div class="admin-toolbar">
+      <input type="search" id="budget-search" class="admin-search" placeholder="Buscar presupuesto…" autocomplete="off" />
+      <label class="admin-filter">
+        Estado:
+        <select id="budget-filter-status" class="admin-select">
+          <option value="all">Todos</option>
+          <option value="borrador">Borrador</option>
+          <option value="enviado">Enviado</option>
+          <option value="aceptado">Aceptado</option>
+          <option value="cancelado">Cancelado</option>
+        </select>
+      </label>
+      <span class="admin-spacer"></span>
+      <button type="button" class="btn btn-primary" id="new-budget-btn">+ Nuevo presupuesto</button>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table" id="budgets-table">
+        <thead>
+          <tr>
+            <th>N°</th>
+            <th>Fecha</th>
+            <th>Cliente</th>
+            <th>Vendedor</th>
+            <th>Forma de pago</th>
+            <th>Total</th>
+            <th>Estado</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="budgets-tbody">
+          <tr><td colspan="8" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===== OVERLAY: Formulario de presupuesto ===== -->
+  <div id="budget-overlay" class="admin-overlay" hidden>
+    <div class="admin-overlay-inner" style="max-width:960px">
+
+      <div class="admin-modal-head" style="display:flex;align-items:center;gap:12px">
+        <span style="font-size:15px;font-weight:700" id="budget-form-title">Nuevo presupuesto</span>
+        <span id="budget-form-number" class="muted" style="font-size:13px"></span>
+        <span class="admin-spacer"></span>
+        <span id="budget-status-badge" class="budget-badge budget-badge--borrador">Borrador</span>
+        <button type="button" class="btn" style="padding:4px 10px;font-size:12px" id="budget-close-btn">✕ Cerrar</button>
+      </div>
+
+      <form id="budget-form" autocomplete="off">
+
+        <!-- Cabecera -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 16px;margin-bottom:14px">
+          <label>
+            Cliente
+            <select id="budget-client" class="admin-select" style="width:100%;margin-top:4px">
+              <option value="">Consumidor final</option>
+            </select>
+          </label>
+          <label id="budget-vendedor-row">
+            Vendedor
+            <select id="budget-vendedor" class="admin-select" style="width:100%;margin-top:4px">
+            </select>
+          </label>
+          <label>
+            Forma de pago
+            <select id="budget-payment" class="admin-select" style="width:100%;margin-top:4px">
+              <option value="Efectivo">Efectivo</option>
+              <option value="Transferencia">Transferencia</option>
+              <option value="Cheque">Cheque</option>
+              <option value="Tarjeta de crédito">Tarjeta de crédito</option>
+              <option value="Tarjeta de débito">Tarjeta de débito</option>
+              <option value="Cuenta corriente">Cuenta corriente</option>
+              <option value="Mercado Pago">Mercado Pago</option>
+            </select>
+          </label>
+        </div>
+
+        <!-- Tabla de items -->
+        <div style="margin-bottom:10px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <strong style="font-size:13px">Artículos</strong>
+            <button type="button" class="btn btn-primary" id="budget-add-product-btn" style="font-size:12px;padding:5px 12px">
+              + Agregar productos
+            </button>
+          </div>
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead>
+                <tr style="background:#f1f5f9;text-align:left">
+                  <th style="padding:6px 8px;border-bottom:1px solid #e2e8f0;width:90px">Código</th>
+                  <th style="padding:6px 8px;border-bottom:1px solid #e2e8f0">Artículo</th>
+                  <th style="padding:6px 8px;border-bottom:1px solid #e2e8f0;width:70px;text-align:right">Cant.</th>
+                  <th style="padding:6px 8px;border-bottom:1px solid #e2e8f0;width:110px;text-align:right">Precio unit.</th>
+                  <th style="padding:6px 8px;border-bottom:1px solid #e2e8f0;width:70px;text-align:right">Desc%</th>
+                  <th style="padding:6px 8px;border-bottom:1px solid #e2e8f0;width:120px;text-align:right">Subtotal</th>
+                  <th style="padding:6px 8px;border-bottom:1px solid #e2e8f0;width:36px"></th>
+                </tr>
+              </thead>
+              <tbody id="budget-items-tbody">
+                <tr id="budget-empty-row">
+                  <td colspan="7" class="muted" style="text-align:center;padding:18px;font-style:italic">
+                    Sin artículos. Usá "+ Agregar productos" para empezar.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Totales + notas -->
+        <div style="display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start">
+          <div>
+            <label>
+              Observaciones
+              <textarea id="budget-notes" rows="3" style="width:100%;margin-top:4px;resize:vertical;font-size:13px;border:1px solid #d1d5db;border-radius:6px;padding:6px 8px" placeholder="Notas internas, condiciones, validez…"></textarea>
+            </label>
+          </div>
+          <div style="min-width:220px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;font-size:13px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+              <span class="muted">Subtotal</span>
+              <span id="budget-subtotal-disp">$ 0</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+              <span class="muted">Descuento</span>
+              <input type="number" id="budget-discount" min="0" max="99" step="0.5" value="0"
+                style="width:54px;border:1px solid #d1d5db;border-radius:4px;padding:2px 6px;font-size:13px;text-align:right" />
+              <span class="muted">%</span>
+              <span style="margin-left:auto" id="budget-discount-disp">— $ 0</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+              <span class="muted">Recargo</span>
+              <input type="number" id="budget-surcharge" min="0" max="99" step="0.5" value="0"
+                style="width:54px;border:1px solid #d1d5db;border-radius:4px;padding:2px 6px;font-size:13px;text-align:right" />
+              <span class="muted">%</span>
+              <span style="margin-left:auto" id="budget-surcharge-disp">+ $ 0</span>
+            </div>
+            <div style="border-top:1px solid #e2e8f0;padding-top:8px;display:flex;justify-content:space-between;font-size:16px;font-weight:700">
+              <span>TOTAL</span>
+              <span id="budget-total-disp" style="color:#d97706">$ 0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Acciones -->
+        <div class="admin-modal-foot" style="margin-top:12px;border-top:1px solid #e2e8f0;padding-top:12px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn" id="budget-print-btn" style="font-size:12px" title="Imprimir presupuesto">🖨 Imprimir</button>
+            <button type="button" class="btn budget-status-action" data-status="cancelado"
+              style="font-size:12px;color:#ef4444;border-color:#ef4444" id="budget-cancel-btn">✕ Cancelar ppto.</button>
+            <button type="button" class="btn budget-status-action" data-status="aceptado"
+              style="font-size:12px;color:#16a34a;border-color:#16a34a" id="budget-accept-btn">✔ Aceptado</button>
+          </div>
+          <span class="admin-spacer"></span>
+          <button type="button" class="btn" id="budget-save-draft-btn">💾 Guardar borrador</button>
+          <button type="submit" class="btn btn-primary" id="budget-send-btn">📤 Guardar y enviar</button>
+        </div>
+
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: Selección de productos ===== -->
+  <div id="product-picker-modal" class="admin-modal" hidden>
+    <div style="background:#fff;border-radius:12px;max-width:700px;width:calc(100% - 32px);max-height:82vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,.25)">
+      <div style="padding:14px 20px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;gap:8px">
+        <strong>Seleccionar productos</strong>
+        <button type="button" class="btn" data-close style="margin-left:auto">✕</button>
+      </div>
+      <div style="padding:8px 20px;border-bottom:1px solid #e5e7eb">
+        <input type="search" id="picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="width:100%" />
+      </div>
+      <div style="flex:1;overflow-y:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead style="position:sticky;top:0;background:#fff;z-index:1">
+            <tr style="background:#f1f5f9;text-align:left">
+              <th style="padding:6px 8px;width:32px"><input type="checkbox" id="picker-check-all" title="Seleccionar todos" /></th>
+              <th style="padding:6px 8px;width:48px"></th>
+              <th style="padding:6px 8px">Artículo</th>
+              <th style="padding:6px 8px;width:80px;text-align:right">Precio</th>
+              <th style="padding:6px 8px;width:60px;text-align:right">Stock</th>
+            </tr>
+          </thead>
+          <tbody id="picker-tbody">
+            <tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="admin-modal-foot" style="gap:12px;align-items:center">
+        <span id="picker-selected-count" class="muted" style="font-size:13px">0 seleccionados</span>
+        <span class="admin-spacer"></span>
+        <button type="button" class="btn" data-close>Cancelar</button>
+        <button type="button" class="btn btn-primary" id="picker-confirm-btn" disabled>Agregar seleccionados</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260522c"></script>
+  <script src="/js/admin.js?v=20260526a"></script>
 </body>
 </html>

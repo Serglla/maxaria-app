@@ -2137,3 +2137,64 @@ button { font: inherit; cursor: pointer; }
 .acc-mov-table th { color: #6b7280; font-weight: 600; }
 .acc-credit { color: #065f46; font-weight: 600; }
 .acc-debit  { color: #991b1b; font-weight: 600; }
+
+/* ===== PRESUPUESTOS / VENTA ===== */
+
+/* Overlay de pantalla completa para el formulario de presupuesto */
+.admin-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  z-index: 1150;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px 16px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+.admin-overlay[hidden] { display: none; }
+.admin-overlay-inner {
+  background: #fff;
+  border-radius: 12px;
+  width: 100%;
+  padding: 20px 24px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  margin: auto;
+}
+
+/* Badges de estado del presupuesto */
+.budget-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .3px;
+}
+.budget-badge--borrador  { background: #f1f5f9; color: #475569; }
+.budget-badge--enviado   { background: #dbeafe; color: #1d4ed8; }
+.budget-badge--aceptado  { background: #dcfce7; color: #15803d; }
+.budget-badge--cancelado { background: #fee2e2; color: #b91c1c; }
+
+/* Items del presupuesto — inputs inline en la tabla */
+#budget-items-tbody input[type="number"],
+#budget-items-tbody input[type="text"] {
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+}
+#budget-items-tbody input:focus {
+  outline: 2px solid #2563eb33;
+  border-color: #2563eb;
+}
+#budget-items-tbody tr:hover td { background: #fafbfc; }
+
+/* Print: ocultar todo menos el contenido del presupuesto */
+@media print {
+  body > * { display: none !important; }
+  #budget-print-area { display: block !important; }
+}
