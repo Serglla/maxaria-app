@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Catálogo</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260527e" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260527f" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -35,23 +35,40 @@
         />
       </div>
 
-      <!-- Botones secundarios distribuidos a lo largo de la fila 1.
-           Orden pedido por Sergio: [Ver como ▼] [Admin] [Ver cambios] [Mis pedidos] [Mis ganancias] [Salir] -->
-      <div class="topbar-actions topbar-actions-secondary">
-        <label id="level-switcher" class="level-switcher" hidden>
-          Ver como:
-          <select id="level-select" class="level-select" aria-label="Ver lista de precios como">
-            <option value="1">Minorista</option>
-            <option value="2">Revendedor</option>
-            <option value="3">Mayorista</option>
-            <option value="4">VIP</option>
-          </select>
-        </label>
-        <a id="admin-link" class="btn btn-ghost" href="/admin" hidden>Admin</a>
-        <button id="price-changes-btn" class="btn btn-ghost" type="button" hidden>Ver cambios</button>
-        <button id="orders-btn" class="btn btn-ghost" type="button">Mis pedidos</button>
-        <button id="earnings-btn" class="btn btn-ghost" type="button" hidden>Mis ganancias</button>
-        <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
+      <!-- Botones secundarios dentro de un menú hamburguesa (☰).
+           Click en el botón despliega el menú; click afuera o ESC lo cierra. -->
+      <div class="topbar-menu-wrap topbar-actions-secondary">
+        <button id="topbar-menu-btn" class="topbar-menu-btn" type="button"
+                aria-label="Menú" aria-expanded="false" aria-haspopup="true">
+          <span class="topbar-menu-icon" aria-hidden="true">☰</span>
+          <span class="topbar-menu-label">Menú</span>
+        </button>
+        <div id="topbar-menu" class="topbar-menu" hidden role="menu">
+          <label id="level-switcher" class="level-switcher topbar-menu-item" hidden>
+            <span class="topbar-menu-item-label">Ver como</span>
+            <select id="level-select" class="level-select" aria-label="Ver lista de precios como">
+              <option value="1">Minorista</option>
+              <option value="2">Revendedor</option>
+              <option value="3">Mayorista</option>
+              <option value="4">VIP</option>
+            </select>
+          </label>
+          <a id="admin-link" class="topbar-menu-item" href="/admin" hidden role="menuitem">
+            <span class="topbar-menu-item-icon">⚙️</span> Admin
+          </a>
+          <button id="price-changes-btn" class="topbar-menu-item" type="button" hidden role="menuitem">
+            <span class="topbar-menu-item-icon">📊</span> Ver cambios
+          </button>
+          <button id="orders-btn" class="topbar-menu-item" type="button" role="menuitem">
+            <span class="topbar-menu-item-icon">📋</span> Mis pedidos
+          </button>
+          <button id="earnings-btn" class="topbar-menu-item" type="button" hidden role="menuitem">
+            <span class="topbar-menu-item-icon">💰</span> Mis ganancias
+          </button>
+          <button id="logout-btn" class="topbar-menu-item topbar-menu-item-danger" type="button" role="menuitem">
+            <span class="topbar-menu-item-icon">🚪</span> Salir
+          </button>
+        </div>
       </div>
 
       <!-- Botones primarios de acción: van abajo en mobile (fila 3) -->
@@ -174,6 +191,6 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="/js/offline.js"></script>
-  <script src="/js/app.js?v=20260527e"></script>
+  <script src="/js/app.js?v=20260527f"></script>
 </body>
 </html>

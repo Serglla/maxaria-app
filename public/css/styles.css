@@ -159,19 +159,113 @@ button { font: inherit; cursor: pointer; }
   background: rgba(255,255,255,.22);
 }
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
-/* En desktop: secundarios distribuidos a lo largo de la fila 1 (Sergio pidió
-   que no queden todos apretados a la derecha). Primarios pegados a la derecha
-   de la fila 2 al lado del buscador. */
-.topbar-actions-secondary {
-  grid-area: secondary;
-  justify-self: stretch;
-  justify-content: space-between;
-  gap: 8px;
-}
-.topbar-actions-primary { grid-area: primary; justify-self: end; }
+.topbar-actions-secondary { grid-area: secondary; justify-self: end; }
+.topbar-actions-primary   { grid-area: primary;   justify-self: end; }
 /* El subtítulo "Administrador - Administrador (viendo como VIP)" ya se ve
    en otros lugares (ej. lista de precios). Lo ocultamos del topbar. */
 .topbar-sub { display: none; }
+
+/* ====== Menú hamburguesa de la topbar (botón ☰ + dropdown) ====== */
+.topbar-menu-wrap { position: relative; }
+.topbar-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,.25);
+  color: #fff;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 14px;
+  transition: background .12s ease;
+}
+.topbar-menu-btn:hover { background: rgba(255,255,255,.12); }
+.topbar-menu-btn[aria-expanded="true"] {
+  background: rgba(255,255,255,.18);
+  border-color: rgba(255,255,255,.5);
+}
+.topbar-menu-icon { font-size: 18px; line-height: 1; }
+
+.topbar-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 220px;
+  background: #fff;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(15,23,42,.18);
+  padding: 6px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.topbar-menu[hidden] { display: none; }
+.topbar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  color: #1f2937;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background .1s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+.topbar-menu-item:hover { background: #f3f4f6; }
+.topbar-menu-item-icon { font-size: 16px; line-height: 1; width: 20px; text-align: center; }
+.topbar-menu-item-danger { color: #dc2626; }
+.topbar-menu-item-danger:hover { background: #fee2e2; }
+
+/* "Ver como" dentro del menú: queda como un row con label + select.
+   El select usa estilo normal (fondo blanco, color oscuro). */
+.topbar-menu .level-switcher {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 7px 10px;
+  margin-bottom: 4px;
+  color: #475569;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.topbar-menu .topbar-menu-item-label {
+  font-weight: 600;
+  color: #64748b;
+}
+.topbar-menu .level-select {
+  background: #fff;
+  color: #1f2937;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  width: 100%;
+}
+.topbar-menu .level-select:focus {
+  outline: 2px solid #2563eb33;
+  border-color: #2563eb;
+}
 
 /* Selector "Ver como ..." (solo admin en /catalogo).
    Permite que el admin vea el catalogo con la lista de precios
@@ -931,24 +1025,18 @@ button { font: inherit; cursor: pointer; }
   .topbar-brand strong { font-size: 14px; }
   .topbar-brand .topbar-sub { display: none; }
 
-  /* Fila 1: secundarios al lado del brand, scrollables si no entran */
+  /* Fila 1: el menú hamburguesa va alineado a la derecha al lado del brand */
   .topbar-actions-secondary {
-    min-width: 0;
     display: flex;
-    gap: 4px;
     align-items: center;
     justify-content: flex-end;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
   }
-  .topbar-actions-secondary::-webkit-scrollbar { display: none; }
-  .topbar-actions-secondary > * { flex-shrink: 0; }
-  .topbar-actions-secondary .btn {
-    white-space: nowrap;
-    font-size: 12px;
-    padding: 5px 9px;
-  }
+  /* En mobile ocultamos el texto "Menú", solo se ve el ícono ☰ */
+  .topbar-menu-label { display: none; }
+  .topbar-menu-btn { padding: 6px 10px; }
+  .topbar-menu-icon { font-size: 20px; }
+  /* El dropdown en mobile es un poco más ancho para que se lea cómodo */
+  .topbar-menu { min-width: 240px; max-width: calc(100vw - 24px); }
 
   /* Fila 2: buscador ancho completo */
   .topbar-search { max-width: none; justify-self: stretch; }

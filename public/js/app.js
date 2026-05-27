@@ -53,6 +53,8 @@
     clientClose: document.getElementById("client-close"),
     clientBack: document.getElementById("client-back"),
     clientBody: document.getElementById("client-body"),
+    topbarMenuBtn: document.getElementById("topbar-menu-btn"),
+    topbarMenu:    document.getElementById("topbar-menu"),
   };
 
   const LEVEL_NAMES = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
@@ -1693,6 +1695,47 @@
   if (els.ventaBtn) {
     els.ventaBtn.addEventListener("click", () => { window.location.href = "/ventas"; });
   }
+
+  // ── Menú hamburguesa del topbar ──
+  // Click en ☰ → toggle. Click adentro de un item (no en el select) → cierra.
+  // Click afuera o ESC → cierra.
+  function closeTopbarMenu() {
+    if (!els.topbarMenu || els.topbarMenu.hidden) return;
+    els.topbarMenu.hidden = true;
+    if (els.topbarMenuBtn) els.topbarMenuBtn.setAttribute("aria-expanded", "false");
+  }
+  function openTopbarMenu() {
+    if (!els.topbarMenu) return;
+    els.topbarMenu.hidden = false;
+    if (els.topbarMenuBtn) els.topbarMenuBtn.setAttribute("aria-expanded", "true");
+  }
+  if (els.topbarMenuBtn) {
+    els.topbarMenuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (els.topbarMenu.hidden) openTopbarMenu();
+      else closeTopbarMenu();
+    });
+  }
+  if (els.topbarMenu) {
+    // Click en un item del menú: cierra (excepto si fue dentro del level-switcher,
+    // donde el usuario está interactuando con el <select>).
+    els.topbarMenu.addEventListener("click", (e) => {
+      if (e.target.closest("#level-switcher")) return;
+      // Si fue un click sobre un item con role menuitem o cualquier botón/link
+      const item = e.target.closest(".topbar-menu-item");
+      if (item) closeTopbarMenu();
+    });
+  }
+  // Click afuera cierra
+  document.addEventListener("click", (e) => {
+    if (!els.topbarMenu || els.topbarMenu.hidden) return;
+    if (e.target.closest("#topbar-menu") || e.target.closest("#topbar-menu-btn")) return;
+    closeTopbarMenu();
+  });
+  // ESC cierra
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && els.topbarMenu && !els.topbarMenu.hidden) closeTopbarMenu();
+  });
 
   // ── Altura dinamica del topbar para sidebar sticky ──
   // Desde el rework a grid (2 filas desktop / 3 filas mobile) la altura del
