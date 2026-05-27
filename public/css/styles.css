@@ -103,7 +103,9 @@ button { font: inherit; cursor: pointer; }
 .catalog-page {
   display: grid;
   grid-template-columns: 240px 1fr;
-  grid-template-rows: 56px auto 1fr;
+  /* Topbar de altura variable (1 o 2 filas segun resolucion + botones visibles).
+     Sidebar sticky usa --topbar-h (se setea desde JS al cargar y al resize). */
+  grid-template-rows: auto auto 1fr;
   grid-template-areas:
     "top  top"
     "vbar vbar"
@@ -118,17 +120,31 @@ button { font: inherit; cursor: pointer; }
   top: 0;
   z-index: 20;
 }
+/* Topbar layout en grid: 2 filas en desktop, 3 en mobile.
+   Areas:
+     brand     secondary  ← fila 1 (brand chico + Mis pedidos/Mis ganancias/Salir...)
+     search    primary    ← fila 2 (buscador + 🧾 Venta + 🛒 Carrito)
+   En mobile se reorganiza a 3 filas (search y primary ocupan todo el ancho). */
 .topbar-inner {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "brand   secondary"
+    "search  primary";
   align-items: center;
-  gap: 16px;
-  padding: 0 16px;
-  height: 56px;
+  gap: 8px 16px;
+  padding: 8px 16px;
 }
-.topbar-brand { display: flex; align-items: baseline; gap: 10px; }
-.topbar-brand strong { font-size: 18px; letter-spacing: .5px; }
+.topbar-brand {
+  grid-area: brand;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.topbar-brand strong { font-size: 16px; letter-spacing: .3px; white-space: nowrap; }
 .topbar-sub { font-size: 12px; color: #c7d2fe; }
-.topbar-search { flex: 1; max-width: 480px; }
+.topbar-search { grid-area: search; max-width: 480px; }
 .topbar-search input {
   width: 100%;
   background: rgba(255,255,255,.15);
@@ -143,6 +159,10 @@ button { font: inherit; cursor: pointer; }
   background: rgba(255,255,255,.22);
 }
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
+/* En desktop: secundarios pegados a la derecha de la fila 1, primarios a la
+   derecha de la fila 2. */
+.topbar-actions-secondary { grid-area: secondary; justify-self: end; }
+.topbar-actions-primary   { grid-area: primary;   justify-self: end; }
 
 /* Selector "Ver como ..." (solo admin en /catalogo).
    Permite que el admin vea el catalogo con la lista de precios
@@ -200,8 +220,8 @@ button { font: inherit; cursor: pointer; }
   padding: 16px 8px;
   overflow-y: auto;
   position: sticky;
-  top: calc(56px + var(--vbar-h, 0px));
-  height: calc(100vh - 56px - var(--vbar-h, 0px));
+  top: calc(var(--topbar-h, 56px) + var(--vbar-h, 0px));
+  height: calc(100vh - var(--topbar-h, 56px) - var(--vbar-h, 0px));
 }
 .sidebar-title {
   margin: 0 8px 8px;
@@ -886,27 +906,25 @@ button { font: inherit; cursor: pointer; }
   .sidebar-title { display: none; }
   .cat-toggle-btn { display: inline-flex; }
 
-  /* En mobile la topbar se distribuye en 3 filas:
-       Fila 1: brand + botones secundarios (Mis pedidos, Mis ganancias, etc + Salir)
+  /* En mobile la topbar se distribuye en 3 filas (grid):
+       Fila 1: brand chico + botones secundarios scrollables a la derecha
        Fila 2: buscador (ancho completo)
-       Fila 3: botones primarios (Venta + Carrito) ancho completo, grandes
-     Los secundarios usan scroll horizontal si no entran al lado del brand. */
+       Fila 3: botones primarios (Venta + Carrito) ancho completo, grandes */
   .topbar-inner {
-    flex-wrap: wrap;
-    height: auto;
-    min-height: 56px;
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "brand   secondary"
+      "search  search"
+      "primary primary";
     padding: 8px 12px;
-    row-gap: 8px;
+    gap: 8px;
   }
-  .topbar-brand { flex-shrink: 0; order: 1; }
+  .topbar-brand strong { font-size: 14px; }
   .topbar-brand .topbar-sub { display: none; }
 
-  /* Fila 1: botones secundarios al lado del brand, scrollables si no entran */
+  /* Fila 1: secundarios al lado del brand, scrollables si no entran */
   .topbar-actions-secondary {
-    order: 2;
-    flex: 1;
     min-width: 0;
-    margin-left: auto;
     display: flex;
     gap: 4px;
     align-items: center;
@@ -923,25 +941,19 @@ button { font: inherit; cursor: pointer; }
     padding: 5px 9px;
   }
 
-  /* Fila 2: buscador */
-  .topbar-search {
-    order: 3;
-    flex: 1 0 100%;
-    max-width: none;
-  }
+  /* Fila 2: buscador ancho completo */
+  .topbar-search { max-width: none; justify-self: stretch; }
   .topbar-search input {
     padding: 10px 12px;
     font-size: 15px;
   }
 
-  /* Fila 3: acciones primarias (Venta + Carrito) bien grandes y centrados */
+  /* Fila 3: acciones primarias bien grandes y centradas */
   .topbar-actions-primary {
-    order: 4;
-    flex: 1 0 100%;
+    justify-self: stretch;
     display: flex;
     gap: 10px;
     align-items: stretch;
-    margin-left: 0;
   }
   .topbar-actions-primary .btn {
     flex: 1;
@@ -954,7 +966,6 @@ button { font: inherit; cursor: pointer; }
     gap: 6px;
     white-space: nowrap;
   }
-  .topbar-actions-primary #cart-btn { gap: 6px; }
   .topbar-actions-primary .badge {
     background: rgba(255,255,255,.25);
     color: #fff;

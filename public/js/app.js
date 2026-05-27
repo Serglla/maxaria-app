@@ -1625,5 +1625,23 @@
     els.ventaBtn.addEventListener("click", () => { window.location.href = "/ventas"; });
   }
 
+  // ── Altura dinamica del topbar para sidebar sticky ──
+  // Desde el rework a grid (2 filas desktop / 3 filas mobile) la altura del
+  // topbar varia segun resolucion y botones visibles. Exponemos --topbar-h
+  // para que .sidebar (top + height) y otros sticky se acomoden solos.
+  function updateTopbarHeight() {
+    const tb = document.querySelector(".topbar");
+    if (!tb) return;
+    const h = tb.offsetHeight;
+    if (h > 0) document.documentElement.style.setProperty("--topbar-h", h + "px");
+  }
+  // Actualizar al cargar, al cambiar tamano, y cuando el browser termina de
+  // calcular layout despues de mostrar/ocultar botones (admin-link, level-switcher, etc).
+  window.addEventListener("resize", updateTopbarHeight);
+  window.addEventListener("orientationchange", updateTopbarHeight);
+  requestAnimationFrame(updateTopbarHeight);
+  // Re-medir despues del bootstrap (los botones cambian de hidden a visible)
+  setTimeout(updateTopbarHeight, 300);
+
   bootstrap();
 })();
