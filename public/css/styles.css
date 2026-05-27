@@ -159,10 +159,19 @@ button { font: inherit; cursor: pointer; }
   background: rgba(255,255,255,.22);
 }
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
-/* En desktop: secundarios pegados a la derecha de la fila 1, primarios a la
-   derecha de la fila 2. */
-.topbar-actions-secondary { grid-area: secondary; justify-self: end; }
-.topbar-actions-primary   { grid-area: primary;   justify-self: end; }
+/* En desktop: secundarios distribuidos a lo largo de la fila 1 (Sergio pidió
+   que no queden todos apretados a la derecha). Primarios pegados a la derecha
+   de la fila 2 al lado del buscador. */
+.topbar-actions-secondary {
+  grid-area: secondary;
+  justify-self: stretch;
+  justify-content: space-between;
+  gap: 8px;
+}
+.topbar-actions-primary { grid-area: primary; justify-self: end; }
+/* El subtítulo "Administrador - Administrador (viendo como VIP)" ya se ve
+   en otros lugares (ej. lista de precios). Lo ocultamos del topbar. */
+.topbar-sub { display: none; }
 
 /* Selector "Ver como ..." (solo admin en /catalogo).
    Permite que el admin vea el catalogo con la lista de precios

@@ -1085,9 +1085,27 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
 
   // Resolver lista personalizada del target (cliente).
   // Si tiene price_list_id, usamos sus columnas base y aplicamos la ganancia.
-  // El admin se queda con priceChangeCols(effectiveLevel) tradicional (sin lista).
-  const useListConfig = level !== 99;
-  const cfg = useListConfig ? getEffectivePriceConfig(targetUserId, effectiveLevel) : { kind: "level" };
+  // El admin se queda con priceChangeCols(effectiveLevel) tradicional (sin lista),
+  // a menos que pase ?as_list_id=N para mirar como una lista personalizada.
+  let cfg;
+  if (level === 99 && req.query.as_list_id != null) {
+    const listIdQ = Number(req.query.as_list_id);
+    const lst = db.prepare(
+      "SELECT id, base_level, markup_percent FROM price_lists WHERE id = ?"
+    ).get(listIdQ);
+    if (lst) {
+      cfg = {
+        kind: "list",
+        listId: lst.id,
+        column: priceColumnForBaseLevel(lst.base_level),
+        markup_percent: Number(lst.markup_percent) || 0,
+      };
+    }
+  }
+  if (!cfg) {
+    const useListConfig = level !== 99;
+    cfg = useListConfig ? getEffectivePriceConfig(targetUserId, effectiveLevel) : { kind: "level" };
+  }
   let cols;
   let listInfo = null; // { id, name, base_level, markup_percent } cuando aplica
   let markup = 0;
@@ -1274,6 +1292,23 @@ app.get("/api/products", requireLogin, (req, res) => {
     if ([1, 2, 3, 4].includes(asLvl)) {
       effectiveLevel = asLvl;
       effectiveUserId = null; // admin "viendo como N": ignorar lista personalizada
+    }
+  } else if (req.session.level === 99 && req.query.as_list_id != null) {
+    // Admin viendo como lista personalizada (L1, L2, etc): aplica la fórmula
+    // de markup sobre la columna base de la lista, igual que un cliente con
+    // esa lista asignada.
+    const listId = Number(req.query.as_list_id);
+    const list = db.prepare(
+      "SELECT id, base_level, markup_percent FROM price_lists WHERE id = ?"
+    ).get(listId);
+    if (list) {
+      vendorCostCfg = {
+        kind: "list",
+        listId: list.id,
+        column: priceColumnForBaseLevel(list.base_level),
+        markup_percent: Number(list.markup_percent) || 0,
+      };
+      effectiveUserId = null;
     }
   }
 

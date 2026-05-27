@@ -56,7 +56,8 @@
   };
 
   const LEVEL_NAMES = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
-  const LS_VIEW_AS_LEVEL    = "maxaria.viewAsLevel";    // solo admin
+  const LS_VIEW_AS_LEVEL    = "maxaria.viewAsLevel";    // solo admin (nivel 1-4)
+  const LS_VIEW_AS_LIST     = "maxaria.viewAsListId";   // solo admin (lista personalizada)
   const LS_VENDEDOR_CLIENT  = "maxaria.vendedorClient"; // solo vendedor (level 5)
 
   const state = {
@@ -66,6 +67,9 @@
     // con la lista de precios de OTRO nivel (1..4). null = ver con su
     // propio mapeo (admin usa minorista por defecto en server).
     viewAsLevel: null,
+    // Solo aplica si me.level === 99: id de la lista personalizada (L1, L2, ...)
+    // que el admin está mirando. Tiene prioridad sobre viewAsLevel cuando != null.
+    viewAsListId: null,
     // Solo aplica si me.level === 5: cliente que está atendiendo el vendedor.
     // null = aún no eligió cliente (catálogo sin precios).
     vendedorClient: null,
@@ -96,10 +100,19 @@
       return [1, 2, 3, 4].includes(v) ? v : null;
     } catch (_) { return null; }
   }
+  function loadViewAsListId() {
+    try {
+      const v = Number(localStorage.getItem(LS_VIEW_AS_LIST));
+      return v > 0 ? v : null;
+    } catch (_) { return null; }
+  }
 
   function productsUrl() {
-    if (state.me && state.me.level === 99 && state.viewAsLevel) {
-      return "/api/products?as_level=" + state.viewAsLevel;
+    if (state.me && state.me.level === 99) {
+      // Admin viendo como otra lista personalizada (L1, L2, etc)
+      if (state.viewAsListId) return "/api/products?as_list_id=" + state.viewAsListId;
+      // Admin viendo como otro nivel base (Minorista/Revendedor/Mayorista/VIP)
+      if (state.viewAsLevel)  return "/api/products?as_level=" + state.viewAsLevel;
     }
     return "/api/products";
   }
@@ -109,7 +122,9 @@
       const me = await api("/api/me");
       state.me = me;
       if (me.level === 99) {
-        state.viewAsLevel = loadViewAsLevel();
+        // Restaurar la lista personalizada tiene prioridad sobre el nivel base.
+        state.viewAsListId = loadViewAsListId();
+        state.viewAsLevel  = state.viewAsListId ? null : loadViewAsLevel();
       }
       if (me.level === 5) {
         state.vendedorClient = me.vendedorClient || null;
@@ -154,10 +169,9 @@
 
   function renderUser() {
     const u = state.me; if (!u) return;
-    const viewing = u.level === 99 && state.viewAsLevel
-      ? " (viendo como " + LEVEL_NAMES[state.viewAsLevel] + ")"
-      : "";
-    els.userInfo.textContent = (u.fullName || u.username) + " - " + u.levelName + viewing;
+    // El sub "Administrador - Administrador (viendo como VIP)" se ocultó del
+    // topbar (decisión 27 may 2026): ya se ve el contexto en otros lugares.
+    if (els.userInfo) els.userInfo.textContent = "";
     if (els.ordersBtn) {
       els.ordersBtn.textContent = u.level === 99 ? "Todos los pedidos" : "Mis pedidos";
     }
@@ -177,14 +191,45 @@
       // (o segun su vendedor_price_level si no hay cliente).
       els.priceChangesBtn.hidden = !u.canSeePriceChanges;
     }
-    // Selector "Ver como ...": SOLO admin
+    // Selector "Ver como ...": SOLO admin. Carga niveles base + listas personalizadas
+    // que el admin haya creado (L1, L2, etc) y permite cambiar la vista del catálogo.
     if (els.levelSwitcher) {
       const isAdmin = u.level === 99;
       els.levelSwitcher.hidden = !isAdmin;
-      if (isAdmin) {
-        els.levelSelect.value = String(state.viewAsLevel || 1);
+      if (isAdmin) populateLevelSelect();
+    }
+  }
+
+  // Pobla el <select id="level-select"> con los 4 niveles base + listas personalizadas
+  // activas. Se llama al cargar (renderUser) y la primera vez que se ejecuta hace fetch.
+  let _priceListsCache = null;
+  async function populateLevelSelect() {
+    if (!els.levelSelect) return;
+    // Cargar listas si todavía no se cargaron
+    if (_priceListsCache === null) {
+      try {
+        const lists = await api("/api/admin/price-lists");
+        _priceListsCache = (lists || []).filter((l) => l.active);
+      } catch (_) {
+        _priceListsCache = [];
       }
     }
+    // Reconstruir las opciones: 4 niveles base + listas personalizadas
+    const baseOpts =
+      '<option value="1">Minorista</option>' +
+      '<option value="2">Revendedor</option>' +
+      '<option value="3">Mayorista</option>' +
+      '<option value="4">VIP</option>';
+    const listsHtml = _priceListsCache.length
+      ? '<optgroup label="Listas personalizadas">' +
+        _priceListsCache.map((l) =>
+          '<option value="list:' + l.id + '">' + escapeHtml(l.name) + '</option>'
+        ).join("") + '</optgroup>'
+      : '';
+    els.levelSelect.innerHTML = baseOpts + listsHtml;
+    // Restaurar selección actual
+    if (state.viewAsListId) els.levelSelect.value = "list:" + state.viewAsListId;
+    else                    els.levelSelect.value = String(state.viewAsLevel || 1);
   }
 
   function renderCategories() {
@@ -822,9 +867,11 @@
     els.pcBody.innerHTML = '<p class="muted">Cargando…</p>';
     openDrawer(els.priceChangesDrawer);
     try {
-      const url = state.me && state.me.level === 99 && state.viewAsLevel
-        ? "/api/price-changes?as_level=" + state.viewAsLevel
-        : "/api/price-changes";
+      let url = "/api/price-changes";
+      if (state.me && state.me.level === 99) {
+        if (state.viewAsListId)      url += "?as_list_id=" + state.viewAsListId;
+        else if (state.viewAsLevel)  url += "?as_level=" + state.viewAsLevel;
+      }
       const data = await api(url);
       els.pcBody.innerHTML = renderPriceChangesHtml(data);
       state.priceChangesLevelName = (data && data.levelName) || "";
@@ -1393,24 +1440,37 @@
     renderProducts();
   }, 150));
 
-  // Selector "Ver como ..." (solo admin). Al cambiar de nivel, re-pedimos
-  // los productos al server con el nuevo as_level y re-renderizamos.
-  // Nota: el carrito conserva los precios capturados al agregar; si el
-  // admin tenia items, los avisamos para que no se confunda.
+  // Selector "Ver como ..." (solo admin). Acepta:
+  //   - "1".."4": niveles base (Minorista, Revendedor, Mayorista, VIP)
+  //   - "list:N": listas personalizadas que el admin creó (L1, L2, ...)
+  // Al cambiar, re-pedimos los productos al server con el query string que
+  // corresponda y re-renderizamos. El carrito conserva los precios capturados;
+  // si tenia items, avisamos.
   if (els.levelSelect) {
     els.levelSelect.addEventListener("change", async () => {
       if (!state.me || state.me.level !== 99) return;
-      const lvl = Number(els.levelSelect.value);
-      if (![1, 2, 3, 4].includes(lvl)) return;
+      const raw = els.levelSelect.value;
+      let asList = null, asLevel = null, label = "";
+      if (raw.indexOf("list:") === 0) {
+        asList = Number(raw.split(":")[1]);
+        if (!asList) return;
+        const lst = (_priceListsCache || []).find((l) => l.id === asList);
+        label = lst ? lst.name : ("Lista #" + asList);
+      } else {
+        asLevel = Number(raw);
+        if (![1, 2, 3, 4].includes(asLevel)) return;
+        label = LEVEL_NAMES[asLevel];
+      }
 
       if (state.cart.size > 0) {
         const ok = confirm(
           "Tenés " + state.cart.size + " producto(s) en el carrito con precios " +
-          "del nivel anterior.\n\n¿Vaciar el carrito y cambiar a " + LEVEL_NAMES[lvl] + "?"
+          "anteriores.\n\n¿Vaciar el carrito y cambiar a " + label + "?"
         );
         if (!ok) {
           // Revertir el select al valor previo
-          els.levelSelect.value = String(state.viewAsLevel || 1);
+          if (state.viewAsListId) els.levelSelect.value = "list:" + state.viewAsListId;
+          else                    els.levelSelect.value = String(state.viewAsLevel || 1);
           return;
         }
         const ids = Array.from(state.cart.keys());
@@ -1420,8 +1480,17 @@
         ids.forEach(refreshCardForProduct);
       }
 
-      state.viewAsLevel = lvl;
-      try { localStorage.setItem(LS_VIEW_AS_LEVEL, String(lvl)); } catch (_) {}
+      state.viewAsLevel  = asLevel;
+      state.viewAsListId = asList;
+      try {
+        if (asList) {
+          localStorage.setItem(LS_VIEW_AS_LIST, String(asList));
+          localStorage.removeItem(LS_VIEW_AS_LEVEL);
+        } else {
+          localStorage.setItem(LS_VIEW_AS_LEVEL, String(asLevel));
+          localStorage.removeItem(LS_VIEW_AS_LIST);
+        }
+      } catch (_) {}
       try {
         state.products = await api(productsUrl());
         renderUser();
@@ -1429,7 +1498,7 @@
         renderProducts();
       } catch (e) {
         console.error(e);
-        alert("No se pudieron cargar los precios para " + LEVEL_NAMES[lvl]);
+        alert("No se pudieron cargar los precios para " + label);
       }
     });
   }
