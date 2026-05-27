@@ -120,31 +120,26 @@ button { font: inherit; cursor: pointer; }
   top: 0;
   z-index: 20;
 }
-/* Topbar layout en grid: 2 filas en desktop, 3 en mobile.
-   Areas:
-     brand     secondary  ← fila 1 (brand chico + Mis pedidos/Mis ganancias/Salir...)
-     search    primary    ← fila 2 (buscador + 🧾 Venta + 🛒 Carrito)
-   En mobile se reorganiza a 3 filas (search y primary ocupan todo el ancho). */
+/* Topbar layout: todo en una sola fila.
+     [Brand] [☰ Menú] [Buscador flex:1] [Venta] [Carrito]
+   El buscador toma el espacio sobrante. */
 .topbar-inner {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-areas:
-    "brand   secondary"
-    "search  primary";
+  display: flex;
   align-items: center;
-  gap: 8px 16px;
+  gap: 10px;
   padding: 8px 16px;
+  min-height: 56px;
 }
 .topbar-brand {
-  grid-area: brand;
   display: flex;
   align-items: baseline;
   gap: 10px;
+  flex-shrink: 0;
   min-width: 0;
 }
 .topbar-brand strong { font-size: 16px; letter-spacing: .3px; white-space: nowrap; }
 .topbar-sub { font-size: 12px; color: #c7d2fe; }
-.topbar-search { grid-area: search; max-width: 480px; }
+.topbar-search { flex: 1; min-width: 120px; max-width: none; }
 .topbar-search input {
   width: 100%;
   background: rgba(255,255,255,.15);
@@ -158,9 +153,9 @@ button { font: inherit; cursor: pointer; }
   outline: 2px solid #fbbf2455;
   background: rgba(255,255,255,.22);
 }
-.topbar-actions { display: flex; gap: 8px; align-items: center; }
-.topbar-actions-secondary { grid-area: secondary; justify-self: end; }
-.topbar-actions-primary   { grid-area: primary;   justify-self: end; }
+.topbar-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.topbar-actions-secondary,
+.topbar-actions-primary { flex-shrink: 0; }
 /* El subtítulo "Administrador - Administrador (viendo como VIP)" ya se ve
    en otros lugares (ej. lista de precios). Lo ocultamos del topbar. */
 .topbar-sub { display: none; }
@@ -1009,58 +1004,37 @@ button { font: inherit; cursor: pointer; }
   .sidebar-title { display: none; }
   .cat-toggle-btn { display: inline-flex; }
 
-  /* En mobile la topbar se distribuye en 3 filas (grid):
-       Fila 1: brand chico + botones secundarios scrollables a la derecha
-       Fila 2: buscador (ancho completo)
-       Fila 3: botones primarios (Venta + Carrito) ancho completo, grandes */
+  /* En mobile mantenemos la fila única, achicamos elementos para que entren */
   .topbar-inner {
-    grid-template-columns: auto 1fr;
-    grid-template-areas:
-      "brand   secondary"
-      "search  search"
-      "primary primary";
-    padding: 8px 12px;
-    gap: 8px;
+    padding: 8px 10px;
+    gap: 6px;
   }
   .topbar-brand strong { font-size: 14px; }
   .topbar-brand .topbar-sub { display: none; }
 
-  /* Fila 1: el menú hamburguesa va alineado a la derecha al lado del brand */
-  .topbar-actions-secondary {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-  }
-  /* En mobile ocultamos el texto "Menú", solo se ve el ícono ☰ */
+  /* Botón menú ☰: solo icono (sin "Menú") */
   .topbar-menu-label { display: none; }
-  .topbar-menu-btn { padding: 6px 10px; }
+  .topbar-menu-btn { padding: 6px 9px; }
   .topbar-menu-icon { font-size: 20px; }
-  /* El dropdown en mobile es un poco más ancho para que se lea cómodo */
+  /* Dropdown del menú al ancho de la pantalla */
   .topbar-menu { min-width: 240px; max-width: calc(100vw - 24px); }
 
-  /* Fila 2: buscador ancho completo */
-  .topbar-search { max-width: none; justify-self: stretch; }
+  /* Buscador más compacto */
+  .topbar-search { min-width: 80px; }
   .topbar-search input {
-    padding: 10px 12px;
-    font-size: 15px;
+    padding: 7px 10px;
+    font-size: 14px;
   }
 
-  /* Fila 3: acciones primarias bien grandes y centradas */
-  .topbar-actions-primary {
-    justify-self: stretch;
-    display: flex;
-    gap: 10px;
-    align-items: stretch;
-  }
+  /* Botones primarios compactos: emoji + nada de texto largo */
+  .topbar-actions-primary { gap: 6px; }
   .topbar-actions-primary .btn {
-    flex: 1;
-    font-size: 15px;
-    padding: 11px 14px;
+    font-size: 13px;
+    padding: 7px 10px;
     font-weight: 600;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    gap: 6px;
+    gap: 4px;
     white-space: nowrap;
   }
   .topbar-actions-primary .badge {
@@ -1068,19 +1042,8 @@ button { font: inherit; cursor: pointer; }
     color: #fff;
   }
   .topbar-actions-primary .cart-total-top {
-    font-size: 14px;
-    padding: 2px 8px;
-  }
-  /* En mobile el carrito (ghost por default) toma el look primary
-     para que los dos botones de la fila 3 se vean uniformes */
-  .topbar-actions-primary #cart-btn {
-    background: #2563eb;
-    color: #fff;
-    border-color: #2563eb;
-  }
-  .topbar-actions-primary #cart-btn:hover {
-    background: #1d4ed8;
-    border-color: #1d4ed8;
+    font-size: 13px;
+    padding: 2px 6px;
   }
 
   /* Drawer ocupa el ancho completo de la pantalla (left+right en lugar de width
