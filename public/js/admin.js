@@ -395,12 +395,6 @@
         if (pedBtn) pedBtn.click();
       }
       applyFilters();
-      // Si se llegó desde el catálogo con #venta, ir directo a esa tab
-      if (window.location.hash === "#venta") {
-        const ventaBtn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "venta");
-        if (ventaBtn) ventaBtn.click();
-        history.replaceState(null, "", "/admin"); // limpiar el hash de la URL
-      }
     } catch (e) {
       console.error(e);
       els.prodTbody.innerHTML = '<tr><td colspan="12" class="muted">Error cargando productos</td></tr>';
