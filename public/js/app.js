@@ -257,6 +257,13 @@
     // grupo para que la nueva categoria siempre arranque en una fila nueva.
     const showHeaders = state.cat === "all" || (state.query && new Set(list.map(p => p.category_id)).size > 1);
     if (showHeaders) {
+      // Pre-contar productos por categoria. Una sola card en la fila queda
+      // visualmente "saltada" porque la columna 2 queda vacia; en mobile lo
+      // marcamos para que ocupe ancho completo (regla CSS .card.card-solo).
+      const countByCat = {};
+      list.forEach((p) => {
+        countByCat[p.category_id] = (countByCat[p.category_id] || 0) + 1;
+      });
       const parts = [];
       let lastCat = null;
       list.forEach((p) => {
@@ -264,11 +271,12 @@
           lastCat = p.category_id;
           parts.push('<div class="grid-cat-header">' + escapeHtml(p.category_name || "") + '</div>');
         }
-        parts.push(cardHtml(p));
+        const solo = countByCat[p.category_id] === 1;
+        parts.push(cardHtml(p, solo));
       });
       els.grid.innerHTML = parts.join("");
     } else {
-      els.grid.innerHTML = list.map(cardHtml).join("");
+      els.grid.innerHTML = list.map((p) => cardHtml(p)).join("");
     }
     // Event delegation: un solo handler en la grilla maneja add/inc/dec
     // de TODOS los cards. Asi no hay que re-bindear handlers cada
@@ -431,7 +439,7 @@
     }
   }
 
-  function cardHtml(p) {
+  function cardHtml(p, solo) {
     const img = p.image_url
       ? '<img src="' + escapeHtml(p.image_url) + '" alt="' + escapeHtml(p.name) + '" loading="lazy" />'
       : '<div class="muted" style="font-size:12px;padding:8px;text-align:center">Sin foto</div>';
@@ -447,7 +455,8 @@
     const actionsHtml = noClient
       ? '<div class="card-actions-none"></div>'
       : '<div class="card-actions" data-id="' + p.id + '">' + cardActionHtml(p.id) + '</div>';
-    return '<article class="card' + (inCart ? ' in-cart' : '') + '" data-id="' + p.id + '">' +
+    const soloCls = solo ? ' card-solo' : '';
+    return '<article class="card' + (inCart ? ' in-cart' : '') + soloCls + '" data-id="' + p.id + '">' +
       '<div class="card-img">' + img + '</div>' +
       '<div class="card-body">' +
         '<div class="card-cat">' + escapeHtml(p.category_name || "") + '</div>' +

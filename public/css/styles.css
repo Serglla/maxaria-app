@@ -886,8 +886,11 @@ button { font: inherit; cursor: pointer; }
   .sidebar-title { display: none; }
   .cat-toggle-btn { display: inline-flex; }
 
-  /* En mobile el buscador baja a una segunda fila ocupando todo el ancho:
-     los botones de la topbar le comen el espacio si queda en la misma fila. */
+  /* En mobile:
+     - Brand + boton Salir en la primera fila (Salir queda anclado a la derecha).
+     - Buscador en una segunda fila ocupando todo el ancho.
+     - Resto de botones de accion en una tercera fila con scroll horizontal
+       si no entran todos (mejor que esconder o que se corten visualmente). */
   .topbar-inner {
     flex-wrap: wrap;
     height: auto;
@@ -895,10 +898,9 @@ button { font: inherit; cursor: pointer; }
     padding: 8px 12px;
     row-gap: 8px;
   }
-  .topbar-brand { flex-shrink: 0; }
-  .topbar-actions { flex-shrink: 0; margin-left: auto; }
+  .topbar-brand { flex-shrink: 0; order: 1; }
   .topbar-search {
-    order: 3;
+    order: 2;
     flex: 1 0 100%;
     max-width: none;
   }
@@ -907,6 +909,20 @@ button { font: inherit; cursor: pointer; }
     font-size: 15px;
   }
   .topbar-brand .topbar-sub { display: none; }
+
+  .topbar-actions {
+    order: 3;
+    flex: 1 0 100%;
+    margin-left: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+    /* Oculta scrollbar visual: en mobile no aporta y come 6-8px de alto */
+    scrollbar-width: none;
+  }
+  .topbar-actions::-webkit-scrollbar { display: none; }
+  .topbar-actions > * { flex-shrink: 0; }
+  .topbar-actions .btn { white-space: nowrap; }
 
   /* Drawer ocupa el ancho completo de la pantalla (left+right en lugar de width
      evita que la regla 'width: 360px' base siga ganando por specificity) */
@@ -946,6 +962,9 @@ button { font: inherit; cursor: pointer; }
     grid-template-columns: repeat(2, 1fr);
     gap: 10px;
   }
+  /* Cuando una categoría tiene un solo producto, ocupa ancho completo
+     (sino la card queda sola en la columna 1 con la 2 vacia y se ve raro) */
+  .card.card-solo { grid-column: 1 / -1; }
   /* Imagen mucho mas chica: deja mas aire para el nombre y el precio */
   .card-img { aspect-ratio: 16 / 11; }
   .card-img img { padding: 4px; }
