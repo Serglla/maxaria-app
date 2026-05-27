@@ -3334,6 +3334,7 @@
     items: [],             // items del formulario actual [{product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal}]
     allProducts: [],       // cache para el picker
     productsLoaded: false,
+    pickerSelected: new Set(), // IDs de productos seleccionados en el picker (persiste al filtrar)
   };
 
   const BUDGET_STATUS_LABELS = {
@@ -3775,8 +3776,10 @@
       const img = p.image_url
         ? '<img src="' + escapeHtml(p.image_url) + '" style="width:36px;height:36px;object-fit:cover;border-radius:4px" loading="lazy" />'
         : '<span style="display:inline-block;width:36px;height:36px;background:#f3f4f6;border-radius:4px;line-height:36px;text-align:center;color:#9ca3af;font-size:18px">📦</span>';
+      // Restaurar el estado de selección del Set persistente
+      const checked = bState.pickerSelected.has(p.id) ? ' checked' : '';
       return '<tr data-prod-id="' + p.id + '">' +
-        '<td style="padding:6px 8px"><input type="checkbox" class="picker-cb" data-prod-id="' + p.id + '" /></td>' +
+        '<td style="padding:6px 8px"><input type="checkbox" class="picker-cb" data-prod-id="' + p.id + '"' + checked + ' /></td>' +
         '<td style="padding:6px 8px">' + img + '</td>' +
         '<td style="padding:6px 8px">' +
           '<div style="font-weight:500">' + escapeHtml(p.name) + '</div>' +
@@ -3789,18 +3792,27 @@
   }
 
   function pickerUpdateCount() {
-    if (!bEls.pickerTbody || !bEls.pickerCount) return;
-    const n = bEls.pickerTbody.querySelectorAll(".picker-cb:checked").length;
+    if (!bEls.pickerCount) return;
+    const n = bState.pickerSelected.size;
     bEls.pickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados");
     if (bEls.pickerConfirm) bEls.pickerConfirm.disabled = n === 0;
   }
 
   if (bEls.picker) {
     bEls.picker.addEventListener("change", (e) => {
-      if (e.target.classList.contains("picker-cb") || e.target.id === "picker-check-all") {
-        if (e.target.id === "picker-check-all") {
-          bEls.pickerTbody.querySelectorAll(".picker-cb").forEach((cb) => { cb.checked = e.target.checked; });
-        }
+      if (e.target.classList.contains("picker-cb")) {
+        const prodId = Number(e.target.dataset.prodId);
+        if (e.target.checked) bState.pickerSelected.add(prodId);
+        else bState.pickerSelected.delete(prodId);
+        pickerUpdateCount();
+      } else if (e.target.id === "picker-check-all") {
+        // "Seleccionar todos" afecta solo los visibles en el filtro actual
+        bEls.pickerTbody.querySelectorAll(".picker-cb").forEach((cb) => {
+          cb.checked = e.target.checked;
+          const pid = Number(cb.dataset.prodId);
+          if (e.target.checked) bState.pickerSelected.add(pid);
+          else bState.pickerSelected.delete(pid);
+        });
         pickerUpdateCount();
       }
     });
@@ -3815,18 +3827,16 @@
   if (bEls.pickerSearch) {
     bEls.pickerSearch.addEventListener("input", debounce((e) => {
       renderPickerList(e.target.value);
-      pickerUpdateCount();
+      // No resetear pickerSelected al filtrar — esa es la fix principal
     }, 200));
   }
 
   if (bEls.pickerConfirm) {
     bEls.pickerConfirm.addEventListener("click", () => {
-      const checked = bEls.pickerTbody ? bEls.pickerTbody.querySelectorAll(".picker-cb:checked") : [];
-      checked.forEach((cb) => {
-        const prodId = Number(cb.dataset.prodId);
+      // Agregar TODOS los productos del Set (independientemente del filtro activo)
+      bState.pickerSelected.forEach((prodId) => {
         const prod = bState.allProducts.find((p) => p.id === prodId);
         if (!prod) return;
-        // Si el producto ya está en la lista, incrementar cantidad
         const existing = bState.items.find((it) => it.product_id === prodId);
         if (existing) {
           existing.quantity += 1;
@@ -3843,6 +3853,8 @@
           });
         }
       });
+      // Limpiar selección y cerrar
+      bState.pickerSelected.clear();
       bEls.picker.hidden = true;
       if (bEls.pickerSearch) bEls.pickerSearch.value = "";
       if (bEls.pickerCheckAll) bEls.pickerCheckAll.checked = false;
@@ -3861,6 +3873,7 @@
       }
       if (bEls.pickerSearch) bEls.pickerSearch.value = "";
       if (bEls.pickerCheckAll) bEls.pickerCheckAll.checked = false;
+      bState.pickerSelected.clear(); // empezar con selección vacía cada vez que se abre
       renderPickerList("");
       pickerUpdateCount();
       bEls.picker.hidden = false;
