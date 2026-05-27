@@ -40,6 +40,7 @@
     pcBody: document.getElementById("pc-body"),
     pcTitle: document.getElementById("pc-title"),
     adminLink: document.getElementById("admin-link"),
+    ventaLink: document.getElementById("venta-link"),
     levelSwitcher: document.getElementById("level-switcher"),
     levelSelect: document.getElementById("level-select"),
     backdrop: document.getElementById("drawer-backdrop"),
@@ -166,6 +167,10 @@
     }
     if (els.adminLink) {
       els.adminLink.hidden = u.level !== 99;
+    }
+    if (els.ventaLink) {
+      // Vendedores (5) y admin (99) ven el botón de Venta en el catálogo
+      els.ventaLink.hidden = u.level !== 5 && u.level !== 99;
     }
     if (els.priceChangesBtn) {
       // El vendedor ve los cambios segun el nivel del cliente seleccionado

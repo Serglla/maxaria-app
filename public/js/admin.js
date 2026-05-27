@@ -395,6 +395,12 @@
         if (pedBtn) pedBtn.click();
       }
       applyFilters();
+      // Si se llegó desde el catálogo con #venta, ir directo a esa tab
+      if (window.location.hash === "#venta") {
+        const ventaBtn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "venta");
+        if (ventaBtn) ventaBtn.click();
+        history.replaceState(null, "", "/admin"); // limpiar el hash de la URL
+      }
     } catch (e) {
       console.error(e);
       els.prodTbody.innerHTML = '<tr><td colspan="12" class="muted">Error cargando productos</td></tr>';
@@ -3389,7 +3395,7 @@
         '<td style="padding:5px 8px"><input type="text" value="' + escapeHtml(it.product_name) + '"' +
           ' data-field="product_name" /></td>' +
         '<td style="padding:5px 8px;text-align:right">' +
-          '<input type="number" value="' + escapeHtml(it.quantity) + '" min="0.01" step="1"' +
+          '<input type="number" value="' + escapeHtml(Math.round(it.quantity)) + '" min="1" step="1"' +
           ' data-field="quantity" style="width:60px;text-align:right" /></td>' +
         '<td style="padding:5px 8px;text-align:right">' +
           '<input type="number" value="' + escapeHtml(it.unit_price) + '" min="0" step="1"' +
@@ -3415,8 +3421,15 @@
       const idx = Number(tr.dataset.idx);
       const field = e.target.dataset.field;
       if (!field || idx >= bState.items.length) return;
-      bState.items[idx][field] = field === "product_code" || field === "product_name"
-        ? e.target.value : Number(e.target.value) || 0;
+      if (field === "product_code" || field === "product_name") {
+        bState.items[idx][field] = e.target.value;
+      } else if (field === "quantity") {
+        // Cantidad siempre entera, mínimo 1
+        bState.items[idx][field] = Math.max(1, Math.round(Number(e.target.value) || 1));
+        e.target.value = bState.items[idx][field]; // corregir el input si vino decimal
+      } else {
+        bState.items[idx][field] = Number(e.target.value) || 0;
+      }
       // Recalcular subtotal de esta fila y totales
       const it = bState.items[idx];
       it.subtotal = Math.round((Number(it.quantity)||1) * (Number(it.unit_price)||0) * (1 - (Number(it.discount_percent)||0) / 100));
