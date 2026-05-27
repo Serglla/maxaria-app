@@ -648,12 +648,82 @@ Tres ajustes al catálogo PDF reportados por Sergio:
 - Confirma la regla de CLAUDE.md: **NO tocar el archivo basándose en el error de bash**. Usar `Read` como fuente de verdad. Si bash y Read difieren, confiar SIEMPRE en Read.
 - El error de bash persiste incluso después de `sleep 2`; no es cuestión de timing corto.
 
+### Revisión completa + fixes críticos (27 mayo 2026, sesión mañana)
+
+Sergio pidió revisión del código completo y aplicar fixes. Se priorizó 🔴 críticos y se dejaron pendientes 🟡 (rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`).
+
+**Bug crítico: `req.session.user` siempre undefined en todo el módulo Presupuestos**
+- Las 6 rutas `/api/budgets*` (GET lista, GET detalle, POST, PUT, PATCH status, DELETE) hacían `const u = req.session.user` y después `u.level`/`u.id`. Pero `POST /login` solo guarda `req.session.userId`, `req.session.level`, `req.session.fullName`, `req.session.username` — nunca un objeto `user`. Cualquier request crasheaba con TypeError → 500.
+- Fix: `const u = { id: req.session.userId, level: req.session.level }` en las 6 rutas. Commit `6c09104`.
+
+**Bug crítico: `POST /api/orders/:id/deliver` no descontaba stock ni generaba débito en cuenta corriente**
+- El flujo de entrega via deliver solo registraba en `deliveries` y ponía `status='entregado'`. La lógica de descuento de stock + débito vivía solo en `PATCH /api/orders/:id` con status='entregado', pero como deliver ya había puesto el status, el PATCH posterior veía `prevStatus === 'entregado'` y no ejecutaba el descuento.
+- Resultado: en producción el stock nunca bajaba al entregar y la cuenta corriente del cliente no se debitaba — el flujo más común para vendedores estaba roto.
+- Fix: dentro de la transacción de `/deliver` se agregó el mismo bloque que el PATCH (descuento de stock + INSERT en `account_movements` + `stock_discounted = 1`), respetando `skipStock` para pedidos con `unified_parent_id != null` y `is_unified`. El check `prevStatus !== "entregado" && !order.stock_discounted` evita doble descuento al editar una entrega ya registrada.
+- Commit `3e3633e`.
+
+**Hardening de `SESSION_SECRET`**
+- Antes: `const SESSION_SECRET = process.env.SESSION_SECRET || "dev-secret-cambiame"`. Si la env var no estaba seteada en producción (deploy mal configurado), el server arrancaba con un secreto público — cualquiera podía forjar cookies.
+- Fix: en `NODE_ENV=production`, si `SESSION_SECRET` falta o coincide con `"dev-secret-cambiame"` / `"cambiar-esto-por-algo-largo-y-aleatorio"` (los dos valores de ejemplo conocidos), el server aborta con banner explicativo. En desarrollo solo warning. Verificado en vivo: aborta correctamente.
+- Commit `4b177ca`.
+
+**Pendientes 🟡 del informe (no se aplicaron)**
+- Rate limiting en `POST /login` (anti brute-force).
+- `POST /api/orders` no valida categorías permitidas del usuario (bypass via API).
+- Race condition en `nextBudgetNumber()` (dos requests simultáneos pueden generar el mismo número → 409 confuso por el UNIQUE).
+- Path traversal en `loadProductImage`: `path.resolve` + check `startsWith(PRODUCT_IMAGES_DIR)` falta.
+- `plain_password` en texto plano (Sergio decidió postergar — requiere decisión sobre cómo mostrarle la pass al admin al crear usuario).
+
+### Fixes mobile + nueva página /ventas (27 mayo 2026, sesión tarde)
+
+**Topbar mobile reorganizado + grilla con cards solas**
+- Reporte: en mobile el botón "Salir" del header del catálogo se cortaba (solo aparecía "Sali") porque los 6 botones + brand no entraban en la primera fila del `.topbar-inner` (flex-wrap).
+- Reporte 2: en la grilla del catálogo, cuando una categoría tenía un solo producto, la card quedaba en la columna 1 con la columna 2 vacía (efecto visual raro).
+- Fix card-solo: `cardHtml(p, solo)` acepta segundo parámetro; `renderProducts()` pre-cuenta productos por categoría y marca con `card-solo` cuando hay uno solo. CSS en mobile: `.card.card-solo { grid-column: 1 / -1 }`.
+- Commit `8646956`.
+
+**Reorganización final del topbar mobile (3 filas)**
+Después de un segundo iteración pedida por Sergio para "que entre mejor todo":
+- HTML: se dividió `.topbar-actions` en dos contenedores nuevos `.topbar-actions-secondary` (Mis pedidos, Mis ganancias, Ver cambios, Salir, Admin, level switcher) y `.topbar-actions-primary` (Venta + Carrito).
+- CSS mobile: 3 filas:
+  - Fila 1: brand + secundarios al lado con scroll horizontal si no entran (font 12px, padding 5px 9px, scrollbar oculto).
+  - Fila 2: buscador ancho completo.
+  - Fila 3: Venta + Carrito `flex: 1`, font 15px, padding generoso (11px 14px), ambos con look primary azul para uniformidad. En desktop carrito sigue ghost.
+- Commit `4f623ad`.
+
+**Página /ventas dedicada (reemplaza al overlay)**
+Sergio pidió que el botón "🧾 Venta" no abra un modal sobre el catálogo sino que vaya a otra sección. Eligió "página nueva /ventas con su propio HTML" sobre "vista fullscreen en la misma página".
+
+- Nuevo `public/ventas.html`: topbar simple ("← Catálogo" + Salir) + lista de presupuestos + form + picker de productos. 205 líneas.
+- Nuevo `public/js/ventas.js`: autocontenido (IIFE propio con su `loadMe()` para mostrar app_name y nombre del usuario en el header). 502 líneas, extraído del IIFE de `app.js`.
+- Nuevo bloque CSS `.ventas-*` en `styles.css` para reemplazar los inline styles del overlay viejo y dar layout responsive (1 columna en mobile).
+- Nueva ruta `GET /ventas` en `server.js` con `requireVendedorOrAdmin`.
+- `app.js`: el handler de `#venta-btn` cambió a `window.location.href = "/ventas"`. Se eliminaron las ~460 líneas del módulo de presupuestos. **app.js bajó de 2090 → 1629 líneas**.
+- `index.html`: removidos `#budget-overlay` y `#product-picker-modal` que ya no se usan.
+- Commit `ab6fbb4`.
+
+**Bug fix: vendedores no veían clientes en el select de presupuesto (página /ventas)**
+- Síntoma: al abrir el form de presupuesto en `/ventas`, el select "Cliente" solo mostraba "Consumidor final" para los vendedores. Para admin sí funcionaba.
+- Causa: `vPopulateClients()` hacía `fetch("/api/admin/users")` que tiene `requireAdmin` → 403 silencioso para vendedores (el try/catch se lo tragaba).
+- Fix: se amplió `/api/clients` (antes solo level 5) para aceptar admin también, manteniendo el filtro por tercerizado para vendedores. `vPopulateClients()` ahora usa `/api/clients` que ya devuelve level 1-4 activos pre-filtrados.
+- Beneficio extra: vendedor tercerizado en `/ventas` ahora ve solo sus clientes asignados (no todos), que es lo deseado.
+- Commit `62d691a`.
+
+**Cache busting bumpeado a `?v=20260527c`** en `styles.css`, `app.js`, `ventas.js`, `ventas.html`.
+
+**Workflow del bash mount**
+- En esta sesión NO ocurrió el problema del bash mount stale. Los `node --check` siempre coincidieron con el filesystem real.
+- Tampoco hubo truncamientos en archivos grandes — los Edits a `server.js` (~3380 líneas), `app.js` (~2000) y `styles.css` (~2400) se aplicaron sin problemas.
+- La sesión consistió en 8 commits en `master` pusheados a `origin`: `6c09104`, `3e3633e`, `4b177ca`, `8646956`, `ab6fbb4`, `62d691a`, `4f623ad`, más el bumpeo de cache.
+
 ### Próximos pasos pendientes (en orden)
 
-1. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
-2. **Backups externos automáticos**: rclone a B2/S3/Drive.
-3. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
-4. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
+1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.
+2. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
+3. **Backups externos automáticos**: rclone a B2/S3/Drive.
+4. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
+5. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
+6. **Decisión sobre `plain_password`**: eliminar el campo de la DB. Para mostrar la pass al admin al crear usuario, devolverla solo en la respuesta JSON de ese POST (sin persistir). Para export/import basta con `password_hash`.
 
 ### Objetivo de negocio
 Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.
