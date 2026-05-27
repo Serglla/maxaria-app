@@ -3187,7 +3187,7 @@ function canAccessBudget(user, budget) {
 
 // GET /api/budgets — lista (filtrada por vendedor si level 5)
 app.get("/api/budgets", requireVendedorOrAdmin, (req, res) => {
-  const u = req.session.user;
+  const u = { id: req.session.userId, level: req.session.level };
   const isAdmin = Number(u.level) === 99;
   const rows = db.prepare(
     "SELECT b.id, b.number, b.client_name, b.payment_method, b.currency," +
@@ -3206,7 +3206,7 @@ app.get("/api/budgets", requireVendedorOrAdmin, (req, res) => {
 
 // GET /api/budgets/:id — detalle con items
 app.get("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
-  const u = req.session.user;
+  const u = { id: req.session.userId, level: req.session.level };
   const budget = db.prepare(
     "SELECT b.*, v.full_name AS vendedor_name, cl.full_name AS client_full_name" +
     "  FROM budgets b" +
@@ -3226,7 +3226,7 @@ app.get("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
 
 // POST /api/budgets — crear presupuesto
 app.post("/api/budgets", requireVendedorOrAdmin, (req, res) => {
-  const u = req.session.user;
+  const u = { id: req.session.userId, level: req.session.level };
   const b = req.body || {};
   const vendedorId = Number(u.level) === 99 ? (b.vendedor_id || u.id) : u.id;
   const clientId = b.client_id ? Number(b.client_id) : null;
@@ -3281,7 +3281,7 @@ app.post("/api/budgets", requireVendedorOrAdmin, (req, res) => {
 
 // PUT /api/budgets/:id — actualizar presupuesto completo
 app.put("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
-  const u = req.session.user;
+  const u = { id: req.session.userId, level: req.session.level };
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
@@ -3336,7 +3336,7 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
 
 // PATCH /api/budgets/:id/status — cambiar estado
 app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, (req, res) => {
-  const u = req.session.user;
+  const u = { id: req.session.userId, level: req.session.level };
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
@@ -3349,7 +3349,7 @@ app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, (req, res) => {
 
 // DELETE /api/budgets/:id
 app.delete("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
-  const u = req.session.user;
+  const u = { id: req.session.userId, level: req.session.level };
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
