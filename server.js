@@ -2362,6 +2362,248 @@ app.get("/api/admin/earnings/:vendedorId", requireAdmin, (req, res) => {
   res.json({ vendedor: vendedor, orders: orders });
 });
 
+// ====================================================================
+// ===== ACTIVIDAD - Reportes extendidos (solo admin) =================
+// ====================================================================
+//
+// Filtro de fechas comun: ?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Si falta alguno, se aplica un default razonable (ultimos 30 dias).
+// Las fechas se comparan contra orders.created_at en formato ISO
+// (la columna ya viene con CURRENT_TIMESTAMP que es comparable lexico).
+function parseActivityRange(req) {
+  function toIso(v, end) {
+    if (!v || typeof v !== "string") return null;
+    const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    return end ? (v + " 23:59:59") : (v + " 00:00:00");
+  }
+  let from = toIso(req.query.from, false);
+  let to = toIso(req.query.to, true);
+  if (!from) {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    from = d.toISOString().slice(0, 10) + " 00:00:00";
+  }
+  if (!to) {
+    to = new Date().toISOString().slice(0, 10) + " 23:59:59";
+  }
+  return { from: from, to: to };
+}
+
+// ----- Historial agregado por cliente -----
+// Suma pedidos no cancelados (excluye unificados del tercerizado) en el
+// rango. Devuelve por cliente: cantidad de pedidos, entregados, total
+// vendido, costo (a partir de vendedor_cost_unit cuando esta seteado;
+// sino cae a products.cost actual como aproximacion), ganancia, ticket
+// promedio, ultimo pedido. Cliente = level entre 1 y 4.
+app.get("/api/admin/activity/clients", requireAdmin, (req, res) => {
+  const range = parseActivityRange(req);
+  const rows = db.prepare(
+    "WITH cli_orders AS (" +
+    "  SELECT u.id AS user_id, u.username, u.full_name, u.level, u.active," +
+    "         o.id AS order_id, o.status, o.total, o.created_at" +
+    "    FROM users u" +
+    "    JOIN orders o ON o.user_id = u.id" +
+    "   WHERE u.level BETWEEN 1 AND 4" +
+    "     AND o.status != 'cancelado'" +
+    "     AND COALESCE(o.is_unified,0) = 0" +
+    "     AND o.created_at BETWEEN ? AND ?" +
+    ")," +
+    "ord_agg AS (" +
+    "  SELECT user_id," +
+    "         COUNT(*) AS orders_count," +
+    "         SUM(CASE WHEN status='entregado' THEN 1 ELSE 0 END) AS delivered_count," +
+    "         SUM(total) AS total_sold," +
+    "         MAX(created_at) AS last_order_at" +
+    "    FROM cli_orders GROUP BY user_id" +
+    ")," +
+    "item_agg AS (" +
+    "  SELECT co.user_id," +
+    "         SUM(COALESCE(oi.vendedor_cost_unit, p.cost, 0) * oi.quantity) AS total_cost," +
+    "         SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS total_earning" +
+    "    FROM cli_orders co" +
+    "    JOIN order_items oi ON oi.order_id = co.order_id" +
+    "    LEFT JOIN products p ON p.id = oi.product_id" +
+    "   GROUP BY co.user_id" +
+    ") " +
+    "SELECT u.id AS user_id, u.username, u.full_name, u.level, u.active," +
+    "       COALESCE(oa.orders_count,0) AS orders_count," +
+    "       COALESCE(oa.delivered_count,0) AS delivered_count," +
+    "       COALESCE(oa.total_sold,0) AS total_sold," +
+    "       COALESCE(ia.total_cost,0) AS total_cost," +
+    "       COALESCE(ia.total_earning,0) AS total_earning," +
+    "       oa.last_order_at" +
+    "  FROM users u" +
+    "  LEFT JOIN ord_agg oa ON oa.user_id = u.id" +
+    "  LEFT JOIN item_agg ia ON ia.user_id = u.id" +
+    " WHERE u.level BETWEEN 1 AND 4" +
+    "   AND COALESCE(oa.orders_count,0) > 0" +
+    " ORDER BY oa.total_sold DESC, u.username"
+  ).all(range.from, range.to);
+  res.json({ from: range.from, to: range.to, rows: rows });
+});
+
+// Detalle de pedidos de un cliente puntual en el rango.
+app.get("/api/admin/activity/clients/:userId", requireAdmin, (req, res) => {
+  const uid = Number(req.params.userId);
+  if (!uid) return res.status(400).json({ error: "ID invalido" });
+  const range = parseActivityRange(req);
+  const cliente = db.prepare(
+    "SELECT id, username, full_name, level FROM users WHERE id = ? AND level BETWEEN 1 AND 4"
+  ).get(uid);
+  if (!cliente) return res.status(404).json({ error: "Cliente no encontrado" });
+  const orders = db.prepare(
+    "SELECT o.id, o.status, o.total, o.created_at," +
+    "       o.assigned_vendedor_id," +
+    "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
+    "       COALESCE(SUM(COALESCE(oi.vendedor_cost_unit, p.cost, 0) * oi.quantity), 0) AS cost_total," +
+    "       COALESCE(SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity), 0) AS earning_total," +
+    "       COALESCE(SUM(oi.quantity), 0) AS items_count" +
+    "  FROM orders o" +
+    "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
+    "  LEFT JOIN order_items oi ON oi.order_id = o.id" +
+    "  LEFT JOIN products p ON p.id = oi.product_id" +
+    " WHERE o.user_id = ? AND o.status != 'cancelado'" +
+    "   AND COALESCE(o.is_unified,0) = 0" +
+    "   AND o.created_at BETWEEN ? AND ?" +
+    " GROUP BY o.id" +
+    " ORDER BY o.created_at DESC"
+  ).all(uid, range.from, range.to);
+  res.json({ cliente: cliente, from: range.from, to: range.to, orders: orders });
+});
+
+// ----- Ranking de productos por ganancia -----
+// Toma items de pedidos no cancelados (excluye unificados) en el rango.
+// Costo: vendedor_cost_unit (snapshot) si existe, sino products.cost.
+// Ganancia = (unit_price - costo_aplicado) * quantity. Devuelve por producto
+// unidades vendidas, total venta, total costo, ganancia, margen %, ultima
+// venta.
+app.get("/api/admin/activity/products-ranking", requireAdmin, (req, res) => {
+  const range = parseActivityRange(req);
+  const rows = db.prepare(
+    "SELECT p.id AS product_id, p.code, p.name, p.category_id," +
+    "       c.name AS category_name, p.stock, p.cost AS current_cost," +
+    "       SUM(oi.quantity) AS units_sold," +
+    "       SUM(oi.unit_price * oi.quantity) AS total_sold," +
+    "       SUM(COALESCE(oi.vendedor_cost_unit, p.cost, 0) * oi.quantity) AS total_cost," +
+    "       SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS total_earning," +
+    "       MAX(o.created_at) AS last_sold_at," +
+    "       COUNT(DISTINCT o.id) AS orders_count" +
+    "  FROM order_items oi" +
+    "  JOIN orders o ON o.id = oi.order_id" +
+    "  LEFT JOIN products p ON p.id = oi.product_id" +
+    "  LEFT JOIN categories c ON c.id = p.category_id" +
+    " WHERE o.status != 'cancelado'" +
+    "   AND COALESCE(o.is_unified,0) = 0" +
+    "   AND o.created_at BETWEEN ? AND ?" +
+    "   AND oi.product_id IS NOT NULL" +
+    " GROUP BY oi.product_id" +
+    " ORDER BY total_earning DESC, units_sold DESC"
+  ).all(range.from, range.to);
+  res.json({ from: range.from, to: range.to, rows: rows });
+});
+
+// ----- Valorizacion del stock -----
+// KPIs globales del inventario al dia de hoy. Solo cuenta productos
+// activos con stock > 0 para el "valor de stock", pero devuelve tambien
+// conteos de agotados y stock bajo (<= umbral configurable via ?low=N,
+// default 5). El valor a precio de venta se devuelve por cada nivel base.
+app.get("/api/admin/activity/stock-valuation", requireAdmin, (req, res) => {
+  const lowThreshold = Math.max(0, Number(req.query.low) || 5);
+  const totals = db.prepare(
+    "SELECT" +
+    "  SUM(CASE WHEN active=1 AND stock>0 THEN stock ELSE 0 END) AS units_in_stock," +
+    "  SUM(CASE WHEN active=1 AND stock>0 THEN cost*stock ELSE 0 END) AS value_cost," +
+    "  SUM(CASE WHEN active=1 AND stock>0 THEN price_minorista*stock ELSE 0 END) AS value_minorista," +
+    "  SUM(CASE WHEN active=1 AND stock>0 THEN price_revendedor*stock ELSE 0 END) AS value_revendedor," +
+    "  SUM(CASE WHEN active=1 AND stock>0 THEN price_mayorista*stock ELSE 0 END) AS value_mayorista," +
+    "  SUM(CASE WHEN active=1 AND stock>0 THEN price_vip*stock ELSE 0 END) AS value_vip," +
+    "  SUM(CASE WHEN active=1 AND stock>0 THEN price_publico*stock ELSE 0 END) AS value_publico," +
+    "  SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) AS active_products," +
+    "  SUM(CASE WHEN active=1 AND stock>0 THEN 1 ELSE 0 END) AS in_stock_products," +
+    "  SUM(CASE WHEN active=1 AND stock<=0 THEN 1 ELSE 0 END) AS out_of_stock_products," +
+    "  SUM(CASE WHEN active=1 AND stock>0 AND stock<=? THEN 1 ELSE 0 END) AS low_stock_products," +
+    "  SUM(CASE WHEN active=0 THEN 1 ELSE 0 END) AS inactive_products" +
+    "  FROM products"
+  ).get(lowThreshold);
+  const lowList = db.prepare(
+    "SELECT id, code, name, stock, cost, price_minorista, price_mayorista" +
+    "  FROM products" +
+    " WHERE active=1 AND stock>0 AND stock<=?" +
+    " ORDER BY stock ASC, name ASC LIMIT 50"
+  ).all(lowThreshold);
+  const outList = db.prepare(
+    "SELECT id, code, name, cost, price_minorista, price_mayorista" +
+    "  FROM products" +
+    " WHERE active=1 AND stock<=0" +
+    " ORDER BY name ASC LIMIT 50"
+  ).all();
+  res.json({
+    low_threshold: lowThreshold,
+    totals: totals,
+    low_stock: lowList,
+    out_of_stock: outList,
+  });
+});
+
+// ----- Valorizacion por categoria -----
+// Misma idea pero agrupado por categoria. Devuelve por cada categoria:
+// productos totales, en stock, unidades, valor a costo, valor a cada nivel
+// de precio, ganancia potencial (valor_minorista - valor_cost).
+app.get("/api/admin/activity/stock-by-category", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT c.id AS category_id, c.name AS category_name, c.sort_order," +
+    "  COUNT(p.id) AS total_products," +
+    "  SUM(CASE WHEN p.active=1 AND p.stock>0 THEN 1 ELSE 0 END) AS in_stock_products," +
+    "  SUM(CASE WHEN p.active=1 AND p.stock<=0 THEN 1 ELSE 0 END) AS out_of_stock_products," +
+    "  SUM(CASE WHEN p.active=1 AND p.stock>0 THEN p.stock ELSE 0 END) AS units_in_stock," +
+    "  SUM(CASE WHEN p.active=1 AND p.stock>0 THEN p.cost*p.stock ELSE 0 END) AS value_cost," +
+    "  SUM(CASE WHEN p.active=1 AND p.stock>0 THEN p.price_minorista*p.stock ELSE 0 END) AS value_minorista," +
+    "  SUM(CASE WHEN p.active=1 AND p.stock>0 THEN p.price_revendedor*p.stock ELSE 0 END) AS value_revendedor," +
+    "  SUM(CASE WHEN p.active=1 AND p.stock>0 THEN p.price_mayorista*p.stock ELSE 0 END) AS value_mayorista," +
+    "  SUM(CASE WHEN p.active=1 AND p.stock>0 THEN p.price_vip*p.stock ELSE 0 END) AS value_vip," +
+    "  SUM(CASE WHEN p.active=1 AND p.stock>0 THEN p.price_publico*p.stock ELSE 0 END) AS value_publico" +
+    "  FROM categories c" +
+    "  LEFT JOIN products p ON p.category_id = c.id" +
+    "  GROUP BY c.id" +
+    "  ORDER BY c.sort_order, c.name"
+  ).all();
+  res.json({ rows: rows });
+});
+
+// ----- Productos sin movimiento -----
+// Productos activos con stock>0 que no aparecen en ningun pedido (no
+// cancelado, no unificado) en los ultimos N dias (default 60).
+app.get("/api/admin/activity/dead-stock", requireAdmin, (req, res) => {
+  const days = Math.max(1, Number(req.query.days) || 60);
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  const since = d.toISOString().slice(0, 10) + " 00:00:00";
+  const rows = db.prepare(
+    "SELECT p.id, p.code, p.name, p.stock, p.cost, p.price_minorista," +
+    "       c.name AS category_name," +
+    "       (SELECT MAX(o.created_at)" +
+    "          FROM order_items oi" +
+    "          JOIN orders o ON o.id = oi.order_id" +
+    "         WHERE oi.product_id = p.id" +
+    "           AND o.status != 'cancelado'" +
+    "           AND COALESCE(o.is_unified,0) = 0) AS last_sold_at" +
+    "  FROM products p" +
+    "  LEFT JOIN categories c ON c.id = p.category_id" +
+    " WHERE p.active=1 AND p.stock>0" +
+    "   AND p.id NOT IN (" +
+    "     SELECT DISTINCT oi.product_id FROM order_items oi" +
+    "     JOIN orders o ON o.id = oi.order_id" +
+    "     WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
+    "       AND o.created_at >= ?" +
+    "       AND oi.product_id IS NOT NULL" +
+    "   )" +
+    " ORDER BY (p.cost*p.stock) DESC, p.name ASC" +
+    " LIMIT 100"
+  ).all(since);
+  res.json({ days: days, since: since, rows: rows });
+});
+
 // Lista de vendedores con estadisticas de pedidos y entregas (solo admin)
 app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
   const rows = db.prepare(

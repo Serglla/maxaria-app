@@ -1414,6 +1414,102 @@ button { font: inherit; cursor: pointer; }
   overflow: auto;
   max-height: calc(100vh - 240px);
 }
+
+/* ===== Actividad: sub-tabs y KPIs ===== */
+.act-subnav {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 14px;
+  padding-bottom: 0;
+}
+.act-subtab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.act-subtab:hover:not(.active) {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+.act-subtab.active {
+  color: #1e3a5f;
+  background: #fff;
+  border-color: #e5e7eb;
+  border-bottom-color: #f59e0b;
+  font-weight: 600;
+}
+.act-subtab:focus { outline: none; }
+.act-subtab:focus-visible { outline: 2px solid #1e3a5f; outline-offset: 1px; }
+
+.act-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 14px 0 6px;
+}
+.act-kpi {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.03);
+}
+.act-kpi-label {
+  font-size: 11px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.act-kpi-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e293b;
+}
+.act-kpi-value.money { font-size: 16px; }
+.act-kpi-pri { border-color: #f59e0b; background: #fffbeb; }
+.act-kpi-pri .act-kpi-value { color: #b45309; }
+.act-kpi-warn { border-color: #fca5a5; background: #fef2f2; }
+.act-kpi-warn .act-kpi-value { color: #b91c1c; }
+
+.act-pot-banner {
+  background: #ecfdf5;
+  border: 1px solid #6ee7b7;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-top: 12px;
+  font-size: 14px;
+  color: #064e3b;
+}
+.act-pot-value {
+  font-weight: 700;
+  font-size: 16px;
+  color: #0a7a0a;
+  margin-left: 6px;
+}
+
+.admin-input {
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+}
+.admin-input:focus {
+  outline: 2px solid #1e3a5f;
+  outline-offset: -1px;
+  border-color: #1e3a5f;
+}
 .admin-table {
   width: 100%;
   border-collapse: collapse;

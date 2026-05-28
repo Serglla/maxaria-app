@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260527l" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260528a" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -338,28 +338,231 @@
 
     <!-- ===== TAB ACTIVIDAD (Ganancias por vendedor) ===== -->
     <section class="tab-panel" id="tab-actividad" hidden>
-      <div class="admin-toolbar">
-        <span class="muted small">Resumen de pedidos y ganancia por vendedor (excluye cancelados). La ganancia se calcula sobre el costo guardado al momento del pedido.</span>
-        <span class="admin-spacer"></span>
-        <span id="act-count" class="muted">…</span>
+      <!-- Sub-navegacion interna de Actividad -->
+      <div class="act-subnav" role="tablist" aria-label="Sub-secciones de Actividad">
+        <button type="button" class="act-subtab active" data-subtab="vendedores">Por vendedor</button>
+        <button type="button" class="act-subtab" data-subtab="clientes">Por cliente</button>
+        <button type="button" class="act-subtab" data-subtab="ranking">Ranking productos</button>
+        <button type="button" class="act-subtab" data-subtab="stock">Stock</button>
+        <button type="button" class="act-subtab" data-subtab="categorias">Por categoría</button>
+        <button type="button" class="act-subtab" data-subtab="muerto">Sin movimiento</button>
       </div>
-      <div class="admin-table-wrap">
-        <table class="admin-table" id="act-table">
-          <thead>
-            <tr>
-              <th>Vendedor</th>
-              <th>Tipo</th>
-              <th class="num">Pedidos</th>
-              <th class="num">Entregados</th>
-              <th class="num">Total vendido</th>
-              <th class="num">Costo</th>
-              <th class="num">Ganancia</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody id="act-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
-          <tfoot id="act-tfoot"></tfoot>
-        </table>
+
+      <!-- ===== Sub-vista: Vendedores (lo de siempre) ===== -->
+      <div class="act-subpanel" data-subpanel="vendedores">
+        <div class="admin-toolbar">
+          <span class="muted small">Resumen de pedidos y ganancia por vendedor (excluye cancelados y pedidos unificados). La ganancia se calcula sobre el costo guardado al momento del pedido.</span>
+          <span class="admin-spacer"></span>
+          <span id="act-count" class="muted">…</span>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table" id="act-table">
+            <thead>
+              <tr>
+                <th>Vendedor</th>
+                <th>Tipo</th>
+                <th class="num">Pedidos</th>
+                <th class="num">Entregados</th>
+                <th class="num">Total vendido</th>
+                <th class="num">Costo</th>
+                <th class="num">Ganancia</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="act-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
+            <tfoot id="act-tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+
+      <!-- ===== Sub-vista: Clientes ===== -->
+      <div class="act-subpanel" data-subpanel="clientes" hidden>
+        <div class="admin-toolbar">
+          <label class="admin-filter">Desde <input type="date" id="act-cli-from" class="admin-input" /></label>
+          <label class="admin-filter">Hasta <input type="date" id="act-cli-to" class="admin-input" /></label>
+          <button class="btn" id="act-cli-apply" type="button">Aplicar</button>
+          <input type="search" id="act-cli-search" class="admin-search" placeholder="Buscar cliente..." autocomplete="off" />
+          <span class="admin-spacer"></span>
+          <span id="act-cli-count" class="muted">…</span>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table" id="act-cli-table">
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th class="num">Pedidos</th>
+                <th class="num">Entregados</th>
+                <th class="num">Total comprado</th>
+                <th class="num">Ticket promedio</th>
+                <th class="num">Costo</th>
+                <th class="num">Ganancia</th>
+                <th>Último pedido</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="act-cli-tbody"><tr><td colspan="9" class="muted">Cargando…</td></tr></tbody>
+            <tfoot id="act-cli-tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+
+      <!-- ===== Sub-vista: Ranking productos ===== -->
+      <div class="act-subpanel" data-subpanel="ranking" hidden>
+        <div class="admin-toolbar">
+          <label class="admin-filter">Desde <input type="date" id="act-rk-from" class="admin-input" /></label>
+          <label class="admin-filter">Hasta <input type="date" id="act-rk-to" class="admin-input" /></label>
+          <button class="btn" id="act-rk-apply" type="button">Aplicar</button>
+          <input type="search" id="act-rk-search" class="admin-search" placeholder="Buscar producto..." autocomplete="off" />
+          <label class="admin-filter">Ordenar por
+            <select id="act-rk-sort" class="admin-select">
+              <option value="earning">Ganancia</option>
+              <option value="sold">Total vendido</option>
+              <option value="units">Unidades</option>
+              <option value="margin">Margen %</option>
+            </select>
+          </label>
+          <span class="admin-spacer"></span>
+          <span id="act-rk-count" class="muted">…</span>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table" id="act-rk-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Producto</th>
+                <th>Categoría</th>
+                <th class="num">Unidades</th>
+                <th class="num">Vendido</th>
+                <th class="num">Costo</th>
+                <th class="num">Ganancia</th>
+                <th class="num">Margen</th>
+                <th class="num">Stock</th>
+                <th>Última venta</th>
+              </tr>
+            </thead>
+            <tbody id="act-rk-tbody"><tr><td colspan="10" class="muted">Cargando…</td></tr></tbody>
+            <tfoot id="act-rk-tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+
+      <!-- ===== Sub-vista: Stock (valorizacion global) ===== -->
+      <div class="act-subpanel" data-subpanel="stock" hidden>
+        <div class="admin-toolbar">
+          <span class="muted small">Valorización del inventario al día de hoy. Solo cuenta productos activos con stock &gt; 0.</span>
+          <span class="admin-spacer"></span>
+          <label class="admin-filter">Umbral stock bajo
+            <input type="number" id="act-st-low" class="admin-input" min="0" max="999" value="5" style="width:70px" />
+          </label>
+          <button class="btn" id="act-st-apply" type="button">Aplicar</button>
+        </div>
+        <div class="act-kpi-grid" id="act-st-kpis">
+          <div class="act-kpi"><div class="act-kpi-label">Productos en stock</div><div class="act-kpi-value" data-k="in_stock_products">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Unidades totales</div><div class="act-kpi-value" data-k="units_in_stock">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Valor a costo</div><div class="act-kpi-value money" data-k="value_cost">—</div></div>
+          <div class="act-kpi act-kpi-pri"><div class="act-kpi-label">Valor a Minorista</div><div class="act-kpi-value money" data-k="value_minorista">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Valor a Revendedor</div><div class="act-kpi-value money" data-k="value_revendedor">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Valor a Mayorista</div><div class="act-kpi-value money" data-k="value_mayorista">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Valor a VIP</div><div class="act-kpi-value money" data-k="value_vip">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Valor a Público</div><div class="act-kpi-value money" data-k="value_publico">—</div></div>
+          <div class="act-kpi act-kpi-warn"><div class="act-kpi-label">Sin stock</div><div class="act-kpi-value" data-k="out_of_stock_products">—</div></div>
+          <div class="act-kpi act-kpi-warn"><div class="act-kpi-label">Stock bajo</div><div class="act-kpi-value" data-k="low_stock_products">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Productos activos</div><div class="act-kpi-value" data-k="active_products">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Inactivos</div><div class="act-kpi-value" data-k="inactive_products">—</div></div>
+        </div>
+        <div class="act-pot-banner" id="act-st-potential" style="display:none">
+          <strong>Ganancia potencial</strong> si se vendiera todo el stock a precio minorista:
+          <span class="act-pot-value" id="act-st-pot-val">—</span>
+        </div>
+
+        <h4 style="margin-top:24px;margin-bottom:8px">⚠️ Productos con stock bajo</h4>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Nombre</th>
+                <th class="num">Stock</th>
+                <th class="num">Costo unit.</th>
+                <th class="num">Valor a costo</th>
+              </tr>
+            </thead>
+            <tbody id="act-st-low-tbody"><tr><td colspan="5" class="muted">—</td></tr></tbody>
+          </table>
+        </div>
+
+        <h4 style="margin-top:24px;margin-bottom:8px">🛑 Productos sin stock (activos)</h4>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Nombre</th>
+                <th class="num">Costo unit.</th>
+                <th class="num">Precio minorista</th>
+              </tr>
+            </thead>
+            <tbody id="act-st-out-tbody"><tr><td colspan="4" class="muted">—</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ===== Sub-vista: Por categoria ===== -->
+      <div class="act-subpanel" data-subpanel="categorias" hidden>
+        <div class="admin-toolbar">
+          <span class="muted small">Valorización por categoría — útil para ver dónde está concentrado el capital del stock.</span>
+          <span class="admin-spacer"></span>
+          <span id="act-cat-count" class="muted">…</span>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table" id="act-cat-table">
+            <thead>
+              <tr>
+                <th>Categoría</th>
+                <th class="num">Productos</th>
+                <th class="num">Con stock</th>
+                <th class="num">Sin stock</th>
+                <th class="num">Unidades</th>
+                <th class="num">Valor a costo</th>
+                <th class="num">Valor minorista</th>
+                <th class="num">Valor mayorista</th>
+                <th class="num">Gan. potencial</th>
+              </tr>
+            </thead>
+            <tbody id="act-cat-tbody"><tr><td colspan="9" class="muted">Cargando…</td></tr></tbody>
+            <tfoot id="act-cat-tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+
+      <!-- ===== Sub-vista: Sin movimiento ===== -->
+      <div class="act-subpanel" data-subpanel="muerto" hidden>
+        <div class="admin-toolbar">
+          <label class="admin-filter">Sin ventas en los últimos
+            <input type="number" id="act-dead-days" class="admin-input" min="1" max="999" value="60" style="width:70px" /> días
+          </label>
+          <button class="btn" id="act-dead-apply" type="button">Aplicar</button>
+          <span class="muted small">Productos activos con stock que no se vendieron en el período (capital parado).</span>
+          <span class="admin-spacer"></span>
+          <span id="act-dead-count" class="muted">…</span>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table" id="act-dead-table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Nombre</th>
+                <th>Categoría</th>
+                <th class="num">Stock</th>
+                <th class="num">Costo unit.</th>
+                <th class="num">Capital parado</th>
+                <th>Última venta</th>
+              </tr>
+            </thead>
+            <tbody id="act-dead-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
+            <tfoot id="act-dead-tfoot"></tfoot>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -382,6 +585,35 @@
             </thead>
             <tbody id="act-detail-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
             <tfoot id="act-detail-tfoot"></tfoot>
+          </table>
+        </div>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cerrar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal detalle de actividad de un cliente -->
+    <div class="admin-modal" id="act-cli-detail-modal" hidden>
+      <div class="admin-modal-box" style="max-width:960px">
+        <h3 id="act-cli-detail-title">Detalle</h3>
+        <div class="muted small" id="act-cli-detail-sub" style="margin-bottom:8px"></div>
+        <div class="admin-table-wrap" style="max-height:65vh;overflow:auto">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Pedido #</th>
+                <th>Fecha</th>
+                <th>Vendedor</th>
+                <th>Estado</th>
+                <th class="num">Items</th>
+                <th class="num">Total</th>
+                <th class="num">Costo</th>
+                <th class="num">Ganancia</th>
+              </tr>
+            </thead>
+            <tbody id="act-cli-detail-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
+            <tfoot id="act-cli-detail-tfoot"></tfoot>
           </table>
         </div>
         <div class="admin-modal-foot">
@@ -1219,6 +1451,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260527l"></script>
+  <script src="/js/admin.js?v=20260528a"></script>
 </body>
 </html>

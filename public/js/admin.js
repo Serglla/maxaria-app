@@ -141,6 +141,49 @@
     actDetailTitle: document.getElementById("act-detail-title"),
     actDetailTbody: document.getElementById("act-detail-tbody"),
     actDetailTfoot: document.getElementById("act-detail-tfoot"),
+    // Actividad - sub-tabs y nuevas vistas
+    actSubtabs: document.querySelectorAll(".act-subtab"),
+    actSubpanels: document.querySelectorAll(".act-subpanel"),
+    // Clientes
+    actCliFrom: document.getElementById("act-cli-from"),
+    actCliTo: document.getElementById("act-cli-to"),
+    actCliApply: document.getElementById("act-cli-apply"),
+    actCliSearch: document.getElementById("act-cli-search"),
+    actCliCount: document.getElementById("act-cli-count"),
+    actCliTbody: document.getElementById("act-cli-tbody"),
+    actCliTfoot: document.getElementById("act-cli-tfoot"),
+    actCliDetailModal: document.getElementById("act-cli-detail-modal"),
+    actCliDetailTitle: document.getElementById("act-cli-detail-title"),
+    actCliDetailSub: document.getElementById("act-cli-detail-sub"),
+    actCliDetailTbody: document.getElementById("act-cli-detail-tbody"),
+    actCliDetailTfoot: document.getElementById("act-cli-detail-tfoot"),
+    // Ranking productos
+    actRkFrom: document.getElementById("act-rk-from"),
+    actRkTo: document.getElementById("act-rk-to"),
+    actRkApply: document.getElementById("act-rk-apply"),
+    actRkSearch: document.getElementById("act-rk-search"),
+    actRkSort: document.getElementById("act-rk-sort"),
+    actRkCount: document.getElementById("act-rk-count"),
+    actRkTbody: document.getElementById("act-rk-tbody"),
+    actRkTfoot: document.getElementById("act-rk-tfoot"),
+    // Stock
+    actStLow: document.getElementById("act-st-low"),
+    actStApply: document.getElementById("act-st-apply"),
+    actStKpis: document.getElementById("act-st-kpis"),
+    actStPotential: document.getElementById("act-st-potential"),
+    actStPotVal: document.getElementById("act-st-pot-val"),
+    actStLowTbody: document.getElementById("act-st-low-tbody"),
+    actStOutTbody: document.getElementById("act-st-out-tbody"),
+    // Por categoria
+    actCatCount: document.getElementById("act-cat-count"),
+    actCatTbody: document.getElementById("act-cat-tbody"),
+    actCatTfoot: document.getElementById("act-cat-tfoot"),
+    // Sin movimiento
+    actDeadDays: document.getElementById("act-dead-days"),
+    actDeadApply: document.getElementById("act-dead-apply"),
+    actDeadCount: document.getElementById("act-dead-count"),
+    actDeadTbody: document.getElementById("act-dead-tbody"),
+    actDeadTfoot: document.getElementById("act-dead-tfoot"),
 
     // Entregas
     entSearch: document.getElementById("ent-search"),
@@ -517,7 +560,7 @@
         if (!state.vendedoresLoaded) loadVendedores();
         else renderVendedores();
       }
-      if (tab === "actividad") loadActividad(); // siempre recargar (datos cambian con cada pedido)
+      if (tab === "actividad") setActSubtab(actState.currentSub); // re-carga la sub-vista activa
       if (tab === "price-lists") {
         if (!state.priceListsLoaded) loadPriceLists();
         else renderPriceLists();
@@ -1051,6 +1094,456 @@
       }
     });
   }
+
+  // -------- Actividad: sub-tabs (clientes / ranking / stock / categorias / muerto) --------
+  // Cache de las fechas elegidas y de los datasets para filtros client-side.
+  const actState = {
+    currentSub: "vendedores",
+    clientsRows: [],
+    rankingRows: [],
+    deadRows: [],
+  };
+
+  function todayIso() { return new Date().toISOString().slice(0, 10); }
+  function isoDaysAgo(n) {
+    const d = new Date(); d.setDate(d.getDate() - n);
+    return d.toISOString().slice(0, 10);
+  }
+  function fmtDateShort(s) {
+    if (!s) return "—";
+    // s viene como "YYYY-MM-DD HH:MM:SS" o ISO
+    const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? (m[3] + "/" + m[2] + "/" + m[1]) : String(s);
+  }
+  function setActSubtab(name) {
+    actState.currentSub = name;
+    if (els.actSubtabs) {
+      els.actSubtabs.forEach((b) => b.classList.toggle("active", b.dataset.subtab === name));
+    }
+    if (els.actSubpanels) {
+      els.actSubpanels.forEach((p) => { p.hidden = p.dataset.subpanel !== name; });
+    }
+    if (name === "vendedores") loadActividad();
+    else if (name === "clientes") loadActClients();
+    else if (name === "ranking") loadActRanking();
+    else if (name === "stock") loadActStock();
+    else if (name === "categorias") loadActCategories();
+    else if (name === "muerto") loadActDead();
+  }
+  if (els.actSubtabs) {
+    els.actSubtabs.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        try { btn.blur(); } catch (_) {}
+        setActSubtab(btn.dataset.subtab);
+      });
+    });
+  }
+
+  // ---- Helpers de rango de fechas ----
+  function fillDefaultRange(fromInp, toInp) {
+    if (fromInp && !fromInp.value) fromInp.value = isoDaysAgo(30);
+    if (toInp && !toInp.value) toInp.value = todayIso();
+  }
+  function rangeQs(fromInp, toInp) {
+    const from = fromInp && fromInp.value ? fromInp.value : "";
+    const to = toInp && toInp.value ? toInp.value : "";
+    const parts = [];
+    if (from) parts.push("from=" + encodeURIComponent(from));
+    if (to) parts.push("to=" + encodeURIComponent(to));
+    return parts.length ? ("?" + parts.join("&")) : "";
+  }
+
+  // ---- Clientes ----
+  async function loadActClients() {
+    if (!els.actCliTbody) return;
+    fillDefaultRange(els.actCliFrom, els.actCliTo);
+    els.actCliTbody.innerHTML = '<tr><td colspan="9" class="muted">Cargando…</td></tr>';
+    try {
+      const data = await api("/api/admin/activity/clients" + rangeQs(els.actCliFrom, els.actCliTo));
+      actState.clientsRows = data.rows || [];
+      renderActClients();
+    } catch (e) {
+      els.actCliTbody.innerHTML = '<tr><td colspan="9" class="muted">Error cargando datos</td></tr>';
+    }
+  }
+  function renderActClients() {
+    if (!els.actCliTbody) return;
+    const q = (els.actCliSearch && els.actCliSearch.value || "").trim().toLowerCase();
+    const rows = actState.clientsRows.filter((r) => {
+      if (!q) return true;
+      const hay = (r.full_name || "") + " " + (r.username || "");
+      return hay.toLowerCase().indexOf(q) !== -1;
+    });
+    if (els.actCliCount) {
+      els.actCliCount.textContent = rows.length + (rows.length === 1 ? " cliente" : " clientes");
+    }
+    if (!rows.length) {
+      els.actCliTbody.innerHTML = '<tr><td colspan="9" class="muted">Sin clientes con pedidos en el período</td></tr>';
+      if (els.actCliTfoot) els.actCliTfoot.innerHTML = "";
+      return;
+    }
+    let tOrders = 0, tDeliv = 0, tSold = 0, tCost = 0, tEarn = 0;
+    els.actCliTbody.innerHTML = rows.map((r) => {
+      tOrders += Number(r.orders_count) || 0;
+      tDeliv += Number(r.delivered_count) || 0;
+      tSold += Number(r.total_sold) || 0;
+      tCost += Number(r.total_cost) || 0;
+      tEarn += Number(r.total_earning) || 0;
+      const avg = r.orders_count > 0 ? Math.round((Number(r.total_sold) || 0) / r.orders_count) : 0;
+      const name = escapeHtml(r.full_name || r.username) + ' <span class="muted small">(' + escapeHtml(r.username) + ')</span>';
+      return '<tr>' +
+        '<td>' + name + '</td>' +
+        '<td class="num">' + (Number(r.orders_count) || 0) + '</td>' +
+        '<td class="num muted">' + (Number(r.delivered_count) || 0) + '</td>' +
+        '<td class="num"><strong>' + fmtMoney(r.total_sold) + '</strong></td>' +
+        '<td class="num">' + fmtMoney(avg) + '</td>' +
+        '<td class="num muted">' + fmtMoney(r.total_cost) + '</td>' +
+        '<td class="num"><strong>' + fmtMoney(r.total_earning) + '</strong></td>' +
+        '<td class="muted small">' + escapeHtml(fmtDateShort(r.last_order_at)) + '</td>' +
+        '<td><button class="btn btn-small" data-act="act-cli-detail" data-id="' + r.user_id + '" data-name="' + escapeHtml(r.full_name || r.username) + '" type="button">Ver detalle</button></td>' +
+      '</tr>';
+    }).join("");
+    if (els.actCliTfoot) {
+      els.actCliTfoot.innerHTML =
+        '<tr><th>Totales</th>' +
+        '<th class="num">' + tOrders + '</th>' +
+        '<th class="num muted">' + tDeliv + '</th>' +
+        '<th class="num">' + fmtMoney(tSold) + '</th>' +
+        '<th></th>' +
+        '<th class="num muted">' + fmtMoney(tCost) + '</th>' +
+        '<th class="num"><strong>' + fmtMoney(tEarn) + '</strong></th>' +
+        '<th></th><th></th></tr>';
+    }
+  }
+  if (els.actCliApply) els.actCliApply.addEventListener("click", loadActClients);
+  if (els.actCliSearch) {
+    els.actCliSearch.addEventListener("input", () => {
+      // debounce simple
+      clearTimeout(els.actCliSearch._t);
+      els.actCliSearch._t = setTimeout(renderActClients, 150);
+    });
+  }
+  if (els.actCliTbody) {
+    els.actCliTbody.addEventListener("click", async (e) => {
+      const btn = e.target.closest('[data-act="act-cli-detail"]');
+      if (!btn) return;
+      const uid = Number(btn.dataset.id);
+      const name = btn.dataset.name || "";
+      if (els.actCliDetailTitle) els.actCliDetailTitle.textContent = "Pedidos de " + name;
+      if (els.actCliDetailSub) {
+        const from = els.actCliFrom && els.actCliFrom.value || "";
+        const to = els.actCliTo && els.actCliTo.value || "";
+        els.actCliDetailSub.textContent = "Rango: " + (from || "(inicio)") + " → " + (to || "(hoy)");
+      }
+      if (els.actCliDetailTbody) els.actCliDetailTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+      if (els.actCliDetailTfoot) els.actCliDetailTfoot.innerHTML = "";
+      if (els.actCliDetailModal) els.actCliDetailModal.hidden = false;
+      try {
+        const data = await api("/api/admin/activity/clients/" + uid + rangeQs(els.actCliFrom, els.actCliTo));
+        renderActClientDetail(data.orders || []);
+      } catch (err) {
+        if (els.actCliDetailTbody) els.actCliDetailTbody.innerHTML = '<tr><td colspan="8" class="muted">Error</td></tr>';
+      }
+    });
+  }
+  function renderActClientDetail(orders) {
+    if (!els.actCliDetailTbody) return;
+    if (!orders.length) {
+      els.actCliDetailTbody.innerHTML = '<tr><td colspan="8" class="muted">Sin pedidos en el rango</td></tr>';
+      return;
+    }
+    let tTotal = 0, tCost = 0, tEarn = 0, tItems = 0;
+    els.actCliDetailTbody.innerHTML = orders.map((o) => {
+      tTotal += Number(o.total) || 0;
+      tCost += Number(o.cost_total) || 0;
+      tEarn += Number(o.earning_total) || 0;
+      tItems += Number(o.items_count) || 0;
+      const vend = o.vendedor_full_name || o.vendedor_username || '<span class="muted">—</span>';
+      return '<tr>' +
+        '<td>#' + o.id + '</td>' +
+        '<td class="muted small">' + escapeHtml(fmtDateShort(o.created_at)) + '</td>' +
+        '<td>' + escapeHtml(vend) + '</td>' +
+        '<td>' + escapeHtml(o.status) + '</td>' +
+        '<td class="num">' + (Number(o.items_count) || 0) + '</td>' +
+        '<td class="num">' + fmtMoney(o.total) + '</td>' +
+        '<td class="num muted">' + fmtMoney(o.cost_total) + '</td>' +
+        '<td class="num"><strong>' + fmtMoney(o.earning_total) + '</strong></td>' +
+      '</tr>';
+    }).join("");
+    if (els.actCliDetailTfoot) {
+      els.actCliDetailTfoot.innerHTML =
+        '<tr><th colspan="4">Totales</th>' +
+        '<th class="num">' + tItems + '</th>' +
+        '<th class="num">' + fmtMoney(tTotal) + '</th>' +
+        '<th class="num muted">' + fmtMoney(tCost) + '</th>' +
+        '<th class="num"><strong>' + fmtMoney(tEarn) + '</strong></th></tr>';
+    }
+  }
+  if (els.actCliDetailModal) {
+    els.actCliDetailModal.addEventListener("click", (e) => {
+      if (e.target.matches("[data-close]") || e.target === els.actCliDetailModal) {
+        els.actCliDetailModal.hidden = true;
+      }
+    });
+  }
+
+  // ---- Ranking de productos ----
+  async function loadActRanking() {
+    if (!els.actRkTbody) return;
+    fillDefaultRange(els.actRkFrom, els.actRkTo);
+    els.actRkTbody.innerHTML = '<tr><td colspan="10" class="muted">Cargando…</td></tr>';
+    try {
+      const data = await api("/api/admin/activity/products-ranking" + rangeQs(els.actRkFrom, els.actRkTo));
+      actState.rankingRows = data.rows || [];
+      renderActRanking();
+    } catch (e) {
+      els.actRkTbody.innerHTML = '<tr><td colspan="10" class="muted">Error cargando datos</td></tr>';
+    }
+  }
+  function renderActRanking() {
+    if (!els.actRkTbody) return;
+    const q = (els.actRkSearch && els.actRkSearch.value || "").trim().toLowerCase();
+    const sortKey = (els.actRkSort && els.actRkSort.value) || "earning";
+    let rows = actState.rankingRows.filter((r) => {
+      if (!q) return true;
+      const hay = (r.name || "") + " " + (r.code || "") + " " + (r.category_name || "");
+      return hay.toLowerCase().indexOf(q) !== -1;
+    }).slice();
+    rows.sort((a, b) => {
+      function score(r) {
+        if (sortKey === "sold") return Number(r.total_sold) || 0;
+        if (sortKey === "units") return Number(r.units_sold) || 0;
+        if (sortKey === "margin") {
+          const t = Number(r.total_sold) || 0;
+          return t > 0 ? (Number(r.total_earning) || 0) / t : 0;
+        }
+        return Number(r.total_earning) || 0;
+      }
+      return score(b) - score(a);
+    });
+    if (els.actRkCount) {
+      els.actRkCount.textContent = rows.length + (rows.length === 1 ? " producto" : " productos");
+    }
+    if (!rows.length) {
+      els.actRkTbody.innerHTML = '<tr><td colspan="10" class="muted">Sin ventas en el período</td></tr>';
+      if (els.actRkTfoot) els.actRkTfoot.innerHTML = "";
+      return;
+    }
+    let tUnits = 0, tSold = 0, tCost = 0, tEarn = 0;
+    els.actRkTbody.innerHTML = rows.map((r, idx) => {
+      tUnits += Number(r.units_sold) || 0;
+      tSold += Number(r.total_sold) || 0;
+      tCost += Number(r.total_cost) || 0;
+      tEarn += Number(r.total_earning) || 0;
+      const margin = (Number(r.total_sold) || 0) > 0
+        ? ((Number(r.total_earning) || 0) / Number(r.total_sold) * 100)
+        : 0;
+      const marginCls = margin >= 0 ? "" : ' style="color:#c00"';
+      const prod = '<strong>' + escapeHtml(r.name || "") + '</strong>' +
+        ' <span class="muted small">' + escapeHtml(r.code || "") + '</span>';
+      return '<tr>' +
+        '<td class="num muted">' + (idx + 1) + '</td>' +
+        '<td>' + prod + '</td>' +
+        '<td class="muted small">' + escapeHtml(r.category_name || "—") + '</td>' +
+        '<td class="num">' + (Number(r.units_sold) || 0) + '</td>' +
+        '<td class="num">' + fmtMoney(r.total_sold) + '</td>' +
+        '<td class="num muted">' + fmtMoney(r.total_cost) + '</td>' +
+        '<td class="num"><strong>' + fmtMoney(r.total_earning) + '</strong></td>' +
+        '<td class="num"' + marginCls + '>' + margin.toFixed(1) + '%</td>' +
+        '<td class="num muted">' + (Number(r.stock) || 0) + '</td>' +
+        '<td class="muted small">' + escapeHtml(fmtDateShort(r.last_sold_at)) + '</td>' +
+      '</tr>';
+    }).join("");
+    if (els.actRkTfoot) {
+      const totMargin = tSold > 0 ? (tEarn / tSold * 100) : 0;
+      els.actRkTfoot.innerHTML =
+        '<tr><th colspan="3">Totales</th>' +
+        '<th class="num">' + tUnits + '</th>' +
+        '<th class="num">' + fmtMoney(tSold) + '</th>' +
+        '<th class="num muted">' + fmtMoney(tCost) + '</th>' +
+        '<th class="num"><strong>' + fmtMoney(tEarn) + '</strong></th>' +
+        '<th class="num">' + totMargin.toFixed(1) + '%</th>' +
+        '<th></th><th></th></tr>';
+    }
+  }
+  if (els.actRkApply) els.actRkApply.addEventListener("click", loadActRanking);
+  if (els.actRkSort) els.actRkSort.addEventListener("change", renderActRanking);
+  if (els.actRkSearch) {
+    els.actRkSearch.addEventListener("input", () => {
+      clearTimeout(els.actRkSearch._t);
+      els.actRkSearch._t = setTimeout(renderActRanking, 150);
+    });
+  }
+
+  // ---- Stock (valorizacion global) ----
+  async function loadActStock() {
+    if (!els.actStKpis) return;
+    const low = Math.max(0, Number(els.actStLow && els.actStLow.value) || 5);
+    try {
+      const data = await api("/api/admin/activity/stock-valuation?low=" + low);
+      renderActStock(data);
+    } catch (e) {
+      if (els.actStLowTbody) els.actStLowTbody.innerHTML = '<tr><td colspan="5" class="muted">Error cargando datos</td></tr>';
+      if (els.actStOutTbody) els.actStOutTbody.innerHTML = '<tr><td colspan="4" class="muted">Error</td></tr>';
+    }
+  }
+  function renderActStock(data) {
+    const t = data.totals || {};
+    if (els.actStKpis) {
+      els.actStKpis.querySelectorAll("[data-k]").forEach((el) => {
+        const k = el.dataset.k;
+        const v = Number(t[k]) || 0;
+        if (el.classList.contains("money")) el.textContent = fmtMoney(v);
+        else el.textContent = v.toLocaleString("es-AR");
+      });
+    }
+    // Ganancia potencial = valor minorista - valor costo
+    const pot = (Number(t.value_minorista) || 0) - (Number(t.value_cost) || 0);
+    if (els.actStPotential && els.actStPotVal) {
+      els.actStPotential.style.display = "block";
+      els.actStPotVal.textContent = fmtMoney(pot);
+    }
+    if (els.actStLowTbody) {
+      const list = data.low_stock || [];
+      if (!list.length) {
+        els.actStLowTbody.innerHTML = '<tr><td colspan="5" class="muted">Nada por debajo del umbral</td></tr>';
+      } else {
+        els.actStLowTbody.innerHTML = list.map((p) => {
+          const val = (Number(p.cost) || 0) * (Number(p.stock) || 0);
+          return '<tr>' +
+            '<td class="muted small">' + escapeHtml(p.code || "") + '</td>' +
+            '<td>' + escapeHtml(p.name || "") + '</td>' +
+            '<td class="num"><strong style="color:#c47700">' + (Number(p.stock) || 0) + '</strong></td>' +
+            '<td class="num muted">' + fmtMoney(p.cost) + '</td>' +
+            '<td class="num">' + fmtMoney(val) + '</td>' +
+          '</tr>';
+        }).join("");
+      }
+    }
+    if (els.actStOutTbody) {
+      const list = data.out_of_stock || [];
+      if (!list.length) {
+        els.actStOutTbody.innerHTML = '<tr><td colspan="4" class="muted">No hay productos activos sin stock</td></tr>';
+      } else {
+        els.actStOutTbody.innerHTML = list.map((p) => {
+          return '<tr>' +
+            '<td class="muted small">' + escapeHtml(p.code || "") + '</td>' +
+            '<td>' + escapeHtml(p.name || "") + '</td>' +
+            '<td class="num muted">' + fmtMoney(p.cost) + '</td>' +
+            '<td class="num">' + fmtMoney(p.price_minorista) + '</td>' +
+          '</tr>';
+        }).join("");
+      }
+    }
+  }
+  if (els.actStApply) els.actStApply.addEventListener("click", loadActStock);
+
+  // ---- Por categoria ----
+  async function loadActCategories() {
+    if (!els.actCatTbody) return;
+    els.actCatTbody.innerHTML = '<tr><td colspan="9" class="muted">Cargando…</td></tr>';
+    try {
+      const data = await api("/api/admin/activity/stock-by-category");
+      renderActCategories(data.rows || []);
+    } catch (e) {
+      els.actCatTbody.innerHTML = '<tr><td colspan="9" class="muted">Error cargando datos</td></tr>';
+    }
+  }
+  function renderActCategories(rows) {
+    if (!els.actCatTbody) return;
+    if (els.actCatCount) {
+      els.actCatCount.textContent = rows.length + (rows.length === 1 ? " categoría" : " categorías");
+    }
+    if (!rows.length) {
+      els.actCatTbody.innerHTML = '<tr><td colspan="9" class="muted">Sin categorías</td></tr>';
+      if (els.actCatTfoot) els.actCatTfoot.innerHTML = "";
+      return;
+    }
+    let tProd = 0, tIn = 0, tOut = 0, tUnits = 0, tCost = 0, tMino = 0, tMayo = 0, tPot = 0;
+    els.actCatTbody.innerHTML = rows.map((c) => {
+      const pot = (Number(c.value_minorista) || 0) - (Number(c.value_cost) || 0);
+      tProd += Number(c.total_products) || 0;
+      tIn += Number(c.in_stock_products) || 0;
+      tOut += Number(c.out_of_stock_products) || 0;
+      tUnits += Number(c.units_in_stock) || 0;
+      tCost += Number(c.value_cost) || 0;
+      tMino += Number(c.value_minorista) || 0;
+      tMayo += Number(c.value_mayorista) || 0;
+      tPot += pot;
+      return '<tr>' +
+        '<td><strong>' + escapeHtml(c.category_name || "—") + '</strong></td>' +
+        '<td class="num">' + (Number(c.total_products) || 0) + '</td>' +
+        '<td class="num">' + (Number(c.in_stock_products) || 0) + '</td>' +
+        '<td class="num muted">' + (Number(c.out_of_stock_products) || 0) + '</td>' +
+        '<td class="num">' + (Number(c.units_in_stock) || 0) + '</td>' +
+        '<td class="num"><strong>' + fmtMoney(c.value_cost) + '</strong></td>' +
+        '<td class="num">' + fmtMoney(c.value_minorista) + '</td>' +
+        '<td class="num muted">' + fmtMoney(c.value_mayorista) + '</td>' +
+        '<td class="num"><strong style="color:#0a7a0a">' + fmtMoney(pot) + '</strong></td>' +
+      '</tr>';
+    }).join("");
+    if (els.actCatTfoot) {
+      els.actCatTfoot.innerHTML =
+        '<tr><th>Totales</th>' +
+        '<th class="num">' + tProd + '</th>' +
+        '<th class="num">' + tIn + '</th>' +
+        '<th class="num muted">' + tOut + '</th>' +
+        '<th class="num">' + tUnits + '</th>' +
+        '<th class="num"><strong>' + fmtMoney(tCost) + '</strong></th>' +
+        '<th class="num">' + fmtMoney(tMino) + '</th>' +
+        '<th class="num muted">' + fmtMoney(tMayo) + '</th>' +
+        '<th class="num"><strong>' + fmtMoney(tPot) + '</strong></th></tr>';
+    }
+  }
+
+  // ---- Sin movimiento ----
+  async function loadActDead() {
+    if (!els.actDeadTbody) return;
+    const days = Math.max(1, Number(els.actDeadDays && els.actDeadDays.value) || 60);
+    els.actDeadTbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando…</td></tr>';
+    try {
+      const data = await api("/api/admin/activity/dead-stock?days=" + days);
+      actState.deadRows = data.rows || [];
+      renderActDead();
+    } catch (e) {
+      els.actDeadTbody.innerHTML = '<tr><td colspan="7" class="muted">Error cargando datos</td></tr>';
+    }
+  }
+  function renderActDead() {
+    if (!els.actDeadTbody) return;
+    const rows = actState.deadRows;
+    if (els.actDeadCount) {
+      els.actDeadCount.textContent = rows.length + (rows.length === 1 ? " producto" : " productos");
+    }
+    if (!rows.length) {
+      els.actDeadTbody.innerHTML = '<tr><td colspan="7" class="muted">No hay productos sin movimiento en el período 🎉</td></tr>';
+      if (els.actDeadTfoot) els.actDeadTfoot.innerHTML = "";
+      return;
+    }
+    let tStock = 0, tCap = 0;
+    els.actDeadTbody.innerHTML = rows.map((p) => {
+      const cap = (Number(p.cost) || 0) * (Number(p.stock) || 0);
+      tStock += Number(p.stock) || 0;
+      tCap += cap;
+      return '<tr>' +
+        '<td class="muted small">' + escapeHtml(p.code || "") + '</td>' +
+        '<td><strong>' + escapeHtml(p.name || "") + '</strong></td>' +
+        '<td class="muted small">' + escapeHtml(p.category_name || "—") + '</td>' +
+        '<td class="num">' + (Number(p.stock) || 0) + '</td>' +
+        '<td class="num muted">' + fmtMoney(p.cost) + '</td>' +
+        '<td class="num"><strong style="color:#c47700">' + fmtMoney(cap) + '</strong></td>' +
+        '<td class="muted small">' + escapeHtml(fmtDateShort(p.last_sold_at)) + '</td>' +
+      '</tr>';
+    }).join("");
+    if (els.actDeadTfoot) {
+      els.actDeadTfoot.innerHTML =
+        '<tr><th colspan="3">Totales</th>' +
+        '<th class="num">' + tStock + '</th><th></th>' +
+        '<th class="num"><strong>' + fmtMoney(tCap) + '</strong></th>' +
+        '<th></th></tr>';
+    }
+  }
+  if (els.actDeadApply) els.actDeadApply.addEventListener("click", loadActDead);
 
   // -------- Listas de precios --------
   async function loadPriceLists() {
