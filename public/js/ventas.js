@@ -71,6 +71,7 @@
     printBtn:      document.getElementById("budget-print-btn"),
     cancelBtn:     document.getElementById("budget-cancel-btn"),
     acceptBtn:     document.getElementById("budget-accept-btn"),
+    invoiceBtn:    document.getElementById("budget-invoice-btn"),
     saveDraftBtn:  document.getElementById("budget-save-draft-btn"),
     sendBtn:       document.getElementById("budget-send-btn"),
     addProductBtn: document.getElementById("budget-add-product-btn"),
@@ -95,8 +96,8 @@
     pickerSelected: new Set(),
   };
 
-  const V_STATUS_LABELS = { borrador:"Borrador", enviado:"Enviado", aceptado:"Aceptado", cancelado:"Cancelado" };
-  const V_STATUS_BADGE  = { borrador:"budget-badge--borrador", enviado:"budget-badge--enviado", aceptado:"budget-badge--aceptado", cancelado:"budget-badge--cancelado" };
+  const V_STATUS_LABELS = { borrador:"Borrador", enviado:"Enviado", aceptado:"Aceptado", facturado:"Facturado", cancelado:"Cancelado" };
+  const V_STATUS_BADGE  = { borrador:"budget-badge--borrador", enviado:"budget-badge--enviado", aceptado:"budget-badge--aceptado", facturado:"budget-badge--facturado", cancelado:"budget-badge--cancelado" };
 
   function vFmt(n) { return "$" + (Number(n)||0).toLocaleString("es-AR"); }
   function vEsc(s) { return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -117,10 +118,11 @@
       vEls.statusBadge.className = "budget-badge " + (V_STATUS_BADGE[st]||"budget-badge--borrador");
       vEls.statusBadge.textContent = V_STATUS_LABELS[st]||st;
     }
-    const isFinal = st === "cancelado" || st === "aceptado";
+    const isFinal = st === "cancelado" || st === "aceptado" || st === "facturado";
     [vEls.saveDraftBtn, vEls.sendBtn, vEls.addProductBtn, vEls.discount, vEls.surcharge].forEach((el) => { if (el) el.disabled = isFinal; });
-    if (vEls.cancelBtn) vEls.cancelBtn.hidden = isFinal;
-    if (vEls.acceptBtn) vEls.acceptBtn.hidden = st === "aceptado" || st === "cancelado";
+    if (vEls.cancelBtn)  vEls.cancelBtn.hidden  = isFinal;
+    if (vEls.acceptBtn)  vEls.acceptBtn.hidden  = st === "aceptado" || st === "cancelado" || st === "facturado";
+    if (vEls.invoiceBtn) vEls.invoiceBtn.hidden = st !== "aceptado";
   }
 
   function vRecalc() {
@@ -346,6 +348,24 @@
     if (!vState.editingId) { await vSave("aceptado"); return; }
     await fetch("/api/budgets/" + vState.editingId + "/status", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({status:"aceptado"}) });
     vState.editingStatus = "aceptado"; vUpdateStatusUI(); vLoadBudgets();
+  });
+
+  if (vEls.invoiceBtn) vEls.invoiceBtn.addEventListener("click", async () => {
+    if (!vState.editingId) return;
+    if (!confirm("Facturar este presupuesto?\n\nSe va a descontar el stock de los artículos y, si hay un cliente con cuenta corriente, se le va a debitar el total.")) return;
+    vEls.invoiceBtn.disabled = true;
+    try {
+      const r = await fetch("/api/budgets/" + vState.editingId + "/invoice", { method:"POST" });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(data.error || "No se pudo facturar"); vEls.invoiceBtn.disabled = false; return; }
+      vState.editingStatus = "facturado";
+      vUpdateStatusUI();
+      vLoadBudgets();
+      alert("Facturado correctamente." + (data.debited ? "\nSe debitó el total en la cuenta corriente del cliente." : "\nVenta a consumidor final: no se tocó cuenta corriente."));
+    } catch (_) {
+      alert("Error de conexión al facturar");
+      vEls.invoiceBtn.disabled = false;
+    }
   });
 
   if (vEls.printBtn) vEls.printBtn.addEventListener("click", () => {

@@ -303,6 +303,10 @@ db.exec(
   "CREATE INDEX IF NOT EXISTS idx_bi_budget ON budget_items(budget_id);"
 );
 
+// Migracion idempotente: al facturar un presupuesto se crea una order y se
+// guarda su id aca para trazabilidad. NULL = todavia no facturado.
+try { db.exec("ALTER TABLE budgets ADD COLUMN order_id INTEGER REFERENCES orders(id)"); } catch (_) {}
+
 // Migracion: Gastos generales del negocio (transporte, alquiler, servicios,
 // impuestos, etc). Distinto de purchase_orders (que son compras de mercaderia
 // que ademas suman stock). Estos gastos solo afectan el flujo de caja y el
@@ -4087,8 +4091,79 @@ app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, (req, res) => {
   const VALID = ["borrador", "enviado", "aceptado", "cancelado"];
   const status = req.body.status;
   if (!VALID.includes(status)) return res.status(400).json({ error: "Estado invalido" });
+  if (budget.status === "facturado") return res.status(409).json({ error: "El presupuesto ya esta facturado" });
   db.prepare("UPDATE budgets SET status=?, updated_at=datetime('now') WHERE id=?").run(status, budget.id);
   res.json({ ok: true });
+});
+
+// POST /api/budgets/:id/invoice — facturar el presupuesto:
+// crea una order con sus items, le descuenta stock y (si hay cliente real,
+// distinto de "consumidor final") genera el debito en cuenta corriente.
+// Marca el presupuesto como 'facturado' y guarda order_id para trazabilidad.
+app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, (req, res) => {
+  const u = { id: req.session.userId, level: req.session.level };
+  const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
+  if (!budget) return res.status(404).json({ error: "No encontrado" });
+  if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
+  if (budget.status !== "aceptado") {
+    return res.status(409).json({ error: "Solo se pueden facturar presupuestos aceptados" });
+  }
+  if (budget.order_id) {
+    return res.status(409).json({ error: "Este presupuesto ya fue facturado" });
+  }
+  const items = db.prepare(
+    "SELECT product_id, product_code, product_name, quantity, unit_price, subtotal" +
+    "  FROM budget_items WHERE budget_id = ?"
+  ).all(budget.id);
+  if (!items.length) return res.status(400).json({ error: "El presupuesto no tiene items" });
+
+  // Si el presupuesto fue armado a nombre de un cliente real (con cuenta), la
+  // venta debita su cuenta corriente. Si es "consumidor final" (client_id NULL)
+  // se asume venta pagada en el acto: descuenta stock pero no toca cuentas.
+  const userIdForOrder = budget.client_id || budget.vendedor_id || u.id;
+  const debitAccount = !!budget.client_id;
+
+  let orderId;
+  try {
+    db.transaction(() => {
+      const r = db.prepare(
+        "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id, stock_discounted, created_at)" +
+        " VALUES (?, 'entregado', ?, ?, ?, 1, datetime('now'))"
+      ).run(
+        userIdForOrder,
+        budget.total,
+        "Facturado desde presupuesto " + budget.number,
+        budget.vendedor_id || null
+      );
+      orderId = r.lastInsertRowid;
+
+      const insItem = db.prepare(
+        "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal)" +
+        " VALUES (?,?,?,?,?,?,?)"
+      );
+      const updStock = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+      for (const it of items) {
+        insItem.run(orderId, it.product_id || null, it.product_code, it.product_name,
+                    it.quantity, it.unit_price, it.subtotal);
+        if (it.product_id) updStock.run(it.quantity, it.product_id);
+      }
+
+      if (debitAccount) {
+        db.prepare(
+          "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+          " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
+        ).run(budget.client_id, budget.total, "Presupuesto " + budget.number, orderId);
+      }
+
+      db.prepare(
+        "UPDATE budgets SET status='facturado', order_id=?, updated_at=datetime('now') WHERE id=?"
+      ).run(orderId, budget.id);
+    })();
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+
+  res.json({ ok: true, order_id: orderId, debited: debitAccount });
 });
 
 // DELETE /api/budgets/:id
