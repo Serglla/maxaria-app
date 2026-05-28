@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260528b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260528c" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -341,6 +341,7 @@
       <!-- Sub-navegacion interna de Actividad -->
       <div class="act-subnav" role="tablist" aria-label="Sub-secciones de Actividad">
         <button type="button" class="act-subtab active" data-subtab="vendedores">Por vendedor</button>
+        <button type="button" class="act-subtab" data-subtab="mensual">Ventas mensuales</button>
         <button type="button" class="act-subtab" data-subtab="clientes">Por cliente</button>
         <button type="button" class="act-subtab" data-subtab="ranking">Ranking productos</button>
         <button type="button" class="act-subtab" data-subtab="stock">Stock</button>
@@ -373,6 +374,64 @@
             <tfoot id="act-tfoot"></tfoot>
           </table>
         </div>
+      </div>
+
+      <!-- ===== Sub-vista: Ventas mensuales ===== -->
+      <div class="act-subpanel" data-subpanel="mensual" hidden>
+        <div class="admin-toolbar">
+          <label class="admin-filter">Mostrar últimos
+            <select id="act-mo-months" class="admin-select">
+              <option value="3">3 meses</option>
+              <option value="6">6 meses</option>
+              <option value="12" selected>12 meses</option>
+              <option value="24">24 meses</option>
+            </select>
+          </label>
+          <button class="btn" id="act-mo-apply" type="button">Aplicar</button>
+          <span class="muted small">Ventas (no cancelados), ganancia neta (precio − costo), gastos en compras a proveedores, cobranzas registradas.</span>
+          <span class="admin-spacer"></span>
+          <span id="act-mo-count" class="muted">…</span>
+        </div>
+
+        <!-- KPIs del rango -->
+        <div class="act-kpi-grid">
+          <div class="act-kpi"><div class="act-kpi-label">Pedidos</div><div class="act-kpi-value" id="act-mo-kpi-orders">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Entregados</div><div class="act-kpi-value" id="act-mo-kpi-delivered">—</div></div>
+          <div class="act-kpi act-kpi-pri"><div class="act-kpi-label">Ventas brutas</div><div class="act-kpi-value money" id="act-mo-kpi-gross">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Costo</div><div class="act-kpi-value money" id="act-mo-kpi-cost">—</div></div>
+          <div class="act-kpi act-kpi-good"><div class="act-kpi-label">Ganancia neta</div><div class="act-kpi-value money" id="act-mo-kpi-earn">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Margen</div><div class="act-kpi-value" id="act-mo-kpi-margin">—</div></div>
+          <div class="act-kpi act-kpi-warn"><div class="act-kpi-label">Gastos (compras)</div><div class="act-kpi-value money" id="act-mo-kpi-purch">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Cobranzas</div><div class="act-kpi-value money" id="act-mo-kpi-pays">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Ticket prom.</div><div class="act-kpi-value money" id="act-mo-kpi-avg">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Flujo neto</div><div class="act-kpi-value money" id="act-mo-kpi-flow" title="Cobranzas − Gastos en compras">—</div></div>
+        </div>
+
+        <h4 style="margin-top:18px;margin-bottom:8px">Detalle por mes</h4>
+        <div class="admin-table-wrap">
+          <table class="admin-table" id="act-mo-table">
+            <thead>
+              <tr>
+                <th>Mes</th>
+                <th class="num">Pedidos</th>
+                <th class="num">Entregados</th>
+                <th class="num">Ventas brutas</th>
+                <th class="num">Costo</th>
+                <th class="num">Ganancia</th>
+                <th class="num">Margen</th>
+                <th class="num">Ticket prom.</th>
+                <th class="num">Gastos compras</th>
+                <th class="num">Cobranzas</th>
+              </tr>
+            </thead>
+            <tbody id="act-mo-tbody"><tr><td colspan="10" class="muted">Cargando…</td></tr></tbody>
+            <tfoot id="act-mo-tfoot"></tfoot>
+          </table>
+        </div>
+
+        <h4 style="margin-top:18px;margin-bottom:8px">Comparativa visual</h4>
+        <p class="muted small" style="margin:0 0 10px 0">Barras al máximo del rango. Verde = ganancia, azul = ventas brutas, naranja = gastos en compras.</p>
+        <div id="act-mo-chart" class="act-mo-chart"></div>
       </div>
 
       <!-- ===== Sub-vista: Clientes ===== -->
@@ -1451,6 +1510,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260528b"></script>
+  <script src="/js/admin.js?v=20260528c"></script>
 </body>
 </html>

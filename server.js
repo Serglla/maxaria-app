@@ -2571,6 +2571,119 @@ app.get("/api/admin/activity/stock-by-category", requireAdmin, (req, res) => {
   res.json({ rows: rows });
 });
 
+// ----- Ventas / Ganancias / Gastos por mes -----
+// Agrega los ultimos N meses (default 12, incluye el actual). Devuelve para
+// cada mes (YYYY-MM):
+//   orders_count, delivered_count, gross_sales, delivered_sales,
+//   cost_total, net_earning, avg_ticket,
+//   purchases_total (gastos a proveedores en compras de mercaderia),
+//   payments_total (cobranzas registradas en el mes)
+// Excluye cancelados y unificados de las ventas.
+app.get("/api/admin/activity/monthly", requireAdmin, (req, res) => {
+  const months = Math.max(1, Math.min(60, Number(req.query.months) || 12));
+  // Generamos la lista de meses YYYY-MM hacia atras desde el mes actual
+  const monthList = [];
+  const now = new Date();
+  now.setDate(1);
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    monthList.push(y + "-" + m);
+  }
+  const firstMonth = monthList[0] + "-01 00:00:00";
+  // Para incluir todo el ultimo mes pedimos fin del mes actual
+  const endOfCurrent = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const endIso = endOfCurrent.toISOString().slice(0, 10) + " 23:59:59";
+
+  // Pedidos no cancelados, no unificados, agregados por mes con sus items
+  const orderRows = db.prepare(
+    "SELECT strftime('%Y-%m', o.created_at) AS month," +
+    "       COUNT(DISTINCT o.id) AS orders_count," +
+    "       SUM(CASE WHEN o.status='entregado' THEN 1 ELSE 0 END) AS delivered_count," +
+    "       SUM(o.total) AS gross_sales," +
+    "       SUM(CASE WHEN o.status='entregado' THEN o.total ELSE 0 END) AS delivered_sales" +
+    "  FROM orders o" +
+    " WHERE o.status != 'cancelado'" +
+    "   AND COALESCE(o.is_unified,0) = 0" +
+    "   AND o.created_at BETWEEN ? AND ?" +
+    " GROUP BY month"
+  ).all(firstMonth, endIso);
+
+  // Costo + ganancia agregados por mes desde order_items (con snapshot o
+  // fallback a products.cost). Excluye cancelados y unificados.
+  const itemRows = db.prepare(
+    "SELECT strftime('%Y-%m', o.created_at) AS month," +
+    "       SUM(COALESCE(oi.vendedor_cost_unit, p.cost, 0) * oi.quantity) AS cost_total," +
+    "       SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS net_earning" +
+    "  FROM order_items oi" +
+    "  JOIN orders o ON o.id = oi.order_id" +
+    "  LEFT JOIN products p ON p.id = oi.product_id" +
+    " WHERE o.status != 'cancelado'" +
+    "   AND COALESCE(o.is_unified,0) = 0" +
+    "   AND o.created_at BETWEEN ? AND ?" +
+    " GROUP BY month"
+  ).all(firstMonth, endIso);
+
+  // Compras a proveedores: gasto en mercaderia. Usamos received_at si esta
+  // seteado, sino created_at, para asignar al mes "real" del gasto.
+  const purchRows = db.prepare(
+    "SELECT strftime('%Y-%m', COALESCE(received_at, created_at)) AS month," +
+    "       COUNT(*) AS purchases_count," +
+    "       SUM(total_cost) AS purchases_total" +
+    "  FROM purchase_orders" +
+    " WHERE COALESCE(received_at, created_at) BETWEEN ? AND ?" +
+    " GROUP BY month"
+  ).all(firstMonth, endIso);
+
+  // Cobranzas (pagos recibidos de clientes)
+  const payRows = db.prepare(
+    "SELECT strftime('%Y-%m', created_at) AS month," +
+    "       COUNT(*) AS payments_count," +
+    "       SUM(amount) AS payments_total" +
+    "  FROM payments" +
+    " WHERE created_at BETWEEN ? AND ?" +
+    " GROUP BY month"
+  ).all(firstMonth, endIso);
+
+  // Indexo cada source por mes para mergear
+  function indexBy(rows) {
+    const out = {};
+    rows.forEach((r) => { out[r.month] = r; });
+    return out;
+  }
+  const ordersByMonth = indexBy(orderRows);
+  const itemsByMonth = indexBy(itemRows);
+  const purchByMonth = indexBy(purchRows);
+  const payByMonth = indexBy(payRows);
+
+  // Armar la respuesta en el orden de monthList
+  const rows = monthList.map((mo) => {
+    const o = ordersByMonth[mo] || {};
+    const i = itemsByMonth[mo] || {};
+    const c = purchByMonth[mo] || {};
+    const p = payByMonth[mo] || {};
+    const ordersCount = Number(o.orders_count) || 0;
+    const gross = Number(o.gross_sales) || 0;
+    const avg = ordersCount > 0 ? Math.round(gross / ordersCount) : 0;
+    return {
+      month: mo,
+      orders_count: ordersCount,
+      delivered_count: Number(o.delivered_count) || 0,
+      gross_sales: gross,
+      delivered_sales: Number(o.delivered_sales) || 0,
+      cost_total: Number(i.cost_total) || 0,
+      net_earning: Number(i.net_earning) || 0,
+      avg_ticket: avg,
+      purchases_count: Number(c.purchases_count) || 0,
+      purchases_total: Number(c.purchases_total) || 0,
+      payments_count: Number(p.payments_count) || 0,
+      payments_total: Number(p.payments_total) || 0,
+    };
+  });
+  res.json({ months: months, rows: rows });
+});
+
 // ----- Productos sin movimiento -----
 // Productos activos con stock>0 que no aparecen en ningun pedido (no
 // cancelado, no unificado) en los ultimos N dias (default 60).

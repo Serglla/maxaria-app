@@ -184,6 +184,23 @@
     actDeadCount: document.getElementById("act-dead-count"),
     actDeadTbody: document.getElementById("act-dead-tbody"),
     actDeadTfoot: document.getElementById("act-dead-tfoot"),
+    // Mensual
+    actMoMonths: document.getElementById("act-mo-months"),
+    actMoApply: document.getElementById("act-mo-apply"),
+    actMoCount: document.getElementById("act-mo-count"),
+    actMoTbody: document.getElementById("act-mo-tbody"),
+    actMoTfoot: document.getElementById("act-mo-tfoot"),
+    actMoChart: document.getElementById("act-mo-chart"),
+    actMoKpiOrders: document.getElementById("act-mo-kpi-orders"),
+    actMoKpiDelivered: document.getElementById("act-mo-kpi-delivered"),
+    actMoKpiGross: document.getElementById("act-mo-kpi-gross"),
+    actMoKpiCost: document.getElementById("act-mo-kpi-cost"),
+    actMoKpiEarn: document.getElementById("act-mo-kpi-earn"),
+    actMoKpiMargin: document.getElementById("act-mo-kpi-margin"),
+    actMoKpiPurch: document.getElementById("act-mo-kpi-purch"),
+    actMoKpiPays: document.getElementById("act-mo-kpi-pays"),
+    actMoKpiAvg: document.getElementById("act-mo-kpi-avg"),
+    actMoKpiFlow: document.getElementById("act-mo-kpi-flow"),
 
     // Entregas
     entSearch: document.getElementById("ent-search"),
@@ -1129,6 +1146,7 @@
     else if (name === "stock") loadActStock();
     else if (name === "categorias") loadActCategories();
     else if (name === "muerto") loadActDead();
+    else if (name === "mensual") loadActMonthly();
   }
   if (els.actSubtabs) {
     els.actSubtabs.forEach((btn) => {
@@ -1544,6 +1562,132 @@
     }
   }
   if (els.actDeadApply) els.actDeadApply.addEventListener("click", loadActDead);
+
+  // ---- Ventas mensuales ----
+  const MONTH_NAMES_ES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+  function fmtMonthLabel(yyyymm) {
+    const m = String(yyyymm || "").match(/^(\d{4})-(\d{2})$/);
+    if (!m) return yyyymm || "";
+    const idx = Math.max(0, Math.min(11, Number(m[2]) - 1));
+    return MONTH_NAMES_ES[idx] + " " + m[1];
+  }
+
+  async function loadActMonthly() {
+    if (!els.actMoTbody) return;
+    const months = Math.max(1, Number(els.actMoMonths && els.actMoMonths.value) || 12);
+    els.actMoTbody.innerHTML = '<tr><td colspan="10" class="muted">Cargando…</td></tr>';
+    if (els.actMoChart) els.actMoChart.innerHTML = "";
+    try {
+      const data = await api("/api/admin/activity/monthly?months=" + months);
+      renderActMonthly(data.rows || []);
+    } catch (e) {
+      els.actMoTbody.innerHTML = '<tr><td colspan="10" class="muted">Error cargando datos</td></tr>';
+    }
+  }
+
+  function renderActMonthly(rows) {
+    if (!els.actMoTbody) return;
+    if (els.actMoCount) {
+      els.actMoCount.textContent = rows.length + (rows.length === 1 ? " mes" : " meses");
+    }
+    if (!rows.length) {
+      els.actMoTbody.innerHTML = '<tr><td colspan="10" class="muted">Sin datos</td></tr>';
+      if (els.actMoTfoot) els.actMoTfoot.innerHTML = "";
+      if (els.actMoChart) els.actMoChart.innerHTML = "";
+      return;
+    }
+    let tOrders = 0, tDeliv = 0, tGross = 0, tCost = 0, tEarn = 0, tPurch = 0, tPays = 0;
+    // Mostramos del mes mas reciente al mas viejo en la tabla.
+    const ordered = rows.slice().reverse();
+    els.actMoTbody.innerHTML = ordered.map((r) => {
+      tOrders += Number(r.orders_count) || 0;
+      tDeliv += Number(r.delivered_count) || 0;
+      tGross += Number(r.gross_sales) || 0;
+      tCost += Number(r.cost_total) || 0;
+      tEarn += Number(r.net_earning) || 0;
+      tPurch += Number(r.purchases_total) || 0;
+      tPays += Number(r.payments_total) || 0;
+      const margin = (Number(r.gross_sales) || 0) > 0
+        ? ((Number(r.net_earning) || 0) / Number(r.gross_sales) * 100)
+        : 0;
+      const marginCls = margin >= 0 ? "" : ' style="color:#c00"';
+      const earnCls = (Number(r.net_earning) || 0) >= 0 ? "" : ' style="color:#c00"';
+      return '<tr>' +
+        '<td><strong>' + escapeHtml(fmtMonthLabel(r.month)) + '</strong></td>' +
+        '<td class="num">' + (Number(r.orders_count) || 0) + '</td>' +
+        '<td class="num muted">' + (Number(r.delivered_count) || 0) + '</td>' +
+        '<td class="num"><strong>' + fmtMoney(r.gross_sales) + '</strong></td>' +
+        '<td class="num muted">' + fmtMoney(r.cost_total) + '</td>' +
+        '<td class="num"' + earnCls + '><strong>' + fmtMoney(r.net_earning) + '</strong></td>' +
+        '<td class="num"' + marginCls + '>' + margin.toFixed(1) + '%</td>' +
+        '<td class="num">' + fmtMoney(r.avg_ticket) + '</td>' +
+        '<td class="num muted">' + fmtMoney(r.purchases_total) + '</td>' +
+        '<td class="num">' + fmtMoney(r.payments_total) + '</td>' +
+      '</tr>';
+    }).join("");
+    const totMargin = tGross > 0 ? (tEarn / tGross * 100) : 0;
+    const totAvg = tOrders > 0 ? Math.round(tGross / tOrders) : 0;
+    if (els.actMoTfoot) {
+      els.actMoTfoot.innerHTML =
+        '<tr><th>Totales</th>' +
+        '<th class="num">' + tOrders + '</th>' +
+        '<th class="num muted">' + tDeliv + '</th>' +
+        '<th class="num"><strong>' + fmtMoney(tGross) + '</strong></th>' +
+        '<th class="num muted">' + fmtMoney(tCost) + '</th>' +
+        '<th class="num"><strong>' + fmtMoney(tEarn) + '</strong></th>' +
+        '<th class="num">' + totMargin.toFixed(1) + '%</th>' +
+        '<th class="num">' + fmtMoney(totAvg) + '</th>' +
+        '<th class="num muted">' + fmtMoney(tPurch) + '</th>' +
+        '<th class="num">' + fmtMoney(tPays) + '</th></tr>';
+    }
+    // KPIs del rango
+    if (els.actMoKpiOrders) els.actMoKpiOrders.textContent = tOrders.toLocaleString("es-AR");
+    if (els.actMoKpiDelivered) els.actMoKpiDelivered.textContent = tDeliv.toLocaleString("es-AR");
+    if (els.actMoKpiGross) els.actMoKpiGross.textContent = fmtMoney(tGross);
+    if (els.actMoKpiCost) els.actMoKpiCost.textContent = fmtMoney(tCost);
+    if (els.actMoKpiEarn) els.actMoKpiEarn.textContent = fmtMoney(tEarn);
+    if (els.actMoKpiMargin) els.actMoKpiMargin.textContent = totMargin.toFixed(1) + "%";
+    if (els.actMoKpiPurch) els.actMoKpiPurch.textContent = fmtMoney(tPurch);
+    if (els.actMoKpiPays) els.actMoKpiPays.textContent = fmtMoney(tPays);
+    if (els.actMoKpiAvg) els.actMoKpiAvg.textContent = fmtMoney(totAvg);
+    if (els.actMoKpiFlow) els.actMoKpiFlow.textContent = fmtMoney(tPays - tPurch);
+
+    // Grafico simple de barras horizontales (cronologico viejo->nuevo para
+    // leer la evolucion de izquierda a derecha como linea de tiempo).
+    if (els.actMoChart) {
+      const maxV = Math.max(
+        1,
+        ...rows.map((r) => Math.max(
+          Number(r.gross_sales) || 0,
+          Number(r.net_earning) || 0,
+          Number(r.purchases_total) || 0
+        ))
+      );
+      els.actMoChart.innerHTML = rows.map((r) => {
+        const gross = Number(r.gross_sales) || 0;
+        const earn = Number(r.net_earning) || 0;
+        const purch = Number(r.purchases_total) || 0;
+        function pct(v) { return Math.max(0, Math.min(100, (v / maxV) * 100)).toFixed(1); }
+        return '<div class="act-mo-chart-row">' +
+          '<div class="act-mo-chart-label">' + escapeHtml(fmtMonthLabel(r.month)) + '</div>' +
+          '<div class="act-mo-chart-bars">' +
+            '<div class="act-mo-chart-bar gross" style="width:' + pct(gross) + '%" title="Ventas brutas: ' + fmtMoney(gross) + '">' +
+              '<span>' + fmtMoney(gross) + '</span>' +
+            '</div>' +
+            '<div class="act-mo-chart-bar earn" style="width:' + pct(Math.max(0, earn)) + '%" title="Ganancia: ' + fmtMoney(earn) + '">' +
+              '<span>' + fmtMoney(earn) + '</span>' +
+            '</div>' +
+            '<div class="act-mo-chart-bar purch" style="width:' + pct(purch) + '%" title="Gastos: ' + fmtMoney(purch) + '">' +
+              '<span>' + fmtMoney(purch) + '</span>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }).join("");
+    }
+  }
+
+  if (els.actMoApply) els.actMoApply.addEventListener("click", loadActMonthly);
+  if (els.actMoMonths) els.actMoMonths.addEventListener("change", loadActMonthly);
 
   // -------- Listas de precios --------
   async function loadPriceLists() {
