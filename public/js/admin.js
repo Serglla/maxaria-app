@@ -197,6 +197,8 @@
     actMoKpiEarn: document.getElementById("act-mo-kpi-earn"),
     actMoKpiMargin: document.getElementById("act-mo-kpi-margin"),
     actMoKpiPurch: document.getElementById("act-mo-kpi-purch"),
+    actMoKpiExp: document.getElementById("act-mo-kpi-exp"),
+    actMoKpiOut: document.getElementById("act-mo-kpi-out"),
     actMoKpiPays: document.getElementById("act-mo-kpi-pays"),
     actMoKpiAvg: document.getElementById("act-mo-kpi-avg"),
     actMoKpiFlow: document.getElementById("act-mo-kpi-flow"),
@@ -259,6 +261,29 @@
     accCount: document.getElementById("acc-count"),
     accTbody: document.getElementById("acc-tbody"),
     accReloadBtn: document.getElementById("acc-reload-btn"),
+
+    // Gastos
+    expFrom: document.getElementById("exp-from"),
+    expTo: document.getElementById("exp-to"),
+    expCatFilter: document.getElementById("exp-cat-filter"),
+    expSearch: document.getElementById("exp-search"),
+    expCount: document.getElementById("exp-count"),
+    expTbody: document.getElementById("exp-tbody"),
+    expTfoot: document.getElementById("exp-tfoot"),
+    expCreateBtn: document.getElementById("exp-create-btn"),
+    expCatsBtn: document.getElementById("exp-cats-btn"),
+    expSummaryAmount: document.getElementById("exp-summary-amount"),
+    expSummaryBycat: document.getElementById("exp-summary-bycat"),
+    expCreateModal: document.getElementById("exp-create-modal"),
+    expCreateForm: document.getElementById("exp-create-form"),
+    expCreateTitle: document.getElementById("exp-create-title"),
+    expCreateMsg: document.getElementById("exp-create-msg"),
+    expCreateSubmit: document.getElementById("exp-create-submit"),
+    expFormCategory: document.getElementById("exp-form-category"),
+    expCatsModal: document.getElementById("exp-cats-modal"),
+    expCatsTbody: document.getElementById("exp-cats-tbody"),
+    expCatCreateForm: document.getElementById("exp-cat-create-form"),
+    expCatCreateMsg: document.getElementById("exp-cat-create-msg"),
 
     // Listas de precios
     plSearch: document.getElementById("pl-search"),
@@ -585,6 +610,7 @@
       if (tab === "proveedores" && !state.suppliersLoaded) loadSuppliers();
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
+      if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas" && !state.accountsLoaded) loadAccounts();
       if (tab === "venta") {
         if (!bState.loaded) loadBudgets();
@@ -1574,13 +1600,13 @@
   async function loadActMonthly() {
     if (!els.actMoTbody) return;
     const months = Math.max(1, Number(els.actMoMonths && els.actMoMonths.value) || 12);
-    els.actMoTbody.innerHTML = '<tr><td colspan="10" class="muted">Cargando…</td></tr>';
+    els.actMoTbody.innerHTML = '<tr><td colspan="11" class="muted">Cargando…</td></tr>';
     if (els.actMoChart) els.actMoChart.innerHTML = "";
     try {
       const data = await api("/api/admin/activity/monthly?months=" + months);
       renderActMonthly(data.rows || []);
     } catch (e) {
-      els.actMoTbody.innerHTML = '<tr><td colspan="10" class="muted">Error cargando datos</td></tr>';
+      els.actMoTbody.innerHTML = '<tr><td colspan="11" class="muted">Error cargando datos</td></tr>';
     }
   }
 
@@ -1590,12 +1616,12 @@
       els.actMoCount.textContent = rows.length + (rows.length === 1 ? " mes" : " meses");
     }
     if (!rows.length) {
-      els.actMoTbody.innerHTML = '<tr><td colspan="10" class="muted">Sin datos</td></tr>';
+      els.actMoTbody.innerHTML = '<tr><td colspan="11" class="muted">Sin datos</td></tr>';
       if (els.actMoTfoot) els.actMoTfoot.innerHTML = "";
       if (els.actMoChart) els.actMoChart.innerHTML = "";
       return;
     }
-    let tOrders = 0, tDeliv = 0, tGross = 0, tCost = 0, tEarn = 0, tPurch = 0, tPays = 0;
+    let tOrders = 0, tDeliv = 0, tGross = 0, tCost = 0, tEarn = 0, tPurch = 0, tPays = 0, tExp = 0;
     // Mostramos del mes mas reciente al mas viejo en la tabla.
     const ordered = rows.slice().reverse();
     els.actMoTbody.innerHTML = ordered.map((r) => {
@@ -1606,6 +1632,7 @@
       tEarn += Number(r.net_earning) || 0;
       tPurch += Number(r.purchases_total) || 0;
       tPays += Number(r.payments_total) || 0;
+      tExp += Number(r.expenses_total) || 0;
       const margin = (Number(r.gross_sales) || 0) > 0
         ? ((Number(r.net_earning) || 0) / Number(r.gross_sales) * 100)
         : 0;
@@ -1621,6 +1648,7 @@
         '<td class="num"' + marginCls + '>' + margin.toFixed(1) + '%</td>' +
         '<td class="num">' + fmtMoney(r.avg_ticket) + '</td>' +
         '<td class="num muted">' + fmtMoney(r.purchases_total) + '</td>' +
+        '<td class="num muted">' + fmtMoney(r.expenses_total) + '</td>' +
         '<td class="num">' + fmtMoney(r.payments_total) + '</td>' +
       '</tr>';
     }).join("");
@@ -1637,9 +1665,12 @@
         '<th class="num">' + totMargin.toFixed(1) + '%</th>' +
         '<th class="num">' + fmtMoney(totAvg) + '</th>' +
         '<th class="num muted">' + fmtMoney(tPurch) + '</th>' +
+        '<th class="num muted">' + fmtMoney(tExp) + '</th>' +
         '<th class="num">' + fmtMoney(tPays) + '</th></tr>';
     }
-    // KPIs del rango
+    // KPIs del rango. Resultado neto = ganancia bruta - gastos generales.
+    // No se restan las compras de mercaderia porque ya estan reflejadas en
+    // el costo de ventas cuando esos items se vendieron.
     if (els.actMoKpiOrders) els.actMoKpiOrders.textContent = tOrders.toLocaleString("es-AR");
     if (els.actMoKpiDelivered) els.actMoKpiDelivered.textContent = tDeliv.toLocaleString("es-AR");
     if (els.actMoKpiGross) els.actMoKpiGross.textContent = fmtMoney(tGross);
@@ -1647,9 +1678,11 @@
     if (els.actMoKpiEarn) els.actMoKpiEarn.textContent = fmtMoney(tEarn);
     if (els.actMoKpiMargin) els.actMoKpiMargin.textContent = totMargin.toFixed(1) + "%";
     if (els.actMoKpiPurch) els.actMoKpiPurch.textContent = fmtMoney(tPurch);
+    if (els.actMoKpiExp) els.actMoKpiExp.textContent = fmtMoney(tExp);
+    if (els.actMoKpiOut) els.actMoKpiOut.textContent = fmtMoney(tPurch + tExp);
     if (els.actMoKpiPays) els.actMoKpiPays.textContent = fmtMoney(tPays);
     if (els.actMoKpiAvg) els.actMoKpiAvg.textContent = fmtMoney(totAvg);
-    if (els.actMoKpiFlow) els.actMoKpiFlow.textContent = fmtMoney(tPays - tPurch);
+    if (els.actMoKpiFlow) els.actMoKpiFlow.textContent = fmtMoney(tEarn - tExp);
 
     // Grafico simple de barras horizontales. Orden: mes mas reciente arriba
     // (igual que la tabla) para que el lector vea primero "ahora" y baje al
@@ -3675,6 +3708,319 @@
         showToast("Pago registrado: " + fmtPrice(out.payment.amount));
       } catch (err) {
         if (els.paymentCreateMsg) { els.paymentCreateMsg.textContent = err.message; els.paymentCreateMsg.className = "config-msg err"; }
+      }
+    });
+  }
+
+  // ========== GASTOS ==========
+  const expState = {
+    categories: [],
+    rows: [],
+    byCategory: [],
+    total: 0,
+  };
+
+  function expDefaultRange() {
+    if (els.expFrom && !els.expFrom.value) {
+      const d = new Date();
+      d.setDate(1); // primer dia del mes actual
+      els.expFrom.value = d.toISOString().slice(0, 10);
+    }
+    if (els.expTo && !els.expTo.value) {
+      els.expTo.value = new Date().toISOString().slice(0, 10);
+    }
+  }
+
+  async function loadExpenseCategories() {
+    try {
+      expState.categories = await api("/api/admin/expense-categories");
+    } catch (e) {
+      expState.categories = [];
+    }
+    // Llenar filtro de categorias en la toolbar
+    if (els.expCatFilter) {
+      const cur = els.expCatFilter.value || "all";
+      els.expCatFilter.innerHTML = '<option value="all">Todas las categorías</option>' +
+        expState.categories.map((c) => {
+          const dim = c.active ? "" : " (inactiva)";
+          return '<option value="' + c.id + '">' + escapeHtml(c.name) + dim + '</option>';
+        }).join("");
+      els.expCatFilter.value = cur;
+    }
+    // Llenar select del formulario (solo activas)
+    if (els.expFormCategory) {
+      els.expFormCategory.innerHTML = expState.categories
+        .filter((c) => c.active)
+        .map((c) => '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>')
+        .join("");
+    }
+  }
+
+  async function loadExpenses() {
+    expDefaultRange();
+    if (!expState.categories.length) await loadExpenseCategories();
+    const qs = [];
+    if (els.expFrom && els.expFrom.value) qs.push("from=" + encodeURIComponent(els.expFrom.value));
+    if (els.expTo && els.expTo.value) qs.push("to=" + encodeURIComponent(els.expTo.value));
+    if (els.expCatFilter && els.expCatFilter.value !== "all") qs.push("category_id=" + encodeURIComponent(els.expCatFilter.value));
+    if (els.expSearch && els.expSearch.value.trim()) qs.push("q=" + encodeURIComponent(els.expSearch.value.trim()));
+    const url = "/api/admin/expenses" + (qs.length ? ("?" + qs.join("&")) : "");
+    if (els.expTbody) els.expTbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando…</td></tr>';
+    try {
+      const data = await api(url);
+      expState.rows = data.rows || [];
+      expState.byCategory = data.by_category || [];
+      expState.total = data.total || 0;
+      renderExpenses();
+    } catch (e) {
+      if (els.expTbody) els.expTbody.innerHTML = '<tr><td colspan="7" class="muted">Error cargando gastos</td></tr>';
+    }
+  }
+
+  function renderExpenses() {
+    if (!els.expTbody) return;
+    const rows = expState.rows;
+    if (els.expCount) {
+      els.expCount.textContent = rows.length + (rows.length === 1 ? " gasto" : " gastos");
+    }
+    // Sumario
+    if (els.expSummaryAmount) els.expSummaryAmount.textContent = fmtMoney(expState.total);
+    if (els.expSummaryBycat) {
+      if (!expState.byCategory.length) {
+        els.expSummaryBycat.innerHTML = '<span class="muted small">Sin gastos en el período.</span>';
+      } else {
+        els.expSummaryBycat.innerHTML = expState.byCategory.map((c) => {
+          return '<div class="exp-cat-chip">' +
+            '<span>' + escapeHtml(c.category_name || "—") + '</span>' +
+            '<span class="exp-cat-chip-val">' + fmtMoney(c.total) + '</span>' +
+            '<span class="exp-cat-chip-count">×' + (c.count || 0) + '</span>' +
+          '</div>';
+        }).join("");
+      }
+    }
+    // Tabla
+    if (!rows.length) {
+      els.expTbody.innerHTML = '<tr><td colspan="7" class="muted">No hay gastos en el período. Registrá uno con el botón "+ Registrar gasto".</td></tr>';
+      if (els.expTfoot) els.expTfoot.innerHTML = "";
+      return;
+    }
+    els.expTbody.innerHTML = rows.map((e) => {
+      const methodNice = (e.payment_method || "").replace(/_/g, " ");
+      return '<tr data-id="' + e.id + '">' +
+        '<td class="muted small">' + escapeHtml(fmtDateShort(e.expense_date)) + '</td>' +
+        '<td><strong>' + escapeHtml(e.category_name || "—") + '</strong></td>' +
+        '<td>' + escapeHtml(e.description || "") + '</td>' +
+        '<td class="muted small">' + escapeHtml(methodNice) + '</td>' +
+        '<td class="muted small">' + escapeHtml(e.reference || "") + '</td>' +
+        '<td class="num"><strong>' + fmtMoney(e.amount) + '</strong></td>' +
+        '<td>' +
+          '<button class="btn btn-small" data-act="exp-edit" data-id="' + e.id + '" type="button">Editar</button> ' +
+          '<button class="btn btn-small btn-danger" data-act="exp-del" data-id="' + e.id + '" type="button">Borrar</button>' +
+        '</td>' +
+      '</tr>';
+    }).join("");
+    if (els.expTfoot) {
+      els.expTfoot.innerHTML = '<tr><th colspan="5">Total</th>' +
+        '<th class="num"><strong>' + fmtMoney(expState.total) + '</strong></th>' +
+        '<th></th></tr>';
+    }
+  }
+
+  // Filtros con debounce
+  function bindExpFilters() {
+    if (els.expFrom) els.expFrom.addEventListener("change", loadExpenses);
+    if (els.expTo) els.expTo.addEventListener("change", loadExpenses);
+    if (els.expCatFilter) els.expCatFilter.addEventListener("change", loadExpenses);
+    if (els.expSearch) {
+      els.expSearch.addEventListener("input", () => {
+        clearTimeout(els.expSearch._t);
+        els.expSearch._t = setTimeout(loadExpenses, 250);
+      });
+    }
+  }
+  bindExpFilters();
+
+  // Abrir modal de creacion
+  function openExpenseForm(existing) {
+    if (!els.expCreateModal || !els.expCreateForm) return;
+    loadExpenseCategories().then(() => {
+      const form = els.expCreateForm;
+      form.reset();
+      if (existing) {
+        if (els.expCreateTitle) els.expCreateTitle.textContent = "Editar gasto #" + existing.id;
+        form.id.value = existing.id;
+        form.expense_date.value = existing.expense_date || "";
+        form.amount.value = existing.amount;
+        form.expense_category_id.value = existing.expense_category_id || "";
+        form.description.value = existing.description || "";
+        form.payment_method.value = existing.payment_method || "efectivo";
+        form.reference.value = existing.reference || "";
+        form.notes.value = existing.notes || "";
+      } else {
+        if (els.expCreateTitle) els.expCreateTitle.textContent = "Registrar gasto";
+        form.id.value = "";
+        form.expense_date.value = new Date().toISOString().slice(0, 10);
+        form.payment_method.value = "efectivo";
+      }
+      if (els.expCreateMsg) { els.expCreateMsg.textContent = ""; els.expCreateMsg.className = "muted small"; }
+      els.expCreateModal.hidden = false;
+      setTimeout(() => { try { form.amount.focus(); } catch (_) {} }, 50);
+    });
+  }
+
+  if (els.expCreateBtn) {
+    els.expCreateBtn.addEventListener("click", () => openExpenseForm(null));
+  }
+
+  if (els.expTbody) {
+    els.expTbody.addEventListener("click", async (e) => {
+      const edit = e.target.closest('[data-act="exp-edit"]');
+      const del = e.target.closest('[data-act="exp-del"]');
+      if (edit) {
+        const id = Number(edit.dataset.id);
+        const row = expState.rows.find((r) => r.id === id);
+        if (row) openExpenseForm(row);
+      } else if (del) {
+        const id = Number(del.dataset.id);
+        if (!confirm("¿Borrar este gasto? Esta acción no se puede deshacer.")) return;
+        try {
+          await api("/api/admin/expenses/" + id, { method: "DELETE" });
+          await loadExpenses();
+        } catch (err) {
+          alert("Error al borrar: " + err.message);
+        }
+      }
+    });
+  }
+
+  if (els.expCreateForm) {
+    els.expCreateForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const form = els.expCreateForm;
+      const id = form.id.value ? Number(form.id.value) : null;
+      const body = {
+        expense_date: form.expense_date.value,
+        amount: Number(form.amount.value),
+        expense_category_id: form.expense_category_id.value ? Number(form.expense_category_id.value) : null,
+        description: form.description.value.trim(),
+        payment_method: form.payment_method.value,
+        reference: form.reference.value.trim(),
+        notes: form.notes.value.trim(),
+      };
+      if (!body.amount || body.amount <= 0) {
+        if (els.expCreateMsg) { els.expCreateMsg.textContent = "Monto invalido"; els.expCreateMsg.className = "config-msg err"; }
+        return;
+      }
+      if (els.expCreateSubmit) els.expCreateSubmit.disabled = true;
+      try {
+        const url = id ? ("/api/admin/expenses/" + id) : "/api/admin/expenses";
+        const method = id ? "PATCH" : "POST";
+        await api(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        els.expCreateModal.hidden = true;
+        await loadExpenses();
+      } catch (err) {
+        if (els.expCreateMsg) { els.expCreateMsg.textContent = err.message; els.expCreateMsg.className = "config-msg err"; }
+      } finally {
+        if (els.expCreateSubmit) els.expCreateSubmit.disabled = false;
+      }
+    });
+  }
+
+  // Modal gestion de categorias
+  function renderExpenseCategoriesAdmin() {
+    if (!els.expCatsTbody) return;
+    if (!expState.categories.length) {
+      els.expCatsTbody.innerHTML = '<tr><td colspan="4" class="muted">Sin categorías</td></tr>';
+      return;
+    }
+    els.expCatsTbody.innerHTML = expState.categories.map((c) => {
+      const usage = Number(c.usage_count) || 0;
+      const canDelete = usage === 0;
+      return '<tr data-id="' + c.id + '">' +
+        '<td><input type="text" data-cat-field="name" value="' + escapeHtml(c.name) + '" maxlength="60" /></td>' +
+        '<td class="num muted">' + usage + '</td>' +
+        '<td><input type="checkbox" data-cat-field="active" ' + (c.active ? "checked" : "") + ' /></td>' +
+        '<td>' +
+          (canDelete
+            ? '<button class="btn btn-small btn-danger" data-cat-act="del" data-id="' + c.id + '" type="button">Borrar</button>'
+            : '<span class="muted small" title="Tiene gastos asociados">Desactivá en su lugar</span>') +
+        '</td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  if (els.expCatsBtn) {
+    els.expCatsBtn.addEventListener("click", async () => {
+      await loadExpenseCategories();
+      renderExpenseCategoriesAdmin();
+      if (els.expCatCreateMsg) { els.expCatCreateMsg.textContent = ""; els.expCatCreateMsg.className = "muted small"; }
+      if (els.expCatsModal) els.expCatsModal.hidden = false;
+    });
+  }
+
+  if (els.expCatCreateForm) {
+    els.expCatCreateForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(els.expCatCreateForm);
+      const name = String(fd.get("name") || "").trim();
+      if (!name) return;
+      try {
+        await api("/api/admin/expense-categories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        els.expCatCreateForm.reset();
+        await loadExpenseCategories();
+        renderExpenseCategoriesAdmin();
+        if (els.expCatCreateMsg) { els.expCatCreateMsg.textContent = "✓ Categoría agregada"; els.expCatCreateMsg.className = "config-msg ok"; }
+      } catch (err) {
+        if (els.expCatCreateMsg) { els.expCatCreateMsg.textContent = err.message; els.expCatCreateMsg.className = "config-msg err"; }
+      }
+    });
+  }
+
+  if (els.expCatsTbody) {
+    // Auto-save al cambiar nombre o checkbox active
+    els.expCatsTbody.addEventListener("change", async (ev) => {
+      const inp = ev.target.closest("[data-cat-field]");
+      if (!inp) return;
+      const tr = inp.closest("tr"); if (!tr) return;
+      const id = Number(tr.dataset.id);
+      const field = inp.dataset.catField;
+      const body = {};
+      if (field === "name") body.name = inp.value.trim();
+      else if (field === "active") body.active = inp.checked ? 1 : 0;
+      try {
+        await api("/api/admin/expense-categories/" + id, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        await loadExpenseCategories();
+        renderExpenseCategoriesAdmin();
+      } catch (err) {
+        alert("Error: " + err.message);
+        await loadExpenseCategories();
+        renderExpenseCategoriesAdmin();
+      }
+    });
+    // Borrar
+    els.expCatsTbody.addEventListener("click", async (ev) => {
+      const btn = ev.target.closest('[data-cat-act="del"]');
+      if (!btn) return;
+      const id = Number(btn.dataset.id);
+      if (!confirm("¿Borrar esta categoría?")) return;
+      try {
+        await api("/api/admin/expense-categories/" + id, { method: "DELETE" });
+        await loadExpenseCategories();
+        renderExpenseCategoriesAdmin();
+      } catch (err) {
+        alert("Error: " + err.message);
       }
     });
   }

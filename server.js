@@ -303,6 +303,58 @@ db.exec(
   "CREATE INDEX IF NOT EXISTS idx_bi_budget ON budget_items(budget_id);"
 );
 
+// Migracion: Gastos generales del negocio (transporte, alquiler, servicios,
+// impuestos, etc). Distinto de purchase_orders (que son compras de mercaderia
+// que ademas suman stock). Estos gastos solo afectan el flujo de caja y el
+// resumen mensual.
+// - expense_categories: catalogo editable de categorias. Seed con las clasicas.
+// - expenses: registro de cada gasto con monto, fecha, categoria, metodo de
+//   pago, descripcion y notas. Conservamos category_name como snapshot para que
+//   si se renombra/borra la categoria los gastos historicos sigan siendo legibles.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS expense_categories (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  name TEXT UNIQUE NOT NULL," +
+  "  active INTEGER NOT NULL DEFAULT 1," +
+  "  sort_order INTEGER NOT NULL DEFAULT 0," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE TABLE IF NOT EXISTS expenses (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  expense_category_id INTEGER REFERENCES expense_categories(id)," +
+  "  category_name TEXT NOT NULL DEFAULT 'Otros'," +
+  "  amount REAL NOT NULL," +
+  "  description TEXT," +
+  "  payment_method TEXT NOT NULL DEFAULT 'efectivo'," +
+  "  reference TEXT," +
+  "  notes TEXT," +
+  "  expense_date TEXT NOT NULL DEFAULT (date('now'))," +
+  "  registered_by INTEGER REFERENCES users(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);" +
+  "CREATE INDEX IF NOT EXISTS idx_expenses_cat ON expenses(expense_category_id);"
+);
+
+// Seed de categorias clasicas si la tabla esta vacia. Se ejecuta solo la
+// primera vez; despues el admin puede agregar/editar/borrar libremente.
+(function seedExpenseCategories() {
+  const row = db.prepare("SELECT COUNT(*) AS n FROM expense_categories").get();
+  if (row && row.n > 0) return;
+  const defaults = [
+    "Transporte", "Flete", "Envíos", "Combustible",
+    "Alquiler", "Servicios", "Luz", "Agua", "Gas", "Internet", "Teléfono",
+    "Impuestos", "Sueldos", "Honorarios", "Mantenimiento",
+    "Insumos de oficina", "Limpieza", "Comisiones bancarias",
+    "Publicidad", "Otros",
+  ];
+  const ins = db.prepare("INSERT INTO expense_categories (name, sort_order) VALUES (?, ?)");
+  const tx = db.transaction(() => {
+    defaults.forEach((name, i) => { ins.run(name, i); });
+  });
+  tx();
+})();
+
 // Helper: genera el proximo numero de presupuesto en formato 0001-00000001.
 function nextBudgetNumber() {
   const row = db.prepare(
@@ -2646,6 +2698,16 @@ app.get("/api/admin/activity/monthly", requireAdmin, (req, res) => {
     " GROUP BY month"
   ).all(firstMonth, endIso);
 
+  // Gastos generales (expenses) por mes - distintos de compras de mercaderia
+  const expRows = db.prepare(
+    "SELECT strftime('%Y-%m', expense_date) AS month," +
+    "       COUNT(*) AS expenses_count," +
+    "       SUM(amount) AS expenses_total" +
+    "  FROM expenses" +
+    " WHERE expense_date BETWEEN ? AND ?" +
+    " GROUP BY month"
+  ).all(firstMonth.slice(0, 10), endIso.slice(0, 10));
+
   // Indexo cada source por mes para mergear
   function indexBy(rows) {
     const out = {};
@@ -2656,6 +2718,7 @@ app.get("/api/admin/activity/monthly", requireAdmin, (req, res) => {
   const itemsByMonth = indexBy(itemRows);
   const purchByMonth = indexBy(purchRows);
   const payByMonth = indexBy(payRows);
+  const expByMonth = indexBy(expRows);
 
   // Armar la respuesta en el orden de monthList
   const rows = monthList.map((mo) => {
@@ -2663,6 +2726,7 @@ app.get("/api/admin/activity/monthly", requireAdmin, (req, res) => {
     const i = itemsByMonth[mo] || {};
     const c = purchByMonth[mo] || {};
     const p = payByMonth[mo] || {};
+    const ex = expByMonth[mo] || {};
     const ordersCount = Number(o.orders_count) || 0;
     const gross = Number(o.gross_sales) || 0;
     const avg = ordersCount > 0 ? Math.round(gross / ordersCount) : 0;
@@ -2679,6 +2743,8 @@ app.get("/api/admin/activity/monthly", requireAdmin, (req, res) => {
       purchases_total: Number(c.purchases_total) || 0,
       payments_count: Number(p.payments_count) || 0,
       payments_total: Number(p.payments_total) || 0,
+      expenses_count: Number(ex.expenses_count) || 0,
+      expenses_total: Number(ex.expenses_total) || 0,
     };
   });
   res.json({ months: months, rows: rows });
@@ -3184,6 +3250,215 @@ app.get("/api/admin/accounts/:userId", requireAdmin, (req, res) => {
     "  FROM account_movements WHERE user_id = ?"
   ).get(userId);
   res.json({ user: user, movements: movements, balance: balance.balance });
+});
+
+// ====================================================================
+// ===== GASTOS (Expenses) - admin only ===============================
+// ====================================================================
+
+// ----- Categorias de gasto -----
+app.get("/api/admin/expense-categories", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT ec.id, ec.name, ec.active, ec.sort_order, ec.created_at," +
+    "       (SELECT COUNT(*) FROM expenses e WHERE e.expense_category_id = ec.id) AS usage_count" +
+    "  FROM expense_categories ec" +
+    "  ORDER BY ec.active DESC, ec.sort_order, ec.name"
+  ).all();
+  res.json(rows);
+});
+
+app.post("/api/admin/expense-categories", requireAdmin, (req, res) => {
+  const name = String(req.body && req.body.name || "").trim();
+  if (!name) return res.status(400).json({ error: "El nombre es obligatorio" });
+  if (name.length > 60) return res.status(400).json({ error: "Maximo 60 caracteres" });
+  const dup = db.prepare("SELECT id FROM expense_categories WHERE LOWER(name) = LOWER(?)").get(name);
+  if (dup) return res.status(409).json({ error: "Ya existe una categoria con ese nombre" });
+  const maxOrder = db.prepare("SELECT COALESCE(MAX(sort_order),0) AS m FROM expense_categories").get();
+  const info = db.prepare(
+    "INSERT INTO expense_categories (name, sort_order) VALUES (?, ?)"
+  ).run(name, (maxOrder.m || 0) + 1);
+  const row = db.prepare("SELECT id, name, active, sort_order FROM expense_categories WHERE id = ?").get(info.lastInsertRowid);
+  res.json(Object.assign({ usage_count: 0 }, row));
+});
+
+app.patch("/api/admin/expense-categories/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const cur = db.prepare("SELECT id FROM expense_categories WHERE id = ?").get(id);
+  if (!cur) return res.status(404).json({ error: "Categoria no encontrada" });
+  const body = req.body || {};
+  const sets = [];
+  const params = [];
+  if (typeof body.name === "string") {
+    const n = body.name.trim();
+    if (!n) return res.status(400).json({ error: "Nombre vacio" });
+    if (n.length > 60) return res.status(400).json({ error: "Maximo 60 caracteres" });
+    const dup = db.prepare("SELECT id FROM expense_categories WHERE LOWER(name) = LOWER(?) AND id != ?").get(n, id);
+    if (dup) return res.status(409).json({ error: "Ya existe una categoria con ese nombre" });
+    sets.push("name = ?"); params.push(n);
+  }
+  if (body.active !== undefined) {
+    sets.push("active = ?"); params.push(body.active ? 1 : 0);
+  }
+  if (body.sort_order !== undefined) {
+    sets.push("sort_order = ?"); params.push(Number(body.sort_order) || 0);
+  }
+  if (!sets.length) return res.json({ ok: true });
+  params.push(id);
+  const stmt = db.prepare("UPDATE expense_categories SET " + sets.join(", ") + " WHERE id = ?");
+  stmt.run.apply(stmt, params);
+  res.json({ ok: true, id });
+});
+
+app.delete("/api/admin/expense-categories/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const used = db.prepare("SELECT COUNT(*) AS n FROM expenses WHERE expense_category_id = ?").get(id);
+  if (used && used.n > 0) {
+    return res.status(409).json({
+      error: "No se puede borrar: hay " + used.n + " gasto(s) con esta categoria. Desactivala en su lugar."
+    });
+  }
+  db.prepare("DELETE FROM expense_categories WHERE id = ?").run(id);
+  res.json({ ok: true });
+});
+
+// ----- Gastos -----
+// GET con filtros opcionales: from, to (YYYY-MM-DD), category_id, q (busqueda)
+app.get("/api/admin/expenses", requireAdmin, (req, res) => {
+  const conds = ["1=1"];
+  const params = [];
+  if (req.query.from && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from)) {
+    conds.push("e.expense_date >= ?"); params.push(req.query.from);
+  }
+  if (req.query.to && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to)) {
+    conds.push("e.expense_date <= ?"); params.push(req.query.to);
+  }
+  if (req.query.category_id) {
+    const cid = Number(req.query.category_id);
+    if (cid) { conds.push("e.expense_category_id = ?"); params.push(cid); }
+  }
+  if (req.query.q && typeof req.query.q === "string") {
+    const q = "%" + req.query.q.trim() + "%";
+    conds.push("(e.description LIKE ? OR e.reference LIKE ? OR e.notes LIKE ? OR e.category_name LIKE ?)");
+    params.push(q, q, q, q);
+  }
+  const stmt = db.prepare(
+    "SELECT e.id, e.expense_category_id, e.category_name, e.amount, e.description," +
+    "       e.payment_method, e.reference, e.notes, e.expense_date," +
+    "       e.registered_by, u.username AS registered_by_username," +
+    "       e.created_at" +
+    "  FROM expenses e" +
+    "  LEFT JOIN users u ON u.id = e.registered_by" +
+    " WHERE " + conds.join(" AND ") +
+    " ORDER BY e.expense_date DESC, e.id DESC LIMIT 500"
+  );
+  const rows = stmt.all.apply(stmt, params);
+  // Sumario adicional: total y suma por categoria del filtro aplicado
+  const sumStmt = db.prepare(
+    "SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS count" +
+    "  FROM expenses e WHERE " + conds.join(" AND ")
+  );
+  const summary = sumStmt.get.apply(sumStmt, params);
+  const byCatStmt = db.prepare(
+    "SELECT e.category_name, e.expense_category_id," +
+    "       COUNT(*) AS count, SUM(e.amount) AS total" +
+    "  FROM expenses e WHERE " + conds.join(" AND ") +
+    " GROUP BY e.expense_category_id, e.category_name" +
+    " ORDER BY total DESC"
+  );
+  const byCategory = byCatStmt.all.apply(byCatStmt, params);
+  res.json({ rows: rows, total: summary.total, count: summary.count, by_category: byCategory });
+});
+
+app.post("/api/admin/expenses", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const amount = Number(b.amount);
+  if (!isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: "El monto debe ser mayor a 0" });
+  }
+  const catId = b.expense_category_id ? Number(b.expense_category_id) : null;
+  let categoryName = String(b.category_name || "").trim();
+  if (catId) {
+    const cat = db.prepare("SELECT id, name FROM expense_categories WHERE id = ?").get(catId);
+    if (!cat) return res.status(400).json({ error: "Categoria invalida" });
+    categoryName = cat.name;
+  }
+  if (!categoryName) categoryName = "Otros";
+  const date = String(b.expense_date || "").trim();
+  const expenseDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : new Date().toISOString().slice(0, 10);
+  const method = String(b.payment_method || "efectivo").trim();
+  const description = String(b.description || "").trim();
+  const reference = String(b.reference || "").trim() || null;
+  const notes = String(b.notes || "").trim() || null;
+  const info = db.prepare(
+    "INSERT INTO expenses (expense_category_id, category_name, amount, description," +
+    "  payment_method, reference, notes, expense_date, registered_by)" +
+    "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(catId, categoryName, amount, description || null, method, reference, notes, expenseDate, req.session.userId || null);
+  const row = db.prepare(
+    "SELECT id, expense_category_id, category_name, amount, description," +
+    "       payment_method, reference, notes, expense_date, created_at" +
+    "  FROM expenses WHERE id = ?"
+  ).get(info.lastInsertRowid);
+  res.json(row);
+});
+
+app.patch("/api/admin/expenses/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const cur = db.prepare("SELECT id FROM expenses WHERE id = ?").get(id);
+  if (!cur) return res.status(404).json({ error: "Gasto no encontrado" });
+  const b = req.body || {};
+  const sets = [];
+  const params = [];
+  if (b.amount !== undefined) {
+    const a = Number(b.amount);
+    if (!isFinite(a) || a <= 0) return res.status(400).json({ error: "Monto invalido" });
+    sets.push("amount = ?"); params.push(a);
+  }
+  if (b.expense_category_id !== undefined) {
+    const cid = b.expense_category_id ? Number(b.expense_category_id) : null;
+    if (cid) {
+      const cat = db.prepare("SELECT id, name FROM expense_categories WHERE id = ?").get(cid);
+      if (!cat) return res.status(400).json({ error: "Categoria invalida" });
+      sets.push("expense_category_id = ?"); params.push(cid);
+      sets.push("category_name = ?"); params.push(cat.name);
+    } else {
+      sets.push("expense_category_id = ?"); params.push(null);
+      if (b.category_name !== undefined) {
+        sets.push("category_name = ?"); params.push(String(b.category_name || "Otros").trim() || "Otros");
+      }
+    }
+  }
+  if (b.expense_date !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(String(b.expense_date))) {
+    sets.push("expense_date = ?"); params.push(b.expense_date);
+  }
+  if (b.payment_method !== undefined) {
+    sets.push("payment_method = ?"); params.push(String(b.payment_method || "efectivo").trim());
+  }
+  if (b.description !== undefined) {
+    sets.push("description = ?"); params.push(String(b.description || "").trim() || null);
+  }
+  if (b.reference !== undefined) {
+    sets.push("reference = ?"); params.push(String(b.reference || "").trim() || null);
+  }
+  if (b.notes !== undefined) {
+    sets.push("notes = ?"); params.push(String(b.notes || "").trim() || null);
+  }
+  if (!sets.length) return res.json({ ok: true });
+  params.push(id);
+  const stmt = db.prepare("UPDATE expenses SET " + sets.join(", ") + " WHERE id = ?");
+  stmt.run.apply(stmt, params);
+  res.json({ ok: true, id });
+});
+
+app.delete("/api/admin/expenses/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const info = db.prepare("DELETE FROM expenses WHERE id = ?").run(id);
+  if (info.changes === 0) return res.status(404).json({ error: "Gasto no encontrado" });
+  res.json({ ok: true });
 });
 
 // ====== Generador de catálogo en PDF ======

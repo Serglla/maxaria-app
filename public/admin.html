@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260528e" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260528f" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -104,6 +104,9 @@
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="compras" type="button">
             <span class="admin-sidebar-item-icon">📥</span>Compras
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="gastos" type="button">
+            <span class="admin-sidebar-item-icon">💸</span>Gastos
           </button>
         </div>
 
@@ -400,10 +403,12 @@
           <div class="act-kpi"><div class="act-kpi-label">Costo</div><div class="act-kpi-value money" id="act-mo-kpi-cost">—</div></div>
           <div class="act-kpi act-kpi-good"><div class="act-kpi-label">Ganancia neta</div><div class="act-kpi-value money" id="act-mo-kpi-earn">—</div></div>
           <div class="act-kpi"><div class="act-kpi-label">Margen</div><div class="act-kpi-value" id="act-mo-kpi-margin">—</div></div>
-          <div class="act-kpi act-kpi-warn"><div class="act-kpi-label">Gastos (compras)</div><div class="act-kpi-value money" id="act-mo-kpi-purch">—</div></div>
+          <div class="act-kpi act-kpi-warn"><div class="act-kpi-label">Compras mercadería</div><div class="act-kpi-value money" id="act-mo-kpi-purch">—</div></div>
+          <div class="act-kpi act-kpi-warn"><div class="act-kpi-label">Gastos generales</div><div class="act-kpi-value money" id="act-mo-kpi-exp">—</div></div>
+          <div class="act-kpi act-kpi-warn"><div class="act-kpi-label">Egresos totales</div><div class="act-kpi-value money" id="act-mo-kpi-out" title="Compras + Gastos generales">—</div></div>
           <div class="act-kpi"><div class="act-kpi-label">Cobranzas</div><div class="act-kpi-value money" id="act-mo-kpi-pays">—</div></div>
           <div class="act-kpi"><div class="act-kpi-label">Ticket prom.</div><div class="act-kpi-value money" id="act-mo-kpi-avg">—</div></div>
-          <div class="act-kpi"><div class="act-kpi-label">Flujo neto</div><div class="act-kpi-value money" id="act-mo-kpi-flow" title="Cobranzas − Gastos en compras">—</div></div>
+          <div class="act-kpi"><div class="act-kpi-label">Resultado neto</div><div class="act-kpi-value money" id="act-mo-kpi-flow" title="Ganancia − Gastos generales">—</div></div>
         </div>
 
         <h4 style="margin-top:18px;margin-bottom:8px">Detalle por mes</h4>
@@ -419,11 +424,12 @@
                 <th class="num">Ganancia</th>
                 <th class="num">Margen</th>
                 <th class="num">Ticket prom.</th>
-                <th class="num">Gastos compras</th>
+                <th class="num">Compras merc.</th>
+                <th class="num">Gastos grales.</th>
                 <th class="num">Cobranzas</th>
               </tr>
             </thead>
-            <tbody id="act-mo-tbody"><tr><td colspan="10" class="muted">Cargando…</td></tr></tbody>
+            <tbody id="act-mo-tbody"><tr><td colspan="11" class="muted">Cargando…</td></tr></tbody>
             <tfoot id="act-mo-tfoot"></tfoot>
           </table>
         </div>
@@ -847,6 +853,126 @@
         </table>
       </div>
     </section>
+
+    <!-- ===== TAB GASTOS ===== -->
+    <section class="tab-panel" id="tab-gastos" hidden>
+      <div class="admin-toolbar">
+        <label class="admin-filter">Desde <input type="date" id="exp-from" class="admin-input" /></label>
+        <label class="admin-filter">Hasta <input type="date" id="exp-to" class="admin-input" /></label>
+        <select id="exp-cat-filter" class="admin-select" title="Filtrar por categoría">
+          <option value="all">Todas las categorías</option>
+        </select>
+        <input type="search" id="exp-search" class="admin-search" placeholder="Buscar descripción, referencia..." autocomplete="off" />
+        <span class="admin-spacer"></span>
+        <span id="exp-count" class="muted">…</span>
+        <button class="btn" id="exp-cats-btn" type="button" title="Crear, editar o desactivar categorías">⚙️ Categorías</button>
+        <button class="btn btn-primary" id="exp-create-btn" type="button">+ Registrar gasto</button>
+      </div>
+
+      <div class="exp-summary" id="exp-summary">
+        <div class="exp-summary-total">
+          <div class="muted small">Total del período</div>
+          <div class="exp-summary-amount" id="exp-summary-amount">$0</div>
+        </div>
+        <div class="exp-summary-bycat" id="exp-summary-bycat"></div>
+      </div>
+
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="exp-table">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Categoría</th>
+              <th>Descripción</th>
+              <th>Método</th>
+              <th>Referencia</th>
+              <th class="num">Monto</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="exp-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
+          <tfoot id="exp-tfoot"></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <!-- Modal crear/editar gasto -->
+    <div class="admin-modal" id="exp-create-modal" hidden>
+      <div class="admin-modal-box" style="max-width:640px">
+        <h3 id="exp-create-title">Registrar gasto</h3>
+        <form id="exp-create-form" class="user-form">
+          <input type="hidden" name="id" value="" />
+          <div class="form-row-2">
+            <label>Fecha
+              <input type="date" name="expense_date" required />
+            </label>
+            <label>Monto <span class="muted">($)</span>
+              <input type="number" name="amount" min="0.01" step="0.01" required autocomplete="off" />
+            </label>
+          </div>
+          <label>Categoría
+            <select name="expense_category_id" id="exp-form-category" required></select>
+          </label>
+          <label>Descripción
+            <input type="text" name="description" maxlength="200" placeholder="Ej: Carga de combustible camioneta" autocomplete="off" />
+          </label>
+          <div class="form-row-2">
+            <label>Método de pago
+              <select name="payment_method">
+                <option value="efectivo">Efectivo</option>
+                <option value="transferencia">Transferencia</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="cheque">Cheque</option>
+                <option value="debito_automatico">Débito automático</option>
+                <option value="otro">Otro</option>
+              </select>
+            </label>
+            <label>Referencia <span class="muted">(comprobante, factura)</span>
+              <input type="text" name="reference" maxlength="80" autocomplete="off" />
+            </label>
+          </div>
+          <label>Notas
+            <textarea name="notes" rows="2" maxlength="500"></textarea>
+          </label>
+          <div id="exp-create-msg" class="muted small"></div>
+          <div class="admin-modal-foot">
+            <button type="button" class="btn" data-close>Cancelar</button>
+            <button type="submit" class="btn btn-primary" id="exp-create-submit">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal gestionar categorías -->
+    <div class="admin-modal" id="exp-cats-modal" hidden>
+      <div class="admin-modal-box" style="max-width:600px">
+        <h3>Categorías de gasto</h3>
+        <p class="muted small">Activá/desactivá categorías o creá nuevas. Las categorías con gastos asociados no se pueden borrar — desactivalas para ocultarlas del formulario.</p>
+        <form id="exp-cat-create-form" class="user-form" style="display:flex;gap:8px;align-items:flex-end;margin:8px 0 12px">
+          <label style="flex:1">Nueva categoría
+            <input type="text" name="name" maxlength="60" required autocomplete="off" placeholder="Ej: Mantenimiento vehículos" />
+          </label>
+          <button type="submit" class="btn btn-primary">+ Agregar</button>
+        </form>
+        <div id="exp-cat-create-msg" class="muted small"></div>
+        <div class="admin-table-wrap" style="max-height:55vh;overflow:auto">
+          <table class="admin-table" id="exp-cats-table">
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th class="num">Usos</th>
+                <th>Activa</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="exp-cats-tbody"><tr><td colspan="4" class="muted">Cargando…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cerrar</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ===== TAB PAGOS ===== -->
     <section class="tab-panel" id="tab-pagos" hidden>
@@ -1509,6 +1635,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260528e"></script>
+  <script src="/js/admin.js?v=20260528f"></script>
 </body>
 </html>
