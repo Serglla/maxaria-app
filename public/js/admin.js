@@ -186,7 +186,6 @@
     actDeadTfoot: document.getElementById("act-dead-tfoot"),
     // Mensual
     actMoMonths: document.getElementById("act-mo-months"),
-    actMoApply: document.getElementById("act-mo-apply"),
     actMoCount: document.getElementById("act-mo-count"),
     actMoTbody: document.getElementById("act-mo-tbody"),
     actMoTfoot: document.getElementById("act-mo-tfoot"),
@@ -1687,7 +1686,6 @@
     }
   }
 
-  if (els.actMoApply) els.actMoApply.addEventListener("click", loadActMonthly);
   if (els.actMoMonths) els.actMoMonths.addEventListener("change", loadActMonthly);
 
   // -------- Listas de precios --------

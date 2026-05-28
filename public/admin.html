@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260528d" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260528e" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -341,7 +341,7 @@
       <!-- Sub-navegacion interna de Actividad -->
       <div class="act-subnav" role="tablist" aria-label="Sub-secciones de Actividad">
         <button type="button" class="act-subtab active" data-subtab="vendedores">Por vendedor</button>
-        <button type="button" class="act-subtab" data-subtab="mensual">Ventas mensuales</button>
+        <button type="button" class="act-subtab" data-subtab="mensual">Ventas</button>
         <button type="button" class="act-subtab" data-subtab="clientes">Por cliente</button>
         <button type="button" class="act-subtab" data-subtab="ranking">Ranking productos</button>
         <button type="button" class="act-subtab" data-subtab="stock">Stock</button>
@@ -387,14 +387,13 @@
               <option value="24">24 meses</option>
             </select>
           </label>
-          <button class="btn" id="act-mo-apply" type="button">Aplicar</button>
           <span class="muted small">Ventas (no cancelados), ganancia neta (precio − costo), gastos en compras a proveedores, cobranzas registradas.</span>
           <span class="admin-spacer"></span>
           <span id="act-mo-count" class="muted">…</span>
         </div>
 
-        <!-- KPIs del rango -->
-        <div class="act-kpi-grid">
+        <!-- KPIs del rango (2 filas de 5) -->
+        <div class="act-kpi-grid act-kpi-grid-5">
           <div class="act-kpi"><div class="act-kpi-label">Pedidos</div><div class="act-kpi-value" id="act-mo-kpi-orders">—</div></div>
           <div class="act-kpi"><div class="act-kpi-label">Entregados</div><div class="act-kpi-value" id="act-mo-kpi-delivered">—</div></div>
           <div class="act-kpi act-kpi-pri"><div class="act-kpi-label">Ventas brutas</div><div class="act-kpi-value money" id="act-mo-kpi-gross">—</div></div>
@@ -1510,6 +1509,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260528d"></script>
+  <script src="/js/admin.js?v=20260528e"></script>
 </body>
 </html>

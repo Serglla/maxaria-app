@@ -1456,6 +1456,18 @@ button { font: inherit; cursor: pointer; }
   gap: 10px;
   margin: 14px 0 6px;
 }
+/* Variante para vista mensual: 5 columnas exactas en desktop = 2 filas
+   de 5 cards. Achicamos progresivamente en pantallas chicas. */
+.act-kpi-grid-5 { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 1100px) {
+  .act-kpi-grid-5 { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 850px) {
+  .act-kpi-grid-5 { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 600px) {
+  .act-kpi-grid-5 { grid-template-columns: repeat(2, 1fr); }
+}
 .act-kpi {
   background: #fff;
   border: 1px solid #e5e7eb;
