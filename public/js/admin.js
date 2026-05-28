@@ -1652,8 +1652,9 @@
     if (els.actMoKpiAvg) els.actMoKpiAvg.textContent = fmtMoney(totAvg);
     if (els.actMoKpiFlow) els.actMoKpiFlow.textContent = fmtMoney(tPays - tPurch);
 
-    // Grafico simple de barras horizontales (cronologico viejo->nuevo para
-    // leer la evolucion de izquierda a derecha como linea de tiempo).
+    // Grafico simple de barras horizontales. Orden: mes mas reciente arriba
+    // (igual que la tabla) para que el lector vea primero "ahora" y baje al
+    // pasado.
     if (els.actMoChart) {
       const maxV = Math.max(
         1,
@@ -1663,7 +1664,7 @@
           Number(r.purchases_total) || 0
         ))
       );
-      els.actMoChart.innerHTML = rows.map((r) => {
+      els.actMoChart.innerHTML = ordered.map((r) => {
         const gross = Number(r.gross_sales) || 0;
         const earn = Number(r.net_earning) || 0;
         const purch = Number(r.purchases_total) || 0;
