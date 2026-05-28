@@ -1089,7 +1089,7 @@
 
   if (els.actDetailModal) {
     els.actDetailModal.addEventListener("click", (e) => {
-      if (e.target.matches("[data-close]") || e.target === els.actDetailModal) {
+      if (e.target.matches("[data-close]")) {
         els.actDetailModal.hidden = true;
       }
     });
@@ -1281,7 +1281,7 @@
   }
   if (els.actCliDetailModal) {
     els.actCliDetailModal.addEventListener("click", (e) => {
-      if (e.target.matches("[data-close]") || e.target === els.actCliDetailModal) {
+      if (e.target.matches("[data-close]")) {
         els.actCliDetailModal.hidden = true;
       }
     });
@@ -2003,10 +2003,13 @@
     });
   }
 
-  // Cerrar modales con [data-close] o click en overlay o Escape
+  // Cerrar modales SOLO con [data-close] o Escape.
+  // Antes se cerraba tambien con click en el overlay (e.target === m), pero eso
+  // hace que un click accidental fuera de la caja descarte todo lo cargado en
+  // los formularios (crear usuario, crear vendedor, crear compra, etc). Se quita.
   document.querySelectorAll(".admin-modal").forEach((m) => {
     m.addEventListener("click", (e) => {
-      if (e.target === m || e.target.matches("[data-close]")) {
+      if (e.target.matches("[data-close]")) {
         m.hidden = true;
         if (m.id === "supplier-create-modal") state.supplierCreatedFromPurchase = false;
         if (m.id === "purchase-create-modal") resetPurchaseModal();
