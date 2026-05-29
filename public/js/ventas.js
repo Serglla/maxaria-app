@@ -116,13 +116,36 @@
     return '<span class="budget-badge ' + (V_STATUS_BADGE[status]||"") + '">' + vEsc(V_STATUS_LABELS[status]||status) + '</span>';
   }
 
+  // Toast efímero para confirmar acciones (guardado, error). Autocontenido:
+  // crea el nodo una vez y lo reutiliza, sin depender de CSS externo.
+  function vToast(msg, isError) {
+    let t = document.getElementById("ventas-toast");
+    if (!t) {
+      t = document.createElement("div");
+      t.id = "ventas-toast";
+      t.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);" +
+        "color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600;" +
+        "box-shadow:0 6px 20px rgba(0,0,0,.2);z-index:2000;opacity:0;" +
+        "transition:opacity .2s ease;pointer-events:none";
+      document.body.appendChild(t);
+    }
+    t.style.background = isError ? "#dc2626" : "#16a34a";
+    t.textContent = msg;
+    requestAnimationFrame(() => { t.style.opacity = "1"; });
+    clearTimeout(t._hideT);
+    t._hideT = setTimeout(() => { t.style.opacity = "0"; }, 1800);
+  }
+
   function vUpdateStatusUI() {
     const st = vState.editingStatus;
     if (vEls.statusBadge) {
       vEls.statusBadge.className = "budget-badge " + (V_STATUS_BADGE[st]||"budget-badge--borrador");
       vEls.statusBadge.textContent = V_STATUS_LABELS[st]||st;
     }
-    const isFinal = st === "cancelado" || st === "aceptado" || st === "facturado";
+    // Solo 'facturado' y 'cancelado' bloquean la edición. Un presupuesto
+    // 'aceptado' se puede seguir corrigiendo (cantidades, precios, etc.) antes
+    // de facturar; sino se puede tipear pero no guardar.
+    const isFinal = st === "cancelado" || st === "facturado";
     [vEls.saveDraftBtn, vEls.sendBtn, vEls.addProductBtn, vEls.discount, vEls.surcharge].forEach((el) => { if (el) el.disabled = isFinal; });
     if (vEls.cancelBtn)  vEls.cancelBtn.hidden  = isFinal;
     if (vEls.acceptBtn)  vEls.acceptBtn.hidden  = st === "aceptado" || st === "cancelado" || st === "facturado";
@@ -163,6 +186,10 @@
         '<td style="text-align:center"><button type="button" data-del-idx="' + idx + '" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px" title="Eliminar">✕</button></td>' +
       '</tr>';
     }).join("");
+    // En estados finales (facturado/cancelado) no se debe poder editar items.
+    if (vState.editingStatus === "facturado" || vState.editingStatus === "cancelado") {
+      vEls.itemsTbody.querySelectorAll("input, button").forEach((el) => { el.disabled = true; });
+    }
     vRecalc();
   }
 
@@ -311,6 +338,11 @@
     const clientName = clientId
       ? ((vEls.client.options[vEls.client.selectedIndex]||{}).text || "Consumidor final")
       : "Consumidor final";
+    // Al guardar cambios sobre un presupuesto ya aceptado, mantener el estado
+    // 'aceptado' (no degradarlo a enviado/borrador) para poder corregirlo antes
+    // de facturar sin perder el botón Facturar.
+    let finalStatus = targetStatus || "borrador";
+    if (vState.editingId && vState.editingStatus === "aceptado") finalStatus = "aceptado";
     const body = {
       client_id:        clientId,
       client_name:      clientName,
@@ -319,15 +351,16 @@
       discount_percent: Number(vEls.discount  ? vEls.discount.value  : 0) || 0,
       surcharge_percent:Number(vEls.surcharge ? vEls.surcharge.value : 0) || 0,
       notes:            vEls.notes ? vEls.notes.value.trim() : "",
-      status:           targetStatus || "borrador",
+      status:           finalStatus,
       items:            vState.items,
     };
     try {
       let result;
       if (vState.editingId) {
-        await fetch("/api/budgets/" + vState.editingId, { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
-        if (targetStatus && targetStatus !== vState.editingStatus) {
-          await fetch("/api/budgets/" + vState.editingId + "/status", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({status:targetStatus}) });
+        const r = await fetch("/api/budgets/" + vState.editingId, { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+        if (!r.ok) throw new Error("PUT " + r.status);
+        if (finalStatus !== vState.editingStatus) {
+          await fetch("/api/budgets/" + vState.editingId + "/status", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({status:finalStatus}) });
         }
       } else {
         result = await fetch("/api/budgets", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) }).then((r) => r.json());
@@ -335,10 +368,11 @@
         if (vEls.formTitle)  vEls.formTitle.textContent = "Presupuesto N° " + result.number;
         if (vEls.formNumber) vEls.formNumber.textContent = result.number;
       }
-      vState.editingStatus = targetStatus || "borrador";
+      vState.editingStatus = finalStatus;
       vUpdateStatusUI();
       vLoadBudgets();
-    } catch (e) { /* silencioso */ }
+      vToast("Cambios guardados");
+    } catch (e) { vToast("No se pudieron guardar los cambios", true); }
   }
 
   if (vEls.saveDraftBtn) vEls.saveDraftBtn.addEventListener("click", () => vSave("borrador"));
