@@ -2756,6 +2756,9 @@ button { font: inherit; cursor: pointer; }
   font-weight: 600;
   letter-spacing: .3px;
 }
+/* El display:inline-block de arriba pisa el atributo `hidden` del browser.
+   Este override fuerza que hidden siempre gane. */
+.budget-badge[hidden] { display: none !important; }
 .budget-badge--borrador  { background: #f1f5f9; color: #475569; }
 .budget-badge--enviado   { background: #dbeafe; color: #1d4ed8; }
 .budget-badge--aceptado  { background: #dcfce7; color: #15803d; }
