@@ -369,6 +369,58 @@ function nextBudgetNumber() {
   return "0001-" + String(seq).padStart(8, "0");
 }
 
+// Backfill: crear presupuestos para pedidos que llegaron por carrito/WhatsApp
+// antes de que existiera la auto-creacion de budget en POST /api/orders.
+// Idempotente: solo toca ordenes sin budget vinculado. Se ejecuta en cada
+// arranque pero normalmente no hace nada tras la primera ejecucion.
+(function backfillOrderBudgets() {
+  try {
+    const orders = db.prepare(
+      "SELECT o.id, o.user_id, o.total, o.notes, o.status," +
+      "       o.assigned_vendedor_id, o.created_at," +
+      "       u.full_name, u.username" +
+      "  FROM orders o" +
+      "  JOIN users u ON u.id = o.user_id" +
+      "  WHERE NOT EXISTS (SELECT 1 FROM budgets b WHERE b.order_id = o.id)" +
+      "  AND COALESCE(o.is_unified, 0) = 0" +
+      "  ORDER BY o.id ASC"
+    ).all();
+    if (!orders.length) return;
+    const insBI = db.prepare(
+      "INSERT INTO budget_items (budget_id, product_id, product_code, product_name," +
+      "  quantity, unit_price, discount_percent, subtotal) VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
+    );
+    const tx = db.transaction(() => {
+      for (const order of orders) {
+        const items = db.prepare(
+          "SELECT product_id, product_code, product_name, quantity, unit_price, subtotal" +
+          "  FROM order_items WHERE order_id = ?"
+        ).all(order.id);
+        const clientName = order.full_name || order.username || "Consumidor final";
+        const budgetStatus = order.status === "cancelado" ? "cancelado" : "enviado";
+        const bNum = nextBudgetNumber();
+        const bRes = db.prepare(
+          "INSERT INTO budgets (number, client_id, client_name, vendedor_id, payment_method, currency," +
+          "  discount_percent, surcharge_percent, subtotal, total, notes, status, order_id," +
+          "  created_at, updated_at)" +
+          "  VALUES (?, ?, ?, ?, 'Efectivo', 'ARS', 0, 0, ?, ?, ?, ?, ?, ?, ?)"
+        ).run(bNum, order.user_id, clientName, order.assigned_vendedor_id || null,
+              order.total, order.total, order.notes || null, budgetStatus, order.id,
+              order.created_at, order.created_at);
+        const budgetId = bRes.lastInsertRowid;
+        for (const it of items) {
+          insBI.run(budgetId, it.product_id, it.product_code, it.product_name,
+                    it.quantity, it.unit_price, it.subtotal);
+        }
+      }
+    });
+    tx();
+    console.log("[backfill] creados " + orders.length + " presupuesto(s) para pedidos existentes");
+  } catch (e) {
+    console.error("[backfill] error migrando pedidos a presupuestos:", e.message);
+  }
+})();
+
 function getSetting(key, fallback) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   if (row && row.value != null) return row.value;
