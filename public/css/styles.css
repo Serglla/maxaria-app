@@ -1092,8 +1092,12 @@ button { font: inherit; cursor: pointer; }
      en el header del dropdown del menú hamburguesa cuando se abre. */
   .topbar-user { display: none; }
 
-  /* Botones primarios compactos: emoji + nada de texto largo */
-  .topbar-actions-primary { gap: 6px; }
+  /* Botones primarios compactos: emoji + nada de texto largo.
+     margin-left:auto empuja el grupo de acciones (Venta/Carrito) y el menú ☰
+     que le sigue en el DOM hacia el borde derecho, dejando el brand a la
+     izquierda. Sin esto los tres quedaban apretados junto al brand y el ☰ no
+     llegaba al margen derecho. */
+  .topbar-actions-primary { gap: 6px; margin-left: auto; }
   .topbar-actions-primary .btn {
     font-size: 13px;
     padding: 7px 10px;

@@ -8,7 +8,7 @@
   "use strict";
 
   // ── Estado global mínimo ──
-  const me = { app_name: "Maxaria", level: 0, fullName: "", id: 0 };
+  const me = { app_name: "Maxaria", level: 0, fullName: "", id: 0, vendedorClientId: null };
 
   // ── Carga inicial de info del usuario ──
   async function loadMe() {
@@ -20,6 +20,10 @@
         me.level    = Number(data.level) || 0;
         me.fullName = data.fullName || data.username || "";
         me.id       = Number(data.id) || 0;
+        // Cliente que el vendedor está atendiendo (elegido en el catálogo,
+        // guardado en sesión y devuelto por /api/me como vendedorClient).
+        me.vendedorClientId = data.vendedorClient && data.vendedorClient.id
+          ? Number(data.vendedorClient.id) : null;
         // Actualizar topbar
         const brand = document.getElementById("topbar-brand-name");
         if (brand) brand.textContent = (me.app_name || "Maxaria");
@@ -276,7 +280,8 @@
     } else {
       if (vEls.formTitle)  vEls.formTitle.textContent = "Nuevo presupuesto";
       if (vEls.formNumber) vEls.formNumber.textContent = "";
-      if (vEls.client)     vEls.client.value = "";
+      // Pre-seleccionar el cliente que el vendedor venía atendiendo en el catálogo.
+      if (vEls.client)     vEls.client.value = me.vendedorClientId ? String(me.vendedorClientId) : "";
       if (vEls.payment)    vEls.payment.value = "Efectivo";
       if (vEls.discount)   vEls.discount.value = 0;
       if (vEls.surcharge)  vEls.surcharge.value = 0;
