@@ -612,10 +612,6 @@
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas" && !state.accountsLoaded) loadAccounts();
-      if (tab === "presupuestos") {
-        if (!bState.loaded) loadBudgets();
-        else renderBudgets();
-      }
       if (tab === "ventas") {
         if (!bState.loaded) loadBudgets();
         // renderVentas se llama desde el handler de tab específico (async)
@@ -4981,14 +4977,8 @@
     });
   }
 
-  // ─────── Handlers de tab para Presupuestos y Ventas ───────
+  // ─────── Handler de tab Ventas (facturados) ───────
   els.tabBtns.forEach((btn) => {
-    if (btn.dataset.tab === "presupuestos") {
-      btn.addEventListener("click", () => {
-        if (!bState.loaded) loadBudgets();
-        else renderBudgets();
-      });
-    }
     if (btn.dataset.tab === "ventas") {
       btn.addEventListener("click", async () => {
         if (!bState.loaded) { await loadBudgets(); }
