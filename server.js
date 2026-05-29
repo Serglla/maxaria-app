@@ -1465,6 +1465,11 @@ app.post("/api/orders", requireLogin, (req, res) => {
   if (!lines.length)
     return res.status(400).json({ error: "Ninguno de los productos del carrito esta disponible" });
 
+  // Nombre del cliente para el presupuesto (snapshot, igual al resto del sistema)
+  const clientRowForBudget = db.prepare("SELECT full_name, username FROM users WHERE id = ?").get(orderUserId);
+  const clientNameForBudget = (clientRowForBudget &&
+    (clientRowForBudget.full_name || clientRowForBudget.username)) || "Consumidor final";
+
   const insertOrder = db.prepare(
     "INSERT INTO orders (user_id, status, total, notes, whatsapp_sent_at, assigned_vendedor_id, created_at)" +
     " VALUES (?, 'enviado', ?, ?, datetime('now'), ?, datetime('now'))"
@@ -1481,6 +1486,26 @@ app.post("/api/orders", requireLogin, (req, res) => {
     for (const l of lines) {
       insertItem.run(orderId, l.product_id, l.product_code, l.product_name,
                      l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
+    }
+
+    // Auto-crear presupuesto vinculado a este pedido.
+    // Queda en estado 'enviado' (el WhatsApp ya fue enviado). El admin puede
+    // aceptarlo y despues facturarlo desde la seccion Presupuestos del panel.
+    const bNum = nextBudgetNumber();
+    const bRes = db.prepare(
+      "INSERT INTO budgets (number, client_id, client_name, vendedor_id, payment_method, currency," +
+      "  discount_percent, surcharge_percent, subtotal, total, notes, status, order_id)" +
+      "  VALUES (?, ?, ?, ?, 'Efectivo', 'ARS', 0, 0, ?, ?, ?, 'enviado', ?)"
+    ).run(bNum, orderUserId, clientNameForBudget, assignedVendedorId || null,
+          total, total, (notes || "").slice(0, 500) || null, orderId);
+    const budgetId = bRes.lastInsertRowid;
+    const insBI = db.prepare(
+      "INSERT INTO budget_items (budget_id, product_id, product_code, product_name," +
+      "  quantity, unit_price, discount_percent, subtotal) VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
+    );
+    for (const l of lines) {
+      insBI.run(budgetId, l.product_id, l.product_code, l.product_name,
+                l.quantity, l.unit_price, l.subtotal);
     }
   })();
 
@@ -3940,7 +3965,7 @@ app.get("/api/budgets", requireVendedorOrAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT b.id, b.number, b.client_name, b.payment_method, b.currency," +
     "       b.discount_percent, b.surcharge_percent, b.subtotal, b.total," +
-    "       b.status, b.notes, b.created_at, b.updated_at," +
+    "       b.status, b.notes, b.order_id, b.created_at, b.updated_at," +
     "       v.full_name AS vendedor_name," +
     "       u.full_name AS client_full_name" +
     "  FROM budgets b" +

@@ -69,8 +69,11 @@
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="entregas" type="button">
             <span class="admin-sidebar-item-icon">🚚</span>Entregas
           </button>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="venta" type="button" id="tab-btn-venta">
-            <span class="admin-sidebar-item-icon">🧾</span>Venta
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="presupuestos" type="button" id="tab-btn-presupuestos">
+            <span class="admin-sidebar-item-icon">📝</span>Presupuestos
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="ventas" type="button" id="tab-btn-ventas">
+            <span class="admin-sidebar-item-icon">✅</span>Ventas
           </button>
         </div>
 
@@ -1441,8 +1444,10 @@
     </div>
   </div>
 
-  <!-- ===== TAB VENTA ===== -->
-  <section class="tab-panel" id="tab-venta" hidden>
+  <!-- ===== TAB PRESUPUESTOS ===== -->
+  <!-- Muestra presupuestos no-facturados (borrador/enviado/aceptado/cancelado).
+       Los facturados (= vendidos) van al tab Ventas. -->
+  <section class="tab-panel" id="tab-presupuestos" hidden>
     <div class="admin-toolbar">
       <input type="search" id="budget-search" class="admin-search" placeholder="Buscar presupuesto…" autocomplete="off" />
       <label class="admin-filter">
@@ -1594,6 +1599,9 @@
               style="font-size:12px;color:#ef4444;border-color:#ef4444" id="budget-cancel-btn">✕ Cancelar ppto.</button>
             <button type="button" class="btn budget-status-action" data-status="aceptado"
               style="font-size:12px;color:#16a34a;border-color:#16a34a" id="budget-accept-btn">✔ Aceptado</button>
+            <!-- Solo visible cuando status=aceptado; factura y mueve a Ventas -->
+            <button type="button" class="btn" id="budget-invoice-btn" hidden
+              style="font-size:12px;background:#16a34a;color:#fff;border-color:#16a34a">🧾 Facturar</button>
           </div>
           <span class="admin-spacer"></span>
           <button type="button" class="btn" id="budget-save-draft-btn">💾 Guardar borrador</button>
@@ -1639,9 +1647,36 @@
     </div>
   </div>
 
+  <!-- ===== TAB VENTAS ===== -->
+  <!-- Solo muestra presupuestos en estado 'facturado' (= vendidos). -->
+  <section class="tab-panel" id="tab-ventas" hidden>
+    <div class="admin-toolbar">
+      <input type="search" id="ventas-search" class="admin-search" placeholder="Buscar venta…" autocomplete="off" />
+      <span class="admin-spacer"></span>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table" id="ventas-table">
+        <thead>
+          <tr>
+            <th>N°</th>
+            <th>Fecha</th>
+            <th>Cliente</th>
+            <th>Vendedor</th>
+            <th>Forma de pago</th>
+            <th style="text-align:right">Total</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="ventas-tbody">
+          <tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260528g"></script>
+  <script src="/js/admin.js?v=20260529a"></script>
 </body>
 </html>

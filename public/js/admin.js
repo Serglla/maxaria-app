@@ -612,9 +612,13 @@
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas" && !state.accountsLoaded) loadAccounts();
-      if (tab === "venta") {
+      if (tab === "presupuestos") {
         if (!bState.loaded) loadBudgets();
         else renderBudgets();
+      }
+      if (tab === "ventas") {
+        if (!bState.loaded) loadBudgets();
+        // renderVentas se llama desde el handler de tab específico (async)
       }
     });
   });
@@ -4332,6 +4336,7 @@
     printBtn:       document.getElementById("budget-print-btn"),
     cancelBtn:      document.getElementById("budget-cancel-btn"),
     acceptBtn:      document.getElementById("budget-accept-btn"),
+    invoiceBtn:     document.getElementById("budget-invoice-btn"),
     saveDraftBtn:   document.getElementById("budget-save-draft-btn"),
     sendBtn:        document.getElementById("budget-send-btn"),
     addProductBtn:  document.getElementById("budget-add-product-btn"),
@@ -4356,11 +4361,11 @@
   };
 
   const BUDGET_STATUS_LABELS = {
-    borrador: "Borrador", enviado: "Enviado", aceptado: "Aceptado", cancelado: "Cancelado",
+    borrador: "Borrador", enviado: "Enviado", aceptado: "Aceptado", cancelado: "Cancelado", facturado: "Facturado",
   };
   const BUDGET_STATUS_BADGE = {
     borrador: "budget-badge--borrador", enviado: "budget-badge--enviado",
-    aceptado: "budget-badge--aceptado", cancelado: "budget-badge--cancelado",
+    aceptado: "budget-badge--aceptado", cancelado: "budget-badge--cancelado", facturado: "budget-badge--facturado",
   };
 
   // --- helpers ---
@@ -4479,7 +4484,8 @@
     if (!bEls.tbody) return;
     const q = (bEls.search ? bEls.search.value.trim().toLowerCase() : "");
     const stFilter = bEls.filterStatus ? bEls.filterStatus.value : "all";
-    let list = bState.list;
+    // Tab Presupuestos: excluir facturado (esos van a Ventas)
+    let list = bState.list.filter((b) => b.status !== "facturado");
     if (q) list = list.filter((b) =>
       (b.number || "").toLowerCase().includes(q) ||
       (b.client_name || "").toLowerCase().includes(q) ||
@@ -4490,8 +4496,10 @@
       return;
     }
     bEls.tbody.innerHTML = list.map((b) => {
+      // Chip "Del carrito" si el presupuesto fue creado automaticamente desde un pedido
+      const fromCart = b.order_id ? ' <span title="Generado desde carrito" style="font-size:11px;background:#dbeafe;color:#1d4ed8;border-radius:4px;padding:1px 5px">🛒</span>' : "";
       return '<tr style="cursor:pointer" data-budget-id="' + b.id + '">' +
-        '<td style="padding:7px 10px;font-weight:600">' + escapeHtml(b.number) + '</td>' +
+        '<td style="padding:7px 10px;font-weight:600">' + escapeHtml(b.number) + fromCart + '</td>' +
         '<td style="padding:7px 10px">' + formatDate(b.created_at) + '</td>' +
         '<td style="padding:7px 10px">' + escapeHtml(b.client_name) + '</td>' +
         '<td style="padding:7px 10px">' + escapeHtml(b.vendedor_name || "—") + '</td>' +
@@ -4503,6 +4511,35 @@
         '</td>' +
       '</tr>';
     }).join("");
+  }
+
+  // Tab Ventas: muestra solo presupuestos facturados (= vendidos)
+  function renderVentas() {
+    const ventasEl = document.getElementById("ventas-tbody");
+    if (!ventasEl) return;
+    const q = (document.getElementById("ventas-search") || {}).value
+      ? document.getElementById("ventas-search").value.trim().toLowerCase() : "";
+    let list = bState.list.filter((b) => b.status === "facturado");
+    if (q) list = list.filter((b) =>
+      (b.number || "").toLowerCase().includes(q) ||
+      (b.client_name || "").toLowerCase().includes(q) ||
+      (b.vendedor_name || "").toLowerCase().includes(q));
+    if (!list.length) {
+      ventasEl.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Sin ventas registradas.</td></tr>';
+      return;
+    }
+    ventasEl.innerHTML = list.map((b) =>
+      '<tr style="cursor:pointer" data-budget-id="' + b.id + '">' +
+      '<td style="padding:7px 10px;font-weight:600">' + escapeHtml(b.number) + '</td>' +
+      '<td style="padding:7px 10px">' + formatDate(b.created_at) + '</td>' +
+      '<td style="padding:7px 10px">' + escapeHtml(b.client_name) + '</td>' +
+      '<td style="padding:7px 10px">' + escapeHtml(b.vendedor_name || "—") + '</td>' +
+      '<td style="padding:7px 10px">' + escapeHtml(b.payment_method) + '</td>' +
+      '<td style="padding:7px 10px;text-align:right;font-weight:600">' + fmtPrice(b.total) + '</td>' +
+      '<td style="padding:7px 10px;text-align:right">' +
+        '<button type="button" class="btn" style="font-size:12px;padding:3px 10px" data-open-budget="' + b.id + '">Ver</button>' +
+      '</td>' +
+    '</tr>').join("");
   }
 
   // Click en una fila o en el botón "Abrir"
@@ -4581,13 +4618,16 @@
       bEls.statusBadge.className = "budget-badge " + (BUDGET_STATUS_BADGE[st] || "budget-badge--borrador");
       bEls.statusBadge.textContent = BUDGET_STATUS_LABELS[st] || st;
     }
-    const isFinal = st === "cancelado" || st === "aceptado";
-    // Deshabilitar edición si está en estado final
+    // Solo facturado y cancelado bloquean la edición.
+    // Un presupuesto aceptado se puede seguir corrigiendo antes de facturar.
+    const isFinal = st === "cancelado" || st === "facturado";
     [bEls.saveDraftBtn, bEls.sendBtn, bEls.addProductBtn, bEls.discount, bEls.surcharge].forEach((el) => {
       if (el) el.disabled = isFinal;
     });
-    if (bEls.cancelBtn) bEls.cancelBtn.hidden = isFinal;
-    if (bEls.acceptBtn) bEls.acceptBtn.hidden = st === "aceptado" || st === "cancelado";
+    if (bEls.cancelBtn)  bEls.cancelBtn.hidden  = isFinal;
+    if (bEls.acceptBtn)  bEls.acceptBtn.hidden  = st === "aceptado" || isFinal;
+    // Facturar: solo cuando está aceptado y tiene id (ya guardado)
+    if (bEls.invoiceBtn) bEls.invoiceBtn.hidden = st !== "aceptado" || !bState.editingId;
   }
 
   async function populateBudgetClients() {
@@ -4625,7 +4665,10 @@
     const discPct = Number(bEls.discount ? bEls.discount.value : 0) || 0;
     const surPct = Number(bEls.surcharge ? bEls.surcharge.value : 0) || 0;
     const notes = bEls.notes ? bEls.notes.value.trim() : "";
-    const status = targetStatus || "borrador";
+    // Al editar un presupuesto aceptado, conservar el estado 'aceptado' para no
+    // perder el botón Facturar ni degradarlo a borrador/enviado accidentalmente.
+    let finalStatus = targetStatus || "borrador";
+    if (bState.editingId && bState.editingStatus === "aceptado") finalStatus = "aceptado";
 
     const body = {
       client_id: clientId,
@@ -4636,20 +4679,18 @@
       discount_percent: discPct,
       surcharge_percent: surPct,
       notes: notes,
-      status: status,
+      status: finalStatus,
       items: bState.items,
     };
 
     try {
       let result;
       if (bState.editingId) {
-        // También actualizar el status si se pasó uno
         result = await api("/api/budgets/" + bState.editingId, { method: "PUT", body: JSON.stringify(body) });
-        if (status !== bState.editingStatus) {
+        if (finalStatus !== bState.editingStatus) {
           await api("/api/budgets/" + bState.editingId + "/status", {
-            method: "PATCH", body: JSON.stringify({ status }),
+            method: "PATCH", body: JSON.stringify({ status: finalStatus }),
           });
-          bState.editingStatus = status;
         }
       } else {
         result = await api("/api/budgets", { method: "POST", body: JSON.stringify(body) });
@@ -4657,10 +4698,9 @@
         if (bEls.formTitle) bEls.formTitle.textContent = "Presupuesto #" + result.number;
         if (bEls.formNumber) bEls.formNumber.textContent = result.number;
       }
-      bState.editingStatus = status;
+      bState.editingStatus = finalStatus;
       budgetUpdateStatusUI();
       showToast("✅ Presupuesto guardado");
-      // Recargar la lista en segundo plano
       loadBudgets();
     } catch (e) {
       showToast("Error: " + e.message, true);
@@ -4704,10 +4744,46 @@
     });
   }
 
+  // Facturar: solo disponible cuando status=aceptado
+  if (bEls.invoiceBtn) {
+    bEls.invoiceBtn.addEventListener("click", async () => {
+      if (!bState.editingId) return;
+      if (!confirm("¿Facturar este presupuesto?\n\nSe va a descontar el stock de los artículos" +
+          (bState.items.some(() => true) ? " y, si hay un cliente con cuenta corriente, se le debitará el total." : "."))) return;
+      bEls.invoiceBtn.disabled = true;
+      try {
+        const data = await api("/api/budgets/" + bState.editingId + "/invoice", { method: "POST" });
+        bState.editingStatus = "facturado";
+        budgetUpdateStatusUI();
+        showToast("🧾 Facturado correctamente" + (data.debited ? " — cuenta corriente debitada" : ""));
+        loadBudgets(); // recarga para mover a Ventas
+      } catch (e) {
+        showToast("Error al facturar: " + e.message, true);
+      } finally {
+        bEls.invoiceBtn.disabled = false;
+      }
+    });
+  }
+
   // Cerrar overlay
   if (bEls.closeBtn) {
     bEls.closeBtn.addEventListener("click", () => {
       if (bEls.overlay) bEls.overlay.hidden = true;
+    });
+  }
+
+  // Buscador de Ventas
+  const ventasSearchEl = document.getElementById("ventas-search");
+  if (ventasSearchEl) ventasSearchEl.addEventListener("input", debounce(renderVentas, 200));
+
+  // Click en fila de Ventas (abre el presupuesto facturado para consultarlo)
+  const ventasTbodyEl = document.getElementById("ventas-tbody");
+  if (ventasTbodyEl) {
+    ventasTbodyEl.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-open-budget]");
+      if (btn) { openBudgetForm(Number(btn.dataset.openBudget)); return; }
+      const tr = e.target.closest("tr[data-budget-id]");
+      if (tr) openBudgetForm(Number(tr.dataset.budgetId));
     });
   }
 
@@ -4905,19 +4981,23 @@
     });
   }
 
-  // ─────── Registro de la tab en el handler de tabs ───────
-  // El handler original de tabs ya está registrado arriba. Extendemos
-  // la lógica para la tab "venta" sin tocar el handler existente.
+  // ─────── Handlers de tab para Presupuestos y Ventas ───────
   els.tabBtns.forEach((btn) => {
-    if (btn.dataset.tab === "venta") {
-      const originalHandler = btn.onclick;
+    if (btn.dataset.tab === "presupuestos") {
       btn.addEventListener("click", () => {
         if (!bState.loaded) loadBudgets();
+        else renderBudgets();
+      });
+    }
+    if (btn.dataset.tab === "ventas") {
+      btn.addEventListener("click", async () => {
+        if (!bState.loaded) { await loadBudgets(); }
+        renderVentas();
       });
     }
   });
 
-  // ─────── Fin PRESUPUESTOS / VENTA ───────
+  // ─────── Fin PRESUPUESTOS / VENTAS ───────
 
   bootstrap();
 })();
