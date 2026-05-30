@@ -306,6 +306,9 @@ db.exec(
 // Migracion idempotente: al facturar un presupuesto se crea una order y se
 // guarda su id aca para trazabilidad. NULL = todavia no facturado.
 try { db.exec("ALTER TABLE budgets ADD COLUMN order_id INTEGER REFERENCES orders(id)"); } catch (_) {}
+// Indica si el presupuesto ya descontó stock (al crearse). Evita doble descuento
+// en facturar/entregar y permite devolver el stock si se cancela.
+try { db.exec("ALTER TABLE budgets ADD COLUMN stock_discounted INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 
 // Migracion: Gastos generales del negocio (transporte, alquiler, servicios,
 // impuestos, etc). Distinto de purchase_orders (que son compras de mercaderia
@@ -1546,8 +1549,8 @@ app.post("/api/orders", requireLogin, (req, res) => {
     const bNum = nextBudgetNumber();
     const bRes = db.prepare(
       "INSERT INTO budgets (number, client_id, client_name, vendedor_id, payment_method, currency," +
-      "  discount_percent, surcharge_percent, subtotal, total, notes, status, order_id)" +
-      "  VALUES (?, ?, ?, ?, 'Efectivo', 'ARS', 0, 0, ?, ?, ?, 'enviado', ?)"
+      "  discount_percent, surcharge_percent, subtotal, total, notes, status, order_id, stock_discounted)" +
+      "  VALUES (?, ?, ?, ?, 'Efectivo', 'ARS', 0, 0, ?, ?, ?, 'enviado', ?, 1)"
     ).run(bNum, orderUserId, clientNameForBudget, assignedVendedorId || null,
           total, total, (notes || "").slice(0, 500) || null, orderId);
     const budgetId = bRes.lastInsertRowid;
@@ -1555,9 +1558,12 @@ app.post("/api/orders", requireLogin, (req, res) => {
       "INSERT INTO budget_items (budget_id, product_id, product_code, product_name," +
       "  quantity, unit_price, discount_percent, subtotal) VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
     );
+    const updStockOrder = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
     for (const l of lines) {
       insBI.run(budgetId, l.product_id, l.product_code, l.product_name,
                 l.quantity, l.unit_price, l.subtotal);
+      // Descontar stock al crear el presupuesto (no al entregar)
+      if (l.product_id) updStockOrder.run(l.quantity, l.product_id);
     }
   })();
 
@@ -1689,7 +1695,11 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
   // Los pedidos individuales que ya fueron absorbidos por un unificado NO
   // descuentan stock por su cuenta: el descuento se hace una sola vez cuando
   // el admin entrega el pedido unificado padre.
-  const skipStock = order.unified_parent_id != null;
+  // Tampoco descuentan si tienen un budget vinculado que ya lo hizo al crearse.
+  const linkedBudgetForOrder = db.prepare(
+    "SELECT stock_discounted FROM budgets WHERE order_id = ? AND stock_discounted = 1 LIMIT 1"
+  ).get(id);
+  const skipStock = order.unified_parent_id != null || !!linkedBudgetForOrder;
 
   db.transaction(() => {
     db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
@@ -2935,7 +2945,11 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, (req, res) => {
   const existing = db.prepare("SELECT id FROM deliveries WHERE order_id = ?").get(id);
   // Los pedidos individuales absorbidos por un unificado no descuentan stock
   // (lo hace el padre al ser entregado). Misma regla que en PATCH /api/orders/:id.
-  const skipStock = order.unified_parent_id != null;
+  // Tampoco si tienen un budget vinculado que ya descontó al crearse.
+  const linkedBudgetForDeliver = db.prepare(
+    "SELECT stock_discounted FROM budgets WHERE order_id = ? AND stock_discounted = 1 LIMIT 1"
+  ).get(id);
+  const skipStock = order.unified_parent_id != null || !!linkedBudgetForDeliver;
   const prevStatus = order.status;
 
   let deliveryId;
@@ -4080,8 +4094,8 @@ app.post("/api/budgets", requireVendedorOrAdmin, (req, res) => {
   const insertBudget = db.transaction(() => {
     const r = db.prepare(
       "INSERT INTO budgets (number, client_id, client_name, vendedor_id, payment_method, currency," +
-      "  discount_percent, surcharge_percent, subtotal, total, notes, status)" +
-      "  VALUES (?,?,?,?,?,?,?,?,?,?,?,'borrador')"
+      "  discount_percent, surcharge_percent, subtotal, total, notes, status, stock_discounted)" +
+      "  VALUES (?,?,?,?,?,?,?,?,?,?,?,'borrador',1)"
     ).run(number, clientId, clientName, vendedorId, payMethod, currency,
           discountPct, surchargePct, subtotal, total, notes);
     const bid = r.lastInsertRowid;
@@ -4089,9 +4103,12 @@ app.post("/api/budgets", requireVendedorOrAdmin, (req, res) => {
       "INSERT INTO budget_items (budget_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +
       "  VALUES (?,?,?,?,?,?,?,?)"
     );
+    const updStockBudget = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
     for (const it of computedItems) {
       insItem.run(bid, it.product_id || null, it.product_code || "", it.product_name || "",
                   it.quantity, it.unit_price, it.discount_percent, it.subtotal);
+      // Descontar stock al crear el presupuesto
+      if (it.product_id) updStockBudget.run(it.quantity, it.product_id);
     }
     return bid;
   });
@@ -4169,7 +4186,21 @@ app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, (req, res) => {
   const status = req.body.status;
   if (!VALID.includes(status)) return res.status(400).json({ error: "Estado invalido" });
   if (budget.status === "facturado") return res.status(409).json({ error: "El presupuesto ya esta facturado" });
-  db.prepare("UPDATE budgets SET status=?, updated_at=datetime('now') WHERE id=?").run(status, budget.id);
+
+  db.transaction(() => {
+    // Al cancelar: devolver stock si fue descontado al crear
+    if (status === "cancelado" && budget.status !== "cancelado" && budget.stock_discounted) {
+      const budgetItems = db.prepare(
+        "SELECT product_id, quantity FROM budget_items WHERE budget_id = ?"
+      ).all(budget.id);
+      const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
+      for (const it of budgetItems) {
+        if (it.product_id) retStock.run(it.quantity, it.product_id);
+      }
+      db.prepare("UPDATE budgets SET stock_discounted = 0 WHERE id = ?").run(budget.id);
+    }
+    db.prepare("UPDATE budgets SET status=?, updated_at=datetime('now') WHERE id=?").run(status, budget.id);
+  })();
   res.json({ ok: true });
 });
 
@@ -4218,11 +4249,11 @@ app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, (req, res) => {
         "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal)" +
         " VALUES (?,?,?,?,?,?,?)"
       );
-      const updStock = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
       for (const it of items) {
         insItem.run(orderId, it.product_id || null, it.product_code, it.product_name,
                     it.quantity, it.unit_price, it.subtotal);
-        if (it.product_id) updStock.run(it.quantity, it.product_id);
+        // Stock YA fue descontado al crear el presupuesto (stock_discounted=1).
+        // No se vuelve a descontar aqui para evitar doble descuento.
       }
 
       if (debitAccount) {
