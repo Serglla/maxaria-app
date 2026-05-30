@@ -1148,37 +1148,168 @@ button { font: inherit; cursor: pointer; }
   .cart-notes-wrap textarea { font-size: 15px; }
   .drawer-foot .btn-primary { font-size: 17px; padding: 14px; }
 
-  /* Catálogo: 2 productos por fila para que se vea más grande */
-  .catalog { padding: 12px 10px 80px; }
+  /* Catálogo: 4 productos por fila para que la imagen no quede gigante.
+     Si el usuario quiere ver una imagen más grande, hace doble tap sobre
+     la card y se abre un modal con la foto y todos los datos. */
+  .catalog { padding: 10px 8px 80px; }
   .grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
   }
-  /* Cuando una categoría tiene un solo producto, ocupa ancho completo
-     (sino la card queda sola en la columna 1 con la 2 vacia y se ve raro) */
+  /* Cuando una categoría tiene un solo producto, ocupa ancho completo */
   .card.card-solo { grid-column: 1 / -1; }
-  /* Imagen mucho mas chica: deja mas aire para el nombre y el precio */
-  .card-img { aspect-ratio: 16 / 11; }
-  .card-img img { padding: 4px; }
-  .card-body { padding: 14px 12px 18px; gap: 10px; }
-  .card-cat { font-size: 14px; }
+  /* Imágenes y tipografía compactas para que entren 4 por fila */
+  .card-img { aspect-ratio: 1 / 1; }
+  .card-img img { padding: 2px; }
+  .card-body { padding: 5px 6px 7px; gap: 3px; }
+  .card-cat { font-size: 9px; letter-spacing: .3px; }
   .card-name {
-    font-size: 19px;
-    line-height: 1.25;
+    font-size: 11px;
+    line-height: 1.2;
     font-weight: 600;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 2;
   }
-  .card-code { font-size: 13px; }
-  .card-price { font-size: 22px; }
+  .card-code { font-size: 9px; }
+  .card-price { font-size: 13px; }
+  .card-foot { gap: 3px; }
   .card-add {
-    font-size: 22px;
-    padding: 8px 14px;
-    border-radius: 8px;
-    min-width: 44px;
+    font-size: 16px;
+    padding: 3px 6px;
+    border-radius: 6px;
+    min-width: 28px;
   }
-  .card-qty { height: 40px; border-radius: 8px; }
-  .card-qty-btn { padding: 0 10px; font-size: 22px; min-width: 32px; }
-  .card-qty-num { min-width: 36px; width: 44px; font-size: 18px; }
+  .card-qty { height: 26px; border-radius: 6px; }
+  .card-qty-btn { padding: 0 4px; font-size: 14px; min-width: 22px; }
+  .card-qty-num { min-width: 24px; width: 28px; font-size: 12px; }
+}
+
+/* ====== Modal de detalle de producto ======
+   Se abre con doble click / doble tap sobre una card. No se cierra al
+   tocar afuera (decisión de UX para Maxaria) — solo con la X o ESC. */
+.product-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .72);
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow-y: auto;
+}
+.product-modal[hidden] { display: none; }
+.product-modal-card {
+  background: #fff;
+  border-radius: 12px;
+  max-width: 560px;
+  width: 100%;
+  max-height: 92vh;
+  overflow-y: auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .4);
+}
+.product-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(0, 0, 0, .6);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+}
+.product-modal-close:hover { background: rgba(0, 0, 0, .8); }
+.product-modal-img {
+  background: #f3f4f6;
+  aspect-ratio: 1 / 1;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 12px 12px 0 0;
+}
+.product-modal-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 16px;
+}
+.product-modal-body {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.product-modal-cat {
+  font-size: 11px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  font-weight: 600;
+}
+.product-modal-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+  line-height: 1.25;
+}
+.product-modal-code {
+  font-size: 12px;
+  color: #6b7280;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+.product-modal-desc {
+  font-size: 14px;
+  color: #374151;
+  white-space: pre-wrap;
+  margin-top: 4px;
+  line-height: 1.45;
+}
+.product-modal-stock {
+  font-size: 13px;
+  color: #6b7280;
+}
+.product-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.product-modal-price {
+  font-size: 28px;
+  font-weight: 700;
+  color: #d97706;
+}
+.product-modal-price.product-modal-price-none {
+  color: #9ca3af;
+  font-weight: 500;
+}
+.product-modal-actions { flex: 0 0 auto; }
+.product-modal-actions .card-add {
+  font-size: 22px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  min-width: 56px;
+}
+.product-modal-actions .card-qty { height: 44px; border-radius: 8px; }
+.product-modal-actions .card-qty-btn { padding: 0 12px; font-size: 22px; min-width: 36px; }
+.product-modal-actions .card-qty-num { min-width: 44px; width: 52px; font-size: 18px; }
+
+@media (max-width: 600px) {
+  .product-modal { padding: 8px; }
+  .product-modal-card { max-height: 96vh; }
+  .product-modal-img { aspect-ratio: 4 / 3; }
+  .product-modal-name { font-size: 18px; }
+  .product-modal-price { font-size: 24px; }
+  .product-modal-body { padding: 14px 16px 18px; }
 }
 
 /* ============================================================

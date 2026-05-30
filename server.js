@@ -1437,7 +1437,7 @@ app.get("/api/products", requireLogin, (req, res) => {
 
   let sql =
     "SELECT p.id, p.code, p.category_id, c.name AS category_name," +
-    "       p.name, p.image_url, " + priceExpr + " AS price, p.stock" +
+    "       p.name, p.description, p.image_url, " + priceExpr + " AS price, p.stock" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  WHERE p.active = 1 AND p.stock > 0";
   const params = [...priceParams];

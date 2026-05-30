@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Catálogo</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260529b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260530a" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -194,12 +194,33 @@
     </div>
   </aside>
 
+  <!-- Modal de detalle de producto (se abre al hacer doble click / doble tap
+       sobre una card del catálogo). Muestra imagen grande + datos completos
+       + precio de la lista del cliente actual. Se cierra con la X o con ESC. -->
+  <div id="product-modal" class="product-modal" hidden role="dialog" aria-modal="true" aria-labelledby="pm-name">
+    <div class="product-modal-card">
+      <button class="product-modal-close" id="pm-close" type="button" aria-label="Cerrar">✕</button>
+      <div class="product-modal-img" id="pm-img"></div>
+      <div class="product-modal-body">
+        <div class="product-modal-cat" id="pm-cat"></div>
+        <h3 class="product-modal-name" id="pm-name"></h3>
+        <div class="product-modal-code" id="pm-code"></div>
+        <div class="product-modal-desc" id="pm-desc"></div>
+        <div class="product-modal-stock" id="pm-stock"></div>
+        <div class="product-modal-foot">
+          <div class="product-modal-price" id="pm-price"></div>
+          <div class="product-modal-actions" id="pm-actions"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- El módulo de presupuestos (Venta) vive en su propia página /ventas
        (ver public/ventas.html + public/js/ventas.js). El botón "🧾 Venta"
        del header redirige allá. -->
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="/js/offline.js"></script>
-  <script src="/js/app.js?v=20260527m"></script>
+  <script src="/js/app.js?v=20260530a"></script>
 </body>
 </html>

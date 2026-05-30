@@ -57,6 +57,17 @@
     topbarMenu:     document.getElementById("topbar-menu"),
     topbarUser:     document.getElementById("topbar-user"),
     topbarMenuUserName: document.getElementById("topbar-menu-user-name"),
+    // Modal de detalle de producto (doble click / doble tap)
+    productModal:   document.getElementById("product-modal"),
+    pmClose:        document.getElementById("pm-close"),
+    pmImg:          document.getElementById("pm-img"),
+    pmCat:          document.getElementById("pm-cat"),
+    pmName:         document.getElementById("pm-name"),
+    pmCode:         document.getElementById("pm-code"),
+    pmDesc:         document.getElementById("pm-desc"),
+    pmStock:        document.getElementById("pm-stock"),
+    pmPrice:        document.getElementById("pm-price"),
+    pmActions:      document.getElementById("pm-actions"),
   };
 
   const LEVEL_NAMES = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
@@ -547,13 +558,20 @@
 
   // Re-renderiza solo la accion (+ o − N +) y la clase in-cart de un card
   // puntual, sin tocar el resto de la grilla. Mantiene scroll y foco.
+  // Si el modal de detalle está abierto sobre el mismo producto, también
+  // actualiza el botón / contador del modal.
   function refreshCardForProduct(productId) {
     const card = els.grid.querySelector('.card[data-id="' + productId + '"]');
-    if (!card) return;
-    const slot = card.querySelector('.card-actions[data-id="' + productId + '"]');
-    if (slot) slot.innerHTML = cardActionHtml(productId);
-    if (state.cart.has(productId)) card.classList.add("in-cart");
-    else card.classList.remove("in-cart");
+    if (card) {
+      const slot = card.querySelector('.card-actions[data-id="' + productId + '"]');
+      if (slot) slot.innerHTML = cardActionHtml(productId);
+      if (state.cart.has(productId)) card.classList.add("in-cart");
+      else card.classList.remove("in-cart");
+    }
+    if (els.productModal && !els.productModal.hidden && Number(els.productModal.dataset.id) === productId) {
+      const slot = els.pmActions.querySelector('.card-actions[data-id="' + productId + '"]');
+      if (slot) slot.innerHTML = cardActionHtml(productId);
+    }
   }
 
   function changeQty(id, delta) {
@@ -1555,6 +1573,145 @@
     if (inp) inp.select();
   });
 
+  // ── Modal de detalle de producto ──
+  // Se abre con doble click (desktop) o doble tap (mobile) sobre una card.
+  // Muestra imagen grande, datos completos y el precio de la lista actual
+  // del cliente. Las acciones (+ / qty) viven dentro del modal y se sincronizan
+  // con la card del grid via refreshCardForProduct().
+
+  function openProductModal(p) {
+    if (!els.productModal) return;
+    els.productModal.dataset.id = String(p.id);
+
+    els.pmImg.innerHTML = p.image_url
+      ? '<img src="' + escapeHtml(p.image_url) + '" alt="' + escapeHtml(p.name) + '" />'
+      : '<div class="muted" style="padding:24px;text-align:center">Sin foto</div>';
+
+    els.pmCat.textContent = p.category_name || "";
+    els.pmCat.hidden = !p.category_name;
+
+    els.pmName.textContent = p.name || "";
+
+    if (p.code) {
+      els.pmCode.textContent = "Código: " + p.code;
+      els.pmCode.hidden = false;
+    } else {
+      els.pmCode.hidden = true;
+    }
+
+    if (p.description) {
+      els.pmDesc.textContent = p.description;
+      els.pmDesc.hidden = false;
+    } else {
+      els.pmDesc.hidden = true;
+    }
+
+    if (p.stock != null && Number(p.stock) > 0) {
+      els.pmStock.textContent = "Stock disponible: " + p.stock;
+      els.pmStock.hidden = false;
+    } else {
+      els.pmStock.hidden = true;
+    }
+
+    const hasPrice = p.price != null && Number(p.price) > 0;
+    if (hasPrice) {
+      els.pmPrice.textContent = fmtPrice(p.price);
+      els.pmPrice.classList.remove("product-modal-price-none");
+    } else {
+      els.pmPrice.textContent = "—";
+      els.pmPrice.classList.add("product-modal-price-none");
+    }
+
+    // Acciones (+ o qty). Si es vendedor sin cliente, no se muestran.
+    const noClient = state.me && state.me.level === 5 && !state.vendedorClient;
+    els.pmActions.innerHTML = noClient
+      ? ""
+      : '<div class="card-actions" data-id="' + p.id + '">' + cardActionHtml(p.id) + '</div>';
+
+    els.productModal.hidden = false;
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeProductModal() {
+    if (!els.productModal || els.productModal.hidden) return;
+    els.productModal.hidden = true;
+    els.productModal.removeAttribute("data-id");
+    document.body.style.overflow = "";
+  }
+
+  function isModalOpen() {
+    return els.productModal && !els.productModal.hidden;
+  }
+
+  // Handler común: si el click NO fue sobre un botón/input de acción, abre el modal
+  function tryOpenModalForCardEvent(e) {
+    if (e.target.closest("button[data-act], input.card-qty-num")) return false;
+    const card = e.target.closest('article.card[data-id]');
+    if (!card) return false;
+    const id = Number(card.dataset.id);
+    const p = state.products.find((x) => x.id === id);
+    if (!p) return false;
+    openProductModal(p);
+    return true;
+  }
+
+  // Desktop: dblclick nativo
+  els.grid.addEventListener("dblclick", (e) => {
+    if (tryOpenModalForCardEvent(e)) e.preventDefault();
+  });
+
+  // Mobile: detección manual de doble tap (algunos navegadores táctiles no
+  // disparan dblclick de forma confiable). Dos taps sobre la misma card en
+  // menos de 350ms abren el modal.
+  let lastTap = { id: 0, time: 0 };
+  els.grid.addEventListener("touchend", (e) => {
+    if (e.target.closest("button[data-act], input.card-qty-num")) return;
+    const card = e.target.closest('article.card[data-id]');
+    if (!card) return;
+    const id = Number(card.dataset.id);
+    const now = Date.now();
+    if (lastTap.id === id && (now - lastTap.time) < 350) {
+      e.preventDefault();
+      const p = state.products.find((x) => x.id === id);
+      if (p) openProductModal(p);
+      lastTap = { id: 0, time: 0 };
+    } else {
+      lastTap = { id, time: now };
+    }
+  }, { passive: false });
+
+  // Acciones (+ o qty) dentro del modal: misma lógica que en la grilla.
+  if (els.pmActions) {
+    els.pmActions.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-act][data-id]");
+      if (!btn) return;
+      const id = Number(btn.dataset.id);
+      const act = btn.dataset.act;
+      if (act === "add" || act === "inc") changeQty(id, +1);
+      else if (act === "dec") changeQty(id, -1);
+    });
+    els.pmActions.addEventListener("change", (e) => {
+      const inp = e.target.closest('input.card-qty-num[data-act="set"][data-id]');
+      if (!inp) return;
+      setQty(Number(inp.dataset.id), inp.value);
+    });
+    els.pmActions.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const inp = e.target.closest('input.card-qty-num[data-act="set"][data-id]');
+      if (!inp) return;
+      e.preventDefault();
+      inp.blur();
+    });
+    els.pmActions.addEventListener("focusin", (e) => {
+      const inp = e.target.closest('input.card-qty-num[data-act="set"][data-id]');
+      if (inp) inp.select();
+    });
+  }
+
+  // Cerrar modal: botón X o tecla ESC. NO se cierra al tocar el fondo
+  // (decisión de UX para Maxaria).
+  if (els.pmClose) els.pmClose.addEventListener("click", closeProductModal);
+
   // ----- Mis ganancias (solo vendedor level 5) -----
   async function openEarnings() {
     if (!els.earningsDrawer) return;
@@ -1700,7 +1857,9 @@
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && anyDrawerOpen()) closeDrawers();
+    if (e.key !== "Escape") return;
+    if (isModalOpen()) { closeProductModal(); return; }
+    if (anyDrawerOpen()) closeDrawers();
   });
 
   // VENTA / PRESUPUESTOS: ahora vive en su propia pagina /ventas con
