@@ -97,7 +97,10 @@
     items: [],
     allProducts: [],
     productsLoaded: false,
-    pickerSelected: new Set(),
+    // Map<pid, qty>: productos seleccionados en el picker con su cantidad.
+    // El usuario puede tildar el checkbox (qty=1 por default) o tipear una
+    // cantidad directamente en la columna "Cant." (eso marca el checkbox).
+    pickerSelected: new Map(),
   };
 
   const V_STATUS_LABELS = { borrador:"Borrador", enviado:"Enviado", aceptado:"Aceptado", facturado:"Facturado", cancelado:"Cancelado" };
@@ -176,14 +179,18 @@
       return;
     }
     vEls.itemsTbody.innerHTML = vState.items.map((it, idx) => {
-      return '<tr data-idx="' + idx + '">' +
-        '<td><input type="text" value="' + vEsc(it.product_code) + '" data-field="product_code" /></td>' +
-        '<td><input type="text" value="' + vEsc(it.product_name) + '" data-field="product_name" style="width:100%" /></td>' +
-        '<td style="text-align:right"><input type="number" value="' + Math.round(it.quantity) + '" min="1" step="1" data-field="quantity" style="width:60px;text-align:right" /></td>' +
-        '<td style="text-align:right"><input type="number" value="' + vEsc(it.unit_price) + '" min="0" step="1" data-field="unit_price" style="width:90px;text-align:right" /></td>' +
-        '<td style="text-align:right"><input type="number" value="' + vEsc(it.discount_percent) + '" min="0" max="100" step="0.5" data-field="discount_percent" style="width:58px;text-align:right" /></td>' +
-        '<td style="text-align:right;font-weight:500">' + vEsc(vFmt(it.subtotal||0)) + '</td>' +
-        '<td style="text-align:center"><button type="button" data-del-idx="' + idx + '" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px" title="Eliminar">✕</button></td>' +
+      // Código y nombre van como texto (vienen del picker, no se editan acá).
+      // En mobile la fila se reorganiza vía CSS para que el nombre ocupe
+      // toda la línea y los inputs vayan debajo (ver .ventas-items-table
+      // en mobile en styles.css).
+      return '<tr data-idx="' + idx + '" class="ventas-item-row">' +
+        '<td class="vit-code" title="' + vEsc(it.product_code) + '">' + vEsc(it.product_code) + '</td>' +
+        '<td class="vit-name" title="' + vEsc(it.product_name) + '">' + vEsc(it.product_name) + '</td>' +
+        '<td class="vit-qty" style="text-align:right"><input type="number" value="' + Math.round(it.quantity) + '" min="1" step="1" inputmode="numeric" data-field="quantity" style="width:60px;text-align:right" /></td>' +
+        '<td class="vit-price" style="text-align:right"><input type="number" value="' + vEsc(it.unit_price) + '" min="0" step="1" inputmode="numeric" data-field="unit_price" style="width:90px;text-align:right" /></td>' +
+        '<td class="vit-disc" style="text-align:right"><input type="number" value="' + vEsc(it.discount_percent) + '" min="0" max="100" step="0.5" inputmode="decimal" data-field="discount_percent" style="width:58px;text-align:right" /></td>' +
+        '<td class="vit-sub" style="text-align:right;font-weight:500">' + vEsc(vFmt(it.subtotal||0)) + '</td>' +
+        '<td class="vit-del" style="text-align:center"><button type="button" data-del-idx="' + idx + '" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px" title="Eliminar">✕</button></td>' +
       '</tr>';
     }).join("");
     // En estados finales (facturado/cancelado) no se debe poder editar items.
@@ -194,26 +201,67 @@
   }
 
   if (vEls.itemsTbody) {
+    // input: actualiza state pero NO reescribe el valor del input. Esto
+    // permite que el usuario borre el contenido sin que el "1" vuelva
+    // automáticamente y bloquee la edición.
     vEls.itemsTbody.addEventListener("input", (e) => {
       const tr = e.target.closest("tr[data-idx]");
       if (!tr) return;
       const idx = Number(tr.dataset.idx);
       const field = e.target.dataset.field;
       if (!field || idx >= vState.items.length) return;
-      if (field === "product_code" || field === "product_name") {
-        vState.items[idx][field] = e.target.value;
-      } else if (field === "quantity") {
-        vState.items[idx][field] = Math.max(1, Math.round(Number(e.target.value)||1));
-        e.target.value = vState.items[idx][field];
+      const raw = e.target.value;
+      if (field === "quantity") {
+        // Mientras el input está vacío, no actualizamos quantity (queda el
+        // valor previo en state). Al hacer blur o change normalizamos.
+        if (raw === "") return;
+        const n = Math.max(1, Math.round(Number(raw) || 0));
+        vState.items[idx][field] = n;
       } else {
-        vState.items[idx][field] = Number(e.target.value)||0;
+        // unit_price / discount_percent: permitir vacío (cuenta como 0)
+        vState.items[idx][field] = Number(raw) || 0;
       }
       const it = vState.items[idx];
       it.subtotal = Math.round((Number(it.quantity)||1)*(Number(it.unit_price)||0)*(1-(Number(it.discount_percent)||0)/100));
-      const cells = tr.querySelectorAll("td");
-      if (cells[5]) cells[5].textContent = vFmt(it.subtotal);
+      // Actualizar el subtotal en la celda .vit-sub (puede no ser el 5to td
+      // si el CSS responsive reordena con order, pero la búsqueda por clase
+      // sigue funcionando).
+      const subCell = tr.querySelector(".vit-sub");
+      if (subCell) subCell.textContent = vFmt(it.subtotal);
       vRecalc();
     });
+
+    // change/blur: normaliza el valor para que no quede vacío al salir.
+    vEls.itemsTbody.addEventListener("change", (e) => {
+      const tr = e.target.closest("tr[data-idx]");
+      if (!tr) return;
+      const idx = Number(tr.dataset.idx);
+      const field = e.target.dataset.field;
+      if (!field || idx >= vState.items.length) return;
+      if (field === "quantity") {
+        const n = Math.max(1, Math.round(Number(e.target.value) || 1));
+        vState.items[idx][field] = n;
+        e.target.value = String(n);
+      } else if (field === "unit_price" || field === "discount_percent") {
+        const n = Math.max(0, Number(e.target.value) || 0);
+        vState.items[idx][field] = n;
+        if (e.target.value === "") e.target.value = "0";
+      }
+      const it = vState.items[idx];
+      it.subtotal = Math.round((Number(it.quantity)||1)*(Number(it.unit_price)||0)*(1-(Number(it.discount_percent)||0)/100));
+      const subCell = tr.querySelector(".vit-sub");
+      if (subCell) subCell.textContent = vFmt(it.subtotal);
+      vRecalc();
+    });
+
+    // focusin: seleccionar todo el contenido del input para sobrescribir
+    // sin tener que borrar manualmente.
+    vEls.itemsTbody.addEventListener("focusin", (e) => {
+      if (e.target.tagName === "INPUT" && e.target.dataset.field) {
+        try { e.target.select(); } catch (_) {}
+      }
+    });
+
     vEls.itemsTbody.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-del-idx]");
       if (!btn) return;
@@ -464,18 +512,21 @@
       list = list.filter((p) => (p.name||"").toLowerCase().includes(q) || (p.code||"").toLowerCase().includes(q));
     }
     if (!list.length) {
-      vEls.pickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Sin resultados</td></tr>';
+      vEls.pickerTbody.innerHTML = '<tr><td colspan="6" class="muted" style="padding:20px;text-align:center">Sin resultados</td></tr>';
       return;
     }
     vEls.pickerTbody.innerHTML = list.map((p) => {
       const img = p.image_url
         ? '<img src="' + vEsc(p.image_url) + '" style="width:36px;height:36px;object-fit:cover;border-radius:4px" loading="lazy" />'
         : '<span style="display:inline-block;width:36px;height:36px;background:#f3f4f6;border-radius:4px;line-height:36px;text-align:center;color:#9ca3af;font-size:18px">📦</span>';
-      const chk = vState.pickerSelected.has(p.id) ? " checked" : "";
-      return '<tr><td><input type="checkbox" class="vpicker-cb" data-pid="' + p.id + '"' + chk + ' /></td>' +
+      const isSel = vState.pickerSelected.has(p.id);
+      const chk = isSel ? " checked" : "";
+      const qty = isSel ? vState.pickerSelected.get(p.id) : "";
+      return '<tr data-pid="' + p.id + '"><td><input type="checkbox" class="vpicker-cb" data-pid="' + p.id + '"' + chk + ' /></td>' +
         '<td>' + img + '</td>' +
         '<td><div style="font-weight:500">' + vEsc(p.name) + '</div>' +
           '<div class="muted" style="font-size:11px">' + vEsc(p.code||"") + '</div></td>' +
+        '<td style="text-align:center"><input type="number" class="vpicker-qty" data-pid="' + p.id + '" min="1" step="1" inputmode="numeric" value="' + qty + '" placeholder="1" style="width:54px;text-align:center;padding:6px 4px;border:1px solid #d1d5db;border-radius:6px;font-size:14px" /></td>' +
         '<td style="text-align:right">' + vFmt(p.price) + '</td>' +
         '<td style="text-align:right;color:' + (p.stock > 0 ? "#059669" : "#9ca3af") + '">' + (p.stock||0) + '</td></tr>';
     }).join("");
@@ -494,15 +545,78 @@
     vEls.picker.addEventListener("change", (e) => {
       if (e.target.classList.contains("vpicker-cb")) {
         const pid = Number(e.target.dataset.pid);
-        e.target.checked ? vState.pickerSelected.add(pid) : vState.pickerSelected.delete(pid);
+        if (e.target.checked) {
+          // Si ya hay qty escrita en la fila, respetarla; sino default 1
+          const tr = e.target.closest("tr[data-pid]");
+          const qInp = tr ? tr.querySelector(".vpicker-qty") : null;
+          const q = qInp ? Math.max(1, Math.round(Number(qInp.value) || 0)) : 1;
+          vState.pickerSelected.set(pid, q || 1);
+          if (qInp && !qInp.value) qInp.value = "1";
+        } else {
+          vState.pickerSelected.delete(pid);
+          const tr = e.target.closest("tr[data-pid]");
+          const qInp = tr ? tr.querySelector(".vpicker-qty") : null;
+          if (qInp) qInp.value = "";
+        }
         vPickerCount();
       } else if (e.target.id === "picker-check-all") {
+        const all = e.target.checked;
         vEls.pickerTbody.querySelectorAll(".vpicker-cb").forEach((cb) => {
-          cb.checked = e.target.checked;
+          cb.checked = all;
           const pid = Number(cb.dataset.pid);
-          e.target.checked ? vState.pickerSelected.add(pid) : vState.pickerSelected.delete(pid);
+          const tr = cb.closest("tr[data-pid]");
+          const qInp = tr ? tr.querySelector(".vpicker-qty") : null;
+          if (all) {
+            const q = qInp ? Math.max(1, Math.round(Number(qInp.value) || 0)) : 1;
+            vState.pickerSelected.set(pid, q || 1);
+            if (qInp && !qInp.value) qInp.value = "1";
+          } else {
+            vState.pickerSelected.delete(pid);
+            if (qInp) qInp.value = "";
+          }
         });
         vPickerCount();
+      }
+    });
+
+    // Tipear una cantidad en la columna "Cant." marca el checkbox y guarda
+    // la qty en el Map. El "1" placeholder no aparece como valor: si el
+    // usuario borra, el input queda vacío hasta que escriba algo o se haga
+    // blur (y ahí se restaura "1" si seguía marcado).
+    vEls.picker.addEventListener("input", (e) => {
+      if (!e.target.classList.contains("vpicker-qty")) return;
+      const pid = Number(e.target.dataset.pid);
+      const raw = e.target.value;
+      if (raw === "") return; // mientras está vacío no tocamos state
+      const q = Math.max(1, Math.round(Number(raw) || 0));
+      vState.pickerSelected.set(pid, q);
+      const tr = e.target.closest("tr[data-pid]");
+      const cb = tr ? tr.querySelector(".vpicker-cb") : null;
+      if (cb && !cb.checked) cb.checked = true;
+      vPickerCount();
+    });
+
+    // Al perder foco, normalizamos. blur no burbujea, por eso usamos capture.
+    vEls.picker.addEventListener("blur", (e) => {
+      if (!e.target.classList || !e.target.classList.contains("vpicker-qty")) return;
+      const pid = Number(e.target.dataset.pid);
+      const raw = e.target.value;
+      if (raw === "" && vState.pickerSelected.has(pid)) {
+        e.target.value = "1";
+        vState.pickerSelected.set(pid, 1);
+        vPickerCount();
+      } else if (raw !== "") {
+        const q = Math.max(1, Math.round(Number(raw) || 0));
+        e.target.value = String(q);
+        vState.pickerSelected.set(pid, q);
+        vPickerCount();
+      }
+    }, true);
+
+    // Foco en el input de qty: seleccionar todo para sobrescribir fácil.
+    vEls.picker.addEventListener("focusin", (e) => {
+      if (e.target.classList.contains("vpicker-qty")) {
+        try { e.target.select(); } catch (_) {}
       }
     });
   }
@@ -518,15 +632,18 @@
 
   if (vEls.pickerConfirm) {
     vEls.pickerConfirm.addEventListener("click", () => {
-      vState.pickerSelected.forEach((pid) => {
+      // pickerSelected es Map<pid, qty>. Usamos la qty que el usuario tipeó
+      // en la columna "Cant." (default 1 si solo marcó el checkbox).
+      vState.pickerSelected.forEach((qty, pid) => {
         const p = vState.allProducts.find((x) => x.id === pid);
         if (!p) return;
+        const addQty = Math.max(1, Math.round(Number(qty) || 1));
         const ex = vState.items.find((it) => it.product_id === pid);
         if (ex) {
-          ex.quantity += 1;
+          ex.quantity += addQty;
           ex.subtotal = Math.round(ex.quantity * ex.unit_price * (1 - ex.discount_percent/100));
         } else {
-          vState.items.push({ product_id:p.id, product_code:p.code||"", product_name:p.name||"", quantity:1, unit_price:p.price||0, discount_percent:0, subtotal:p.price||0 });
+          vState.items.push({ product_id:p.id, product_code:p.code||"", product_name:p.name||"", quantity:addQty, unit_price:p.price||0, discount_percent:0, subtotal:Math.round(addQty * (p.price||0)) });
         }
       });
       vState.pickerSelected.clear();

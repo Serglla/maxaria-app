@@ -3113,4 +3113,126 @@ button { font: inherit; cursor: pointer; }
   .ventas-footer-grid { grid-template-columns: 1fr; }
   .ventas-totals-box { min-width: 0; width: 100%; box-sizing: border-box; }
   .ventas-action-row .btn { font-size: 13px; padding: 8px 12px; }
+
+  /* ── Tabla de items del presupuesto: en mobile se reorganiza como
+     mini-cards con el nombre arriba en una línea completa (sin truncar)
+     y los controles (cant / precio / desc / subtotal) abajo en grilla.
+     Los <td> mantienen el mismo orden en el DOM, sólo cambia el layout. */
+  .ventas-items-table { font-size: 14px; }
+  .ventas-items-table thead { display: none; }
+  .ventas-items-table tbody,
+  .ventas-items-table tr,
+  .ventas-items-table td { display: block; width: 100%; box-sizing: border-box; }
+  .ventas-items-table tr.ventas-item-row {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 10px 10px 8px;
+    margin-bottom: 8px;
+    background: #fff;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-areas:
+      "name name del"
+      "code code code"
+      "qty  price disc"
+      "sub  sub   sub";
+    column-gap: 8px;
+    row-gap: 6px;
+    align-items: end;
+  }
+  .ventas-items-table .vit-code {
+    grid-area: code;
+    padding: 0;
+    font-size: 11px;
+    color: #6b7280;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  .ventas-items-table .vit-name {
+    grid-area: name;
+    padding: 0;
+    font-weight: 600;
+    font-size: 15px;
+    color: #111827;
+    line-height: 1.3;
+    white-space: normal;
+    overflow: visible;
+    text-align: left !important;
+  }
+  .ventas-items-table .vit-qty,
+  .ventas-items-table .vit-price,
+  .ventas-items-table .vit-disc {
+    padding: 0;
+    text-align: left !important;
+  }
+  .ventas-items-table .vit-qty   { grid-area: qty; }
+  .ventas-items-table .vit-price { grid-area: price; }
+  .ventas-items-table .vit-disc  { grid-area: disc; }
+  .ventas-items-table .vit-qty::before,
+  .ventas-items-table .vit-price::before,
+  .ventas-items-table .vit-disc::before {
+    display: block;
+    font-size: 10px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    margin-bottom: 3px;
+  }
+  .ventas-items-table .vit-qty::before   { content: "Cant."; }
+  .ventas-items-table .vit-price::before { content: "Precio"; }
+  .ventas-items-table .vit-disc::before  { content: "Desc %"; }
+  .ventas-items-table .vit-qty input,
+  .ventas-items-table .vit-price input,
+  .ventas-items-table .vit-disc input {
+    width: 100% !important;
+    box-sizing: border-box;
+    padding: 8px 6px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 15px;
+    text-align: center !important;
+    background: #fff;
+  }
+  .ventas-items-table .vit-sub {
+    grid-area: sub;
+    padding: 6px 0 0;
+    text-align: right !important;
+    font-size: 15px;
+    color: #d97706;
+    font-weight: 700;
+    border-top: 1px dashed #e5e7eb;
+    margin-top: 4px;
+  }
+  .ventas-items-table .vit-sub::before {
+    content: "Subtotal: ";
+    color: #6b7280;
+    font-weight: 400;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+  }
+  .ventas-items-table .vit-del {
+    grid-area: del;
+    padding: 0;
+    text-align: right !important;
+  }
+  .ventas-items-table .vit-del button {
+    font-size: 20px !important;
+    padding: 4px 8px !important;
+  }
+
+  /* ── Picker en mobile: la columna "Cant." debe ser visible y útil.
+     Compactamos imagen y stock para que entre todo. */
+  .ventas-page .picker-table { font-size: 13px; }
+  .ventas-page .picker-table th,
+  .ventas-page .picker-table td { padding: 6px 4px; }
+  .ventas-page .picker-table th:nth-child(2),
+  .ventas-page .picker-table td:nth-child(2) {
+    /* imagen */
+    padding-right: 4px;
+  }
+  .ventas-page .vpicker-qty {
+    font-size: 15px !important;
+    padding: 8px 4px !important;
+    width: 50px !important;
+  }
 }
