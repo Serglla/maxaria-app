@@ -1156,8 +1156,6 @@ button { font: inherit; cursor: pointer; }
     grid-template-columns: repeat(4, 1fr);
     gap: 6px;
   }
-  /* Cuando una categoría tiene un solo producto, ocupa ancho completo */
-  .card.card-solo { grid-column: 1 / -1; }
   /* Imágenes y tipografía compactas para que entren 4 por fila */
   .card-img { aspect-ratio: 1 / 1; }
   .card-img img { padding: 2px; }

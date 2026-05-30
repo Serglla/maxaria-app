@@ -330,13 +330,6 @@
     // grupo para que la nueva categoria siempre arranque en una fila nueva.
     const showHeaders = state.cat === "all" || (state.query && new Set(list.map(p => p.category_id)).size > 1);
     if (showHeaders) {
-      // Pre-contar productos por categoria. Una sola card en la fila queda
-      // visualmente "saltada" porque la columna 2 queda vacia; en mobile lo
-      // marcamos para que ocupe ancho completo (regla CSS .card.card-solo).
-      const countByCat = {};
-      list.forEach((p) => {
-        countByCat[p.category_id] = (countByCat[p.category_id] || 0) + 1;
-      });
       const parts = [];
       let lastCat = null;
       list.forEach((p) => {
@@ -344,8 +337,7 @@
           lastCat = p.category_id;
           parts.push('<div class="grid-cat-header">' + escapeHtml(p.category_name || "") + '</div>');
         }
-        const solo = countByCat[p.category_id] === 1;
-        parts.push(cardHtml(p, solo));
+        parts.push(cardHtml(p));
       });
       els.grid.innerHTML = parts.join("");
     } else {
@@ -512,7 +504,7 @@
     }
   }
 
-  function cardHtml(p, solo) {
+  function cardHtml(p) {
     const img = p.image_url
       ? '<img src="' + escapeHtml(p.image_url) + '" alt="' + escapeHtml(p.name) + '" loading="lazy" />'
       : '<div class="muted" style="font-size:12px;padding:8px;text-align:center">Sin foto</div>';
@@ -528,8 +520,7 @@
     const actionsHtml = noClient
       ? '<div class="card-actions-none"></div>'
       : '<div class="card-actions" data-id="' + p.id + '">' + cardActionHtml(p.id) + '</div>';
-    const soloCls = solo ? ' card-solo' : '';
-    return '<article class="card' + (inCart ? ' in-cart' : '') + soloCls + '" data-id="' + p.id + '">' +
+    return '<article class="card' + (inCart ? ' in-cart' : '') + '" data-id="' + p.id + '">' +
       '<div class="card-img">' + img + '</div>' +
       '<div class="card-body">' +
         '<div class="card-cat">' + escapeHtml(p.category_name || "") + '</div>' +
