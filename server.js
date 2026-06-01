@@ -310,6 +310,9 @@ try { db.exec("ALTER TABLE budgets ADD COLUMN order_id INTEGER REFERENCES orders
 // en facturar/entregar y permite devolver el stock si se cancela.
 try { db.exec("ALTER TABLE budgets ADD COLUMN stock_discounted INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 
+// Migracion: stock minimo por producto (0 = sin alerta)
+try { db.exec("ALTER TABLE products ADD COLUMN stock_min INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+
 // Migracion: Gastos generales del negocio (transporte, alquiler, servicios,
 // impuestos, etc). Distinto de purchase_orders (que son compras de mercaderia
 // que ademas suman stock). Estos gastos solo afectan el flujo de caja y el
@@ -1888,7 +1891,7 @@ app.get("/api/admin/products", requireAdmin, (req, res) => {
   const sql =
     "SELECT p.id, p.code, p.category_id, c.name AS category_name, p.name," +
     "       p.cost, p.price_minorista, p.price_revendedor, p.price_mayorista," +
-    "       p.price_vip, p.price_publico, p.stock, p.active, p.image_url" +
+    "       p.price_vip, p.price_publico, p.stock, p.stock_min, p.active, p.image_url" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  ORDER BY c.sort_order, c.name, p.name";
   res.json(db.prepare(sql).all());
@@ -1897,7 +1900,7 @@ app.get("/api/admin/products", requireAdmin, (req, res) => {
 // Crear producto nuevo
 app.post("/api/admin/products", requireAdmin, (req, res) => {
   const { code, name, category_id, cost, price_minorista, price_revendedor,
-          price_mayorista, price_vip, price_publico, stock } = req.body || {};
+          price_mayorista, price_vip, price_publico, stock, stock_min } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: "Nombre requerido" });
   if (!code || !String(code).trim()) return res.status(400).json({ error: "Código requerido" });
   const existing = db.prepare("SELECT id FROM products WHERE code=?").get(String(code).trim());
@@ -1906,15 +1909,15 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
   try {
     const r = db.prepare(
       "INSERT INTO products (code, name, category_id, cost, price_minorista, price_revendedor," +
-      " price_mayorista, price_vip, price_publico, stock, active)" +
-      " VALUES (?,?,?,?,?,?,?,?,?,?,1)"
+      " price_mayorista, price_vip, price_publico, stock, stock_min, active)" +
+      " VALUES (?,?,?,?,?,?,?,?,?,?,?,1)"
     ).run(
       String(code).trim(),
       String(name).trim(),
       category_id ? Number(category_id) : null,
       num(cost), num(price_minorista), num(price_revendedor),
       num(price_mayorista), num(price_vip), num(price_publico),
-      num(stock)
+      num(stock), num(stock_min)
     );
     // Devolver el producto creado (con category_name para el state del frontend)
     const created = db.prepare(
@@ -1933,7 +1936,7 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   if (!id) return res.status(400).json({ error: "ID invalido" });
   const allowed = [
     "name", "cost", "price_minorista", "price_revendedor",
-    "price_mayorista", "price_vip", "price_publico", "stock", "active", "image_url",
+    "price_mayorista", "price_vip", "price_publico", "stock", "stock_min", "active", "image_url",
   ];
   const sets = [];
   const vals = [];

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260601a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260601b" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -1982,14 +1982,18 @@
         </label>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <label class="np-label">
-            <span>Stock</span>
+            <span>Stock actual</span>
             <input type="number" id="ep-stock" class="admin-input" min="0" step="1" />
           </label>
           <label class="np-label">
-            <span>Costo</span>
-            <input type="number" id="ep-cost" class="admin-input" min="0" step="1" />
+            <span>Stock mínimo <span style="font-weight:400;color:#9ca3af">(alerta)</span></span>
+            <input type="number" id="ep-stock-min" class="admin-input" min="0" step="1" value="0" />
           </label>
         </div>
+        <label class="np-label">
+          <span>Costo</span>
+          <input type="number" id="ep-cost" class="admin-input" min="0" step="1" />
+        </label>
         <div id="ep-prices-box" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
           <div class="bidir-header">
             <span>Nivel</span><span>%</span><span>$$$</span>
@@ -2058,15 +2062,20 @@
           <input type="text" id="np-name" class="admin-input" placeholder="Nombre del producto" />
         </label>
 
-        <!-- Fila 3: Stock + Costo -->
+        <!-- Fila 3: Stock + Stock mínimo -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <label class="np-label">Stock inicial
             <input type="number" id="np-stock" class="admin-input" placeholder="0" min="0" step="1" value="0" />
           </label>
-          <label class="np-label">Costo
-            <input type="number" id="np-cost" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          <label class="np-label">
+            <span>Stock mínimo <span style="font-weight:400;color:#9ca3af">(alerta)</span></span>
+            <input type="number" id="np-stock-min" class="admin-input" placeholder="0" min="0" step="1" value="0" />
           </label>
         </div>
+        <!-- Fila 4: Costo -->
+        <label class="np-label">Costo
+          <input type="number" id="np-cost" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+        </label>
 
         <!-- Precios — % del costo, bidireccional -->
         <div id="np-prices-box" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
@@ -2186,6 +2195,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260601a"></script>
+  <script src="/js/admin.js?v=20260601b"></script>
 </body>
 </html>

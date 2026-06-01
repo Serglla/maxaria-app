@@ -3419,6 +3419,7 @@ button { font: inherit; cursor: pointer; }
 .cell-active-badge { font-size: 11px; font-weight: 600; color: #9ca3af; }
 .cell-active-badge.active { color: #15803d; }
 .text-danger { color: #dc2626 !important; font-weight: 600; }
+.text-warn   { color: #d97706 !important; font-weight: 600; }
 
 /* ═══════════════════════════════════════════
    REPORTES DE VENTAS
@@ -3470,8 +3471,8 @@ button { font: inherit; cursor: pointer; }
 .bidir-header,
 .bidir-row {
   display: grid;
-  grid-template-columns: 90px 80px 1fr;
-  gap: 8px;
+  grid-template-columns: 82px 58px 1fr;
+  gap: 6px;
   align-items: center;
 }
 .bidir-header {
@@ -3484,16 +3485,23 @@ button { font: inherit; cursor: pointer; }
   padding-bottom: 6px;
   border-bottom: 1px solid #d1d5db;
 }
-.bidir-header span:nth-child(2),
-.bidir-header span:nth-child(3) { text-align: center; }
+.bidir-header span:nth-child(2) { text-align: center; }
+.bidir-header span:nth-child(3) { text-align: right; }
 .bidir-row {
-  margin-top: 5px;
+  margin-top: 4px;
   padding: 3px 0;
   border-bottom: 1px solid #f1f5f9;
 }
 .bidir-row:last-child { border-bottom: none; }
 .bidir-lbl { font-size: 13px; font-weight: 600; color: #374151; }
-.bidir-pct,
+.bidir-pct {
+  min-width: 0;
+  width: 100%;
+  text-align: center;
+  padding: 5px 4px !important;
+  font-size: 13px;
+  box-sizing: border-box;
+}
 .bidir-price {
   min-width: 0;
   width: 100%;
@@ -3502,6 +3510,10 @@ button { font: inherit; cursor: pointer; }
   font-size: 13px;
   box-sizing: border-box;
 }
+/* Oculta las flechas del spinner en inputs de % para que quepan 2 dígitos */
+.bidir-pct::-webkit-inner-spin-button,
+.bidir-pct::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.bidir-pct { -moz-appearance: textfield; }
 
 /* ═══════════════════════════════════════════
    AJUSTES DE STOCK
