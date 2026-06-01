@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260531d" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260531e" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -1872,45 +1872,80 @@
 
   <!-- Modal nuevo producto -->
   <div id="new-product-modal" class="admin-modal" hidden>
-    <div class="admin-modal-box" style="max-width:560px">
+    <div class="admin-modal-box" style="max-width:520px">
       <div class="admin-modal-head">
         <strong>Nuevo producto</strong>
         <button type="button" class="admin-modal-close" data-close>✕</button>
       </div>
-      <div style="padding:16px 20px">
+      <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
+
+        <!-- Fila 1: Código + Categoría -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <label class="caja-form-label" style="grid-column:1/2">Código <span style="color:#dc2626">*</span>
+          <label class="np-label">Código <span class="req">*</span>
             <input type="text" id="np-code" class="admin-input" placeholder="ej: ABC-001" />
           </label>
-          <label class="caja-form-label" style="grid-column:2/3">Categoría
-            <select id="np-category" class="admin-select"></select>
-          </label>
-          <label class="caja-form-label" style="grid-column:1/-1">Nombre <span style="color:#dc2626">*</span>
-            <input type="text" id="np-name" class="admin-input" placeholder="Nombre del producto" />
-          </label>
-          <label class="caja-form-label">Stock inicial
-            <input type="number" id="np-stock" class="admin-input" placeholder="0" min="0" step="1" value="0" />
-          </label>
-          <label class="caja-form-label">Costo
-            <input type="number" id="np-cost" class="admin-input" placeholder="0" min="0" step="1" value="0" />
-          </label>
-          <label class="caja-form-label">Precio minorista
-            <input type="number" id="np-minorista" class="admin-input" placeholder="0" min="0" step="1" value="0" />
-          </label>
-          <label class="caja-form-label">Precio revendedor
-            <input type="number" id="np-revendedor" class="admin-input" placeholder="0" min="0" step="1" value="0" />
-          </label>
-          <label class="caja-form-label">Precio mayorista
-            <input type="number" id="np-mayorista" class="admin-input" placeholder="0" min="0" step="1" value="0" />
-          </label>
-          <label class="caja-form-label">Precio VIP
-            <input type="number" id="np-vip" class="admin-input" placeholder="0" min="0" step="1" value="0" />
-          </label>
-          <label class="caja-form-label">Precio público
-            <input type="number" id="np-publico" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          <label class="np-label">Categoría
+            <select id="np-category" class="admin-select" style="height:34px"></select>
           </label>
         </div>
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+
+        <!-- Fila 2: Nombre -->
+        <label class="np-label">Nombre <span class="req">*</span>
+          <input type="text" id="np-name" class="admin-input" placeholder="Nombre del producto" />
+        </label>
+
+        <!-- Fila 3: Stock + Costo -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label class="np-label">Stock inicial
+            <input type="number" id="np-stock" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          </label>
+          <label class="np-label">Costo
+            <input type="number" id="np-cost" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          </label>
+        </div>
+
+        <!-- Precio base minorista -->
+        <label class="np-label">Precio minorista <span class="req">*</span>
+          <input type="number" id="np-minorista" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+        </label>
+
+        <!-- Precios derivados por % del minorista -->
+        <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
+          <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px">
+            Precios derivados — % del minorista
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 80px 90px;gap:6px 10px;align-items:center;font-size:13px">
+            <span style="font-weight:600;color:#374151">Revendedor</span>
+            <div style="display:flex;align-items:center;gap:3px">
+              <input type="number" id="np-pct-rev" class="admin-input np-pct" value="90" min="0" max="200" step="1" style="text-align:right" />
+              <span class="muted">%</span>
+            </div>
+            <span class="np-preview muted" id="np-prev-rev">$ 0</span>
+
+            <span style="font-weight:600;color:#374151">Mayorista</span>
+            <div style="display:flex;align-items:center;gap:3px">
+              <input type="number" id="np-pct-may" class="admin-input np-pct" value="80" min="0" max="200" step="1" style="text-align:right" />
+              <span class="muted">%</span>
+            </div>
+            <span class="np-preview muted" id="np-prev-may">$ 0</span>
+
+            <span style="font-weight:600;color:#374151">VIP</span>
+            <div style="display:flex;align-items:center;gap:3px">
+              <input type="number" id="np-pct-vip" class="admin-input np-pct" value="70" min="0" max="200" step="1" style="text-align:right" />
+              <span class="muted">%</span>
+            </div>
+            <span class="np-preview muted" id="np-prev-vip">$ 0</span>
+
+            <span style="font-weight:600;color:#374151">Público</span>
+            <div style="display:flex;align-items:center;gap:3px">
+              <input type="number" id="np-pct-pub" class="admin-input np-pct" value="100" min="0" max="200" step="1" style="text-align:right" />
+              <span class="muted">%</span>
+            </div>
+            <span class="np-preview muted" id="np-prev-pub">$ 0</span>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
           <button type="button" class="btn" data-close>Cancelar</button>
           <button type="button" class="btn btn-primary" id="np-save-btn">Crear producto</button>
         </div>
@@ -1996,6 +2031,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260531d"></script>
+  <script src="/js/admin.js?v=20260531e"></script>
 </body>
 </html>

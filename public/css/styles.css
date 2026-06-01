@@ -3413,6 +3413,23 @@ button { font: inherit; cursor: pointer; }
 }
 
 /* ═══════════════════════════════════════════
+   NUEVO PRODUCTO
+   ═══════════════════════════════════════════ */
+.np-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+}
+.np-label .admin-input,
+.np-label .admin-select { margin-top: 0; }
+.np-label .req { color: #dc2626; }
+.np-pct { width: 60px !important; padding: 4px 6px !important; }
+.np-preview { font-size: 13px; font-weight: 600; text-align: right; }
+
+/* ═══════════════════════════════════════════
    AJUSTES DE STOCK
    ═══════════════════════════════════════════ */
 .stock-adj-plus  { color: #15803d; font-weight: 700; }

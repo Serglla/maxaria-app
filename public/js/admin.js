@@ -5082,38 +5082,79 @@
   // ─────────────────────────────────────────────────────────────────
   // NUEVO PRODUCTO
   // ─────────────────────────────────────────────────────────────────
-  const newProdModal   = document.getElementById("new-product-modal");
-  const newProdBtn     = document.getElementById("new-product-btn");
-  const npSaveBtn      = document.getElementById("np-save-btn");
+  const newProdModal     = document.getElementById("new-product-modal");
+  const newProdBtn       = document.getElementById("new-product-btn");
+  const npSaveBtn        = document.getElementById("np-save-btn");
   const npCategorySelect = document.getElementById("np-category");
+  const npMinoristaInp   = document.getElementById("np-minorista");
+
+  // Sugiere el siguiente código a partir de los existentes
+  function npSuggestCode() {
+    if (!state.products.length) return "";
+    // Producto con el id más alto (el más reciente)
+    const last = state.products.reduce((a, b) => (b.id > a.id ? b : a));
+    const code = (last.code || "").trim();
+    // Intentar incrementar el sufijo numérico: "ABC-001" → "ABC-002"
+    const m = code.match(/^(.*?)(\d+)$/);
+    if (m) {
+      const prefix = m[1];
+      const n      = parseInt(m[2], 10) + 1;
+      return prefix + String(n).padStart(m[2].length, "0");
+    }
+    return code ? code + "-2" : "";
+  }
+
+  // Calcula y muestra los precios derivados en tiempo real
+  function npUpdatePreviews() {
+    const base = Math.round(Number(npMinoristaInp ? npMinoristaInp.value : 0)) || 0;
+    const fmtP = (n) => "$ " + Math.round(n).toLocaleString("es-AR");
+    [
+      { pctId: "np-pct-rev", prevId: "np-prev-rev" },
+      { pctId: "np-pct-may", prevId: "np-prev-may" },
+      { pctId: "np-pct-vip", prevId: "np-prev-vip" },
+      { pctId: "np-pct-pub", prevId: "np-prev-pub" },
+    ].forEach(({ pctId, prevId }) => {
+      const pctEl  = document.getElementById(pctId);
+      const prevEl = document.getElementById(prevId);
+      if (!pctEl || !prevEl) return;
+      const pct   = Number(pctEl.value) || 0;
+      const price = Math.round(base * pct / 100);
+      prevEl.textContent = fmtP(price);
+      prevEl.style.color = price > 0 ? "#0f172a" : "#9ca3af";
+    });
+  }
 
   function npFillCategories() {
     if (!npCategorySelect) return;
-    const cats = [...new Set(state.products.map((p) => p.category_name).filter(Boolean))].sort();
-    // Usar también state.allCategories si está disponible
-    const allCats = state.allCategories && state.allCategories.length ? state.allCategories : cats.map((n) => ({ name: n }));
+    const allCats = state.allCategories && state.allCategories.length
+      ? state.allCategories
+      : [...new Map(state.products.filter((p) => p.category_id).map((p) => [p.category_id, { id: p.category_id, name: p.category_name }])).values()]
+          .sort((a, b) => a.name.localeCompare(b.name));
     npCategorySelect.innerHTML = '<option value="">— Sin categoría —</option>' +
-      allCats.map((c) => '<option value="' + (c.id || "") + '">' + escapeHtml(c.name) + '</option>').join("");
+      allCats.map((c) => '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>').join("");
   }
 
-  function npResetForm() {
-    ["np-code","np-name","np-stock","np-cost","np-minorista","np-revendedor","np-mayorista","np-vip","np-publico"].forEach((id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.value = (id === "np-stock" || id === "np-cost" || id.startsWith("np-m") || id.startsWith("np-v") || id.startsWith("np-r") || id.startsWith("np-p")) ? "0" : "";
-    });
-    if (npCategorySelect) npCategorySelect.value = "";
+  function npOpenModal() {
+    npFillCategories();
+    const codeEl = document.getElementById("np-code");
+    if (codeEl) codeEl.value = npSuggestCode();
+    if (document.getElementById("np-name"))    document.getElementById("np-name").value    = "";
+    if (document.getElementById("np-stock"))   document.getElementById("np-stock").value   = "0";
+    if (document.getElementById("np-cost"))    document.getElementById("np-cost").value    = "0";
+    if (npMinoristaInp) npMinoristaInp.value = "0";
+    // Resetear %
+    const defaults = { "np-pct-rev": 90, "np-pct-may": 80, "np-pct-vip": 70, "np-pct-pub": 100 };
+    Object.entries(defaults).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v; });
+    npUpdatePreviews();
+    if (newProdModal) newProdModal.hidden = false;
+    if (document.getElementById("np-name")) document.getElementById("np-name").focus();
   }
 
-  if (newProdBtn) {
-    newProdBtn.addEventListener("click", () => {
-      npResetForm();
-      npFillCategories();
-      if (newProdModal) newProdModal.hidden = false;
-      const codeEl = document.getElementById("np-code");
-      if (codeEl) codeEl.focus();
-    });
-  }
+  if (newProdBtn) newProdBtn.addEventListener("click", npOpenModal);
+
+  // Live preview al cambiar minorista o cualquier %
+  if (npMinoristaInp) npMinoristaInp.addEventListener("input", npUpdatePreviews);
+  document.querySelectorAll(".np-pct").forEach((el) => el.addEventListener("input", npUpdatePreviews));
 
   if (npSaveBtn) {
     npSaveBtn.addEventListener("click", async () => {
@@ -5121,18 +5162,20 @@
       const name = (document.getElementById("np-name")?.value || "").trim();
       if (!code) { alert("El código es obligatorio."); return; }
       if (!name) { alert("El nombre es obligatorio."); return; }
-      const catSel = document.getElementById("np-category");
+      const base = Math.round(Number(npMinoristaInp ? npMinoristaInp.value : 0)) || 0;
+      if (!base) { alert("Ingresá un precio minorista mayor a 0."); return; }
+      const pct = (id) => Number(document.getElementById(id)?.value) || 0;
       const body = {
         code,
         name,
-        category_id:       catSel && catSel.value ? Number(catSel.value) : null,
-        stock:             Number(document.getElementById("np-stock")?.value)     || 0,
-        cost:              Number(document.getElementById("np-cost")?.value)      || 0,
-        price_minorista:   Number(document.getElementById("np-minorista")?.value) || 0,
-        price_revendedor:  Number(document.getElementById("np-revendedor")?.value)|| 0,
-        price_mayorista:   Number(document.getElementById("np-mayorista")?.value) || 0,
-        price_vip:         Number(document.getElementById("np-vip")?.value)       || 0,
-        price_publico:     Number(document.getElementById("np-publico")?.value)   || 0,
+        category_id:      npCategorySelect && npCategorySelect.value ? Number(npCategorySelect.value) : null,
+        stock:            Number(document.getElementById("np-stock")?.value) || 0,
+        cost:             Number(document.getElementById("np-cost")?.value)  || 0,
+        price_minorista:  base,
+        price_revendedor: Math.round(base * pct("np-pct-rev") / 100),
+        price_mayorista:  Math.round(base * pct("np-pct-may") / 100),
+        price_vip:        Math.round(base * pct("np-pct-vip") / 100),
+        price_publico:    Math.round(base * pct("np-pct-pub") / 100),
       };
       try {
         npSaveBtn.disabled = true;
@@ -5141,7 +5184,6 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        // Agregar al state y re-renderizar
         state.products.unshift(result.product);
         populateCategoryFilter(state.products);
         applyFilters();
