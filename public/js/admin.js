@@ -5106,7 +5106,29 @@
   }
 
   // Calcula y muestra los precios derivados en tiempo real (base = costo)
+  // Fórmula: precio = costo + costo × pct/100  (ej: costo 100, 12% → 112)
   // Orden: VIP → Revendedor → Mayorista → Minorista → Público
+  const NP_PCT_FIELDS = ["np-pct-vip","np-pct-rev","np-pct-may","np-pct-min","np-pct-pub"];
+  const NP_LS_KEY = "maxaria_np_pcts";
+
+  function npSavePcts() {
+    try {
+      const obj = {};
+      NP_PCT_FIELDS.forEach((id) => { const el = document.getElementById(id); if (el) obj[id] = el.value; });
+      localStorage.setItem(NP_LS_KEY, JSON.stringify(obj));
+    } catch (_) {}
+  }
+
+  function npLoadPcts() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(NP_LS_KEY) || "{}");
+      NP_PCT_FIELDS.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el && saved[id] !== undefined) el.value = saved[id];
+      });
+    } catch (_) {}
+  }
+
   function npUpdatePreviews() {
     const base = Math.round(Number(npCostInp ? npCostInp.value : 0)) || 0;
     const fmtP = (n) => "$ " + Math.round(n).toLocaleString("es-AR");
@@ -5121,7 +5143,7 @@
       const prevEl = document.getElementById(prevId);
       if (!pctEl || !prevEl) return;
       const pct   = Number(pctEl.value) || 0;
-      const price = Math.round(base * pct / 100);
+      const price = Math.round(base * (1 + pct / 100)); // costo + X%
       prevEl.textContent = fmtP(price);
       prevEl.style.color = price > 0 ? "#0f172a" : "#9ca3af";
     });
@@ -5144,9 +5166,10 @@
     if (document.getElementById("np-name"))  document.getElementById("np-name").value  = "";
     if (document.getElementById("np-stock")) document.getElementById("np-stock").value = "0";
     if (npCostInp) npCostInp.value = "0";
-    // Resetear %
+    // Cargar últimos % usados (o defaults si es la primera vez)
     const defaults = { "np-pct-vip": 110, "np-pct-rev": 130, "np-pct-may": 120, "np-pct-min": 150, "np-pct-pub": 150 };
     Object.entries(defaults).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v; });
+    npLoadPcts(); // sobreescribe con los guardados si existen
     npUpdatePreviews();
     if (newProdModal) newProdModal.hidden = false;
     if (document.getElementById("np-name")) document.getElementById("np-name").focus();
@@ -5164,20 +5187,22 @@
       const name = (document.getElementById("np-name")?.value || "").trim();
       if (!code) { alert("El código es obligatorio."); return; }
       if (!name) { alert("El nombre es obligatorio."); return; }
-      const base = Math.round(Number(npMinoristaInp ? npMinoristaInp.value : 0)) || 0;
-      if (!base) { alert("Ingresá un precio minorista mayor a 0."); return; }
+      const cost = Math.round(Number(npCostInp ? npCostInp.value : 0)) || 0;
+      if (!cost) { alert("Ingresá un costo mayor a 0."); return; }
       const pct = (id) => Number(document.getElementById(id)?.value) || 0;
+      const fromCost = (p) => Math.round(cost * (1 + pct(p) / 100));
+      npSavePcts();
       const body = {
         code,
         name,
         category_id:      npCategorySelect && npCategorySelect.value ? Number(npCategorySelect.value) : null,
         stock:            Number(document.getElementById("np-stock")?.value) || 0,
-        cost:             Number(document.getElementById("np-cost")?.value)  || 0,
-        price_minorista:  base,
-        price_revendedor: Math.round(base * pct("np-pct-rev") / 100),
-        price_mayorista:  Math.round(base * pct("np-pct-may") / 100),
-        price_vip:        Math.round(base * pct("np-pct-vip") / 100),
-        price_publico:    Math.round(base * pct("np-pct-pub") / 100),
+        cost,
+        price_minorista:  fromCost("np-pct-min"),
+        price_revendedor: fromCost("np-pct-rev"),
+        price_mayorista:  fromCost("np-pct-may"),
+        price_vip:        fromCost("np-pct-vip"),
+        price_publico:    fromCost("np-pct-pub"),
       };
       try {
         npSaveBtn.disabled = true;

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260531g" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260531h" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -1968,17 +1968,20 @@
       <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
 
         <!-- Fila 1: Código + Categoría -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <label class="np-label">Código <span class="req">*</span>
-            <input type="text" id="np-code" class="admin-input" placeholder="ej: ABC-001" />
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">
+          <label class="np-label">
+            <span>Código <span class="req">*</span></span>
+            <input type="text" id="np-code" class="admin-input" placeholder="ej: 4088" />
           </label>
-          <label class="np-label">Categoría
-            <select id="np-category" class="admin-select" style="height:34px"></select>
+          <label class="np-label">
+            <span>Categoría</span>
+            <select id="np-category" class="admin-select"></select>
           </label>
         </div>
 
         <!-- Fila 2: Nombre -->
-        <label class="np-label">Nombre <span class="req">*</span>
+        <label class="np-label">
+          <span>Nombre <span class="req">*</span></span>
           <input type="text" id="np-name" class="admin-input" placeholder="Nombre del producto" />
         </label>
 
@@ -2121,6 +2124,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260531g"></script>
+  <script src="/js/admin.js?v=20260531h"></script>
 </body>
 </html>
