@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260531b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260531c" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -289,6 +289,7 @@
           <input type="file" id="excel-file" accept=".xlsx,.xls" hidden />
         </label>
         <button class="btn" id="catalog-btn" type="button" title="Generar catálogo en PDF con lista de precios a elección">📄 Catálogo PDF</button>
+        <button class="btn" id="stock-adj-history-btn" type="button" title="Ver historial de ajustes de stock">📋 Ajustes</button>
       </div>
 
       <div class="admin-table-wrap">
@@ -307,9 +308,10 @@
               <th class="sortable num" data-sort="price_vip">VIP<span class="sort-arrow"></span></th>
               <th class="sortable num" data-sort="price_publico">Público<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="active">Activo<span class="sort-arrow"></span></th>
+              <th></th>
             </tr>
           </thead>
-          <tbody id="prod-tbody"><tr><td colspan="12" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="prod-tbody"><tr><td colspan="13" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
 
@@ -1867,9 +1869,84 @@
     </div>
   </section>
 
+  <!-- Modal ajuste de stock -->
+  <div id="stock-adj-modal" class="admin-modal" hidden>
+    <div class="admin-modal-box" style="max-width:420px">
+      <div class="admin-modal-head">
+        <strong>Ajustar stock</strong>
+        <button type="button" class="admin-modal-close" data-close>✕</button>
+      </div>
+      <div style="padding:16px 20px">
+        <div id="stock-adj-product-info" style="background:#f1f5f9;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:13px"></div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:6px">Modo</label>
+          <div style="display:flex;gap:8px">
+            <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer">
+              <input type="radio" name="stock-adj-mode" value="set" id="stock-adj-mode-set" checked /> Fijar en
+            </label>
+            <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer">
+              <input type="radio" name="stock-adj-mode" value="delta" id="stock-adj-mode-delta" /> Sumar / restar
+            </label>
+          </div>
+        </div>
+        <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:4px" id="stock-adj-qty-label">Nuevo stock</label>
+        <input type="number" id="stock-adj-qty" class="admin-input" style="width:100%;margin-bottom:12px" placeholder="0" step="1" />
+        <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:4px">Tipo de ajuste</label>
+        <select id="stock-adj-type" class="admin-select" style="width:100%;margin-bottom:12px">
+          <option value="ajuste">Ajuste manual</option>
+          <option value="inventario">Toma de inventario</option>
+          <option value="merma">Merma / rotura / vencimiento</option>
+          <option value="devolucion">Devolución</option>
+        </select>
+        <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:4px">Razón / nota (opcional)</label>
+        <input type="text" id="stock-adj-reason" class="admin-input" style="width:100%;margin-bottom:16px" placeholder="Ej: conteo físico del 31/05" />
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="button" class="btn btn-primary" id="stock-adj-save-btn">Guardar ajuste</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal historial de ajustes -->
+  <div id="stock-adj-hist-modal" class="admin-modal" hidden>
+    <div class="admin-modal-box" style="max-width:720px">
+      <div class="admin-modal-head">
+        <strong>Historial de ajustes de stock</strong>
+        <button type="button" class="admin-modal-close" data-close>✕</button>
+      </div>
+      <div style="padding:12px 20px;border-bottom:1px solid #e5e7eb;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input type="date" id="stock-hist-from" class="admin-input" style="width:130px" />
+        <input type="date" id="stock-hist-to" class="admin-input" style="width:130px" />
+        <input type="search" id="stock-hist-search" class="admin-search" placeholder="Buscar producto…" style="width:160px" autocomplete="off" />
+        <button type="button" class="btn btn-small" id="stock-hist-filter-btn">Filtrar</button>
+      </div>
+      <div style="max-height:420px;overflow-y:auto">
+        <table class="admin-table" id="stock-hist-table">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Producto</th>
+              <th>Tipo</th>
+              <th class="num">Antes</th>
+              <th class="num">Cambio</th>
+              <th class="num">Después</th>
+              <th>Razón</th>
+              <th>Usuario</th>
+            </tr>
+          </thead>
+          <tbody id="stock-hist-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="admin-modal-foot">
+        <button type="button" class="btn" data-close>Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260531b"></script>
+  <script src="/js/admin.js?v=20260531c"></script>
 </body>
 </html>

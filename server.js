@@ -362,6 +362,25 @@ db.exec(
   tx();
 })();
 
+// ─── Ajustes de stock ────────────────────────────────────────────────────────
+db.exec(
+  "CREATE TABLE IF NOT EXISTS stock_adjustments (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  product_id INTEGER REFERENCES products(id)," +
+  "  product_code TEXT NOT NULL DEFAULT ''," +
+  "  product_name TEXT NOT NULL DEFAULT ''," +
+  "  type TEXT NOT NULL DEFAULT 'ajuste'," + // ajuste|inventario|merma|devolucion
+  "  qty_before INTEGER NOT NULL DEFAULT 0," +
+  "  qty_change INTEGER NOT NULL DEFAULT 0," +  // positivo o negativo
+  "  qty_after INTEGER NOT NULL DEFAULT 0," +
+  "  reason TEXT," +
+  "  registered_by INTEGER REFERENCES users(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_stock_adj_product ON stock_adjustments(product_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_stock_adj_date ON stock_adjustments(created_at);"
+);
+
 // ─── Caja: cuentas y movimientos ─────────────────────────────────────────────
 db.exec(
   "CREATE TABLE IF NOT EXISTS cash_accounts (" +
@@ -4322,6 +4341,62 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
   db.prepare("DELETE FROM budgets WHERE id = ?").run(budget.id);
   res.json({ ok: true });
+});
+
+// ===== AJUSTES DE STOCK =====
+
+// GET /api/admin/stock-adjustments — historial (filtrable por product_id, from, to)
+app.get("/api/admin/stock-adjustments", requireAdmin, (req, res) => {
+  const { product_id, from, to } = req.query;
+  const where = [];
+  const params = [];
+  if (product_id) { where.push("sa.product_id=?"); params.push(Number(product_id)); }
+  if (from)       { where.push("date(sa.created_at)>=?"); params.push(from); }
+  if (to)         { where.push("date(sa.created_at)<=?"); params.push(to); }
+  const wStr = where.length ? " WHERE " + where.join(" AND ") : "";
+  const rows = db.prepare(
+    "SELECT sa.*, u.username AS registered_by_username" +
+    " FROM stock_adjustments sa" +
+    " LEFT JOIN users u ON u.id = sa.registered_by" +
+    wStr +
+    " ORDER BY sa.id DESC LIMIT 300"
+  ).all(...params);
+  res.json(rows);
+});
+
+// POST /api/admin/stock-adjustments — crear ajuste
+app.post("/api/admin/stock-adjustments", requireAdmin, (req, res) => {
+  const userId = req.session.userId;
+  const { product_id, mode, qty, type, reason } = req.body;
+  // mode: "set" (fijar) o "delta" (sumar/restar)
+  if (!product_id) return res.status(400).json({ error: "Producto requerido" });
+  const product = db.prepare("SELECT * FROM products WHERE id=?").get(product_id);
+  if (!product) return res.status(404).json({ error: "Producto no encontrado" });
+
+  const validTypes = ["ajuste","inventario","merma","devolucion"];
+  const adjType = validTypes.includes(type) ? type : "ajuste";
+  const qtyBefore = product.stock || 0;
+  let qtyAfter, qtyChange;
+
+  if (mode === "set") {
+    qtyAfter  = Math.max(0, Math.round(Number(qty)));
+    qtyChange = qtyAfter - qtyBefore;
+  } else {
+    // delta
+    qtyChange = Math.round(Number(qty)) || 0;
+    qtyAfter  = Math.max(0, qtyBefore + qtyChange);
+    qtyChange = qtyAfter - qtyBefore; // recalcular por si fue clampeado a 0
+  }
+
+  db.transaction(() => {
+    db.prepare("UPDATE products SET stock=? WHERE id=?").run(qtyAfter, product_id);
+    db.prepare(
+      "INSERT INTO stock_adjustments (product_id, product_code, product_name, type, qty_before, qty_change, qty_after, reason, registered_by)" +
+      " VALUES (?,?,?,?,?,?,?,?,?)"
+    ).run(product_id, product.code, product.name, adjType, qtyBefore, qtyChange, qtyAfter, reason || null, userId);
+  })();
+
+  res.json({ ok: true, qty_before: qtyBefore, qty_after: qtyAfter, qty_change: qtyChange });
 });
 
 // ===== CAJA =====

@@ -490,7 +490,7 @@
       applyFilters();
     } catch (e) {
       console.error(e);
-      els.prodTbody.innerHTML = '<tr><td colspan="12" class="muted">Error cargando productos</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="13" class="muted">Error cargando productos</td></tr>';
     }
     // En paralelo, chequear dbinfo (no bloqueamos el render principal por esto)
     checkDbInfo();
@@ -2606,7 +2606,7 @@
     const list = state.productsFiltered;
     els.prodCount.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     if (!list.length) {
-      els.prodTbody.innerHTML = '<tr><td colspan="12" class="muted">Sin resultados</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="13" class="muted">Sin resultados</td></tr>';
       els.pageInfo.textContent = "Página 0 / 0";
       els.pagePrev.disabled = true;
       els.pageNext.disabled = true;
@@ -2642,6 +2642,7 @@
       '<td class="num"><input type="number" min="0" class="cell-input cell-num cell-price" data-field="price_vip" value="' + (p.price_vip || 0) + '" /></td>' +
       '<td class="num"><input type="number" min="0" class="cell-input cell-num cell-price" data-field="price_publico" value="' + (p.price_publico || 0) + '" /></td>' +
       '<td><label class="cell-toggle"><input type="checkbox" data-field="active"' + (p.active ? " checked" : "") + ' /><span></span></label></td>' +
+      '<td><button class="btn btn-small" type="button" data-act="adj-stock" data-id="' + p.id + '" title="Ajustar stock">±</button></td>' +
     '</tr>';
   }
 
@@ -5077,6 +5078,153 @@
       bEls.picker.hidden = false;
     });
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // AJUSTES DE STOCK
+  // ─────────────────────────────────────────────────────────────────
+  const adjModal     = document.getElementById("stock-adj-modal");
+  const adjHistModal = document.getElementById("stock-adj-hist-modal");
+  const adjState     = { productId: null, productStock: 0 };
+
+  const ADJ_TYPE_LABEL = { ajuste:"Ajuste manual", inventario:"Inventario", merma:"Merma/rotura", devolucion:"Devolución" };
+
+  function openStockAdjModal(product) {
+    adjState.productId    = product.id;
+    adjState.productStock = product.stock || 0;
+    const info = document.getElementById("stock-adj-product-info");
+    if (info) info.innerHTML =
+      '<strong>' + escapeHtml(product.name) + '</strong>' +
+      ' <span class="muted">(' + escapeHtml(product.code || "") + ')</span>' +
+      ' — Stock actual: <strong>' + adjState.productStock + '</strong>';
+    const qtyInp = document.getElementById("stock-adj-qty");
+    if (qtyInp) { qtyInp.value = adjState.productStock; qtyInp.focus(); }
+    const modeSet = document.getElementById("stock-adj-mode-set");
+    if (modeSet) modeSet.checked = true;
+    const lbl = document.getElementById("stock-adj-qty-label");
+    if (lbl) lbl.textContent = "Nuevo stock";
+    const reason = document.getElementById("stock-adj-reason");
+    if (reason) reason.value = "";
+    if (adjModal) adjModal.hidden = false;
+  }
+
+  // Cambio de modo fijar/delta → actualizar label
+  document.querySelectorAll("input[name='stock-adj-mode']").forEach((radio) => {
+    radio.addEventListener("change", () => {
+      const lbl    = document.getElementById("stock-adj-qty-label");
+      const qtyInp = document.getElementById("stock-adj-qty");
+      if (radio.value === "set") {
+        if (lbl) lbl.textContent = "Nuevo stock";
+        if (qtyInp) qtyInp.value = adjState.productStock;
+      } else {
+        if (lbl) lbl.textContent = "Cantidad a sumar (+) o restar (−)";
+        if (qtyInp) qtyInp.value = 0;
+      }
+    });
+  });
+
+  // Guardar ajuste
+  const adjSaveBtn = document.getElementById("stock-adj-save-btn");
+  if (adjSaveBtn) {
+    adjSaveBtn.addEventListener("click", async () => {
+      const modeEl  = document.querySelector("input[name='stock-adj-mode']:checked");
+      const qtyInp  = document.getElementById("stock-adj-qty");
+      const typeEl  = document.getElementById("stock-adj-type");
+      const reasonEl= document.getElementById("stock-adj-reason");
+      const mode    = modeEl  ? modeEl.value  : "set";
+      const qty     = Number(qtyInp  ? qtyInp.value  : 0);
+      const type    = typeEl  ? typeEl.value  : "ajuste";
+      const reason  = reasonEl? reasonEl.value.trim() : "";
+      if (isNaN(qty)) { alert("Ingresá una cantidad válida."); return; }
+      try {
+        adjSaveBtn.disabled = true;
+        const result = await api("/api/admin/stock-adjustments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ product_id: adjState.productId, mode, qty, type, reason }),
+        });
+        // Actualizar estado local del producto
+        const p = state.products.find((x) => x.id === adjState.productId);
+        if (p) {
+          p.stock = result.qty_after;
+          // Actualizar también el input en la tabla si está visible
+          const tr = els.prodTbody.querySelector('tr[data-id="' + adjState.productId + '"]');
+          if (tr) {
+            const inp = tr.querySelector('[data-field="stock"]');
+            if (inp) inp.value = result.qty_after;
+          }
+          applyFilters(); // re-render para reflejar cambio de color OOS
+        }
+        showToast("Stock ajustado: " + result.qty_before + " → " + result.qty_after);
+        if (adjModal) adjModal.hidden = true;
+      } catch (e) {
+        alert(e.message || "Error al guardar ajuste");
+      } finally {
+        adjSaveBtn.disabled = false;
+      }
+    });
+  }
+
+  // Click en botón ajustar de cada fila de producto
+  els.prodTbody.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act='adj-stock']");
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    const product = state.products.find((x) => x.id === id);
+    if (product) openStockAdjModal(product);
+  });
+
+  // Historial global
+  const stockHistBtn = document.getElementById("stock-adj-history-btn");
+  if (stockHistBtn) {
+    stockHistBtn.addEventListener("click", () => {
+      if (adjHistModal) adjHistModal.hidden = false;
+      loadStockHistory();
+    });
+  }
+
+  async function loadStockHistory(productId) {
+    const tbody = document.getElementById("stock-hist-tbody");
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+    try {
+      const from   = document.getElementById("stock-hist-from");
+      const to     = document.getElementById("stock-hist-to");
+      const search = document.getElementById("stock-hist-search");
+      const qs = [
+        productId ? "product_id=" + productId : "",
+        from && from.value ? "from=" + from.value : "",
+        to   && to.value   ? "to="   + to.value   : "",
+      ].filter(Boolean).join("&");
+      let rows = await api("/api/admin/stock-adjustments" + (qs ? "?" + qs : ""));
+      const q = search ? search.value.trim().toLowerCase() : "";
+      if (q) rows = rows.filter((r) => (r.product_name + " " + r.product_code).toLowerCase().includes(q));
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="muted">Sin ajustes</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map((r) => {
+        const chg     = Number(r.qty_change);
+        const chgStr  = (chg > 0 ? "+" : "") + chg;
+        const chgCls  = chg > 0 ? "stock-adj-plus" : (chg < 0 ? "stock-adj-minus" : "");
+        const dateStr = (r.created_at || "").slice(0, 10).split("-").reverse().join("/");
+        return "<tr>" +
+          "<td class=\"muted small\">" + dateStr + "</td>" +
+          "<td><strong>" + escapeHtml(r.product_name) + "</strong> <span class=\"muted small\">" + escapeHtml(r.product_code) + "</span></td>" +
+          "<td class=\"muted small\">" + escapeHtml(ADJ_TYPE_LABEL[r.type] || r.type) + "</td>" +
+          "<td class=\"num muted\">" + r.qty_before + "</td>" +
+          "<td class=\"num " + chgCls + "\">" + chgStr + "</td>" +
+          "<td class=\"num\"><strong>" + r.qty_after + "</strong></td>" +
+          "<td class=\"muted small\">" + escapeHtml(r.reason || "—") + "</td>" +
+          "<td class=\"muted small\">" + escapeHtml(r.registered_by_username || "—") + "</td>" +
+          "</tr>";
+      }).join("");
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="8" class="muted">Error cargando historial.</td></tr>';
+    }
+  }
+
+  const stockHistFilterBtn = document.getElementById("stock-hist-filter-btn");
+  if (stockHistFilterBtn) stockHistFilterBtn.addEventListener("click", () => loadStockHistory());
 
   // ─────────────────────────────────────────────────────────────────
   // CAJA

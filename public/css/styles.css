@@ -3411,3 +3411,9 @@ button { font: inherit; cursor: pointer; }
   .caja-layout { grid-template-columns: 1fr; }
   #tab-caja { padding: 12px 12px 32px; }
 }
+
+/* ═══════════════════════════════════════════
+   AJUSTES DE STOCK
+   ═══════════════════════════════════════════ */
+.stock-adj-plus  { color: #15803d; font-weight: 700; }
+.stock-adj-minus { color: #dc2626; font-weight: 700; }
