@@ -712,6 +712,7 @@
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas" && !state.accountsLoaded) loadAccounts();
+      if (tab === "caja") loadCaja();
       if (tab === "ventas") {
         if (!bState.loaded) loadBudgets();
         // renderVentas se llama desde el handler de tab específico (async)
@@ -5074,6 +5075,222 @@
       renderPickerList("");
       pickerUpdateCount();
       bEls.picker.hidden = false;
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // CAJA
+  // ─────────────────────────────────────────────────────────────────
+  const cajaEls = {
+    accountsWrap:    document.getElementById("caja-accounts-wrap"),
+    addAccountBtn:   document.getElementById("caja-add-account-btn"),
+    newAccountForm:  document.getElementById("caja-new-account-form"),
+    accName:         document.getElementById("caja-acc-name"),
+    accType:         document.getElementById("caja-acc-type"),
+    accSaveBtn:      document.getElementById("caja-acc-save-btn"),
+    accCancelBtn:    document.getElementById("caja-acc-cancel-btn"),
+    typeBtns:        document.querySelectorAll(".caja-type-btn"),
+    movAccount:      document.getElementById("caja-mov-account"),
+    movDestWrap:     document.getElementById("caja-mov-dest-wrap"),
+    movCounterpart:  document.getElementById("caja-mov-counterpart"),
+    movAmount:       document.getElementById("caja-mov-amount"),
+    movDesc:         document.getElementById("caja-mov-desc"),
+    movDate:         document.getElementById("caja-mov-date"),
+    movSaveBtn:      document.getElementById("caja-mov-save-btn"),
+    filterAccount:   document.getElementById("caja-filter-account"),
+    filterFrom:      document.getElementById("caja-filter-from"),
+    filterTo:        document.getElementById("caja-filter-to"),
+    filterBtn:       document.getElementById("caja-filter-btn"),
+    movTbody:        document.getElementById("caja-mov-tbody"),
+    movSummary:      document.getElementById("caja-mov-summary"),
+  };
+  const cajaState = { accounts: [], movType: "ingreso" };
+
+  function cajaFmt(n) { return "$ " + Number(n).toLocaleString("es-AR"); }
+  function cajaTodayIso() { return new Date().toISOString().slice(0, 10); }
+
+  function cajaRenderAccounts() {
+    if (!cajaEls.accountsWrap) return;
+    const accs = cajaState.accounts;
+    if (!accs.length) { cajaEls.accountsWrap.innerHTML = '<p class="muted">Sin cuentas.</p>'; return; }
+    const ICON = { efectivo:"💵", banco:"🏦", digital:"📱" };
+    cajaEls.accountsWrap.innerHTML = accs.map((a) => {
+      const saldo = Number(a.saldo) || 0;
+      const cls   = saldo < 0 ? "caja-acc-neg" : "caja-acc-pos";
+      return '<div class="caja-acc-card">' +
+        '<span class="caja-acc-icon">' + (ICON[a.type] || "💰") + '</span>' +
+        '<div class="caja-acc-info">' +
+          '<span class="caja-acc-name">' + escapeHtml(a.name) + '</span>' +
+          '<span class="caja-acc-type muted small">' + a.type + '</span>' +
+        '</div>' +
+        '<span class="caja-acc-saldo ' + cls + '">' + cajaFmt(saldo) + '</span>' +
+      '</div>';
+    }).join("");
+  }
+
+  function cajaFillSelects() {
+    const accs = cajaState.accounts;
+    // Select movimiento
+    [cajaEls.movAccount, cajaEls.movCounterpart].forEach((sel) => {
+      if (!sel) return;
+      sel.innerHTML = accs.map((a) => '<option value="' + a.id + '">' + escapeHtml(a.name) + '</option>').join("");
+    });
+    // Select filtro
+    if (cajaEls.filterAccount) {
+      const cur = cajaEls.filterAccount.value;
+      cajaEls.filterAccount.innerHTML = '<option value="all">Todas las cuentas</option>' +
+        accs.map((a) => '<option value="' + a.id + '">' + escapeHtml(a.name) + '</option>').join("");
+      if (cur) cajaEls.filterAccount.value = cur;
+    }
+  }
+
+  async function loadCaja() {
+    try {
+      cajaState.accounts = await api("/api/admin/caja");
+      cajaRenderAccounts();
+      cajaFillSelects();
+      await loadCajaMovements();
+    } catch (e) {
+      if (cajaEls.accountsWrap) cajaEls.accountsWrap.innerHTML = '<p class="muted">Error cargando caja.</p>';
+    }
+  }
+
+  async function loadCajaMovements() {
+    if (!cajaEls.movTbody) return;
+    cajaEls.movTbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando…</td></tr>';
+    try {
+      const acc  = cajaEls.filterAccount  ? cajaEls.filterAccount.value  : "all";
+      const from = cajaEls.filterFrom     ? cajaEls.filterFrom.value     : "";
+      const to   = cajaEls.filterTo       ? cajaEls.filterTo.value       : "";
+      const qs   = [
+        acc !== "all" ? "account_id=" + acc : "",
+        from ? "from=" + from : "",
+        to   ? "to="   + to   : "",
+      ].filter(Boolean).join("&");
+      const rows = await api("/api/admin/caja/movements" + (qs ? "?" + qs : ""));
+
+      let totIn = 0, totOut = 0;
+      const TYPE_LABEL = { ingreso:"▲ Ingreso", egreso:"▼ Egreso" };
+      const TYPE_CLS   = { ingreso:"caja-mov-in", egreso:"caja-mov-out" };
+
+      if (!rows.length) {
+        cajaEls.movTbody.innerHTML = '<tr><td colspan="6" class="muted">Sin movimientos</td></tr>';
+      } else {
+        cajaEls.movTbody.innerHTML = rows.map((r) => {
+          if (r.type === "ingreso") totIn  += Number(r.amount) || 0;
+          else                      totOut += Number(r.amount) || 0;
+          const isTransfer = r.source === "transferencia";
+          let descHtml = escapeHtml(r.description || "—");
+          if (isTransfer && r.counterpart_name) {
+            descHtml += ' <span class="muted small">(⇄ ' + escapeHtml(r.counterpart_name) + ')</span>';
+          }
+          const dateStr = (r.movement_date || "").slice(0, 10).split("-").reverse().join("/");
+          const typeLbl = isTransfer ? (r.type === "ingreso" ? "⇄ Entrada" : "⇄ Salida") : (TYPE_LABEL[r.type] || r.type);
+          const typeCls = TYPE_CLS[r.type] || "";
+          return "<tr>" +
+            "<td class=\"muted small\">" + dateStr + "</td>" +
+            "<td>" + escapeHtml(r.account_name) + "</td>" +
+            "<td>" + descHtml + "</td>" +
+            "<td><span class=\"" + typeCls + "\">" + typeLbl + "</span></td>" +
+            "<td class=\"num " + typeCls + "\">" + cajaFmt(r.amount) + "</td>" +
+            "<td><button class=\"btn btn-small\" data-caja-del=\"" + r.id + "\" type=\"button\" title=\"Eliminar\">✕</button></td>" +
+            "</tr>";
+        }).join("");
+      }
+      if (cajaEls.movSummary) {
+        cajaEls.movSummary.textContent = "Ingresos: " + cajaFmt(totIn) + "  |  Egresos: " + cajaFmt(totOut) + "  |  Neto: " + cajaFmt(totIn - totOut);
+      }
+    } catch (e) {
+      cajaEls.movTbody.innerHTML = '<tr><td colspan="6" class="muted">Error cargando movimientos.</td></tr>';
+    }
+  }
+
+  // Toggle ingreso/egreso/transferencia
+  if (cajaEls.typeBtns) {
+    cajaEls.typeBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        cajaEls.typeBtns.forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        cajaState.movType = btn.dataset.type;
+        if (cajaEls.movDestWrap) cajaEls.movDestWrap.hidden = (cajaState.movType !== "transferencia");
+      });
+    });
+  }
+
+  // Fecha default hoy
+  if (cajaEls.movDate) cajaEls.movDate.value = cajaTodayIso();
+
+  // Guardar movimiento
+  if (cajaEls.movSaveBtn) {
+    cajaEls.movSaveBtn.addEventListener("click", async () => {
+      const amount = Number(cajaEls.movAmount ? cajaEls.movAmount.value : 0);
+      if (!amount || amount <= 0) { alert("Ingresá un monto mayor a 0."); return; }
+      const body = {
+        account_id:             cajaEls.movAccount    ? Number(cajaEls.movAccount.value)    : null,
+        type:                   cajaState.movType,
+        amount,
+        description:            cajaEls.movDesc       ? cajaEls.movDesc.value.trim()        : "",
+        movement_date:          cajaEls.movDate       ? cajaEls.movDate.value               : cajaTodayIso(),
+        counterpart_account_id: cajaState.movType === "transferencia" && cajaEls.movCounterpart
+                                  ? Number(cajaEls.movCounterpart.value) : null,
+      };
+      try {
+        cajaEls.movSaveBtn.disabled = true;
+        await api("/api/admin/caja/movements", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+        if (cajaEls.movAmount)  cajaEls.movAmount.value = "";
+        if (cajaEls.movDesc)    cajaEls.movDesc.value   = "";
+        showToast("Movimiento registrado");
+        await loadCaja(); // refresca saldos + tabla
+      } catch (e) {
+        alert(e.message || "Error al guardar");
+      } finally {
+        cajaEls.movSaveBtn.disabled = false;
+      }
+    });
+  }
+
+  // Filtrar movimientos
+  if (cajaEls.filterBtn) cajaEls.filterBtn.addEventListener("click", loadCajaMovements);
+
+  // Delete movimiento
+  const cajaTbodyEl = document.getElementById("caja-mov-tbody");
+  if (cajaTbodyEl) {
+    cajaTbodyEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-caja-del]");
+      if (!btn) return;
+      if (!confirm("¿Eliminar este movimiento?")) return;
+      try {
+        await api("/api/admin/caja/movements/" + btn.dataset.cajaDel, { method:"DELETE" });
+        showToast("Movimiento eliminado");
+        await loadCaja();
+      } catch (err) { alert(err.message || "Error"); }
+    });
+  }
+
+  // Nueva cuenta
+  if (cajaEls.addAccountBtn) {
+    cajaEls.addAccountBtn.addEventListener("click", () => {
+      if (cajaEls.newAccountForm) cajaEls.newAccountForm.hidden = false;
+      if (cajaEls.accName) cajaEls.accName.focus();
+    });
+  }
+  if (cajaEls.accCancelBtn) {
+    cajaEls.accCancelBtn.addEventListener("click", () => {
+      if (cajaEls.newAccountForm) cajaEls.newAccountForm.hidden = true;
+    });
+  }
+  if (cajaEls.accSaveBtn) {
+    cajaEls.accSaveBtn.addEventListener("click", async () => {
+      const name = cajaEls.accName ? cajaEls.accName.value.trim() : "";
+      const type = cajaEls.accType ? cajaEls.accType.value : "efectivo";
+      if (!name) { alert("Ingresá un nombre para la cuenta."); return; }
+      try {
+        await api("/api/admin/caja/accounts", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, type }) });
+        if (cajaEls.accName) cajaEls.accName.value = "";
+        if (cajaEls.newAccountForm) cajaEls.newAccountForm.hidden = true;
+        showToast("Cuenta creada");
+        await loadCaja();
+      } catch (e) { alert(e.message || "Error"); }
     });
   }
 

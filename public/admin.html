@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260531a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260531b" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -114,6 +114,13 @@
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="gastos" type="button">
             <span class="admin-sidebar-item-icon">💸</span>Gastos
+          </button>
+        </div>
+
+        <div class="admin-sidebar-group">
+          <div class="admin-sidebar-group-title">Finanzas</div>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="caja" type="button">
+            <span class="admin-sidebar-item-icon">💰</span>Caja
           </button>
         </div>
 
@@ -343,6 +350,103 @@
           </thead>
           <tbody id="user-tbody"><tr><td colspan="13" class="muted">Cargando…</td></tr></tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- ===== TAB CAJA ===== -->
+    <section class="tab-panel" id="tab-caja" hidden>
+      <div class="caja-layout">
+
+        <!-- Panel izquierdo: cuentas + form movimiento -->
+        <div class="caja-left">
+
+          <!-- Saldos por cuenta -->
+          <div class="caja-accounts-header">
+            <span class="dash-section-label" style="margin:0">Cuentas</span>
+            <button class="btn btn-small" id="caja-add-account-btn" type="button">+ Nueva cuenta</button>
+          </div>
+          <div id="caja-accounts-wrap" class="caja-accounts-wrap">
+            <div class="muted">Cargando…</div>
+          </div>
+
+          <!-- Form nueva cuenta (oculto) -->
+          <div id="caja-new-account-form" class="caja-form-box" hidden>
+            <strong style="font-size:13px">Nueva cuenta</strong>
+            <label class="caja-form-label">Nombre
+              <input type="text" id="caja-acc-name" class="admin-input" placeholder="ej: Banco Galicia" />
+            </label>
+            <label class="caja-form-label">Tipo
+              <select id="caja-acc-type" class="admin-select">
+                <option value="efectivo">💵 Efectivo</option>
+                <option value="banco">🏦 Banco</option>
+                <option value="digital">📱 Digital (MP, Ualá…)</option>
+              </select>
+            </label>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button class="btn btn-primary btn-small" id="caja-acc-save-btn" type="button">Guardar</button>
+              <button class="btn btn-small" id="caja-acc-cancel-btn" type="button">Cancelar</button>
+            </div>
+          </div>
+
+          <!-- Form movimiento rápido -->
+          <div class="dash-section-label" style="margin-top:20px">Registrar movimiento</div>
+          <div class="caja-form-box">
+            <div class="caja-mov-type-toggle">
+              <button class="btn caja-type-btn active" data-type="ingreso" type="button">▲ Ingreso</button>
+              <button class="btn caja-type-btn" data-type="egreso" type="button">▼ Egreso</button>
+              <button class="btn caja-type-btn" data-type="transferencia" type="button">⇄ Transferencia</button>
+            </div>
+            <label class="caja-form-label">Cuenta origen
+              <select id="caja-mov-account" class="admin-select"></select>
+            </label>
+            <div id="caja-mov-dest-wrap" hidden>
+              <label class="caja-form-label">Cuenta destino
+                <select id="caja-mov-counterpart" class="admin-select"></select>
+              </label>
+            </div>
+            <label class="caja-form-label">Monto
+              <input type="number" id="caja-mov-amount" class="admin-input" placeholder="0" min="0" step="1" />
+            </label>
+            <label class="caja-form-label">Descripción
+              <input type="text" id="caja-mov-desc" class="admin-input" placeholder="Opcional" />
+            </label>
+            <label class="caja-form-label">Fecha
+              <input type="date" id="caja-mov-date" class="admin-input" />
+            </label>
+            <button class="btn btn-primary" id="caja-mov-save-btn" type="button" style="margin-top:10px;width:100%">Registrar</button>
+          </div>
+        </div>
+
+        <!-- Panel derecho: historial de movimientos -->
+        <div class="caja-right">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+            <span class="dash-section-label" style="margin:0">Movimientos</span>
+            <select id="caja-filter-account" class="admin-select" style="min-width:140px">
+              <option value="all">Todas las cuentas</option>
+            </select>
+            <input type="date" id="caja-filter-from" class="admin-input" style="width:130px" />
+            <input type="date" id="caja-filter-to" class="admin-input" style="width:130px" />
+            <button class="btn btn-small" id="caja-filter-btn" type="button">Filtrar</button>
+            <span class="admin-spacer"></span>
+            <span id="caja-mov-summary" class="muted small"></span>
+          </div>
+          <div class="admin-table-wrap">
+            <table class="admin-table" id="caja-mov-table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Cuenta</th>
+                  <th>Descripción</th>
+                  <th>Tipo</th>
+                  <th class="num">Monto</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="caja-mov-tbody"><tr><td colspan="6" class="muted">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
       </div>
     </section>
 
@@ -1766,6 +1870,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260531a"></script>
+  <script src="/js/admin.js?v=20260531b"></script>
 </body>
 </html>

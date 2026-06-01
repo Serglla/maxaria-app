@@ -362,6 +362,46 @@ db.exec(
   tx();
 })();
 
+// ─── Caja: cuentas y movimientos ─────────────────────────────────────────────
+db.exec(
+  "CREATE TABLE IF NOT EXISTS cash_accounts (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  name TEXT UNIQUE NOT NULL," +
+  "  type TEXT NOT NULL DEFAULT 'efectivo'," +  // efectivo|banco|digital
+  "  active INTEGER NOT NULL DEFAULT 1," +
+  "  sort_order INTEGER NOT NULL DEFAULT 0," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE TABLE IF NOT EXISTS cash_movements (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  account_id INTEGER NOT NULL REFERENCES cash_accounts(id)," +
+  "  type TEXT NOT NULL DEFAULT 'ingreso'," +  // ingreso|egreso
+  "  amount REAL NOT NULL," +
+  "  description TEXT," +
+  "  source TEXT NOT NULL DEFAULT 'manual'," + // manual|cobro|gasto|compra|transferencia
+  "  related_id INTEGER," +                    // id del pago/gasto/compra vinculado
+  "  counterpart_account_id INTEGER REFERENCES cash_accounts(id)," + // transferencias
+  "  movement_date TEXT NOT NULL DEFAULT (date('now'))," +
+  "  registered_by INTEGER REFERENCES users(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_cash_mov_account ON cash_movements(account_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_cash_mov_date ON cash_movements(movement_date);"
+);
+
+// Seed: crear cuentas default si la tabla esta vacia
+(function seedCashAccounts() {
+  const row = db.prepare("SELECT COUNT(*) AS n FROM cash_accounts").get();
+  if (row && row.n > 0) return;
+  const defaults = [
+    { name: "Caja efectivo", type: "efectivo", sort_order: 0 },
+    { name: "Banco",         type: "banco",    sort_order: 1 },
+    { name: "Mercado Pago",  type: "digital",  sort_order: 2 },
+  ];
+  const ins = db.prepare("INSERT INTO cash_accounts (name, type, sort_order) VALUES (?,?,?)");
+  db.transaction(() => defaults.forEach((r) => ins.run(r.name, r.type, r.sort_order)))();
+})();
+
 // Helper: genera el proximo numero de presupuesto en formato 0001-00000001.
 function nextBudgetNumber() {
   const row = db.prepare(
@@ -4281,6 +4321,143 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
   if (!budget) return res.status(404).json({ error: "No encontrado" });
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
   db.prepare("DELETE FROM budgets WHERE id = ?").run(budget.id);
+  res.json({ ok: true });
+});
+
+// ===== CAJA =====
+
+// Helper: saldo de una cuenta
+function cajaSaldo(accountId) {
+  const r = db.prepare(
+    "SELECT COALESCE(SUM(CASE WHEN type='ingreso' THEN amount ELSE -amount END),0) AS saldo" +
+    " FROM cash_movements WHERE account_id=?"
+  ).get(accountId);
+  return r ? r.saldo : 0;
+}
+
+// GET /api/admin/caja — cuentas con saldo
+app.get("/api/admin/caja", requireAdmin, (req, res) => {
+  const accounts = db.prepare(
+    "SELECT ca.*, " +
+    " COALESCE((SELECT SUM(CASE WHEN cm.type='ingreso' THEN cm.amount ELSE -cm.amount END)" +
+    "           FROM cash_movements cm WHERE cm.account_id = ca.id), 0) AS saldo" +
+    " FROM cash_accounts ca ORDER BY ca.sort_order, ca.id"
+  ).all();
+  res.json(accounts);
+});
+
+// POST /api/admin/caja/accounts — crear cuenta
+app.post("/api/admin/caja/accounts", requireAdmin, (req, res) => {
+  const { name, type, sort_order } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: "Nombre requerido" });
+  const validTypes = ["efectivo","banco","digital"];
+  const t = validTypes.includes(type) ? type : "efectivo";
+  try {
+    const r = db.prepare(
+      "INSERT INTO cash_accounts (name, type, sort_order) VALUES (?,?,?)"
+    ).run(name.trim(), t, Number(sort_order) || 0);
+    res.json({ ok: true, id: r.lastInsertRowid });
+  } catch (e) {
+    if (e.message && e.message.includes("UNIQUE")) return res.status(409).json({ error: "Ya existe una cuenta con ese nombre" });
+    throw e;
+  }
+});
+
+// PATCH /api/admin/caja/accounts/:id — editar cuenta
+app.patch("/api/admin/caja/accounts/:id", requireAdmin, (req, res) => {
+  const { name, type, active, sort_order } = req.body;
+  const acc = db.prepare("SELECT * FROM cash_accounts WHERE id=?").get(req.params.id);
+  if (!acc) return res.status(404).json({ error: "No encontrada" });
+  const validTypes = ["efectivo","banco","digital"];
+  const updates = {};
+  if (name !== undefined)       updates.name       = name.trim();
+  if (type !== undefined)       updates.type       = validTypes.includes(type) ? type : acc.type;
+  if (active !== undefined)     updates.active     = active ? 1 : 0;
+  if (sort_order !== undefined) updates.sort_order = Number(sort_order) || 0;
+  if (!Object.keys(updates).length) return res.json({ ok: true });
+  const sets = Object.keys(updates).map((k) => k + "=?").join(",");
+  try {
+    db.prepare("UPDATE cash_accounts SET " + sets + " WHERE id=?")
+      .run(...Object.values(updates), acc.id);
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.message && e.message.includes("UNIQUE")) return res.status(409).json({ error: "Ya existe una cuenta con ese nombre" });
+    throw e;
+  }
+});
+
+// GET /api/admin/caja/movements — listado de movimientos
+app.get("/api/admin/caja/movements", requireAdmin, (req, res) => {
+  const { account_id, from, to, limit: lim } = req.query;
+  const params = [];
+  const where = [];
+  if (account_id && account_id !== "all") { where.push("cm.account_id=?"); params.push(Number(account_id)); }
+  if (from) { where.push("cm.movement_date>=?"); params.push(from); }
+  if (to)   { where.push("cm.movement_date<=?"); params.push(to); }
+  const wStr = where.length ? (" WHERE " + where.join(" AND ")) : "";
+  const rows = db.prepare(
+    "SELECT cm.*, ca.name AS account_name, ca.type AS account_type," +
+    "       cp.name AS counterpart_name," +
+    "       u.username AS registered_by_username" +
+    " FROM cash_movements cm" +
+    " JOIN cash_accounts ca ON ca.id = cm.account_id" +
+    " LEFT JOIN cash_accounts cp ON cp.id = cm.counterpart_account_id" +
+    " LEFT JOIN users u ON u.id = cm.registered_by" +
+    wStr +
+    " ORDER BY cm.movement_date DESC, cm.id DESC" +
+    " LIMIT ?"
+  ).all(...params, Number(lim) || 200);
+  res.json(rows);
+});
+
+// POST /api/admin/caja/movements — registrar movimiento (ingreso/egreso/transferencia)
+app.post("/api/admin/caja/movements", requireAdmin, (req, res) => {
+  const userId = req.session.userId;
+  const { account_id, type, amount, description, movement_date, counterpart_account_id } = req.body;
+  if (!account_id) return res.status(400).json({ error: "Cuenta requerida" });
+  if (!["ingreso","egreso","transferencia"].includes(type)) return res.status(400).json({ error: "Tipo inválido" });
+  const amt = Number(amount);
+  if (!amt || amt <= 0) return res.status(400).json({ error: "Monto inválido" });
+  const acc = db.prepare("SELECT * FROM cash_accounts WHERE id=?").get(account_id);
+  if (!acc) return res.status(404).json({ error: "Cuenta no encontrada" });
+  const date = movement_date || new Date().toISOString().slice(0, 10);
+  const ins = db.prepare(
+    "INSERT INTO cash_movements (account_id, type, amount, description, source, counterpart_account_id, movement_date, registered_by)" +
+    " VALUES (?,?,?,?,?,?,?,?)"
+  );
+
+  if (type === "transferencia") {
+    const cpId = Number(counterpart_account_id);
+    if (!cpId || cpId === Number(account_id)) return res.status(400).json({ error: "Cuenta destino inválida" });
+    const cp = db.prepare("SELECT * FROM cash_accounts WHERE id=?").get(cpId);
+    if (!cp) return res.status(404).json({ error: "Cuenta destino no encontrada" });
+    db.transaction(() => {
+      ins.run(account_id, "egreso",   amt, description || ("Transferencia a " + cp.name),   "transferencia", cpId, date, userId);
+      ins.run(cpId,       "ingreso",  amt, description || ("Transferencia desde " + acc.name), "transferencia", account_id, date, userId);
+    })();
+  } else {
+    ins.run(account_id, type, amt, description, "manual", null, date, userId);
+  }
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/caja/movements/:id — borrar movimiento
+app.delete("/api/admin/caja/movements/:id", requireAdmin, (req, res) => {
+  const mov = db.prepare("SELECT * FROM cash_movements WHERE id=?").get(req.params.id);
+  if (!mov) return res.status(404).json({ error: "No encontrado" });
+  // Si es transferencia, borrar también la contraparte
+  if (mov.source === "transferencia" && mov.counterpart_account_id) {
+    // Buscar el movimiento espejo: mismo amount, misma fecha, cuenta = counterpart, source=transferencia, counterpart=esta cuenta
+    const mirror = db.prepare(
+      "SELECT id FROM cash_movements WHERE source='transferencia' AND account_id=? AND counterpart_account_id=? AND amount=? AND movement_date=? AND id!=?"
+    ).get(mov.counterpart_account_id, mov.account_id, mov.amount, mov.movement_date, mov.id);
+    db.transaction(() => {
+      db.prepare("DELETE FROM cash_movements WHERE id=?").run(mov.id);
+      if (mirror) db.prepare("DELETE FROM cash_movements WHERE id=?").run(mirror.id);
+    })();
+  } else {
+    db.prepare("DELETE FROM cash_movements WHERE id=?").run(mov.id);
+  }
   res.json({ ok: true });
 });
 

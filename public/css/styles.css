@@ -3325,3 +3325,89 @@ button { font: inherit; cursor: pointer; }
   .dash-kpi-value { font-size: 18px; }
   .dash-two-col { grid-template-columns: 1fr; }
 }
+
+/* ═══════════════════════════════════════════
+   CAJA
+   ═══════════════════════════════════════════ */
+#tab-caja { padding: 20px 24px 40px; }
+
+.caja-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.caja-left  { display: flex; flex-direction: column; gap: 0; }
+.caja-right {}
+
+/* Accounts */
+.caja-accounts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.caja-accounts-wrap { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+.caja-acc-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.caja-acc-icon  { font-size: 20px; flex-shrink: 0; }
+.caja-acc-info  { flex: 1; display: flex; flex-direction: column; }
+.caja-acc-name  { font-weight: 600; font-size: 14px; }
+.caja-acc-saldo { font-size: 16px; font-weight: 700; flex-shrink: 0; }
+.caja-acc-pos   { color: #15803d; }
+.caja-acc-neg   { color: #dc2626; }
+
+/* Form box */
+.caja-form-box {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.caja-form-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-top: 10px;
+}
+.caja-form-label:first-of-type { margin-top: 10px; }
+
+/* Type toggle */
+.caja-mov-type-toggle {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.caja-type-btn {
+  flex: 1;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.caja-type-btn.active[data-type="ingreso"]      { background: #dcfce7; border-color: #16a34a; color: #15803d; font-weight:700; }
+.caja-type-btn.active[data-type="egreso"]       { background: #fee2e2; border-color: #dc2626; color: #dc2626; font-weight:700; }
+.caja-type-btn.active[data-type="transferencia"]{ background: #dbeafe; border-color: #3b82f6; color: #1d4ed8; font-weight:700; }
+
+/* Movement table */
+.caja-mov-in  { color: #15803d; font-weight: 600; }
+.caja-mov-out { color: #dc2626; font-weight: 600; }
+
+@media (max-width: 900px) {
+  .caja-layout { grid-template-columns: 1fr; }
+  #tab-caja { padding: 12px 12px 32px; }
+}
