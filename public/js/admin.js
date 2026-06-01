@@ -688,6 +688,7 @@
       closeAdminSidebar();
       els.panels.forEach((p) => { p.hidden = p.id !== "tab-" + tab; });
       if (tab === "dashboard") loadDashboard();
+      if (tab === "reportes") loadReportes();
       if (tab === "pedidos" && !state.ordersLoaded) loadOrders();
       if (tab === "config" && !state.settingsLoaded) loadSettings();
       if (tab === "usuarios") {
@@ -5343,6 +5344,226 @@
 
   const stockHistFilterBtn = document.getElementById("stock-hist-filter-btn");
   if (stockHistFilterBtn) stockHistFilterBtn.addEventListener("click", () => loadStockHistory());
+
+  // ─────────────────────────────────────────────────────────────────
+  // REPORTES DE VENTAS
+  // ─────────────────────────────────────────────────────────────────
+  const rptEls = {
+    from:       document.getElementById("rpt-from"),
+    to:         document.getElementById("rpt-to"),
+    status:     document.getElementById("rpt-status"),
+    client:     document.getElementById("rpt-client"),
+    vendedor:   document.getElementById("rpt-vendedor"),
+    applyBtn:   document.getElementById("rpt-apply-btn"),
+    exportBtn:  document.getElementById("rpt-export-btn"),
+    tbody:      document.getElementById("rpt-tbody"),
+    tfoot:      document.getElementById("rpt-tfoot"),
+  };
+  const rptState = { rows: [], expanded: new Set() };
+
+  function rptFmt(n) { return "$ " + Number(n).toLocaleString("es-AR"); }
+  function rptPct(num, den) { return den > 0 ? Math.round(num / den * 100) + "%" : "—"; }
+  function rptDate(s) { return (s || "").slice(0, 10).split("-").reverse().join("/"); }
+
+  const STATUS_LABEL = { pendiente:"Pendiente", enviado:"Enviado", preparando:"Preparando", entregado:"Entregado", cancelado:"Cancelado" };
+  const STATUS_CLS   = { pendiente:"tag-pendiente", enviado:"tag-enviado", preparando:"tag-preparando", entregado:"tag-entregado", cancelado:"tag-cancelado" };
+
+  // Setea el rango "este mes" por default
+  function rptSetDefaultRange() {
+    if (!rptEls.from || rptEls.from.value) return;
+    const now = new Date();
+    rptEls.from.value = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2,"0") + "-01";
+    rptEls.to.value   = now.toISOString().slice(0, 10);
+  }
+
+  // Llena los selects de cliente y vendedor al abrir el tab (usa state existente)
+  function rptFillSelects() {
+    if (rptEls.client) {
+      const cur = rptEls.client.value;
+      const clients = (state.users || []).filter((u) => u.level >= 1 && u.level <= 4 && u.active);
+      rptEls.client.innerHTML = '<option value="">Todos los clientes</option>' +
+        clients.map((u) => '<option value="' + u.id + '">' + escapeHtml(u.full_name || u.username) + '</option>').join("");
+      if (cur) rptEls.client.value = cur;
+    }
+    if (rptEls.vendedor) {
+      const cur = rptEls.vendedor.value;
+      const vends = (state.vendedoresActiveCache || []);
+      rptEls.vendedor.innerHTML = '<option value="">Todos los vendedores</option>' +
+        vends.map((v) => '<option value="' + v.id + '">' + escapeHtml(v.full_name || v.username) + '</option>').join("");
+      if (cur) rptEls.vendedor.value = cur;
+    }
+  }
+
+  async function loadReportes() {
+    rptSetDefaultRange();
+    // Cargar usuarios y vendedores si no están en caché
+    if (!state.usersLoaded) {
+      try {
+        const [users, vends] = await Promise.all([
+          api("/api/admin/users").catch(() => []),
+          api("/api/admin/vendedores").catch(() => []),
+        ]);
+        state.users = users;
+        state.usersLoaded = true;
+        state.vendedoresActiveCache = (vends || []).filter((v) => v.active);
+      } catch (_) {}
+    }
+    rptFillSelects();
+    await applyReportes();
+  }
+
+  async function applyReportes() {
+    if (!rptEls.tbody) return;
+    rptEls.tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>';
+    if (rptEls.tfoot) rptEls.tfoot.innerHTML = "";
+
+    const qs = [
+      rptEls.from    && rptEls.from.value    ? "from="      + rptEls.from.value    : "",
+      rptEls.to      && rptEls.to.value      ? "to="        + rptEls.to.value      : "",
+      rptEls.status  && rptEls.status.value !== "todos" ? "status=" + rptEls.status.value : "",
+      rptEls.client  && rptEls.client.value  ? "client_id=" + rptEls.client.value  : "",
+      rptEls.vendedor&& rptEls.vendedor.value? "vendedor_id="+ rptEls.vendedor.value: "",
+    ].filter(Boolean).join("&");
+
+    try {
+      const data = await api("/api/admin/reports/sales" + (qs ? "?" + qs : ""));
+      rptState.rows = data.orders || [];
+      rptState.expanded.clear();
+      renderReportes(data);
+    } catch (e) {
+      rptEls.tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Error cargando reporte.</td></tr>';
+    }
+  }
+
+  function renderReportes(data) {
+    const { kpis, cobros, orders } = data;
+    // KPIs
+    const setKpi = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setKpi("rpt-kpi-orders",     kpis.total_orders);
+    setKpi("rpt-kpi-entregados", kpis.entregados + " entregado(s)");
+    setKpi("rpt-kpi-ventas",     rptFmt(kpis.ventas_brutas));
+    setKpi("rpt-kpi-entregadas", "Entregadas: " + rptFmt(kpis.ventas_entregadas));
+    setKpi("rpt-kpi-ticket",     kpis.total_orders > 0 ? rptFmt(Math.round(kpis.ventas_brutas / kpis.total_orders)) : "—");
+    setKpi("rpt-kpi-ganancia",   rptFmt(kpis.ganancia_total));
+    setKpi("rpt-kpi-margen",     rptPct(kpis.ganancia_total, kpis.ventas_brutas) + " del total");
+    setKpi("rpt-kpi-cobros",     rptFmt(cobros.total));
+    setKpi("rpt-kpi-cobros-cnt", cobros.cnt + " pago(s)");
+
+    if (!orders.length) {
+      rptEls.tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Sin pedidos en el período seleccionado.</td></tr>';
+      return;
+    }
+
+    // Tabla
+    let tVentas = 0, tGanancia = 0;
+    rptEls.tbody.innerHTML = orders.map((o) => {
+      tVentas    += Number(o.total)         || 0;
+      tGanancia  += Number(o.earning_total) || 0;
+      const margen = o.total > 0 ? Math.round(o.earning_total / o.total * 100) : 0;
+      const client   = escapeHtml(o.client_name || o.client_username);
+      const vendedor = o.vendedor_name ? escapeHtml(o.vendedor_name) : '<span class="muted">—</span>';
+      const ganHtml  = o.earning_total > 0
+        ? '<span style="color:#15803d">' + rptFmt(o.earning_total) + '</span>'
+        : '<span class="muted">—</span>';
+      return '<tr class="rpt-order-row" data-order-id="' + o.id + '">' +
+        '<td class="muted">#' + o.id + '</td>' +
+        '<td class="muted small">' + rptDate(o.created_at) + '</td>' +
+        '<td>' + client + '</td>' +
+        '<td class="muted small">' + vendedor + '</td>' +
+        '<td><span class="order-tag ' + (STATUS_CLS[o.status] || "") + '">' + (STATUS_LABEL[o.status] || o.status) + '</span></td>' +
+        '<td class="num muted">' + (o.items_count || 0) + '</td>' +
+        '<td class="num"><strong>' + rptFmt(o.total) + '</strong></td>' +
+        '<td class="num">' + ganHtml + '</td>' +
+        '<td class="num muted">' + (margen > 0 ? margen + "%" : "—") + '</td>' +
+        '<td><button class="btn btn-small rpt-detail-btn" type="button" data-id="' + o.id + '">▼</button></td>' +
+        '</tr>' +
+        '<tr class="rpt-detail-row" id="rpt-detail-' + o.id + '" hidden>' +
+        '<td colspan="10" style="padding:0;background:#f8fafc"></td>' +
+        '</tr>';
+    }).join("");
+
+    // Totales
+    const tMargen = tVentas > 0 ? Math.round(tGanancia / tVentas * 100) : 0;
+    rptEls.tfoot.innerHTML =
+      '<tr style="font-weight:700;background:#f1f5f9">' +
+      '<td colspan="6" style="padding:8px 12px">Totales (' + orders.length + ' pedidos)</td>' +
+      '<td class="num">' + rptFmt(tVentas) + '</td>' +
+      '<td class="num" style="color:#15803d">' + rptFmt(tGanancia) + '</td>' +
+      '<td class="num">' + (tMargen > 0 ? tMargen + "%" : "—") + '</td>' +
+      '<td></td></tr>';
+  }
+
+  // Expandir detalle de un pedido
+  if (rptEls.tbody) {
+    rptEls.tbody.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".rpt-detail-btn");
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const detailRow = document.getElementById("rpt-detail-" + id);
+      if (!detailRow) return;
+      if (!detailRow.hidden) {
+        detailRow.hidden = true;
+        btn.textContent = "▼";
+        return;
+      }
+      // Cargar items si no están en caché
+      btn.disabled = true;
+      try {
+        const items = await api("/api/admin/reports/sales/" + id + "/items");
+        const td = detailRow.querySelector("td");
+        if (td) {
+          td.innerHTML = '<div style="padding:8px 16px 12px">' +
+            '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
+            '<thead><tr style="color:#6b7280">' +
+            '<th style="text-align:left;padding:4px 8px">Producto</th>' +
+            '<th style="text-align:right;padding:4px 8px">Cant.</th>' +
+            '<th style="text-align:right;padding:4px 8px">Precio unit.</th>' +
+            '<th style="text-align:right;padding:4px 8px">Subtotal</th>' +
+            '</tr></thead><tbody>' +
+            (items.map((it) =>
+              '<tr><td style="padding:3px 8px">' + escapeHtml(it.product_name) + ' <span style="color:#9ca3af">' + escapeHtml(it.product_code || "") + '</span></td>' +
+              '<td style="text-align:right;padding:3px 8px">' + it.quantity + '</td>' +
+              '<td style="text-align:right;padding:3px 8px">' + rptFmt(it.unit_price) + '</td>' +
+              '<td style="text-align:right;padding:3px 8px"><strong>' + rptFmt(it.subtotal) + '</strong></td></tr>'
+            ).join("") || '<tr><td colspan="4" style="padding:8px;color:#9ca3af">Sin items</td></tr>') +
+            '</tbody></table></div>';
+        }
+        detailRow.hidden = false;
+        btn.textContent = "▲";
+      } catch (_) { showToast("Error cargando items", "err"); }
+      finally { btn.disabled = false; }
+    });
+  }
+
+  // Botón Aplicar
+  if (rptEls.applyBtn) rptEls.applyBtn.addEventListener("click", applyReportes);
+
+  // Export CSV
+  if (rptEls.exportBtn) {
+    rptEls.exportBtn.addEventListener("click", () => {
+      if (!rptState.rows.length) { alert("No hay datos para exportar."); return; }
+      const header = ["#","Fecha","Cliente","Vendedor","Estado","Items","Total","Ganancia","Margen %"];
+      const rows = rptState.rows.map((o) => [
+        o.id,
+        rptDate(o.created_at),
+        '"' + (o.client_name || o.client_username).replace(/"/g,'""') + '"',
+        '"' + (o.vendedor_name || "—").replace(/"/g,'""') + '"',
+        o.status,
+        o.items_count || 0,
+        o.total,
+        Math.round(o.earning_total) || 0,
+        o.total > 0 ? Math.round(o.earning_total / o.total * 100) : 0,
+      ]);
+      const csv = [header, ...rows].map((r) => r.join(",")).join("\n");
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = "reporte-ventas-" + (rptEls.from ? rptEls.from.value : "hoy") + ".csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
 
   // ─────────────────────────────────────────────────────────────────
   // CAJA

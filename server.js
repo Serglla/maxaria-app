@@ -4376,6 +4376,94 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== REPORTES DE VENTAS =====
+
+// GET /api/admin/reports/sales — pedidos con KPIs del período
+// Params: from, to, client_id, vendedor_id, status (default: todos menos cancelado)
+app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
+  const { from, to, client_id, vendedor_id, status } = req.query;
+  const where = ["COALESCE(o.is_unified,0) = 0"];
+  const params = [];
+
+  if (from)        { where.push("date(o.created_at) >= ?"); params.push(from); }
+  if (to)          { where.push("date(o.created_at) <= ?"); params.push(to); }
+  if (client_id)   { where.push("o.user_id = ?");           params.push(Number(client_id)); }
+  if (vendedor_id) { where.push("(o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"); params.push(Number(vendedor_id), Number(vendedor_id)); }
+  if (status === "entregado") {
+    where.push("o.status = 'entregado'");
+  } else if (status === "activo") {
+    where.push("o.status NOT IN ('cancelado','entregado')");
+  } else {
+    where.push("o.status != 'cancelado'");
+  }
+
+  const wStr = " WHERE " + where.join(" AND ");
+
+  // KPIs del período
+  const kpis = db.prepare(
+    "SELECT COUNT(DISTINCT o.id) AS total_orders," +
+    "       SUM(CASE WHEN o.status='entregado' THEN 1 ELSE 0 END) AS entregados," +
+    "       COALESCE(SUM(o.total),0) AS ventas_brutas," +
+    "       COALESCE(SUM(CASE WHEN o.status='entregado' THEN o.total ELSE 0 END),0) AS ventas_entregadas," +
+    "       COALESCE(SUM(oi_agg.cost_total),0) AS costo_total," +
+    "       COALESCE(SUM(oi_agg.earning_total),0) AS ganancia_total" +
+    " FROM orders o" +
+    " JOIN users u ON u.id = o.user_id" +
+    " LEFT JOIN (" +
+    "   SELECT order_id," +
+    "     SUM(COALESCE(vendedor_cost_unit, 0) * quantity) AS cost_total," +
+    "     SUM((unit_price - COALESCE(vendedor_cost_unit, 0)) * quantity) AS earning_total" +
+    "   FROM order_items GROUP BY order_id" +
+    " ) oi_agg ON oi_agg.order_id = o.id" +
+    wStr
+  ).get(...params);
+
+  // Cobros del período
+  const cobros = (() => {
+    const cp = [];
+    const cw = [];
+    if (from) { cw.push("date(created_at) >= ?"); cp.push(from); }
+    if (to)   { cw.push("date(created_at) <= ?"); cp.push(to); }
+    const q = "SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt FROM payments" +
+              (cw.length ? " WHERE " + cw.join(" AND ") : "");
+    return db.prepare(q).get(...cp);
+  })();
+
+  // Lista de pedidos
+  const orders = db.prepare(
+    "SELECT o.id, o.status, o.total, o.created_at, o.notes," +
+    "       u.id AS client_id, u.full_name AS client_name, u.username AS client_username," +
+    "       v.full_name AS vendedor_name, v.username AS vendedor_username," +
+    "       COALESCE(oi_agg.cost_total,0) AS cost_total," +
+    "       COALESCE(oi_agg.earning_total,0) AS earning_total," +
+    "       COALESCE(oi_agg.items_count,0) AS items_count" +
+    " FROM orders o" +
+    " JOIN users u ON u.id = o.user_id" +
+    " LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
+    " LEFT JOIN (" +
+    "   SELECT order_id," +
+    "     SUM(COALESCE(vendedor_cost_unit, 0) * quantity) AS cost_total," +
+    "     SUM((unit_price - COALESCE(vendedor_cost_unit, 0)) * quantity) AS earning_total," +
+    "     SUM(quantity) AS items_count" +
+    "   FROM order_items GROUP BY order_id" +
+    " ) oi_agg ON oi_agg.order_id = o.id" +
+    wStr +
+    " ORDER BY o.id DESC LIMIT 500"
+  ).all(...params);
+
+  res.json({ kpis, cobros, orders });
+});
+
+// GET /api/admin/reports/sales/:orderId/items — ítems de un pedido
+app.get("/api/admin/reports/sales/:orderId/items", requireAdmin, (req, res) => {
+  const items = db.prepare(
+    "SELECT oi.*, p.image_url FROM order_items oi" +
+    " LEFT JOIN products p ON p.id = oi.product_id" +
+    " WHERE oi.order_id = ?"
+  ).all(req.params.orderId);
+  res.json(items);
+});
+
 // ===== AJUSTES DE STOCK =====
 
 // GET /api/admin/stock-adjustments — historial (filtrable por product_id, from, to)

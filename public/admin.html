@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260531e" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260531f" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -93,6 +93,9 @@
 
         <div class="admin-sidebar-group">
           <div class="admin-sidebar-group-title">Reportes</div>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="reportes" type="button">
+            <span class="admin-sidebar-item-icon">📈</span>Reportes
+          </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="actividad" type="button">
             <span class="admin-sidebar-item-icon">📊</span>Actividad
           </button>
@@ -572,6 +575,91 @@
             </tr>
           </thead>
           <tbody id="vend-tbody"><tr><td colspan="11" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== TAB REPORTES ===== -->
+    <section class="tab-panel" id="tab-reportes" hidden>
+      <!-- Filtros -->
+      <div class="rpt-toolbar">
+        <label class="rpt-filter-label">Desde
+          <input type="date" id="rpt-from" class="admin-input" />
+        </label>
+        <label class="rpt-filter-label">Hasta
+          <input type="date" id="rpt-to" class="admin-input" />
+        </label>
+        <label class="rpt-filter-label">Estado
+          <select id="rpt-status" class="admin-select">
+            <option value="todos">Todos (sin cancelados)</option>
+            <option value="entregado">Solo entregados</option>
+            <option value="activo">Solo activos</option>
+          </select>
+        </label>
+        <label class="rpt-filter-label">Cliente
+          <select id="rpt-client" class="admin-select">
+            <option value="">Todos</option>
+          </select>
+        </label>
+        <label class="rpt-filter-label">Vendedor
+          <select id="rpt-vendedor" class="admin-select">
+            <option value="">Todos</option>
+          </select>
+        </label>
+        <button class="btn btn-primary" id="rpt-apply-btn" type="button">Aplicar</button>
+        <button class="btn btn-ghost" id="rpt-export-btn" type="button" title="Exportar como CSV">⬇ CSV</button>
+      </div>
+
+      <!-- KPIs -->
+      <div class="dash-kpi-row" id="rpt-kpi-row" style="margin:0 24px 16px">
+        <div class="dash-kpi dash-kpi-accent">
+          <div class="dash-kpi-label">Pedidos</div>
+          <div class="dash-kpi-value" id="rpt-kpi-orders">—</div>
+          <div class="dash-kpi-sub" id="rpt-kpi-entregados"></div>
+        </div>
+        <div class="dash-kpi dash-kpi-accent">
+          <div class="dash-kpi-label">Ventas brutas</div>
+          <div class="dash-kpi-value" id="rpt-kpi-ventas">—</div>
+          <div class="dash-kpi-sub" id="rpt-kpi-entregadas"></div>
+        </div>
+        <div class="dash-kpi">
+          <div class="dash-kpi-label">Ticket promedio</div>
+          <div class="dash-kpi-value" id="rpt-kpi-ticket">—</div>
+          <div class="dash-kpi-sub">por pedido</div>
+        </div>
+        <div class="dash-kpi dash-kpi-good">
+          <div class="dash-kpi-label">Ganancia neta</div>
+          <div class="dash-kpi-value" id="rpt-kpi-ganancia">—</div>
+          <div class="dash-kpi-sub" id="rpt-kpi-margen"></div>
+        </div>
+        <div class="dash-kpi">
+          <div class="dash-kpi-label">Cobros del período</div>
+          <div class="dash-kpi-value" id="rpt-kpi-cobros">—</div>
+          <div class="dash-kpi-sub" id="rpt-kpi-cobros-cnt"></div>
+        </div>
+      </div>
+
+      <!-- Tabla de pedidos -->
+      <div class="admin-table-wrap" style="margin:0 24px">
+        <table class="admin-table" id="rpt-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Vendedor</th>
+              <th>Estado</th>
+              <th class="num">Items</th>
+              <th class="num">Total</th>
+              <th class="num">Ganancia</th>
+              <th class="num">Margen</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="rpt-tbody">
+            <tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Aplicá los filtros para ver el reporte.</td></tr>
+          </tbody>
+          <tfoot id="rpt-tfoot"></tfoot>
         </table>
       </div>
     </section>
@@ -2031,6 +2119,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260531e"></script>
+  <script src="/js/admin.js?v=20260531f"></script>
 </body>
 </html>
