@@ -2487,46 +2487,40 @@ button { font: inherit; cursor: pointer; }
 
 /* ====== Modal de categorías por usuario ====== */
 .cats-check-list {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px 8px;
+  margin: 12px 0;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+label.cats-check {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  margin: 12px 0;
-  max-height: 300px;
-  overflow-y: auto;
-}
-.cats-check {
-  display: inline-flex;
+  flex-direction: row;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 5px 8px;
   background: #f9fafb;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 12px;
+  line-height: 1.25;
   cursor: pointer;
   user-select: none;
-  min-width: 120px;
+  min-width: 0;
 }
-.cats-check input[type="checkbox"] { margin: 0; }
- 8px 12px;
-  margin: 12px 0;
-  max-height: 300px;
-  overflow-y: auto;
+label.cats-check input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
 }
-.cats-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  font-size: 14px;
-  cursor: pointer;
-  user-select: none;
-  min-width: 120px;
+.cats-check-lbl {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.cats-check input[type="checkbox"] { margin: 0; }
 
 /* ====== Vendedores & Entregas: nuevas secciones ====== */
 

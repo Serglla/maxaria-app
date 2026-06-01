@@ -925,9 +925,9 @@
       }
       els.userCatsList.innerHTML = allCats.map((c) => {
         const checked = c.allowed ? " checked" : "";
-        return '<label class="cfg-check cats-check">' +
-          '<input type="checkbox" data-cat-id="' + c.id + '"' + checked + ' /> ' +
-          escapeHtml(c.name) +
+        return '<label class="cats-check" title="' + escapeHtml(c.name) + '">' +
+          '<input type="checkbox" data-cat-id="' + c.id + '"' + checked + ' />' +
+          '<span class="cats-check-lbl">' + escapeHtml(c.name) + '</span>' +
         '</label>';
       }).join("");
     } catch (err) {
@@ -4253,10 +4253,11 @@
     els.catalogCatsWrap.innerHTML = "";
     state.allCategories.forEach((c) => {
       const lbl = document.createElement("label");
-      lbl.style.cssText = "display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px";
+      lbl.className = "cats-check";
+      lbl.title = c.name;
       lbl.innerHTML =
-        '<input type="checkbox" data-cat-id="' + c.id + '" checked style="width:15px;height:15px"> ' +
-        escapeHtml(c.name);
+        '<input type="checkbox" data-cat-id="' + c.id + '" checked>' +
+        '<span class="cats-check-lbl">' + escapeHtml(c.name) + '</span>';
       els.catalogCatsWrap.appendChild(lbl);
     });
 
