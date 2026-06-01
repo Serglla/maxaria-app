@@ -10,7 +10,7 @@
  * Versionar CACHE_VERSION fuerza la invalidación de caches viejos al hacer deploy.
  */
 
-const CACHE_VERSION = "maxaria-v2";
+const CACHE_VERSION = "maxaria-v3";
 const STATIC_CACHE  = CACHE_VERSION + "-static";
 const PAGES_CACHE   = CACHE_VERSION + "-pages";
 const IMAGES_CACHE  = CACHE_VERSION + "-images";

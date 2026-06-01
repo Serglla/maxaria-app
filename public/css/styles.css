@@ -1226,16 +1226,24 @@ button { font: inherit; cursor: pointer; }
 .product-modal-img {
   background: #f3f4f6;
   aspect-ratio: 1 / 1;
-  display: grid;
-  place-items: center;
+  position: relative;
   overflow: hidden;
   border-radius: 12px 12px 0 0;
 }
+/* La imagen se posiciona en absoluto con inset para que el alto quede acotado
+   por el alto real del marco (el aspect-ratio no da un alto "definido" para
+   resolver height:100%, así que una imagen vertical se desbordaba y quedaba
+   recortada arriba y abajo). max-width/height + margin:auto la centran y la
+   contienen entera, sea vertical, cuadrada o apaisada. */
 .product-modal-img img {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 16px;
+  margin: auto;
+  width: auto;
+  height: auto;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 32px);
   object-fit: contain;
-  padding: 16px;
 }
 .product-modal-body {
   padding: 16px 20px 20px;
