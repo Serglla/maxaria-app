@@ -1894,6 +1894,39 @@ app.get("/api/admin/products", requireAdmin, (req, res) => {
   res.json(db.prepare(sql).all());
 });
 
+// Crear producto nuevo
+app.post("/api/admin/products", requireAdmin, (req, res) => {
+  const { code, name, category_id, cost, price_minorista, price_revendedor,
+          price_mayorista, price_vip, price_publico, stock } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: "Nombre requerido" });
+  if (!code || !String(code).trim()) return res.status(400).json({ error: "Código requerido" });
+  const existing = db.prepare("SELECT id FROM products WHERE code=?").get(String(code).trim());
+  if (existing) return res.status(409).json({ error: "Ya existe un producto con ese código" });
+  const num = (v) => { const n = Math.round(Number(v)); return isFinite(n) ? Math.max(0, n) : 0; };
+  try {
+    const r = db.prepare(
+      "INSERT INTO products (code, name, category_id, cost, price_minorista, price_revendedor," +
+      " price_mayorista, price_vip, price_publico, stock, active)" +
+      " VALUES (?,?,?,?,?,?,?,?,?,?,1)"
+    ).run(
+      String(code).trim(),
+      String(name).trim(),
+      category_id ? Number(category_id) : null,
+      num(cost), num(price_minorista), num(price_revendedor),
+      num(price_mayorista), num(price_vip), num(price_publico),
+      num(stock)
+    );
+    // Devolver el producto creado (con category_name para el state del frontend)
+    const created = db.prepare(
+      "SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE p.id=?"
+    ).get(r.lastInsertRowid);
+    res.json({ ok: true, product: created });
+  } catch (e) {
+    if (e.message && e.message.includes("UNIQUE")) return res.status(409).json({ error: "Código duplicado" });
+    throw e;
+  }
+});
+
 // Editar campos puntuales de un producto
 app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);

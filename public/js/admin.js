@@ -5080,6 +5080,82 @@
   }
 
   // ─────────────────────────────────────────────────────────────────
+  // NUEVO PRODUCTO
+  // ─────────────────────────────────────────────────────────────────
+  const newProdModal   = document.getElementById("new-product-modal");
+  const newProdBtn     = document.getElementById("new-product-btn");
+  const npSaveBtn      = document.getElementById("np-save-btn");
+  const npCategorySelect = document.getElementById("np-category");
+
+  function npFillCategories() {
+    if (!npCategorySelect) return;
+    const cats = [...new Set(state.products.map((p) => p.category_name).filter(Boolean))].sort();
+    // Usar también state.allCategories si está disponible
+    const allCats = state.allCategories && state.allCategories.length ? state.allCategories : cats.map((n) => ({ name: n }));
+    npCategorySelect.innerHTML = '<option value="">— Sin categoría —</option>' +
+      allCats.map((c) => '<option value="' + (c.id || "") + '">' + escapeHtml(c.name) + '</option>').join("");
+  }
+
+  function npResetForm() {
+    ["np-code","np-name","np-stock","np-cost","np-minorista","np-revendedor","np-mayorista","np-vip","np-publico"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = (id === "np-stock" || id === "np-cost" || id.startsWith("np-m") || id.startsWith("np-v") || id.startsWith("np-r") || id.startsWith("np-p")) ? "0" : "";
+    });
+    if (npCategorySelect) npCategorySelect.value = "";
+  }
+
+  if (newProdBtn) {
+    newProdBtn.addEventListener("click", () => {
+      npResetForm();
+      npFillCategories();
+      if (newProdModal) newProdModal.hidden = false;
+      const codeEl = document.getElementById("np-code");
+      if (codeEl) codeEl.focus();
+    });
+  }
+
+  if (npSaveBtn) {
+    npSaveBtn.addEventListener("click", async () => {
+      const code = (document.getElementById("np-code")?.value || "").trim();
+      const name = (document.getElementById("np-name")?.value || "").trim();
+      if (!code) { alert("El código es obligatorio."); return; }
+      if (!name) { alert("El nombre es obligatorio."); return; }
+      const catSel = document.getElementById("np-category");
+      const body = {
+        code,
+        name,
+        category_id:       catSel && catSel.value ? Number(catSel.value) : null,
+        stock:             Number(document.getElementById("np-stock")?.value)     || 0,
+        cost:              Number(document.getElementById("np-cost")?.value)      || 0,
+        price_minorista:   Number(document.getElementById("np-minorista")?.value) || 0,
+        price_revendedor:  Number(document.getElementById("np-revendedor")?.value)|| 0,
+        price_mayorista:   Number(document.getElementById("np-mayorista")?.value) || 0,
+        price_vip:         Number(document.getElementById("np-vip")?.value)       || 0,
+        price_publico:     Number(document.getElementById("np-publico")?.value)   || 0,
+      };
+      try {
+        npSaveBtn.disabled = true;
+        const result = await api("/api/admin/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        // Agregar al state y re-renderizar
+        state.products.unshift(result.product);
+        populateCategoryFilter(state.products);
+        applyFilters();
+        showToast("Producto creado: " + name);
+        if (newProdModal) newProdModal.hidden = true;
+      } catch (e) {
+        alert(e.message || "Error al crear producto");
+      } finally {
+        npSaveBtn.disabled = false;
+      }
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
   // AJUSTES DE STOCK
   // ─────────────────────────────────────────────────────────────────
   const adjModal     = document.getElementById("stock-adj-modal");

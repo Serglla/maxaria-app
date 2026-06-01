@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260531c" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260531d" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -289,6 +289,7 @@
           <input type="file" id="excel-file" accept=".xlsx,.xls" hidden />
         </label>
         <button class="btn" id="catalog-btn" type="button" title="Generar catálogo en PDF con lista de precios a elección">📄 Catálogo PDF</button>
+        <button class="btn btn-primary" id="new-product-btn" type="button">+ Nuevo producto</button>
         <button class="btn" id="stock-adj-history-btn" type="button" title="Ver historial de ajustes de stock">📋 Ajustes</button>
       </div>
 
@@ -1869,6 +1870,54 @@
     </div>
   </section>
 
+  <!-- Modal nuevo producto -->
+  <div id="new-product-modal" class="admin-modal" hidden>
+    <div class="admin-modal-box" style="max-width:560px">
+      <div class="admin-modal-head">
+        <strong>Nuevo producto</strong>
+        <button type="button" class="admin-modal-close" data-close>✕</button>
+      </div>
+      <div style="padding:16px 20px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label class="caja-form-label" style="grid-column:1/2">Código <span style="color:#dc2626">*</span>
+            <input type="text" id="np-code" class="admin-input" placeholder="ej: ABC-001" />
+          </label>
+          <label class="caja-form-label" style="grid-column:2/3">Categoría
+            <select id="np-category" class="admin-select"></select>
+          </label>
+          <label class="caja-form-label" style="grid-column:1/-1">Nombre <span style="color:#dc2626">*</span>
+            <input type="text" id="np-name" class="admin-input" placeholder="Nombre del producto" />
+          </label>
+          <label class="caja-form-label">Stock inicial
+            <input type="number" id="np-stock" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          </label>
+          <label class="caja-form-label">Costo
+            <input type="number" id="np-cost" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          </label>
+          <label class="caja-form-label">Precio minorista
+            <input type="number" id="np-minorista" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          </label>
+          <label class="caja-form-label">Precio revendedor
+            <input type="number" id="np-revendedor" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          </label>
+          <label class="caja-form-label">Precio mayorista
+            <input type="number" id="np-mayorista" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          </label>
+          <label class="caja-form-label">Precio VIP
+            <input type="number" id="np-vip" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          </label>
+          <label class="caja-form-label">Precio público
+            <input type="number" id="np-publico" class="admin-input" placeholder="0" min="0" step="1" value="0" />
+          </label>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="button" class="btn btn-primary" id="np-save-btn">Crear producto</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal ajuste de stock -->
   <div id="stock-adj-modal" class="admin-modal" hidden>
     <div class="admin-modal-box" style="max-width:420px">
@@ -1947,6 +1996,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260531c"></script>
+  <script src="/js/admin.js?v=20260531d"></script>
 </body>
 </html>
