@@ -3466,6 +3466,29 @@ button { font: inherit; cursor: pointer; }
 .np-pct { width: 60px !important; padding: 4px 6px !important; }
 .np-preview { font-size: 13px; font-weight: 600; text-align: right; }
 
+/* Grilla bidireccional %  ↔  precio */
+.bidir-header,
+.bidir-row {
+  display: grid;
+  grid-template-columns: 80px 68px 14px 1fr;
+  gap: 6px;
+  align-items: center;
+}
+.bidir-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.bidir-row { margin-top: 6px; }
+.bidir-lbl { font-size: 12px; font-weight: 700; color: #374151; }
+.bidir-pct  { text-align: right; padding: 4px 6px !important; }
+.bidir-price { text-align: right; padding: 4px 6px !important; }
+
 /* ═══════════════════════════════════════════
    AJUSTES DE STOCK
    ═══════════════════════════════════════════ */

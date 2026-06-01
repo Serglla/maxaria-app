@@ -716,14 +716,73 @@ Sergio pidió que el botón "🧾 Venta" no abra un modal sobre el catálogo sin
 - Tampoco hubo truncamientos en archivos grandes — los Edits a `server.js` (~3380 líneas), `app.js` (~2000) y `styles.css` (~2400) se aplicaron sin problemas.
 - La sesión consistió en 8 commits en `master` pusheados a `origin`: `6c09104`, `3e3633e`, `4b177ca`, `8646956`, `ab6fbb4`, `62d691a`, `4f623ad`, más el bumpeo de cache.
 
+### Control de gestión — funcionalidades nuevas (31 mayo 2026)
+
+Sesión completa de expansión funcional. Todo en la misma branch de trabajo. Cache busting final: `?v=20260531i`.
+
+#### Dashboard KPIs (pestaña nueva en /admin, solo admin)
+
+- Primera entrada de la sidebar ("General → 🏠 Dashboard"). Al abrir /admin el admin aterriza acá directamente.
+- Endpoint `GET /api/admin/dashboard` devuelve en una sola llamada: ventas hoy/semana/mes/mes anterior, cobros hoy/mes, pedidos activos por estado, deuda total clientes, stock cero/bajo/ok, últimos 8 pedidos, top 5 deudores.
+- UI: 3 filas de KPI cards (ventas, operaciones, stock) + tabla de últimos pedidos + tabla de mayores deudores. Botón ↺ recarga.
+- Los vendedores siguen arrancando en Pedidos (no ven el dashboard).
+
+#### Caja — múltiples cuentas (pestaña "Finanzas → 💰 Caja")
+
+- Schema: `cash_accounts` (id, name, type efectivo|banco|digital, active, sort_order) + `cash_movements` (id, account_id, type ingreso|egreso, amount, description, source manual|cobro|gasto|compra|transferencia, counterpart_account_id, movement_date, registered_by).
+- Seed automático: 3 cuentas default (Caja efectivo, Banco, Mercado Pago).
+- API: `GET /api/admin/caja`, `POST /api/admin/caja/accounts`, `PATCH /api/admin/caja/accounts/:id`, `GET /api/admin/caja/movements`, `POST /api/admin/caja/movements`, `DELETE /api/admin/caja/movements/:id`.
+- Transferencia entre cuentas crea dos movimientos en transacción (egreso origen + ingreso destino); al borrar elimina ambos.
+- UI: layout 2 columnas — izquierda (cards de saldo por cuenta + form de movimiento con toggle ingreso/egreso/transferencia) + derecha (historial filtrable con resumen "Ingresos | Egresos | Neto").
+
+#### Ajustes de stock manuales
+
+- Schema: `stock_adjustments` (product_id, type ajuste|inventario|merma|devolucion, qty_before, qty_change, qty_after, reason, registered_by).
+- API: `GET /api/admin/stock-adjustments` (filtrable por product_id, from, to), `POST /api/admin/stock-adjustments` (modo `set` fijar o `delta` sumar/restar; actualiza products.stock en transacción).
+- UI: botón **±** al final de cada fila de productos → modal con modo fijar/sumar, tipo, nota, preview del cambio. Botón **📋 Ajustes** en toolbar abre historial global con búsqueda y filtro de fechas.
+
+#### Reportes de ventas (pestaña "Reportes → 📈 Reportes")
+
+- Endpoint `GET /api/admin/reports/sales` + `GET /api/admin/reports/sales/:orderId/items`.
+- Filtros: desde/hasta (default este mes), estado (todos/entregado/activo), cliente, vendedor.
+- KPIs del período: pedidos totales y entregados, ventas brutas y entregadas, ticket promedio, ganancia neta + % margen, cobros registrados.
+- Tabla: pedido por pedido con fecha, cliente, vendedor, estado, items, total, ganancia, margen. Cada fila tiene botón ▼ que expande el detalle de ítems (lazy load).
+- Totales en el tfoot.
+- Botón **⬇ CSV** exporta el reporte filtrado como UTF-8 BOM CSV.
+
+#### Nuevo producto — modal mejorado
+
+- Botón **+ Nuevo producto** en toolbar de Productos.
+- Endpoint `POST /api/admin/products` (valida código único, devuelve el producto creado con category_name para el state del frontend).
+- Código sugerido automáticamente: busca el valor numérico máximo entre todos los códigos existentes y suma 1. Para los productos de Sergio (códigos tipo `4087`) sugiere `4088`. Fallback para códigos con sufijo alfanumérico.
+- Base de precios = **Costo**. Fórmula: `precio = costo × (1 + pct/100)`. Ej: costo 100 + 12% → $112.
+- Precios derivados en orden VIP → Revendedor → Mayorista → Minorista → Público, con preview en tiempo real.
+- Los porcentajes se guardan en `localStorage` (clave `maxaria_np_pcts`) y se restauran en la próxima apertura del modal.
+- Defaults iniciales: VIP 110%, Revendedor 130%, Mayorista 120%, Minorista 150%, Público 150%.
+
+#### Edición de productos — modal al doble click
+
+- La tabla de productos pasó a ser **completamente de solo lectura**. Los `<input>` inline fueron eliminados. Cada celda muestra el valor como texto. Stock en 0 aparece en rojo.
+- **Doble click** en cualquier fila abre el modal de edición pre-cargado con todos los campos: código (read-only), categoría, nombre, stock, costo, los 5 precios (VIP/Revendedor/Mayorista/Minorista/Público), checkbox activo.
+- Al guardar hace PATCH, actualiza el state local y re-renderiza sin recargar.
+- El botón ± de ajuste de stock sigue siendo un solo click (no interfiere con el doble click).
+- Se eliminó el auto-save listener de "change" en el tbody de productos.
+
+#### Convenciones nuevas
+
+- **Cache busting**: cada vez que se modifiquen `admin.js`, `app.js`, `ventas.js` o `styles.css` y se quiera que el browser traiga la versión nueva, bumpear el query string `?v=YYYYMMDD<letra>` en el tag `<link>` o `<script>` de `admin.html`, `index.html` o `ventas.html`.
+- **Bash mount stale**: el bind mount Linux sigue siendo unreliable para verificar archivos editados por las file tools. Siempre usar `Read` como fuente de verdad. Si bash y Read difieren, confiar en Read.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.
-2. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias, `add-client.sh`, README de despliegue.
-3. **Backups externos automáticos**: rclone a B2/S3/Drive.
-4. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
-5. **Wizard de primer arranque**: guía para clientes nuevos en el primer login de admin.
-6. **Decisión sobre `plain_password`**: eliminar el campo de la DB. Para mostrar la pass al admin al crear usuario, devolverla solo en la respuesta JSON de ese POST (sin persistir). Para export/import basta con `password_hash`.
+2. **Cuenta corriente con proveedores**: simétrico a lo que ya existe para clientes — registrar deuda que genera cada orden de compra y los pagos a proveedores.
+3. **Remito PDF por entrega**: documento de entrega descargable/enviable por WA (reutiliza la infra del catálogo PDF).
+4. **Alerta de stock mínimo**: campo `stock_min` por producto + indicador en dashboard + lista de "reponer".
+5. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias.
+6. **Backups externos automáticos**: rclone a B2/S3/Drive.
+7. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
+8. **Decisión sobre `plain_password`**: eliminar el campo de la DB. Para mostrar la pass al admin al crear usuario, devolverla solo en la respuesta JSON de ese POST (sin persistir).
 
 ### Objetivo de negocio
 Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.

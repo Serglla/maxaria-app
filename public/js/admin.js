@@ -5061,7 +5061,32 @@
   const editProdModal   = document.getElementById("edit-product-modal");
   const epSaveBtn       = document.getElementById("ep-save-btn");
   const epCatSelect     = document.getElementById("ep-category");
+  const epCostInp       = document.getElementById("ep-cost");
   let   editProdId      = null;
+
+  // Pares pctId → priceId para el modal Editar
+  const EP_PAIRS = [
+    { pctId: "ep-vip-pct",        priceId: "ep-vip"        },
+    { pctId: "ep-revendedor-pct", priceId: "ep-revendedor" },
+    { pctId: "ep-mayorista-pct",  priceId: "ep-mayorista"  },
+    { pctId: "ep-minorista-pct",  priceId: "ep-minorista"  },
+    { pctId: "ep-publico-pct",    priceId: "ep-publico"    },
+  ];
+
+  function epGetCost() { return Math.round(Number(epCostInp ? epCostInp.value : 0)) || 0; }
+  function epPctToPrice(cost, pct)   { return cost > 0 ? Math.round(cost * (1 + pct / 100)) : 0; }
+  function epPriceToPct(cost, price) { return cost > 0 ? Math.round((price / cost - 1) * 100) : 0; }
+
+  // Cuando cambia el costo, recalcula todos los precios manteniendo sus %
+  function epRecalcAllPrices() {
+    const cost = epGetCost();
+    EP_PAIRS.forEach(({ pctId, priceId }) => {
+      const pctEl   = document.getElementById(pctId);
+      const priceEl = document.getElementById(priceId);
+      if (!pctEl || !priceEl) return;
+      priceEl.value = epPctToPrice(cost, Number(pctEl.value) || 0);
+    });
+  }
 
   function epFillCategories() {
     if (!epCatSelect) return;
@@ -5077,21 +5102,48 @@
     editProdId = p.id;
     epFillCategories();
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-    set("ep-code",       p.code        || "");
-    set("ep-name",       p.name        || "");
-    set("ep-stock",      p.stock       || 0);
-    set("ep-cost",       p.cost        || 0);
-    set("ep-minorista",  p.price_minorista  || 0);
-    set("ep-revendedor", p.price_revendedor || 0);
-    set("ep-mayorista",  p.price_mayorista  || 0);
-    set("ep-vip",        p.price_vip        || 0);
-    set("ep-publico",    p.price_publico    || 0);
+    set("ep-code",  p.code  || "");
+    set("ep-name",  p.name  || "");
+    set("ep-stock", p.stock || 0);
+    set("ep-cost",  p.cost  || 0);
+    // Precios
+    const prices = {
+      "ep-vip":        p.price_vip        || 0,
+      "ep-revendedor": p.price_revendedor || 0,
+      "ep-mayorista":  p.price_mayorista  || 0,
+      "ep-minorista":  p.price_minorista  || 0,
+      "ep-publico":    p.price_publico    || 0,
+    };
+    Object.entries(prices).forEach(([id, val]) => set(id, val));
+    // Calcular % iniciales desde costo y precio guardados
+    const cost = p.cost || 0;
+    EP_PAIRS.forEach(({ pctId, priceId }) => {
+      const pctEl = document.getElementById(pctId);
+      if (pctEl) pctEl.value = epPriceToPct(cost, prices[priceId] || 0);
+    });
     if (epCatSelect) epCatSelect.value = p.category_id || "";
     const activeChk = document.getElementById("ep-active");
     if (activeChk) activeChk.checked = !!p.active;
     if (editProdModal) editProdModal.hidden = false;
     const nameEl = document.getElementById("ep-name");
     if (nameEl) nameEl.focus();
+  }
+
+  // Cuando cambia el costo → recalcula precios
+  if (epCostInp) epCostInp.addEventListener("input", epRecalcAllPrices);
+
+  // Bidireccional: para cada par (pct ↔ precio)
+  if (editProdModal) {
+    EP_PAIRS.forEach(({ pctId, priceId }) => {
+      const pctEl   = document.getElementById(pctId);
+      const priceEl = document.getElementById(priceId);
+      if (pctEl) pctEl.addEventListener("input", () => {
+        priceEl.value = epPctToPrice(epGetCost(), Number(pctEl.value) || 0);
+      });
+      if (priceEl) priceEl.addEventListener("input", () => {
+        pctEl.value = epPriceToPct(epGetCost(), Number(priceEl.value) || 0);
+      });
+    });
   }
 
   if (epSaveBtn) {
@@ -5148,34 +5200,40 @@
   const newProdBtn       = document.getElementById("new-product-btn");
   const npSaveBtn        = document.getElementById("np-save-btn");
   const npCategorySelect = document.getElementById("np-category");
-  const npCostInp = document.getElementById("np-cost");
+  const npCostInp        = document.getElementById("np-cost");
 
-  // Sugiere el siguiente código: busca el código con valor numérico más alto
-  function npSuggestCode() {
-    if (!state.products.length) return "";
-    let maxNum = -1;
-    state.products.forEach((p) => {
-      const n = parseInt((p.code || "").trim(), 10);
-      if (!isNaN(n) && n > maxNum) maxNum = n;
+  // Pares pctId → priceId para el modal Nuevo
+  const NP_PAIRS = [
+    { pctId: "np-vip-pct",  priceId: "np-vip"  },
+    { pctId: "np-rev-pct",  priceId: "np-rev"  },
+    { pctId: "np-may-pct",  priceId: "np-may"  },
+    { pctId: "np-min-pct",  priceId: "np-min"  },
+    { pctId: "np-pub-pct",  priceId: "np-pub"  },
+  ];
+  const NP_LS_KEY = "maxaria_np_pcts2";
+
+  function npGetCost() { return Math.round(Number(npCostInp ? npCostInp.value : 0)) || 0; }
+
+  // costo + % → precio
+  function npPctToPrice(cost, pct) { return cost > 0 ? Math.round(cost * (1 + pct / 100)) : 0; }
+  // costo + precio → %
+  function npPriceToPct(cost, price) { return cost > 0 ? Math.round((price / cost - 1) * 100) : 0; }
+
+  // Recalcula todos los precios desde sus % actuales (cuando cambia el costo)
+  function npRecalcAllPrices() {
+    const cost = npGetCost();
+    NP_PAIRS.forEach(({ pctId, priceId }) => {
+      const pctEl   = document.getElementById(pctId);
+      const priceEl = document.getElementById(priceId);
+      if (!pctEl || !priceEl) return;
+      priceEl.value = npPctToPrice(cost, Number(pctEl.value) || 0);
     });
-    if (maxNum >= 0) return String(maxNum + 1);
-    // Fallback: código del producto con mayor id, incrementando sufijo
-    const last = state.products.reduce((a, b) => (b.id > a.id ? b : a));
-    const m = (last.code || "").trim().match(/^(.*?)(\d+)$/);
-    if (m) return m[1] + String(parseInt(m[2], 10) + 1).padStart(m[2].length, "0");
-    return "";
   }
-
-  // Calcula y muestra los precios derivados en tiempo real (base = costo)
-  // Fórmula: precio = costo + costo × pct/100  (ej: costo 100, 12% → 112)
-  // Orden: VIP → Revendedor → Mayorista → Minorista → Público
-  const NP_PCT_FIELDS = ["np-pct-vip","np-pct-rev","np-pct-may","np-pct-min","np-pct-pub"];
-  const NP_LS_KEY = "maxaria_np_pcts";
 
   function npSavePcts() {
     try {
       const obj = {};
-      NP_PCT_FIELDS.forEach((id) => { const el = document.getElementById(id); if (el) obj[id] = el.value; });
+      NP_PAIRS.forEach(({ pctId }) => { const el = document.getElementById(pctId); if (el) obj[pctId] = el.value; });
       localStorage.setItem(NP_LS_KEY, JSON.stringify(obj));
     } catch (_) {}
   }
@@ -5183,31 +5241,11 @@
   function npLoadPcts() {
     try {
       const saved = JSON.parse(localStorage.getItem(NP_LS_KEY) || "{}");
-      NP_PCT_FIELDS.forEach((id) => {
-        const el = document.getElementById(id);
-        if (el && saved[id] !== undefined) el.value = saved[id];
+      NP_PAIRS.forEach(({ pctId }) => {
+        const el = document.getElementById(pctId);
+        if (el && saved[pctId] !== undefined) el.value = saved[pctId];
       });
     } catch (_) {}
-  }
-
-  function npUpdatePreviews() {
-    const base = Math.round(Number(npCostInp ? npCostInp.value : 0)) || 0;
-    const fmtP = (n) => "$ " + Math.round(n).toLocaleString("es-AR");
-    [
-      { pctId: "np-pct-vip", prevId: "np-prev-vip" },
-      { pctId: "np-pct-rev", prevId: "np-prev-rev" },
-      { pctId: "np-pct-may", prevId: "np-prev-may" },
-      { pctId: "np-pct-min", prevId: "np-prev-min" },
-      { pctId: "np-pct-pub", prevId: "np-prev-pub" },
-    ].forEach(({ pctId, prevId }) => {
-      const pctEl  = document.getElementById(pctId);
-      const prevEl = document.getElementById(prevId);
-      if (!pctEl || !prevEl) return;
-      const pct   = Number(pctEl.value) || 0;
-      const price = Math.round(base * (1 + pct / 100)); // costo + X%
-      prevEl.textContent = fmtP(price);
-      prevEl.style.color = price > 0 ? "#0f172a" : "#9ca3af";
-    });
   }
 
   function npFillCategories() {
@@ -5228,19 +5266,47 @@
     if (document.getElementById("np-stock")) document.getElementById("np-stock").value = "0";
     if (npCostInp) npCostInp.value = "0";
     // Cargar últimos % usados (o defaults si es la primera vez)
-    const defaults = { "np-pct-vip": 110, "np-pct-rev": 130, "np-pct-may": 120, "np-pct-min": 150, "np-pct-pub": 150 };
+    const defaults = { "np-vip-pct": 110, "np-rev-pct": 130, "np-may-pct": 120, "np-min-pct": 150, "np-pub-pct": 150 };
     Object.entries(defaults).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v; });
     npLoadPcts(); // sobreescribe con los guardados si existen
-    npUpdatePreviews();
+    npRecalcAllPrices(); // precios a 0 (costo=0)
     if (newProdModal) newProdModal.hidden = false;
     if (document.getElementById("np-name")) document.getElementById("np-name").focus();
   }
 
+  // Sugiere el siguiente código: busca el código con valor numérico más alto
+  function npSuggestCode() {
+    if (!state.products.length) return "";
+    let maxNum = -1;
+    state.products.forEach((p) => {
+      const n = parseInt((p.code || "").trim(), 10);
+      if (!isNaN(n) && n > maxNum) maxNum = n;
+    });
+    if (maxNum >= 0) return String(maxNum + 1);
+    const last = state.products.reduce((a, b) => (b.id > a.id ? b : a));
+    const m = (last.code || "").trim().match(/^(.*?)(\d+)$/);
+    if (m) return m[1] + String(parseInt(m[2], 10) + 1).padStart(m[2].length, "0");
+    return "";
+  }
+
   if (newProdBtn) newProdBtn.addEventListener("click", npOpenModal);
 
-  // Live preview al cambiar costo o cualquier %
-  if (npCostInp) npCostInp.addEventListener("input", npUpdatePreviews);
-  document.querySelectorAll(".np-pct").forEach((el) => el.addEventListener("input", npUpdatePreviews));
+  // Cuando cambia el costo → recalcula todos los precios
+  if (npCostInp) npCostInp.addEventListener("input", npRecalcAllPrices);
+
+  // Bidireccional: para cada par (pct ↔ precio)
+  if (newProdModal) {
+    NP_PAIRS.forEach(({ pctId, priceId }) => {
+      const pctEl   = document.getElementById(pctId);
+      const priceEl = document.getElementById(priceId);
+      if (pctEl) pctEl.addEventListener("input", () => {
+        priceEl.value = npPctToPrice(npGetCost(), Number(pctEl.value) || 0);
+      });
+      if (priceEl) priceEl.addEventListener("input", () => {
+        pctEl.value = npPriceToPct(npGetCost(), Number(priceEl.value) || 0);
+      });
+    });
+  }
 
   if (npSaveBtn) {
     npSaveBtn.addEventListener("click", async () => {
@@ -5248,10 +5314,9 @@
       const name = (document.getElementById("np-name")?.value || "").trim();
       if (!code) { alert("El código es obligatorio."); return; }
       if (!name) { alert("El nombre es obligatorio."); return; }
-      const cost = Math.round(Number(npCostInp ? npCostInp.value : 0)) || 0;
+      const cost = npGetCost();
       if (!cost) { alert("Ingresá un costo mayor a 0."); return; }
-      const pct = (id) => Number(document.getElementById(id)?.value) || 0;
-      const fromCost = (p) => Math.round(cost * (1 + pct(p) / 100));
+      const getPrice = (id) => Math.round(Number(document.getElementById(id)?.value) || 0);
       npSavePcts();
       const body = {
         code,
@@ -5259,11 +5324,11 @@
         category_id:      npCategorySelect && npCategorySelect.value ? Number(npCategorySelect.value) : null,
         stock:            Number(document.getElementById("np-stock")?.value) || 0,
         cost,
-        price_minorista:  fromCost("np-pct-min"),
-        price_revendedor: fromCost("np-pct-rev"),
-        price_mayorista:  fromCost("np-pct-may"),
-        price_vip:        fromCost("np-pct-vip"),
-        price_publico:    fromCost("np-pct-pub"),
+        price_vip:        getPrice("np-vip"),
+        price_revendedor: getPrice("np-rev"),
+        price_mayorista:  getPrice("np-may"),
+        price_minorista:  getPrice("np-min"),
+        price_publico:    getPrice("np-pub"),
       };
       try {
         npSaveBtn.disabled = true;

@@ -1990,14 +1990,39 @@
             <input type="number" id="ep-cost" class="admin-input" min="0" step="1" />
           </label>
         </div>
-        <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
-          <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px">Precios</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px">
-            <label class="np-label"><span>VIP</span><input type="number" id="ep-vip" class="admin-input" min="0" step="1" /></label>
-            <label class="np-label"><span>Revendedor</span><input type="number" id="ep-revendedor" class="admin-input" min="0" step="1" /></label>
-            <label class="np-label"><span>Mayorista</span><input type="number" id="ep-mayorista" class="admin-input" min="0" step="1" /></label>
-            <label class="np-label"><span>Minorista</span><input type="number" id="ep-minorista" class="admin-input" min="0" step="1" /></label>
-            <label class="np-label"><span>Público</span><input type="number" id="ep-publico" class="admin-input" min="0" step="1" /></label>
+        <div id="ep-prices-box" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
+          <div class="bidir-header">
+            <span>Nivel</span><span style="text-align:right">%</span><span></span><span>Precio</span>
+          </div>
+          <div class="bidir-row">
+            <span class="bidir-lbl">VIP</span>
+            <input type="number" id="ep-vip-pct" class="admin-input bidir-pct" data-price="ep-vip" step="1" placeholder="0" />
+            <span class="muted">%</span>
+            <input type="number" id="ep-vip" class="admin-input bidir-price" data-pct="ep-vip-pct" min="0" step="1" />
+          </div>
+          <div class="bidir-row">
+            <span class="bidir-lbl">Revendedor</span>
+            <input type="number" id="ep-revendedor-pct" class="admin-input bidir-pct" data-price="ep-revendedor" step="1" placeholder="0" />
+            <span class="muted">%</span>
+            <input type="number" id="ep-revendedor" class="admin-input bidir-price" data-pct="ep-revendedor-pct" min="0" step="1" />
+          </div>
+          <div class="bidir-row">
+            <span class="bidir-lbl">Mayorista</span>
+            <input type="number" id="ep-mayorista-pct" class="admin-input bidir-pct" data-price="ep-mayorista" step="1" placeholder="0" />
+            <span class="muted">%</span>
+            <input type="number" id="ep-mayorista" class="admin-input bidir-price" data-pct="ep-mayorista-pct" min="0" step="1" />
+          </div>
+          <div class="bidir-row">
+            <span class="bidir-lbl">Minorista</span>
+            <input type="number" id="ep-minorista-pct" class="admin-input bidir-pct" data-price="ep-minorista" step="1" placeholder="0" />
+            <span class="muted">%</span>
+            <input type="number" id="ep-minorista" class="admin-input bidir-price" data-pct="ep-minorista-pct" min="0" step="1" />
+          </div>
+          <div class="bidir-row">
+            <span class="bidir-lbl">Público</span>
+            <input type="number" id="ep-publico-pct" class="admin-input bidir-pct" data-price="ep-publico" step="1" placeholder="0" />
+            <span class="muted">%</span>
+            <input type="number" id="ep-publico" class="admin-input bidir-price" data-pct="ep-publico-pct" min="0" step="1" />
           </div>
         </div>
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer">
@@ -2048,46 +2073,40 @@
           </label>
         </div>
 
-        <!-- Precios — todos derivados del costo -->
-        <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
-          <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px">
-            Precios — % del costo
+        <!-- Precios — % del costo, bidireccional -->
+        <div id="np-prices-box" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
+          <div class="bidir-header">
+            <span>Nivel</span><span style="text-align:right">%</span><span></span><span>Precio</span>
           </div>
-          <div style="display:grid;grid-template-columns:1fr 80px 90px;gap:6px 10px;align-items:center;font-size:13px">
-            <span style="font-weight:600;color:#374151">VIP</span>
-            <div style="display:flex;align-items:center;gap:3px">
-              <input type="number" id="np-pct-vip" class="admin-input np-pct" value="110" min="0" max="9999" step="1" style="text-align:right" />
-              <span class="muted">%</span>
-            </div>
-            <span class="np-preview muted" id="np-prev-vip">$ 0</span>
-
-            <span style="font-weight:600;color:#374151">Revendedor</span>
-            <div style="display:flex;align-items:center;gap:3px">
-              <input type="number" id="np-pct-rev" class="admin-input np-pct" value="130" min="0" max="9999" step="1" style="text-align:right" />
-              <span class="muted">%</span>
-            </div>
-            <span class="np-preview muted" id="np-prev-rev">$ 0</span>
-
-            <span style="font-weight:600;color:#374151">Mayorista</span>
-            <div style="display:flex;align-items:center;gap:3px">
-              <input type="number" id="np-pct-may" class="admin-input np-pct" value="120" min="0" max="9999" step="1" style="text-align:right" />
-              <span class="muted">%</span>
-            </div>
-            <span class="np-preview muted" id="np-prev-may">$ 0</span>
-
-            <span style="font-weight:600;color:#0f172a">Minorista</span>
-            <div style="display:flex;align-items:center;gap:3px">
-              <input type="number" id="np-pct-min" class="admin-input np-pct" value="150" min="0" max="9999" step="1" style="text-align:right" />
-              <span class="muted">%</span>
-            </div>
-            <span class="np-preview" id="np-prev-min">$ 0</span>
-
-            <span style="font-weight:600;color:#374151">Público</span>
-            <div style="display:flex;align-items:center;gap:3px">
-              <input type="number" id="np-pct-pub" class="admin-input np-pct" value="150" min="0" max="9999" step="1" style="text-align:right" />
-              <span class="muted">%</span>
-            </div>
-            <span class="np-preview muted" id="np-prev-pub">$ 0</span>
+          <div class="bidir-row">
+            <span class="bidir-lbl">VIP</span>
+            <input type="number" id="np-vip-pct" class="admin-input bidir-pct" data-price="np-vip" step="1" value="110" />
+            <span class="muted">%</span>
+            <input type="number" id="np-vip" class="admin-input bidir-price" data-pct="np-vip-pct" min="0" step="1" value="0" />
+          </div>
+          <div class="bidir-row">
+            <span class="bidir-lbl">Revendedor</span>
+            <input type="number" id="np-rev-pct" class="admin-input bidir-pct" data-price="np-rev" step="1" value="130" />
+            <span class="muted">%</span>
+            <input type="number" id="np-rev" class="admin-input bidir-price" data-pct="np-rev-pct" min="0" step="1" value="0" />
+          </div>
+          <div class="bidir-row">
+            <span class="bidir-lbl">Mayorista</span>
+            <input type="number" id="np-may-pct" class="admin-input bidir-pct" data-price="np-may" step="1" value="120" />
+            <span class="muted">%</span>
+            <input type="number" id="np-may" class="admin-input bidir-price" data-pct="np-may-pct" min="0" step="1" value="0" />
+          </div>
+          <div class="bidir-row">
+            <span class="bidir-lbl">Minorista</span>
+            <input type="number" id="np-min-pct" class="admin-input bidir-pct" data-price="np-min" step="1" value="150" />
+            <span class="muted">%</span>
+            <input type="number" id="np-min" class="admin-input bidir-price" data-pct="np-min-pct" min="0" step="1" value="0" />
+          </div>
+          <div class="bidir-row">
+            <span class="bidir-lbl">Público</span>
+            <input type="number" id="np-pub-pct" class="admin-input bidir-pct" data-price="np-pub" step="1" value="150" />
+            <span class="muted">%</span>
+            <input type="number" id="np-pub" class="admin-input bidir-price" data-pct="np-pub-pct" min="0" step="1" value="0" />
           </div>
         </div>
 
@@ -2177,6 +2196,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260531i"></script>
+  <script src="/js/admin.js?v=20260601a"></script>
 </body>
 </html>
