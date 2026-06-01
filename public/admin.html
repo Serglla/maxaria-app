@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260531f" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260531g" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -1992,41 +1992,43 @@
           </label>
         </div>
 
-        <!-- Precio base minorista -->
-        <label class="np-label">Precio minorista <span class="req">*</span>
-          <input type="number" id="np-minorista" class="admin-input" placeholder="0" min="0" step="1" value="0" />
-        </label>
-
-        <!-- Precios derivados por % del minorista -->
+        <!-- Precios — todos derivados del costo -->
         <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
           <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px">
-            Precios derivados — % del minorista
+            Precios — % del costo
           </div>
           <div style="display:grid;grid-template-columns:1fr 80px 90px;gap:6px 10px;align-items:center;font-size:13px">
+            <span style="font-weight:600;color:#374151">VIP</span>
+            <div style="display:flex;align-items:center;gap:3px">
+              <input type="number" id="np-pct-vip" class="admin-input np-pct" value="110" min="0" max="9999" step="1" style="text-align:right" />
+              <span class="muted">%</span>
+            </div>
+            <span class="np-preview muted" id="np-prev-vip">$ 0</span>
+
             <span style="font-weight:600;color:#374151">Revendedor</span>
             <div style="display:flex;align-items:center;gap:3px">
-              <input type="number" id="np-pct-rev" class="admin-input np-pct" value="90" min="0" max="200" step="1" style="text-align:right" />
+              <input type="number" id="np-pct-rev" class="admin-input np-pct" value="130" min="0" max="9999" step="1" style="text-align:right" />
               <span class="muted">%</span>
             </div>
             <span class="np-preview muted" id="np-prev-rev">$ 0</span>
 
             <span style="font-weight:600;color:#374151">Mayorista</span>
             <div style="display:flex;align-items:center;gap:3px">
-              <input type="number" id="np-pct-may" class="admin-input np-pct" value="80" min="0" max="200" step="1" style="text-align:right" />
+              <input type="number" id="np-pct-may" class="admin-input np-pct" value="120" min="0" max="9999" step="1" style="text-align:right" />
               <span class="muted">%</span>
             </div>
             <span class="np-preview muted" id="np-prev-may">$ 0</span>
 
-            <span style="font-weight:600;color:#374151">VIP</span>
+            <span style="font-weight:600;color:#0f172a">Minorista</span>
             <div style="display:flex;align-items:center;gap:3px">
-              <input type="number" id="np-pct-vip" class="admin-input np-pct" value="70" min="0" max="200" step="1" style="text-align:right" />
+              <input type="number" id="np-pct-min" class="admin-input np-pct" value="150" min="0" max="9999" step="1" style="text-align:right" />
               <span class="muted">%</span>
             </div>
-            <span class="np-preview muted" id="np-prev-vip">$ 0</span>
+            <span class="np-preview" id="np-prev-min">$ 0</span>
 
             <span style="font-weight:600;color:#374151">Público</span>
             <div style="display:flex;align-items:center;gap:3px">
-              <input type="number" id="np-pct-pub" class="admin-input np-pct" value="100" min="0" max="200" step="1" style="text-align:right" />
+              <input type="number" id="np-pct-pub" class="admin-input np-pct" value="150" min="0" max="9999" step="1" style="text-align:right" />
               <span class="muted">%</span>
             </div>
             <span class="np-preview muted" id="np-prev-pub">$ 0</span>
@@ -2119,6 +2121,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260531f"></script>
+  <script src="/js/admin.js?v=20260531g"></script>
 </body>
 </html>

@@ -5087,32 +5087,34 @@
   const newProdBtn       = document.getElementById("new-product-btn");
   const npSaveBtn        = document.getElementById("np-save-btn");
   const npCategorySelect = document.getElementById("np-category");
-  const npMinoristaInp   = document.getElementById("np-minorista");
+  const npCostInp = document.getElementById("np-cost");
 
-  // Sugiere el siguiente código a partir de los existentes
+  // Sugiere el siguiente código: busca el código con valor numérico más alto
   function npSuggestCode() {
     if (!state.products.length) return "";
-    // Producto con el id más alto (el más reciente)
+    let maxNum = -1;
+    state.products.forEach((p) => {
+      const n = parseInt((p.code || "").trim(), 10);
+      if (!isNaN(n) && n > maxNum) maxNum = n;
+    });
+    if (maxNum >= 0) return String(maxNum + 1);
+    // Fallback: código del producto con mayor id, incrementando sufijo
     const last = state.products.reduce((a, b) => (b.id > a.id ? b : a));
-    const code = (last.code || "").trim();
-    // Intentar incrementar el sufijo numérico: "ABC-001" → "ABC-002"
-    const m = code.match(/^(.*?)(\d+)$/);
-    if (m) {
-      const prefix = m[1];
-      const n      = parseInt(m[2], 10) + 1;
-      return prefix + String(n).padStart(m[2].length, "0");
-    }
-    return code ? code + "-2" : "";
+    const m = (last.code || "").trim().match(/^(.*?)(\d+)$/);
+    if (m) return m[1] + String(parseInt(m[2], 10) + 1).padStart(m[2].length, "0");
+    return "";
   }
 
-  // Calcula y muestra los precios derivados en tiempo real
+  // Calcula y muestra los precios derivados en tiempo real (base = costo)
+  // Orden: VIP → Revendedor → Mayorista → Minorista → Público
   function npUpdatePreviews() {
-    const base = Math.round(Number(npMinoristaInp ? npMinoristaInp.value : 0)) || 0;
+    const base = Math.round(Number(npCostInp ? npCostInp.value : 0)) || 0;
     const fmtP = (n) => "$ " + Math.round(n).toLocaleString("es-AR");
     [
+      { pctId: "np-pct-vip", prevId: "np-prev-vip" },
       { pctId: "np-pct-rev", prevId: "np-prev-rev" },
       { pctId: "np-pct-may", prevId: "np-prev-may" },
-      { pctId: "np-pct-vip", prevId: "np-prev-vip" },
+      { pctId: "np-pct-min", prevId: "np-prev-min" },
       { pctId: "np-pct-pub", prevId: "np-prev-pub" },
     ].forEach(({ pctId, prevId }) => {
       const pctEl  = document.getElementById(pctId);
@@ -5139,12 +5141,11 @@
     npFillCategories();
     const codeEl = document.getElementById("np-code");
     if (codeEl) codeEl.value = npSuggestCode();
-    if (document.getElementById("np-name"))    document.getElementById("np-name").value    = "";
-    if (document.getElementById("np-stock"))   document.getElementById("np-stock").value   = "0";
-    if (document.getElementById("np-cost"))    document.getElementById("np-cost").value    = "0";
-    if (npMinoristaInp) npMinoristaInp.value = "0";
+    if (document.getElementById("np-name"))  document.getElementById("np-name").value  = "";
+    if (document.getElementById("np-stock")) document.getElementById("np-stock").value = "0";
+    if (npCostInp) npCostInp.value = "0";
     // Resetear %
-    const defaults = { "np-pct-rev": 90, "np-pct-may": 80, "np-pct-vip": 70, "np-pct-pub": 100 };
+    const defaults = { "np-pct-vip": 110, "np-pct-rev": 130, "np-pct-may": 120, "np-pct-min": 150, "np-pct-pub": 150 };
     Object.entries(defaults).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v; });
     npUpdatePreviews();
     if (newProdModal) newProdModal.hidden = false;
@@ -5153,8 +5154,8 @@
 
   if (newProdBtn) newProdBtn.addEventListener("click", npOpenModal);
 
-  // Live preview al cambiar minorista o cualquier %
-  if (npMinoristaInp) npMinoristaInp.addEventListener("input", npUpdatePreviews);
+  // Live preview al cambiar costo o cualquier %
+  if (npCostInp) npCostInp.addEventListener("input", npUpdatePreviews);
   document.querySelectorAll(".np-pct").forEach((el) => el.addEventListener("input", npUpdatePreviews));
 
   if (npSaveBtn) {
