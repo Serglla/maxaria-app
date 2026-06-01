@@ -3713,16 +3713,40 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
     mayorista: "price_mayorista", vip: "price_vip", publico: "price_publico",
   };
   let priceCol = "price_minorista", priceLabel = "Minorista", markup = null;
-  if (pConf.type === "list" && pConf.listId) {
+  let chgBaseLevel = "minorista"; // base_level usado para la sección de cambios
+  const lvlNames = { 1: "minorista", 2: "revendedor", 3: "mayorista", 4: "vip" };
+  if (pConf.type === "client" && pConf.userId) {
+    // El catálogo se arma con la config de precios efectiva del cliente
+    // (su lista personalizada si tiene, o su nivel base).
+    const cu = db.prepare(
+      "SELECT id, full_name, username, level FROM users WHERE id = ? AND level BETWEEN 1 AND 4"
+    ).get(Number(pConf.userId));
+    if (!cu) return res.status(400).json({ error: "Cliente no encontrado" });
+    const cfg = getEffectivePriceConfig(cu.id, cu.level);
+    priceCol = cfg.column;
+    const cname = cu.full_name || cu.username || ("Cliente #" + cu.id);
+    if (cfg.kind === "list") {
+      markup = Number(cfg.markup_percent) || 0;
+      const li = db.prepare("SELECT name, base_level FROM price_lists WHERE id = ?").get(cfg.listId);
+      priceLabel = cname + " (" + ((li && li.name) || "lista") + ")";
+      chgBaseLevel = (li && li.base_level) || "minorista";
+    } else {
+      const lk = lvlNames[cu.level] || "minorista";
+      priceLabel = cname + " (" + lk.charAt(0).toUpperCase() + lk.slice(1) + ")";
+      chgBaseLevel = lk;
+    }
+  } else if (pConf.type === "list" && pConf.listId) {
     const lst = db.prepare("SELECT * FROM price_lists WHERE id = ? AND active = 1").get(Number(pConf.listId));
     if (!lst) return res.status(400).json({ error: "Lista de precios no encontrada o inactiva" });
     priceCol = priceColumnForBaseLevel(lst.base_level);
     markup = Number(lst.markup_percent) || 0;
     priceLabel = lst.name;
+    chgBaseLevel = lst.base_level || "minorista";
   } else {
     priceCol = lvlMap[pConf.level] || "price_minorista";
     const lk = pConf.level || "minorista";
     priceLabel = lk.charAt(0).toUpperCase() + lk.slice(1);
+    chgBaseLevel = lk;
   }
 
   // WA destino
@@ -3810,17 +3834,10 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
 
   // ── Sección de cambios de precio (páginas iniciales) ──────────────────────
   if (includePriceChanges) {
-    // Determinar columnas de old/new según el nivel base del catálogo
-    const chgLvlKey = (function () {
-      if (pConf.type === "list" && pConf.listId) {
-        const lst2 = db.prepare("SELECT base_level FROM price_lists WHERE id = ?").get(Number(pConf.listId));
-        return (lst2 && lst2.base_level) || "minorista";
-      }
-      return pConf.level || "minorista";
-    })();
-    // price_changes guarda old_/new_ para minorista/revendedor/mayorista/vip
-    // publico no tiene columnas propias → cae a minorista
-    const chgKey = ["revendedor", "mayorista", "vip"].includes(chgLvlKey) ? chgLvlKey : "minorista";
+    // Determinar columnas de old/new según el nivel base del catálogo.
+    // price_changes guarda old_/new_ para minorista/revendedor/mayorista/vip;
+    // publico y costo no tienen columnas propias → caen a minorista.
+    const chgKey = ["revendedor", "mayorista", "vip"].includes(chgBaseLevel) ? chgBaseLevel : "minorista";
     const oldCol = "old_" + chgKey, newCol = "new_" + chgKey;
 
     const lastUpdate = db.prepare(

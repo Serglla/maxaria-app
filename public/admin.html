@@ -1710,20 +1710,30 @@
       <h3>📄 Generar catálogo PDF</h3>
       <form id="catalog-form" class="user-form">
 
-        <label>Lista de precios
-          <select id="catalog-price-select" name="price" required>
-            <optgroup label="Niveles base">
-              <option value="level:minorista">Minorista</option>
-              <option value="level:revendedor">Revendedor</option>
-              <option value="level:mayorista">Mayorista</option>
-              <option value="level:vip">VIP</option>
-              <option value="level:publico">Precio público</option>
-            </optgroup>
-            <optgroup label="Listas personalizadas" id="catalog-price-lists-group">
-              <!-- se llena dinámicamente -->
-            </optgroup>
+        <label>¿Para quién es el catálogo?
+          <select id="catalog-client-select" name="client">
+            <option value="">— Sin cliente (elegir lista manualmente) —</option>
+            <!-- se llena dinámicamente con clientes -->
           </select>
         </label>
+        <p class="muted" id="catalog-client-hint" style="font-size:12px;margin-top:2px">Si elegís un cliente, el catálogo usa automáticamente su lista de precios.</p>
+
+        <div id="catalog-price-wrap">
+          <label>Lista de precios
+            <select id="catalog-price-select" name="price">
+              <optgroup label="Niveles base">
+                <option value="level:minorista">Minorista</option>
+                <option value="level:revendedor">Revendedor</option>
+                <option value="level:mayorista">Mayorista</option>
+                <option value="level:vip">VIP</option>
+                <option value="level:publico">Precio público</option>
+              </optgroup>
+              <optgroup label="Listas personalizadas" id="catalog-price-lists-group">
+                <!-- se llena dinámicamente -->
+              </optgroup>
+            </select>
+          </label>
+        </div>
 
         <label style="margin-bottom:4px">Categorías a incluir <span class="muted">(todas marcadas = catálogo completo)</span></label>
         <div id="catalog-cats-wrap" style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;max-height:200px;overflow-y:auto;display:grid;grid-template-columns:repeat(3,1fr);gap:6px 4px">
@@ -2196,6 +2206,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260601c"></script>
+  <script src="/js/admin.js?v=20260601d"></script>
 </body>
 </html>

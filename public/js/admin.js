@@ -298,6 +298,9 @@
     catalogBtn: document.getElementById("catalog-btn"),
     catalogModal: document.getElementById("catalog-modal"),
     catalogForm: document.getElementById("catalog-form"),
+    catalogClientSelect: document.getElementById("catalog-client-select"),
+    catalogClientHint: document.getElementById("catalog-client-hint"),
+    catalogPriceWrap: document.getElementById("catalog-price-wrap"),
     catalogPriceSelect: document.getElementById("catalog-price-select"),
     catalogPriceListsGroup: document.getElementById("catalog-price-lists-group"),
     catalogCatsWrap: document.getElementById("catalog-cats-wrap"),
@@ -4290,7 +4293,56 @@
       els.catalogWaSelect.appendChild(grpV);
     }
 
+    // Poblar select de cliente (clientes activos level 1-4). Si se elige uno,
+    // el catálogo usa su lista de precios efectiva automáticamente.
+    if (els.catalogClientSelect) {
+      els.catalogClientSelect.innerHTML =
+        '<option value="">— Sin cliente (elegir lista manualmente) —</option>';
+      allUsers
+        .filter((u) => u.active && Number(u.level) >= 1 && Number(u.level) <= 4)
+        .sort((a, b) => (a.full_name || a.username || "").localeCompare(b.full_name || b.username || ""))
+        .forEach((u) => {
+          const o = document.createElement("option");
+          o.value = u.id;
+          o.textContent = (u.full_name || u.username) + " — " + catalogClientPriceLabel(u);
+          els.catalogClientSelect.appendChild(o);
+        });
+      els.catalogClientSelect.value = "";
+      syncCatalogClientUI();
+    }
+
     els.catalogModal.hidden = false;
+  }
+
+  // Devuelve el nombre de la lista/nivel efectivo de un cliente para mostrar en el hint.
+  function catalogClientPriceLabel(u) {
+    if (u.price_list_id) {
+      const pl = (state.priceLists || []).find((l) => l.id === u.price_list_id && l.active);
+      if (pl) return pl.name;
+    }
+    return { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" }[Number(u.level)] || "Minorista";
+  }
+
+  // Muestra/oculta el selector manual de lista según haya o no cliente elegido.
+  function syncCatalogClientUI() {
+    const sel = els.catalogClientSelect;
+    if (!sel) return;
+    const hasClient = !!sel.value;
+    if (els.catalogPriceWrap) els.catalogPriceWrap.style.display = hasClient ? "none" : "";
+    if (els.catalogClientHint) {
+      if (hasClient) {
+        const txt = sel.options[sel.selectedIndex].textContent;
+        const after = txt.indexOf("—") >= 0 ? txt.slice(txt.indexOf("—") + 1).trim() : "";
+        els.catalogClientHint.textContent = "Se usará la lista del cliente" + (after ? ": " + after : "") + ".";
+      } else {
+        els.catalogClientHint.textContent =
+          "Si elegís un cliente, el catálogo usa automáticamente su lista de precios.";
+      }
+    }
+  }
+
+  if (els.catalogClientSelect) {
+    els.catalogClientSelect.addEventListener("change", syncCatalogClientUI);
   }
 
   if (els.catalogBtn) {
@@ -4316,13 +4368,19 @@
       els.catalogGenerateBtn.disabled = true;
       els.catalogGenerateBtn.textContent = "Generando…";
 
-      // Armar priceConfig
-      const priceVal = els.catalogPriceSelect.value; // "level:minorista" | "list:5"
+      // Armar priceConfig: si hay cliente elegido, el server resuelve su lista
+      // efectiva; si no, se usa la lista/nivel elegido manualmente.
+      const clientId = els.catalogClientSelect ? Number(els.catalogClientSelect.value) || 0 : 0;
       let priceConfig;
-      if (priceVal.startsWith("list:")) {
-        priceConfig = { type: "list", listId: Number(priceVal.split(":")[1]) };
+      if (clientId) {
+        priceConfig = { type: "client", userId: clientId };
       } else {
-        priceConfig = { type: "level", level: priceVal.split(":")[1] || "minorista" };
+        const priceVal = els.catalogPriceSelect.value; // "level:minorista" | "list:5"
+        if (priceVal.startsWith("list:")) {
+          priceConfig = { type: "list", listId: Number(priceVal.split(":")[1]) };
+        } else {
+          priceConfig = { type: "level", level: priceVal.split(":")[1] || "minorista" };
+        }
       }
 
       // Categorías seleccionadas (vacío = todas)
