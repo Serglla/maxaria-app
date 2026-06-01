@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260529b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260531a" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -52,8 +52,15 @@
       </div>
       <nav class="admin-sidebar-nav admin-tabs">
         <div class="admin-sidebar-group">
+          <div class="admin-sidebar-group-title">General</div>
+          <button class="tab-btn admin-sidebar-item admin-only active" data-tab="dashboard" type="button">
+            <span class="admin-sidebar-item-icon">🏠</span>Dashboard
+          </button>
+        </div>
+
+        <div class="admin-sidebar-group">
           <div class="admin-sidebar-group-title">Catálogo</div>
-          <button class="tab-btn admin-sidebar-item active" data-tab="productos" type="button">
+          <button class="tab-btn admin-sidebar-item" data-tab="productos" type="button">
             <span class="admin-sidebar-item-icon">📦</span>Productos
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="price-lists" type="button">
@@ -124,8 +131,131 @@
 
   <main class="admin-main">
 
+    <!-- ===== TAB DASHBOARD ===== -->
+    <section class="tab-panel" id="tab-dashboard" hidden>
+      <div class="dash-header">
+        <h2 class="dash-title">Resumen del negocio</h2>
+        <button class="btn btn-ghost" id="dash-reload" type="button" title="Actualizar datos">↺ Actualizar</button>
+      </div>
+
+      <!-- Fila 1: KPIs de ventas -->
+      <div class="dash-section-label">Ventas</div>
+      <div class="dash-kpi-row">
+        <div class="dash-kpi">
+          <div class="dash-kpi-label">Hoy</div>
+          <div class="dash-kpi-value" id="dash-sales-today">—</div>
+          <div class="dash-kpi-sub" id="dash-sales-today-cnt"></div>
+        </div>
+        <div class="dash-kpi">
+          <div class="dash-kpi-label">Esta semana</div>
+          <div class="dash-kpi-value" id="dash-sales-week">—</div>
+          <div class="dash-kpi-sub" id="dash-sales-week-cnt"></div>
+        </div>
+        <div class="dash-kpi dash-kpi-accent">
+          <div class="dash-kpi-label">Este mes</div>
+          <div class="dash-kpi-value" id="dash-sales-month">—</div>
+          <div class="dash-kpi-sub" id="dash-sales-month-vs"></div>
+        </div>
+        <div class="dash-kpi">
+          <div class="dash-kpi-label">Cobros hoy</div>
+          <div class="dash-kpi-value" id="dash-cobros-today">—</div>
+          <div class="dash-kpi-sub">recibidos</div>
+        </div>
+        <div class="dash-kpi">
+          <div class="dash-kpi-label">Cobros del mes</div>
+          <div class="dash-kpi-value" id="dash-cobros-month">—</div>
+          <div class="dash-kpi-sub" id="dash-cobros-month-cnt"></div>
+        </div>
+      </div>
+
+      <!-- Fila 2: Estado operativo -->
+      <div class="dash-section-label">Operaciones</div>
+      <div class="dash-kpi-row">
+        <div class="dash-kpi dash-kpi-warn" id="dash-kpi-pendientes">
+          <div class="dash-kpi-label">Pendientes</div>
+          <div class="dash-kpi-value" id="dash-orders-pendiente">—</div>
+          <div class="dash-kpi-sub">por preparar</div>
+        </div>
+        <div class="dash-kpi dash-kpi-warn" id="dash-kpi-enviados">
+          <div class="dash-kpi-label">Enviados</div>
+          <div class="dash-kpi-value" id="dash-orders-enviado">—</div>
+          <div class="dash-kpi-sub">a confirmar</div>
+        </div>
+        <div class="dash-kpi dash-kpi-warn" id="dash-kpi-preparando">
+          <div class="dash-kpi-label">En preparación</div>
+          <div class="dash-kpi-value" id="dash-orders-preparando">—</div>
+          <div class="dash-kpi-sub">en curso</div>
+        </div>
+        <div class="dash-kpi dash-kpi-good">
+          <div class="dash-kpi-label">Entregados hoy</div>
+          <div class="dash-kpi-value" id="dash-entregados-hoy">—</div>
+          <div class="dash-kpi-sub">pedidos</div>
+        </div>
+        <div class="dash-kpi dash-kpi-danger" id="dash-kpi-deuda">
+          <div class="dash-kpi-label">Deuda clientes</div>
+          <div class="dash-kpi-value" id="dash-deuda-total">—</div>
+          <div class="dash-kpi-sub">saldo total</div>
+        </div>
+      </div>
+
+      <!-- Fila 3: Stock -->
+      <div class="dash-section-label">Stock</div>
+      <div class="dash-kpi-row">
+        <div class="dash-kpi dash-kpi-danger">
+          <div class="dash-kpi-label">Sin stock</div>
+          <div class="dash-kpi-value" id="dash-stock-cero">—</div>
+          <div class="dash-kpi-sub">productos activos</div>
+        </div>
+        <div class="dash-kpi dash-kpi-warn">
+          <div class="dash-kpi-label">Stock bajo (1–5)</div>
+          <div class="dash-kpi-value" id="dash-stock-bajo">—</div>
+          <div class="dash-kpi-sub">productos activos</div>
+        </div>
+        <div class="dash-kpi dash-kpi-good">
+          <div class="dash-kpi-label">Con stock</div>
+          <div class="dash-kpi-value" id="dash-stock-ok">—</div>
+          <div class="dash-kpi-sub">productos disponibles</div>
+        </div>
+      </div>
+
+      <!-- Últimos pedidos + Top deudores -->
+      <div class="dash-two-col">
+        <div>
+          <div class="dash-section-label">Últimos pedidos</div>
+          <div class="admin-table-wrap">
+            <table class="admin-table" id="dash-recent-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Cliente</th>
+                  <th>Estado</th>
+                  <th class="num">Total</th>
+                  <th>Fecha</th>
+                </tr>
+              </thead>
+              <tbody id="dash-recent-tbody"><tr><td colspan="5" class="muted">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <div class="dash-section-label">Mayores deudores</div>
+          <div class="admin-table-wrap">
+            <table class="admin-table" id="dash-deudores-table">
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th class="num">Saldo</th>
+                </tr>
+              </thead>
+              <tbody id="dash-deudores-tbody"><tr><td colspan="2" class="muted">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- ===== TAB PRODUCTOS ===== -->
-    <section class="tab-panel" id="tab-productos">
+    <section class="tab-panel" id="tab-productos" hidden>
       <div class="admin-toolbar">
         <input type="search" id="prod-search" class="admin-search" placeholder="Buscar por código o nombre..." autocomplete="off" />
         <label class="admin-filter">
@@ -1636,6 +1766,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260529a"></script>
+  <script src="/js/admin.js?v=20260531a"></script>
 </body>
 </html>

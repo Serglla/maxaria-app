@@ -4284,6 +4284,134 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== DASHBOARD =====
+app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
+  const now = new Date();
+  const todayIso  = now.toISOString().slice(0, 10);
+  const monthIso  = todayIso.slice(0, 7); // YYYY-MM
+  const prevMonth = (() => {
+    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  })();
+  const weekStart = (() => {
+    const d = new Date(now);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // lunes
+    return d.toISOString().slice(0, 10);
+  })();
+
+  // Ventas hoy
+  const salesToday = db.prepare(
+    "SELECT COUNT(*) AS cnt, COALESCE(SUM(total),0) AS total" +
+    " FROM orders WHERE status != 'cancelado' AND COALESCE(is_unified,0)=0" +
+    " AND date(created_at)=?"
+  ).get(todayIso);
+
+  // Ventas esta semana
+  const salesWeek = db.prepare(
+    "SELECT COUNT(*) AS cnt, COALESCE(SUM(total),0) AS total" +
+    " FROM orders WHERE status != 'cancelado' AND COALESCE(is_unified,0)=0" +
+    " AND date(created_at) >= ?"
+  ).get(weekStart);
+
+  // Ventas mes actual
+  const salesMonth = db.prepare(
+    "SELECT COUNT(*) AS cnt, COALESCE(SUM(total),0) AS total" +
+    " FROM orders WHERE status != 'cancelado' AND COALESCE(is_unified,0)=0" +
+    " AND strftime('%Y-%m', created_at)=?"
+  ).get(monthIso);
+
+  // Ventas mes anterior
+  const salesPrevMonth = db.prepare(
+    "SELECT COALESCE(SUM(total),0) AS total" +
+    " FROM orders WHERE status != 'cancelado' AND COALESCE(is_unified,0)=0" +
+    " AND strftime('%Y-%m', created_at)=?"
+  ).get(prevMonth);
+
+  // Pedidos activos por estado
+  const activeOrders = db.prepare(
+    "SELECT status, COUNT(*) AS cnt FROM orders" +
+    " WHERE status IN ('pendiente','enviado','preparando') AND COALESCE(is_unified,0)=0" +
+    " GROUP BY status"
+  ).all();
+
+  // Cobros del mes
+  const cobrosMonth = db.prepare(
+    "SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt" +
+    " FROM payments WHERE strftime('%Y-%m', created_at)=?"
+  ).get(monthIso);
+
+  // Cobros hoy
+  const cobrosToday = db.prepare(
+    "SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE date(created_at)=?"
+  ).get(todayIso);
+
+  // Deuda total clientes (saldo negativo = deben plata)
+  const deuda = db.prepare(
+    "SELECT COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE -amount END),0) AS saldo" +
+    " FROM account_movements"
+  ).get();
+
+  // Stock crítico: activos con stock = 0
+  const stockCero = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM products WHERE active=1 AND stock=0"
+  ).get();
+
+  // Stock bajo: activos con stock entre 1 y 5
+  const stockBajo = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM products WHERE active=1 AND stock BETWEEN 1 AND 5"
+  ).get();
+
+  // Total productos activos con stock > 0
+  const stockOk = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM products WHERE active=1 AND stock > 0"
+  ).get();
+
+  // Últimos 8 pedidos
+  const recentOrders = db.prepare(
+    "SELECT o.id, o.status, o.total, o.created_at," +
+    "       u.full_name, u.username" +
+    " FROM orders o" +
+    " JOIN users u ON u.id = o.user_id" +
+    " WHERE COALESCE(o.is_unified,0)=0" +
+    " ORDER BY o.id DESC LIMIT 8"
+  ).all();
+
+  // Top 5 deudores
+  const topDeudores = db.prepare(
+    "SELECT u.id, u.full_name, u.username," +
+    "       COALESCE(SUM(CASE WHEN am.type='debit' THEN am.amount ELSE -am.amount END),0) AS saldo" +
+    " FROM users u" +
+    " LEFT JOIN account_movements am ON am.user_id = u.id" +
+    " WHERE u.level BETWEEN 1 AND 4 AND u.active=1" +
+    " GROUP BY u.id" +
+    " HAVING saldo > 0" +
+    " ORDER BY saldo DESC LIMIT 5"
+  ).all();
+
+  // Pedidos entregados hoy
+  const entregadosHoy = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM orders" +
+    " WHERE status='entregado' AND COALESCE(is_unified,0)=0 AND date(created_at)=?"
+  ).get(todayIso);
+
+  res.json({
+    salesToday:     { total: salesToday.total,     cnt: salesToday.cnt },
+    salesWeek:      { total: salesWeek.total,      cnt: salesWeek.cnt },
+    salesMonth:     { total: salesMonth.total,     cnt: salesMonth.cnt },
+    salesPrevMonth: { total: salesPrevMonth.total },
+    activeOrders,
+    cobrosMonth:    { total: cobrosMonth.total, cnt: cobrosMonth.cnt },
+    cobrosToday:    { total: cobrosToday.total },
+    deudaTotal:     deuda.saldo,
+    stockCero:      stockCero.cnt,
+    stockBajo:      stockBajo.cnt,
+    stockOk:        stockOk.cnt,
+    entregadosHoy:  entregadosHoy.cnt,
+    recentOrders,
+    topDeudores,
+  });
+});
+
 app.get("/healthz", (req, res) => res.json({ ok: true, ts: Date.now() }));
 // Servir imagenes de productos desde el volumen persistente
 app.use("/images/products", express.static(PRODUCT_IMAGES_DIR));

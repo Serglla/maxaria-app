@@ -482,6 +482,10 @@
         // Vendedor: ir directo a Pedidos y ocultar cosas que no necesita
         const pedBtn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "pedidos");
         if (pedBtn) pedBtn.click();
+      } else {
+        // Admin: abrir Dashboard por default (click activa el panel + carga datos)
+        const dashBtn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "dashboard");
+        if (dashBtn) dashBtn.click();
       }
       applyFilters();
     } catch (e) {
@@ -576,6 +580,101 @@
     }
   });
 
+  // ---------- Dashboard ----------
+  async function loadDashboard() {
+    try {
+      const d = await api("/api/admin/dashboard");
+
+      // Helpers
+      const fmt = (n) => "$ " + Number(n).toLocaleString("es-AR");
+      const setV = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+      const setC = (id, cls) => { const el = document.getElementById(id); if (el) { el.classList.remove("dash-kpi-warn","dash-kpi-danger","dash-kpi-good","dash-kpi-accent"); if (cls) el.classList.add(cls); } };
+
+      // Ventas
+      setV("dash-sales-today",      fmt(d.salesToday.total));
+      setV("dash-sales-today-cnt",  d.salesToday.cnt + " pedido(s)");
+      setV("dash-sales-week",       fmt(d.salesWeek.total));
+      setV("dash-sales-week-cnt",   d.salesWeek.cnt + " pedido(s)");
+      setV("dash-sales-month",      fmt(d.salesMonth.total));
+      // Comparativa mes anterior
+      {
+        const curr = d.salesMonth.total;
+        const prev = d.salesPrevMonth.total;
+        let vs = "";
+        if (prev > 0) {
+          const pct = Math.round(((curr - prev) / prev) * 100);
+          vs = (pct >= 0 ? "▲ " : "▼ ") + Math.abs(pct) + "% vs mes anterior";
+        } else {
+          vs = d.salesMonth.cnt + " pedido(s)";
+        }
+        setV("dash-sales-month-vs", vs);
+      }
+      setV("dash-cobros-today",     fmt(d.cobrosToday.total));
+      setV("dash-cobros-month",     fmt(d.cobrosMonth.total));
+      setV("dash-cobros-month-cnt", d.cobrosMonth.cnt + " pago(s)");
+
+      // Pedidos activos
+      const byStatus = {};
+      (d.activeOrders || []).forEach((r) => { byStatus[r.status] = r.cnt; });
+      setV("dash-orders-pendiente",  byStatus["pendiente"]  || 0);
+      setV("dash-orders-enviado",    byStatus["enviado"]    || 0);
+      setV("dash-orders-preparando", byStatus["preparando"] || 0);
+      setV("dash-entregados-hoy",    d.entregadosHoy || 0);
+      setV("dash-deuda-total",       fmt(d.deudaTotal || 0));
+      if ((d.deudaTotal || 0) > 0) setC("dash-kpi-deuda", "dash-kpi-danger");
+
+      // Stock
+      setV("dash-stock-cero", d.stockCero || 0);
+      setV("dash-stock-bajo", d.stockBajo || 0);
+      setV("dash-stock-ok",   d.stockOk   || 0);
+
+      // Últimos pedidos
+      const STATUS_LABEL = { pendiente:"Pendiente", enviado:"Enviado", preparando:"Preparando", entregado:"Entregado", cancelado:"Cancelado" };
+      const STATUS_CLS   = { pendiente:"tag-pendiente", enviado:"tag-enviado", preparando:"tag-preparando", entregado:"tag-entregado", cancelado:"tag-cancelado" };
+      const tbody = document.getElementById("dash-recent-tbody");
+      if (tbody) {
+        if (!d.recentOrders || !d.recentOrders.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="muted">Sin pedidos</td></tr>';
+        } else {
+          tbody.innerHTML = d.recentOrders.map((o) => {
+            const name = escapeHtml(o.full_name || o.username);
+            const lbl  = STATUS_LABEL[o.status] || o.status;
+            const cls  = STATUS_CLS[o.status]   || "";
+            const date = (o.created_at || "").slice(0,10).split("-").reverse().join("/");
+            return "<tr>" +
+              "<td class=\"muted\">#" + o.id + "</td>" +
+              "<td>" + name + "</td>" +
+              "<td><span class=\"order-tag " + cls + "\">" + lbl + "</span></td>" +
+              "<td class=\"num\">" + fmt(o.total) + "</td>" +
+              "<td class=\"muted small\">" + date + "</td>" +
+              "</tr>";
+          }).join("");
+        }
+      }
+
+      // Top deudores
+      const dtbody = document.getElementById("dash-deudores-tbody");
+      if (dtbody) {
+        if (!d.topDeudores || !d.topDeudores.length) {
+          dtbody.innerHTML = '<tr><td colspan="2" class="muted">Sin deudores</td></tr>';
+        } else {
+          dtbody.innerHTML = d.topDeudores.map((r) =>
+            "<tr>" +
+            "<td>" + escapeHtml(r.full_name || r.username) + "</td>" +
+            "<td class=\"num\" style=\"color:#dc2626;font-weight:600\">" + fmt(r.saldo) + "</td>" +
+            "</tr>"
+          ).join("");
+        }
+      }
+    } catch (e) {
+      console.error("Dashboard error:", e);
+    }
+  }
+
+  // Botón reload del dashboard
+  const dashReloadBtn = document.getElementById("dash-reload");
+  if (dashReloadBtn) dashReloadBtn.addEventListener("click", loadDashboard);
+
   // ---------- tabs ----------
   els.tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -588,6 +687,7 @@
       // En mobile, cerrar el drawer del sidebar al elegir una sección
       closeAdminSidebar();
       els.panels.forEach((p) => { p.hidden = p.id !== "tab-" + tab; });
+      if (tab === "dashboard") loadDashboard();
       if (tab === "pedidos" && !state.ordersLoaded) loadOrders();
       if (tab === "config" && !state.settingsLoaded) loadSettings();
       if (tab === "usuarios") {
