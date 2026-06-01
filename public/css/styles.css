@@ -3466,12 +3466,12 @@ button { font: inherit; cursor: pointer; }
 .np-pct { width: 60px !important; padding: 4px 6px !important; }
 .np-preview { font-size: 13px; font-weight: 600; text-align: right; }
 
-/* Grilla bidireccional %  ↔  precio */
+/* Grilla bidireccional %  ↔  precio — 3 columnas: Nivel | % | $$$ */
 .bidir-header,
 .bidir-row {
   display: grid;
-  grid-template-columns: 80px 68px 14px 1fr;
-  gap: 6px;
+  grid-template-columns: 90px 80px 1fr;
+  gap: 8px;
   align-items: center;
 }
 .bidir-header {
@@ -3479,15 +3479,29 @@ button { font: inherit; cursor: pointer; }
   font-weight: 700;
   color: #6b7280;
   text-transform: uppercase;
-  letter-spacing: .03em;
-  margin-bottom: 4px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid #e5e7eb;
+  letter-spacing: .04em;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #d1d5db;
 }
-.bidir-row { margin-top: 6px; }
-.bidir-lbl { font-size: 12px; font-weight: 700; color: #374151; }
-.bidir-pct  { text-align: right; padding: 4px 6px !important; }
-.bidir-price { text-align: right; padding: 4px 6px !important; }
+.bidir-header span:nth-child(2),
+.bidir-header span:nth-child(3) { text-align: center; }
+.bidir-row {
+  margin-top: 5px;
+  padding: 3px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+.bidir-row:last-child { border-bottom: none; }
+.bidir-lbl { font-size: 13px; font-weight: 600; color: #374151; }
+.bidir-pct,
+.bidir-price {
+  min-width: 0;
+  width: 100%;
+  text-align: right;
+  padding: 5px 8px !important;
+  font-size: 13px;
+  box-sizing: border-box;
+}
 
 /* ═══════════════════════════════════════════
    AJUSTES DE STOCK
