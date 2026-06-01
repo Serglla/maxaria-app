@@ -2625,64 +2625,39 @@
     els.pageNext.disabled = state.page >= totalPages - 1;
   }
 
+  function fmtNum(n) { return (n || 0).toLocaleString("es-AR"); }
+
   function rowHtml(p) {
     const imgSrc = p.image_url ? escapeHtml(p.image_url) : "";
     const imgThumb = imgSrc
       ? '<img src="' + imgSrc + '" alt="" class="prod-thumb" />'
       : '<span class="prod-thumb-empty" title="Sin imagen">📷</span>';
-    return '<tr data-id="' + p.id + '"' + (p.stock <= 0 ? ' class="row-oos"' : '') + (p.active ? '' : ' class="row-inactive"') + '>' +
-      '<td class="col-img"><button class="prod-img-btn" type="button" data-act="edit-img" data-id="' + p.id + '" data-name="' + escapeHtml(p.name) + '" title="Ver / cambiar imagen">' + imgThumb + '</button></td>' +
+    const rowCls = !p.active ? "row-inactive" : (p.stock <= 0 ? "row-oos" : "");
+    return '<tr data-id="' + p.id + '" class="prod-row ' + rowCls + '" title="Doble click para editar">' +
+      '<td class="col-img"><button class="prod-img-btn" type="button" data-act="edit-img" data-id="' + p.id + '" data-name="' + escapeHtml(p.name) + '" title="Cambiar imagen">' + imgThumb + '</button></td>' +
       '<td class="cell-code">' + escapeHtml(p.code || "") + '</td>' +
-      '<td><input class="cell-input cell-name" data-field="name" value="' + escapeHtml(p.name) + '" /></td>' +
-      '<td class="cell-cat muted">' + escapeHtml(p.category_name || "") + '</td>' +
-      '<td class="num"><input type="number" min="0" class="cell-input cell-num" data-field="stock" value="' + (p.stock || 0) + '" /></td>' +
-      '<td class="num"><input type="number" min="0" class="cell-input cell-num" data-field="cost" value="' + (p.cost || 0) + '" /></td>' +
-      '<td class="num"><input type="number" min="0" class="cell-input cell-num cell-price" data-field="price_minorista" value="' + (p.price_minorista || 0) + '" /></td>' +
-      '<td class="num"><input type="number" min="0" class="cell-input cell-num cell-price" data-field="price_revendedor" value="' + (p.price_revendedor || 0) + '" /></td>' +
-      '<td class="num"><input type="number" min="0" class="cell-input cell-num cell-price" data-field="price_mayorista" value="' + (p.price_mayorista || 0) + '" /></td>' +
-      '<td class="num"><input type="number" min="0" class="cell-input cell-num cell-price" data-field="price_vip" value="' + (p.price_vip || 0) + '" /></td>' +
-      '<td class="num"><input type="number" min="0" class="cell-input cell-num cell-price" data-field="price_publico" value="' + (p.price_publico || 0) + '" /></td>' +
-      '<td><label class="cell-toggle"><input type="checkbox" data-field="active"' + (p.active ? " checked" : "") + ' /><span></span></label></td>' +
+      '<td>' + escapeHtml(p.name) + '</td>' +
+      '<td class="muted">' + escapeHtml(p.category_name || "—") + '</td>' +
+      '<td class="num' + (p.stock <= 0 ? " text-danger" : "") + '">' + fmtNum(p.stock) + '</td>' +
+      '<td class="num muted">' + fmtNum(p.cost) + '</td>' +
+      '<td class="num">' + fmtNum(p.price_minorista) + '</td>' +
+      '<td class="num">' + fmtNum(p.price_revendedor) + '</td>' +
+      '<td class="num">' + fmtNum(p.price_mayorista) + '</td>' +
+      '<td class="num">' + fmtNum(p.price_vip) + '</td>' +
+      '<td class="num">' + fmtNum(p.price_publico) + '</td>' +
+      '<td><span class="cell-active-badge' + (p.active ? " active" : "") + '">' + (p.active ? "Sí" : "No") + '</span></td>' +
       '<td><button class="btn btn-small" type="button" data-act="adj-stock" data-id="' + p.id + '" title="Ajustar stock">±</button></td>' +
     '</tr>';
   }
 
-  // Auto-save al cambiar un input. Usamos 'change' (dispara al perder foco
-  // o al togglear el checkbox) en lugar de 'input' para no llamar al server
-  // en cada tecleo.
-  els.prodTbody.addEventListener("change", async (e) => {
-    const inp = e.target.closest("[data-field]");
-    if (!inp) return;
-    const tr = inp.closest("tr");
+  // Doble click en fila → abrir modal de edición
+  els.prodTbody.addEventListener("dblclick", (e) => {
+    const btn = e.target.closest("button");
+    if (btn) return; // no abrir si hicieron doble click en un botón
+    const tr = e.target.closest("tr[data-id]");
     if (!tr) return;
-    const id = Number(tr.dataset.id);
-    const field = inp.dataset.field;
-    let value;
-    if (inp.type === "checkbox") value = inp.checked ? 1 : 0;
-    else if (inp.type === "number") value = Number(inp.value) || 0;
-    else value = inp.value;
-
-    inp.classList.add("saving");
-    try {
-      await api("/api/admin/products/" + id, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [field]: value }),
-      });
-      // Reflejar en el state local sin re-renderizar la tabla entera
-      const p = state.products.find((x) => x.id === id);
-      if (p) p[field] = inp.type === "checkbox" ? (value ? 1 : 0) : value;
-      inp.classList.remove("saving");
-      inp.classList.add("saved");
-      setTimeout(() => inp.classList.remove("saved"), 1200);
-      // Si toggleamos active y el filtro de inactivos esta puesto, refiltrar
-      if (field === "active" && els.filterInactive.checked) applyFilters();
-    } catch (err) {
-      inp.classList.remove("saving");
-      inp.classList.add("error");
-      showToast("Error al guardar: " + err.message, "err");
-      setTimeout(() => inp.classList.remove("error"), 2000);
-    }
+    const p = state.products.find((x) => x.id === Number(tr.dataset.id));
+    if (p) openEditProdModal(p);
   });
 
   els.prodSearch.addEventListener("input", debounce(applyFilters, 200));
@@ -5077,6 +5052,92 @@
       renderPickerList("");
       pickerUpdateCount();
       bEls.picker.hidden = false;
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // EDITAR PRODUCTO (modal al doble click)
+  // ─────────────────────────────────────────────────────────────────
+  const editProdModal   = document.getElementById("edit-product-modal");
+  const epSaveBtn       = document.getElementById("ep-save-btn");
+  const epCatSelect     = document.getElementById("ep-category");
+  let   editProdId      = null;
+
+  function epFillCategories() {
+    if (!epCatSelect) return;
+    const allCats = state.allCategories && state.allCategories.length
+      ? state.allCategories
+      : [...new Map(state.products.filter((p) => p.category_id).map((p) => [p.category_id, { id: p.category_id, name: p.category_name }])).values()]
+          .sort((a, b) => a.name.localeCompare(b.name));
+    epCatSelect.innerHTML = '<option value="">— Sin categoría —</option>' +
+      allCats.map((c) => '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>').join("");
+  }
+
+  function openEditProdModal(p) {
+    editProdId = p.id;
+    epFillCategories();
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    set("ep-code",       p.code        || "");
+    set("ep-name",       p.name        || "");
+    set("ep-stock",      p.stock       || 0);
+    set("ep-cost",       p.cost        || 0);
+    set("ep-minorista",  p.price_minorista  || 0);
+    set("ep-revendedor", p.price_revendedor || 0);
+    set("ep-mayorista",  p.price_mayorista  || 0);
+    set("ep-vip",        p.price_vip        || 0);
+    set("ep-publico",    p.price_publico    || 0);
+    if (epCatSelect) epCatSelect.value = p.category_id || "";
+    const activeChk = document.getElementById("ep-active");
+    if (activeChk) activeChk.checked = !!p.active;
+    if (editProdModal) editProdModal.hidden = false;
+    const nameEl = document.getElementById("ep-name");
+    if (nameEl) nameEl.focus();
+  }
+
+  if (epSaveBtn) {
+    epSaveBtn.addEventListener("click", async () => {
+      if (!editProdId) return;
+      const get = (id) => { const el = document.getElementById(id); return el ? el.value : ""; };
+      const name = get("ep-name").trim();
+      if (!name) { alert("El nombre es obligatorio."); return; }
+      const activeChk = document.getElementById("ep-active");
+      const body = {
+        name,
+        category_id:      epCatSelect && epCatSelect.value ? Number(epCatSelect.value) : null,
+        stock:            Number(get("ep-stock"))      || 0,
+        cost:             Number(get("ep-cost"))       || 0,
+        price_minorista:  Number(get("ep-minorista"))  || 0,
+        price_revendedor: Number(get("ep-revendedor")) || 0,
+        price_mayorista:  Number(get("ep-mayorista"))  || 0,
+        price_vip:        Number(get("ep-vip"))        || 0,
+        price_publico:    Number(get("ep-publico"))    || 0,
+        active:           activeChk && activeChk.checked ? 1 : 0,
+      };
+      try {
+        epSaveBtn.disabled = true;
+        await api("/api/admin/products/" + editProdId, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        // Actualizar state local
+        const p = state.products.find((x) => x.id === editProdId);
+        if (p) {
+          Object.assign(p, body);
+          // category_name necesita buscarse
+          if (epCatSelect && epCatSelect.value) {
+            const opt = epCatSelect.options[epCatSelect.selectedIndex];
+            if (opt) p.category_name = opt.text;
+          } else { p.category_name = ""; }
+        }
+        applyFilters();
+        showToast("Producto guardado");
+        if (editProdModal) editProdModal.hidden = true;
+      } catch (e) {
+        alert(e.message || "Error al guardar");
+      } finally {
+        epSaveBtn.disabled = false;
+      }
     });
   }
 

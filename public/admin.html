@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260531h" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260531i" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -1958,6 +1958,59 @@
     </div>
   </section>
 
+  <!-- Modal editar producto -->
+  <div id="edit-product-modal" class="admin-modal" hidden>
+    <div class="admin-modal-box" style="max-width:520px">
+      <div class="admin-modal-head">
+        <strong>Editar producto</strong>
+        <button type="button" class="admin-modal-close" data-close>✕</button>
+      </div>
+      <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">
+          <label class="np-label">
+            <span>Código</span>
+            <input type="text" id="ep-code" class="admin-input" disabled style="background:#f1f5f9;color:#6b7280" />
+          </label>
+          <label class="np-label">
+            <span>Categoría</span>
+            <select id="ep-category" class="admin-select"></select>
+          </label>
+        </div>
+        <label class="np-label">
+          <span>Nombre <span class="req">*</span></span>
+          <input type="text" id="ep-name" class="admin-input" placeholder="Nombre del producto" />
+        </label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label class="np-label">
+            <span>Stock</span>
+            <input type="number" id="ep-stock" class="admin-input" min="0" step="1" />
+          </label>
+          <label class="np-label">
+            <span>Costo</span>
+            <input type="number" id="ep-cost" class="admin-input" min="0" step="1" />
+          </label>
+        </div>
+        <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
+          <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px">Precios</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px">
+            <label class="np-label"><span>VIP</span><input type="number" id="ep-vip" class="admin-input" min="0" step="1" /></label>
+            <label class="np-label"><span>Revendedor</span><input type="number" id="ep-revendedor" class="admin-input" min="0" step="1" /></label>
+            <label class="np-label"><span>Mayorista</span><input type="number" id="ep-mayorista" class="admin-input" min="0" step="1" /></label>
+            <label class="np-label"><span>Minorista</span><input type="number" id="ep-minorista" class="admin-input" min="0" step="1" /></label>
+            <label class="np-label"><span>Público</span><input type="number" id="ep-publico" class="admin-input" min="0" step="1" /></label>
+          </div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer">
+          <input type="checkbox" id="ep-active" /> Producto activo
+        </label>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="button" class="btn btn-primary" id="ep-save-btn">Guardar cambios</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal nuevo producto -->
   <div id="new-product-modal" class="admin-modal" hidden>
     <div class="admin-modal-box" style="max-width:520px">
@@ -2124,6 +2177,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260531h"></script>
+  <script src="/js/admin.js?v=20260531i"></script>
 </body>
 </html>
