@@ -1855,7 +1855,7 @@
   }
 
   function plRowHtml(pl) {
-    const baseOpts = ["minorista", "revendedor", "mayorista", "vip", "publico"].map((b) =>
+    const baseOpts = ["costo", "minorista", "revendedor", "mayorista", "vip", "publico"].map((b) =>
       '<option value="' + b + '"' + (pl.base_level === b ? " selected" : "") + '>' +
         b.charAt(0).toUpperCase() + b.slice(1) +
       '</option>'

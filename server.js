@@ -650,9 +650,12 @@ function priceColumnFor(level) {
 
 // Nombres validos de columnas de precio base usadas por las listas personalizadas.
 // El "publico" es opcional, suele venir vacio en el Excel, pero lo aceptamos.
-const PRICE_LIST_BASE_LEVELS = ["minorista", "revendedor", "mayorista", "vip", "publico"];
+// "costo" usa la columna products.cost (no price_*). "publico" suele venir vacio
+// en el Excel pero lo aceptamos.
+const PRICE_LIST_BASE_LEVELS = ["costo", "minorista", "revendedor", "mayorista", "vip", "publico"];
 function priceColumnForBaseLevel(baseLevel) {
   const b = String(baseLevel || "").trim().toLowerCase();
+  if (b === "costo") return "cost";
   if (!PRICE_LIST_BASE_LEVELS.includes(b)) return "price_minorista";
   return "price_" + b;
 }

@@ -1020,7 +1020,7 @@
         <button class="btn btn-primary" id="pl-create-btn" type="button">+ Nueva lista</button>
       </div>
       <p class="muted small" style="margin: 4px 0 12px 0">
-        Cada lista parte de una lista base (Minorista, Revendedor, Mayorista, VIP) y le aplica un % de
+        Cada lista parte de una lista base (Costo, Minorista, Revendedor, Mayorista, VIP) y le aplica un % de
         <strong>ganancia limpia del vendedor</strong> sobre el precio final.
         Luego se asigna a un cliente desde la pestaña <strong>Usuarios</strong> (columna "Lista de precios").
         El precio que ve el cliente es <code>base / (1 − ganancia/100)</code>, redondeado, de modo que
@@ -1054,6 +1054,7 @@
           </label>
           <label>Lista base
             <select name="base_level" required>
+              <option value="costo">Costo</option>
               <option value="minorista">Minorista</option>
               <option value="revendedor">Revendedor</option>
               <option value="mayorista" selected>Mayorista</option>
@@ -2195,6 +2196,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260601b"></script>
+  <script src="/js/admin.js?v=20260601c"></script>
 </body>
 </html>
