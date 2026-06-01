@@ -121,6 +121,26 @@
     userCatsNone: document.getElementById("user-cats-none"),
     userCatsMsg: document.getElementById("user-cats-msg"),
     userCatsSave: document.getElementById("user-cats-save"),
+    // Administradores (solo superadmin)
+    adminsTbody: document.getElementById("admins-tbody"),
+    adminCreateBtn: document.getElementById("admin-create-btn"),
+    adminCreateModal: document.getElementById("admin-create-modal"),
+    adminCreateForm: document.getElementById("admin-create-form"),
+    adminCreateSections: document.getElementById("admin-create-sections"),
+    adminCreateAll: document.getElementById("admin-create-all"),
+    adminCreateNone: document.getElementById("admin-create-none"),
+    adminCreateMsg: document.getElementById("admin-create-msg"),
+    adminSectionsModal: document.getElementById("admin-sections-modal"),
+    adminSectionsTarget: document.getElementById("admin-sections-target"),
+    adminSectionsList: document.getElementById("admin-sections-list"),
+    adminSectionsAll: document.getElementById("admin-sections-all"),
+    adminSectionsNone: document.getElementById("admin-sections-none"),
+    adminSectionsMsg: document.getElementById("admin-sections-msg"),
+    adminSectionsSave: document.getElementById("admin-sections-save"),
+    adminResetModal: document.getElementById("admin-reset-modal"),
+    adminResetTarget: document.getElementById("admin-reset-target"),
+    adminResetForm: document.getElementById("admin-reset-form"),
+    adminResetMsg: document.getElementById("admin-reset-msg"),
 
     // Vendedores
     vendSearch: document.getElementById("vend-search"),
@@ -442,7 +462,10 @@
     const res = await fetch(url, opts);
     if (res.status === 401) { location.href = "/login"; throw new Error("no auth"); }
     if (res.status === 403) {
-      alert("Acceso denegado. Solo el admin puede usar esta funcion.");
+      // No usar alert(): es bloqueante y congela el panel. Avisar con toast.
+      let msg = "Acceso denegado a esa sección.";
+      try { msg = (await res.clone().json()).error || msg; } catch (_) {}
+      try { showToast(msg); } catch (_) {}
       throw new Error("forbidden");
     }
     if (!res.ok) {
@@ -488,17 +511,39 @@
         const pedBtn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "pedidos");
         if (pedBtn) pedBtn.click();
       } else {
-        // Admin: abrir Dashboard por default (click activa el panel + carga datos)
-        const dashBtn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "dashboard");
-        if (dashBtn) dashBtn.click();
+        // Admin: aplicar permisos por sección. El superadmin ve todo (incluida la
+        // pestaña Administradores); un admin común solo ve sus secciones.
+        const isSuper = !!me.isSuperadmin;
+        const allowed = Array.isArray(me.adminSections) ? me.adminSections : null;
+        els.tabBtns.forEach((btn) => {
+          const tab = btn.dataset.tab;
+          if (tab === "administradores") {
+            // Solo el superadmin ve y usa esta pestaña.
+            btn.hidden = !isSuper;
+            btn.style.display = isSuper ? "" : "none";
+            return;
+          }
+          // Si el server mandó la lista de secciones (admin común), ocultar las no permitidas.
+          if (!isSuper && allowed && !allowed.includes(tab)) {
+            btn.style.display = "none";
+          }
+        });
+        // Aterrizar en la primera pestaña visible permitida.
+        const landing = isSuper
+          ? Array.from(els.tabBtns).find((b) => b.dataset.tab === "dashboard")
+          : Array.from(els.tabBtns).find((b) => b.style.display !== "none" && !b.hidden);
+        if (landing) landing.click();
       }
       applyFilters();
     } catch (e) {
       console.error(e);
       els.prodTbody.innerHTML = '<tr><td colspan="13" class="muted">Error cargando productos</td></tr>';
     }
-    // En paralelo, chequear dbinfo (no bloqueamos el render principal por esto)
-    checkDbInfo();
+    // En paralelo, chequear dbinfo (no bloqueamos el render principal por esto).
+    // Solo si el usuario puede ver Configuración (sino el endpoint da 403).
+    const canConfig = !state.isAdmin ? false
+      : (me.isSuperadmin || (Array.isArray(me.adminSections) && me.adminSections.includes("config")));
+    if (canConfig) checkDbInfo();
   }
 
   // ---------- DB info / banner ----------
@@ -719,6 +764,7 @@
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas" && !state.accountsLoaded) loadAccounts();
       if (tab === "caja") loadCaja();
+      if (tab === "administradores") loadAdmins();
       if (tab === "ventas") {
         if (!bState.loaded) loadBudgets();
         // renderVentas se llama desde el handler de tab específico (async)
@@ -2294,6 +2340,207 @@
         els.userCatsMsg.className = "config-msg err";
       } finally {
         els.userCatsSave.disabled = false;
+      }
+    });
+  }
+
+  // ---------- Administradores (solo superadmin) ----------
+  function renderSectionChecklist(container, checkedKeys) {
+    const checked = new Set(checkedKeys || []);
+    container.innerHTML = (state.adminSectionsCatalog || []).map((s) =>
+      '<label class="cats-check" title="' + escapeHtml(s.label) + '">' +
+        '<input type="checkbox" value="' + s.key + '"' + (checked.has(s.key) ? " checked" : "") + '>' +
+        '<span class="cats-check-lbl">' + escapeHtml(s.label) + '</span>' +
+      '</label>'
+    ).join("");
+  }
+  function checklistValues(container) {
+    return Array.from(container.querySelectorAll("input[type=checkbox]:checked")).map((c) => c.value);
+  }
+  function sectionLabels(keys) {
+    const map = {};
+    (state.adminSectionsCatalog || []).forEach((s) => { map[s.key] = s.label; });
+    return (keys || []).map((k) => map[k] || k);
+  }
+
+  async function loadAdmins() {
+    els.adminsTbody.innerHTML = '<tr><td colspan="5" class="muted">Cargando…</td></tr>';
+    try {
+      const data = await api("/api/admin/admins");
+      state.adminSectionsCatalog = data.sections || [];
+      renderAdmins(data.admins || []);
+    } catch (err) {
+      els.adminsTbody.innerHTML = '<tr><td colspan="5" class="muted err">Error: ' + escapeHtml(err.message) + '</td></tr>';
+    }
+  }
+
+  function renderAdmins(admins) {
+    state.admins = admins;
+    if (!admins.length) {
+      els.adminsTbody.innerHTML = '<tr><td colspan="5" class="muted">Sin administradores</td></tr>';
+      return;
+    }
+    els.adminsTbody.innerHTML = admins.map((a) => {
+      if (a.is_superadmin) {
+        return '<tr data-id="' + a.id + '">' +
+          '<td>' + escapeHtml(a.username) + ' <span class="vend-badge">Superadmin</span></td>' +
+          '<td>' + escapeHtml(a.full_name || "—") + '</td>' +
+          '<td class="muted">Acceso total</td>' +
+          '<td>' + (a.active ? "Sí" : "No") + '</td>' +
+          '<td class="muted small">—</td>' +
+        '</tr>';
+      }
+      const secs = sectionLabels(a.sections);
+      const secTxt = secs.length ? escapeHtml(secs.join(", ")) : '<span class="muted">ninguna</span>';
+      return '<tr data-id="' + a.id + '">' +
+        '<td>' + escapeHtml(a.username) + '</td>' +
+        '<td>' + escapeHtml(a.full_name || "—") + '</td>' +
+        '<td class="small">' + secTxt +
+          ' <button class="btn btn-small" data-act="sections" data-id="' + a.id + '" type="button">Editar</button></td>' +
+        '<td><label class="cell-toggle"><input type="checkbox" data-act="active" data-id="' + a.id + '"' +
+          (a.active ? " checked" : "") + ' /><span></span></label></td>' +
+        '<td><button class="btn btn-small" data-act="reset" data-id="' + a.id + '" data-username="' +
+          escapeHtml(a.username) + '" type="button">🔑 Clave</button></td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  if (els.adminsTbody) {
+    els.adminsTbody.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const id = Number(btn.dataset.id);
+      if (btn.dataset.act === "sections") openAdminSectionsModal(id);
+      if (btn.dataset.act === "reset") openAdminResetModal(id, btn.dataset.username);
+    });
+    els.adminsTbody.addEventListener("change", async (e) => {
+      const cb = e.target.closest('input[data-act="active"]');
+      if (!cb) return;
+      const id = Number(cb.dataset.id);
+      try {
+        await api("/api/admin/admins/" + id, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active: cb.checked }),
+        });
+        showToast("Administrador actualizado");
+      } catch (err) {
+        cb.checked = !cb.checked;
+        showToast("Error: " + err.message);
+      }
+    });
+  }
+
+  if (els.adminCreateBtn) {
+    els.adminCreateBtn.addEventListener("click", () => {
+      els.adminCreateForm.reset();
+      els.adminCreateMsg.textContent = "";
+      els.adminCreateMsg.className = "config-msg";
+      renderSectionChecklist(els.adminCreateSections, []);
+      els.adminCreateModal.hidden = false;
+    });
+  }
+  if (els.adminCreateAll) {
+    els.adminCreateAll.addEventListener("click", () => {
+      els.adminCreateSections.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = true; });
+    });
+  }
+  if (els.adminCreateNone) {
+    els.adminCreateNone.addEventListener("click", () => {
+      els.adminCreateSections.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = false; });
+    });
+  }
+  if (els.adminCreateForm) {
+    els.adminCreateForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(els.adminCreateForm);
+      const body = {
+        username: String(fd.get("username") || "").trim(),
+        full_name: String(fd.get("full_name") || "").trim(),
+        password: String(fd.get("password") || ""),
+        sections: checklistValues(els.adminCreateSections),
+      };
+      els.adminCreateMsg.textContent = "Creando…";
+      els.adminCreateMsg.className = "config-msg";
+      try {
+        await api("/api/admin/admins", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        els.adminCreateModal.hidden = true;
+        showToast("Administrador creado");
+        loadAdmins();
+      } catch (err) {
+        els.adminCreateMsg.textContent = "Error: " + err.message;
+        els.adminCreateMsg.className = "config-msg err";
+      }
+    });
+  }
+
+  function openAdminSectionsModal(id) {
+    const a = (state.admins || []).find((x) => x.id === id);
+    if (!a) return;
+    state.adminsEditId = id;
+    els.adminSectionsTarget.textContent = "Usuario: " + a.username;
+    els.adminSectionsMsg.textContent = "";
+    els.adminSectionsMsg.className = "config-msg";
+    renderSectionChecklist(els.adminSectionsList, a.sections);
+    els.adminSectionsModal.hidden = false;
+  }
+  if (els.adminSectionsAll) {
+    els.adminSectionsAll.addEventListener("click", () => {
+      els.adminSectionsList.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = true; });
+    });
+  }
+  if (els.adminSectionsNone) {
+    els.adminSectionsNone.addEventListener("click", () => {
+      els.adminSectionsList.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = false; });
+    });
+  }
+  if (els.adminSectionsSave) {
+    els.adminSectionsSave.addEventListener("click", async () => {
+      if (!state.adminsEditId) return;
+      const sections = checklistValues(els.adminSectionsList);
+      els.adminSectionsMsg.textContent = "Guardando…";
+      els.adminSectionsMsg.className = "config-msg";
+      try {
+        await api("/api/admin/admins/" + state.adminsEditId, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sections: sections }),
+        });
+        els.adminSectionsModal.hidden = true;
+        showToast("Permisos actualizados");
+        loadAdmins();
+      } catch (err) {
+        els.adminSectionsMsg.textContent = "Error: " + err.message;
+        els.adminSectionsMsg.className = "config-msg err";
+      }
+    });
+  }
+
+  function openAdminResetModal(id, username) {
+    state.adminsResetId = id;
+    els.adminResetTarget.textContent = "Usuario: " + (username || "");
+    els.adminResetForm.reset();
+    els.adminResetMsg.textContent = "";
+    els.adminResetMsg.className = "config-msg";
+    els.adminResetModal.hidden = false;
+  }
+  if (els.adminResetForm) {
+    els.adminResetForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const pwd = String(new FormData(els.adminResetForm).get("password") || "");
+      els.adminResetMsg.textContent = "Guardando…";
+      els.adminResetMsg.className = "config-msg";
+      try {
+        await api("/api/admin/admins/" + state.adminsResetId + "/reset-password", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: pwd }),
+        });
+        els.adminResetModal.hidden = true;
+        showToast("Contraseña actualizada");
+      } catch (err) {
+        els.adminResetMsg.textContent = "Error: " + err.message;
+        els.adminResetMsg.className = "config-msg err";
       }
     });
   }

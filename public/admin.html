@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260601f" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260601h" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -131,6 +131,9 @@
           <div class="admin-sidebar-group-title">Sistema</div>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="config" type="button">
             <span class="admin-sidebar-item-icon">⚙️</span>Configuración
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only superadmin-only" data-tab="administradores" type="button" hidden>
+            <span class="admin-sidebar-item-icon">🛡️</span>Administradores
           </button>
         </div>
       </nav>
@@ -547,6 +550,29 @@
           nuevos se crean. Nunca borra usuarios.
         </p>
       </div>
+    </section>
+
+    <!-- ===== TAB ADMINISTRADORES (solo superadmin) ===== -->
+    <section class="tab-panel" id="tab-administradores" hidden>
+      <div class="admin-toolbar">
+        <span style="font-weight:600">Administradores y permisos</span>
+        <span class="admin-spacer"></span>
+        <button class="btn btn-primary" id="admin-create-btn" type="button">+ Crear administrador</button>
+      </div>
+      <p class="muted small" style="margin:0 0 10px">
+        Creá usuarios que entran al panel con permisos limitados a las secciones que elijas.
+        Solo vos (superadmin) ves esta sección y podés gestionarlos.
+      </p>
+      <table class="admin-table" id="admins-table">
+        <thead>
+          <tr>
+            <th>Usuario</th><th>Nombre</th><th>Secciones</th><th>Activo</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="admins-tbody">
+          <tr><td colspan="5" class="muted">Cargando…</td></tr>
+        </tbody>
+      </table>
     </section>
 
     <!-- ===== TAB VENDEDORES ===== -->
@@ -1474,6 +1500,67 @@
     </div>
   </div>
 
+  <!-- Modal crear administrador (solo superadmin) -->
+  <div class="admin-modal" id="admin-create-modal" hidden>
+    <div class="admin-modal-box">
+      <h3>Crear administrador</h3>
+      <form id="admin-create-form" class="user-form">
+        <label>Usuario <input name="username" required autocomplete="off" /></label>
+        <label>Nombre <input name="full_name" autocomplete="off" /></label>
+        <label>Contraseña <span class="muted">mínimo 6</span>
+          <input type="text" name="password" required autocomplete="new-password" />
+        </label>
+        <label style="margin-bottom:4px">Secciones que puede usar <span class="muted">(pestañas del panel)</span></label>
+        <div id="admin-create-sections" class="cats-check-list"></div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button type="button" class="btn" id="admin-create-all" style="font-size:12px;padding:3px 10px">✔ Todas</button>
+          <button type="button" class="btn" id="admin-create-none" style="font-size:12px;padding:3px 10px">✘ Ninguna</button>
+        </div>
+        <p id="admin-create-msg" class="config-msg" style="min-height:18px"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="admin-create-save">Crear</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal editar permisos de un administrador -->
+  <div class="admin-modal" id="admin-sections-modal" hidden>
+    <div class="admin-modal-box">
+      <h3>Permisos de secciones</h3>
+      <p id="admin-sections-target" class="muted"></p>
+      <div id="admin-sections-list" class="cats-check-list"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button type="button" class="btn" id="admin-sections-all" style="font-size:12px;padding:3px 10px">✔ Todas</button>
+        <button type="button" class="btn" id="admin-sections-none" style="font-size:12px;padding:3px 10px">✘ Ninguna</button>
+      </div>
+      <p id="admin-sections-msg" class="config-msg"></p>
+      <div class="admin-modal-foot">
+        <button type="button" class="btn" data-close>Cancelar</button>
+        <button type="button" class="btn btn-primary" id="admin-sections-save">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal resetear contraseña de un administrador -->
+  <div class="admin-modal" id="admin-reset-modal" hidden>
+    <div class="admin-modal-box">
+      <h3>Resetear contraseña</h3>
+      <p id="admin-reset-target" class="muted"></p>
+      <form id="admin-reset-form" class="user-form">
+        <label>Nueva contraseña <span class="muted">mínimo 6</span>
+          <input type="text" name="password" required autocomplete="new-password" />
+        </label>
+        <p id="admin-reset-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal reset password -->
   <div class="admin-modal" id="user-reset-modal" hidden>
     <div class="admin-modal-box">
@@ -2210,6 +2297,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260601g"></script>
+  <script src="/js/admin.js?v=20260601i"></script>
 </body>
 </html>

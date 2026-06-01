@@ -141,6 +141,22 @@ try { db.exec("ALTER TABLE users ADD COLUMN vendedor_price_level INTEGER NOT NUL
 try { db.exec("ALTER TABLE users ADD COLUMN whatsapp_number TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE users ADD COLUMN plain_password TEXT"); } catch (_) {}
 
+// Migracion: Superadmin + usuarios privilegiados con permisos por seccion.
+// - users.is_superadmin: 1 = superadmin (acceso total + unico que gestiona admins).
+// - users.admin_sections: CSV de claves de seccion del panel que puede usar un
+//   admin (level 99) que NO es superadmin. NULL/'' = ninguna. El superadmin lo ignora.
+// Bootstrap idempotente: si todavia no hay ningun superadmin, se marca al admin
+// original (menor id con level 99) como superadmin una sola vez.
+try { db.exec("ALTER TABLE users ADD COLUMN is_superadmin INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+try { db.exec("ALTER TABLE users ADD COLUMN admin_sections TEXT"); } catch (_) {}
+try {
+  db.exec(
+    "UPDATE users SET is_superadmin = 1" +
+    " WHERE id = (SELECT MIN(id) FROM users WHERE level = 99)" +
+    "   AND NOT EXISTS (SELECT 1 FROM users WHERE is_superadmin = 1)"
+  );
+} catch (_) {}
+
 // Migracion: Listas de precios personalizadas.
 // - price_lists: lista base (minorista/revendedor/mayorista/vip/publico) + % ganancia.
 //   `markup_percent` (nombre historico) representa la GANANCIA LIMPIA del vendedor
@@ -731,6 +747,64 @@ function levelName(level) {
     default: return "Cliente";
   }
 }
+// ===== Superadmin / permisos por seccion del panel admin =====
+// Las claves coinciden con los data-tab del sidebar de admin.html.
+// "administradores" es exclusiva del superadmin y NO es asignable a un admin comun.
+const ADMIN_SECTIONS = [
+  { key: "dashboard",   label: "Dashboard" },
+  { key: "productos",   label: "Productos" },
+  { key: "price-lists", label: "Listas de precios" },
+  { key: "pedidos",     label: "Pedidos" },
+  { key: "entregas",    label: "Entregas" },
+  { key: "ventas",      label: "Ventas" },
+  { key: "usuarios",    label: "Usuarios" },
+  { key: "vendedores",  label: "Vendedores" },
+  { key: "reportes",    label: "Reportes" },
+  { key: "actividad",   label: "Actividad" },
+  { key: "pagos",       label: "Pagos" },
+  { key: "cuentas",     label: "Cuentas" },
+  { key: "proveedores", label: "Proveedores" },
+  { key: "compras",     label: "Compras" },
+  { key: "gastos",      label: "Gastos" },
+  { key: "caja",        label: "Caja" },
+  { key: "config",      label: "Configuración" },
+];
+const ADMIN_SECTION_KEYS = new Set(ADMIN_SECTIONS.map((s) => s.key));
+
+// Mapea un path de /api/admin/* a la clave de seccion que lo gobierna.
+// Devuelve null si no esta mapeado (endpoints compartidos => se permiten).
+function sectionForAdminRequest(p) {
+  const has = (frag) => p.indexOf("/api/admin/" + frag) === 0;
+  if (has("admins"))      return "administradores";
+  if (has("dashboard"))   return "dashboard";
+  if (has("products") || has("import-excel") || has("stock-adjustments") || has("catalog")) return "productos";
+  if (has("price-lists")) return "price-lists";
+  if (has("orders"))      return "pedidos";
+  if (has("deliveries"))  return "entregas";
+  if (has("users"))       return "usuarios";
+  if (has("vendedores"))  return "vendedores";
+  if (has("reports"))     return "reportes";
+  if (has("earnings") || has("activity")) return "actividad";
+  if (has("payments"))    return "pagos";
+  if (has("accounts"))    return "cuentas";
+  if (has("suppliers"))   return "proveedores";
+  if (has("purchases"))   return "compras";
+  if (has("expenses") || has("expense-categories")) return "gastos";
+  if (has("caja"))        return "caja";
+  if (has("settings") || has("dbinfo")) return "config";
+  return null;
+}
+
+// Permisos efectivos de un usuario level 99: { isSuperadmin, sections:Set }.
+function getAdminPerms(userId) {
+  const row = db.prepare("SELECT is_superadmin, admin_sections FROM users WHERE id = ?").get(userId) || {};
+  const isSuperadmin = Number(row.is_superadmin) === 1;
+  const sections = new Set(
+    String(row.admin_sections || "").split(",").map((s) => s.trim()).filter(Boolean)
+  );
+  return { isSuperadmin, sections };
+}
+
 function requireLogin(req, res, next) {
   if (!req.session || !req.session.userId) {
     if (req.path.startsWith("/api/")) return res.status(401).json({ error: "No autenticado" });
@@ -747,6 +821,18 @@ function requireAdmin(req, res, next) {
   if (req.session.level !== 99) {
     if (req.path.startsWith("/api/")) return res.status(403).json({ error: "Solo admin" });
     return res.status(403).send("Acceso restringido. Solo el administrador puede entrar a /admin.");
+  }
+  // Enforcement por seccion: el superadmin pasa siempre. Un admin comun solo
+  // puede usar las secciones que tiene en admin_sections; nunca "administradores".
+  const perms = getAdminPerms(req.session.userId);
+  if (!perms.isSuperadmin) {
+    const section = sectionForAdminRequest(req.path);
+    if (section === "administradores") {
+      return res.status(403).json({ error: "Solo el superadmin puede gestionar administradores" });
+    }
+    if (section && !perms.sections.has(section)) {
+      return res.status(403).json({ error: "Sin permiso para esta sección" });
+    }
   }
   next();
 }
@@ -889,6 +975,14 @@ app.get("/api/me", requireLogin, (req, res) => {
   // vendedor asignado y pueda mostrar/bloquear el envio.
   if ([1, 2, 3, 4].includes(Number(level))) {
     resp.assignedVendedor = assignedVendedor;
+  }
+  if (Number(level) === 99) {
+    // Superadmin ve todas las secciones; admin comun, solo las asignadas.
+    const perms = getAdminPerms(req.session.userId);
+    resp.isSuperadmin = perms.isSuperadmin;
+    resp.adminSections = perms.isSuperadmin
+      ? ADMIN_SECTIONS.map((s) => s.key)
+      : ADMIN_SECTIONS.map((s) => s.key).filter((k) => perms.sections.has(k));
   }
   if (level === 5) {
     resp.vendedorClient = req.session.vendedorClientId
@@ -2190,6 +2284,90 @@ app.post("/api/admin/users/:id/reset-password", requireAdmin, (req, res) => {
   const password = String((req.body || {}).password || "");
   if (password.length < 6)
     return res.status(400).json({ error: "La contrasena debe tener al menos 6 caracteres" });
+  const hash = bcrypt.hashSync(password, 10);
+  db.prepare("UPDATE users SET password_hash = ?, plain_password = ? WHERE id = ?").run(hash, password, id);
+  res.json({ ok: true });
+});
+
+// ===== Administradores / usuarios privilegiados (solo superadmin) =====
+// El gating a superadmin lo hace requireAdmin via la seccion "administradores".
+function sanitizeSections(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const s of arr) {
+    const k = String(s || "").trim();
+    if (ADMIN_SECTION_KEYS.has(k) && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+function adminRowOut(u) {
+  return {
+    id: u.id, username: u.username, full_name: u.full_name,
+    active: !!u.active, is_superadmin: Number(u.is_superadmin) === 1,
+    sections: String(u.admin_sections || "").split(",").map((s) => s.trim()).filter(Boolean),
+  };
+}
+
+app.get("/api/admin/admins", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, username, full_name, active, is_superadmin, admin_sections" +
+    "  FROM users WHERE level = 99 ORDER BY is_superadmin DESC, username"
+  ).all();
+  res.json({ admins: rows.map(adminRowOut), sections: ADMIN_SECTIONS });
+});
+
+app.post("/api/admin/admins", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const username = String(b.username || "").trim().toLowerCase();
+  const password = String(b.password || "");
+  const fullName = String(b.full_name || "").trim() || null;
+  const sections = sanitizeSections(b.sections);
+  if (!username) return res.status(400).json({ error: "Usuario requerido" });
+  if (password.length < 6) return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+  const exists = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
+  if (exists) return res.status(409).json({ error: "Ya existe un usuario con ese nombre" });
+  const hash = bcrypt.hashSync(password, 10);
+  const r = db.prepare(
+    "INSERT INTO users (username, password_hash, plain_password, full_name, level, active, is_superadmin, admin_sections)" +
+    " VALUES (?, ?, ?, ?, 99, 1, 0, ?)"
+  ).run(username, hash, password, fullName, sections.join(","));
+  const row = db.prepare(
+    "SELECT id, username, full_name, active, is_superadmin, admin_sections FROM users WHERE id = ?"
+  ).get(r.lastInsertRowid);
+  res.json({ ok: true, admin: adminRowOut(row) });
+});
+
+app.patch("/api/admin/admins/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const target = db.prepare("SELECT id, level, is_superadmin FROM users WHERE id = ?").get(id);
+  if (!target || target.level !== 99) return res.status(404).json({ error: "Administrador no encontrado" });
+  if (Number(target.is_superadmin) === 1) return res.status(403).json({ error: "No se puede editar al superadmin" });
+  const b = req.body || {};
+  const sets = [], vals = [];
+  if ("full_name" in b) { sets.push("full_name = ?"); vals.push(String(b.full_name || "").trim() || null); }
+  if ("active" in b) {
+    if (id === req.session.userId) return res.status(400).json({ error: "No podés desactivarte a vos mismo" });
+    sets.push("active = ?"); vals.push(b.active ? 1 : 0);
+  }
+  if ("sections" in b) { sets.push("admin_sections = ?"); vals.push(sanitizeSections(b.sections).join(",")); }
+  if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
+  vals.push(id);
+  db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+  const row = db.prepare(
+    "SELECT id, username, full_name, active, is_superadmin, admin_sections FROM users WHERE id = ?"
+  ).get(id);
+  res.json({ ok: true, admin: adminRowOut(row) });
+});
+
+app.post("/api/admin/admins/:id/reset-password", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const target = db.prepare("SELECT id, level, is_superadmin FROM users WHERE id = ?").get(id);
+  if (!target || target.level !== 99) return res.status(404).json({ error: "Administrador no encontrado" });
+  if (Number(target.is_superadmin) === 1) return res.status(403).json({ error: "No se puede resetear la clave del superadmin desde acá" });
+  const password = String((req.body || {}).password || "");
+  if (password.length < 6) return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
   const hash = bcrypt.hashSync(password, 10);
   db.prepare("UPDATE users SET password_hash = ?, plain_password = ? WHERE id = ?").run(hash, password, id);
   res.json({ ok: true });
