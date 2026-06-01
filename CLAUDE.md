@@ -773,12 +773,23 @@ Sesión completa de expansión funcional. Todo en la misma branch de trabajo. Ca
 - **Cache busting**: cada vez que se modifiquen `admin.js`, `app.js`, `ventas.js` o `styles.css` y se quiera que el browser traiga la versión nueva, bumpear el query string `?v=YYYYMMDD<letra>` en el tag `<link>` o `<script>` de `admin.html`, `index.html` o `ventas.html`.
 - **Bash mount stale**: el bind mount Linux sigue siendo unreliable para verificar archivos editados por las file tools. Siempre usar `Read` como fuente de verdad. Si bash y Read difieren, confiar en Read.
 
+### Modales de producto — campos bidireccionales (1 junio 2026)
+
+**Modal "Editar producto" y "Nuevo producto"** — rediseño completo de la sección de precios:
+
+- **Grilla bidireccional**: 3 columnas (Nivel | % | $$$). CSS: `.bidir-header`, `.bidir-row`, `.bidir-lbl`, `.bidir-pct`, `.bidir-price`. Columna % sin spinners (58px), columna $$$ con `1fr`.
+- **Lógica JS bidireccional**: cambiar `%` → recalcula precio; cambiar precio → recalcula `%`; cambiar costo → recalcula todos los precios manteniendo sus %. Fórmula: `precio = costo × (1 + pct/100)`.
+- **Formato de precios**: los campos $$$ son `type="text"` visualmente con `fmtPrice(n)` → `"$ 1.000"` (locale `es-AR`). Al hacer foco cambian a `type="number"` para editar; al salir (blur) vuelven a formato texto. Helper `parsePrice(s)` para parsear antes de guardar o en cálculo bidirec.
+- **Layout**: fila Stock + Stock mínimo | fila Costo (solo). Antes era Stock + Costo en la misma fila.
+- **Stock mínimo** (`stock_min`): campo nuevo en ambos modales (default 0 = sin alerta). Migración idempotente en `server.js`: `ALTER TABLE products ADD COLUMN stock_min INTEGER NOT NULL DEFAULT 0`. Incluido en GET/PATCH/POST de `/api/admin/products`. En la tabla de productos: si `stock > 0` y `stock <= stock_min`, la celda aparece en naranja (`.text-warn`) con ⚠ y tooltip "Stock bajo (mínimo: N)".
+- **Cache busting**: `admin.js?v=20260601b`, `styles.css?v=20260601b`.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.
 2. **Cuenta corriente con proveedores**: simétrico a lo que ya existe para clientes — registrar deuda que genera cada orden de compra y los pagos a proveedores.
 3. **Remito PDF por entrega**: documento de entrega descargable/enviable por WA (reutiliza la infra del catálogo PDF).
-4. **Alerta de stock mínimo**: campo `stock_min` por producto + indicador en dashboard + lista de "reponer".
+4. **Alerta de stock mínimo en dashboard**: el campo `stock_min` ya existe en productos (implementado 1 jun). Falta: indicador en dashboard + lista de "reponer".
 5. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias.
 6. **Backups externos automáticos**: rclone a B2/S3/Drive.
 7. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
