@@ -117,6 +117,8 @@
     userCatsModal: document.getElementById("user-cats-modal"),
     userCatsTarget: document.getElementById("user-cats-target"),
     userCatsList: document.getElementById("user-cats-list"),
+    userCatsAll: document.getElementById("user-cats-all"),
+    userCatsNone: document.getElementById("user-cats-none"),
     userCatsMsg: document.getElementById("user-cats-msg"),
     userCatsSave: document.getElementById("user-cats-save"),
 
@@ -2249,6 +2251,18 @@
     }
   });
 
+  // Marcar todas / ninguna en el modal de categorías visibles del usuario
+  if (els.userCatsAll) {
+    els.userCatsAll.addEventListener("click", () => {
+      els.userCatsList.querySelectorAll('input[type=checkbox]').forEach((cb) => { cb.checked = true; });
+    });
+  }
+  if (els.userCatsNone) {
+    els.userCatsNone.addEventListener("click", () => {
+      els.userCatsList.querySelectorAll('input[type=checkbox]').forEach((cb) => { cb.checked = false; });
+    });
+  }
+
   // Guardar permisos de categorias
   if (els.userCatsSave) {
     els.userCatsSave.addEventListener("click", async () => {
@@ -4342,8 +4356,23 @@
     }
   }
 
+  // Al elegir un cliente, las categorías a incluir heredan las que ese cliente
+  // tiene permitidas (user_category_access). Sin restricción = todas marcadas.
+  async function applyCatalogClientCategories(clientId) {
+    const boxes = els.catalogCatsWrap.querySelectorAll("input[type=checkbox]");
+    if (!clientId) { boxes.forEach((b) => { b.checked = true; }); return; }
+    try {
+      const data = await api("/api/admin/users/" + clientId + "/categories");
+      const allowed = new Set((data.categories || []).filter((c) => c.allowed).map((c) => c.id));
+      boxes.forEach((b) => { b.checked = allowed.has(Number(b.dataset.catId)); });
+    } catch (_) { /* si falla, se dejan como están */ }
+  }
+
   if (els.catalogClientSelect) {
-    els.catalogClientSelect.addEventListener("change", syncCatalogClientUI);
+    els.catalogClientSelect.addEventListener("change", () => {
+      syncCatalogClientUI();
+      applyCatalogClientCategories(Number(els.catalogClientSelect.value) || 0);
+    });
   }
 
   if (els.catalogBtn) {
