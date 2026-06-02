@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Ventas</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260602a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260602d" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -79,7 +79,9 @@
       <div id="budget-form-view" hidden>
         <button type="button" class="btn" id="budget-back-btn" style="font-size:12px;margin-bottom:12px">← Volver a la lista</button>
         <form id="budget-form" autocomplete="off">
-          <div class="ventas-form-grid">
+          <div class="ventas-section">
+            <div class="ventas-section-title">Datos del presupuesto</div>
+            <div class="ventas-form-grid">
             <label>
               Cliente
               <select id="budget-client" class="admin-select" style="width:100%;margin-top:4px">
@@ -103,9 +105,10 @@
                 <option value="Mercado Pago">Mercado Pago</option>
               </select>
             </label>
+            </div>
           </div>
 
-          <div class="ventas-items-section">
+          <div class="ventas-items-section ventas-section">
             <div class="ventas-items-head">
               <strong>Artículos</strong>
               <button type="button" class="btn btn-primary" id="budget-add-product-btn" style="font-size:12px;padding:5px 12px">+ Agregar productos</button>
@@ -128,7 +131,9 @@
             </div>
           </div>
 
-          <div class="ventas-footer-grid">
+          <div class="ventas-section">
+            <div class="ventas-section-title">Observaciones y totales</div>
+            <div class="ventas-footer-grid">
             <label>
               Observaciones
               <textarea id="budget-notes" rows="3" class="ventas-notes" placeholder="Notas internas, condiciones, validez…"></textarea>
@@ -153,6 +158,7 @@
                 <span>TOTAL</span>
                 <span id="budget-total-disp">$ 0</span>
               </div>
+            </div>
             </div>
           </div>
 
