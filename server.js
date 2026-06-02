@@ -1921,6 +1921,17 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
   ).get(id);
   const skipStock = order.unified_parent_id != null || !!linkedBudgetForOrder;
 
+  // ¿El stock de este pedido está actualmente descontado? Los pedidos del
+  // catálogo descuentan stock al ENVIARSE (al crearse), anotándolo en el
+  // presupuesto vinculado (budgets.stock_discounted=1), no en orders. Si hay
+  // presupuesto vinculado, ese flag es la fuente de verdad; si no (ej: pedido
+  // unificado del tercerizado), usamos orders.stock_discounted. Sirve para
+  // saber si al cancelar hay que devolver stock (y evitar devolverlo dos veces).
+  const anyLinkedBudget = db.prepare(
+    "SELECT id FROM budgets WHERE order_id = ? LIMIT 1"
+  ).get(id);
+  const stockCurrentlyOut = anyLinkedBudget ? !!linkedBudgetForOrder : !!order.stock_discounted;
+
   db.transaction(() => {
     db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
 
@@ -1949,9 +1960,14 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
       db.prepare("UPDATE orders SET stock_discounted = 1 WHERE id = ?").run(id);
     }
 
-    // Al cancelar: devolver stock y eliminar el movimiento de debito del pedido
-    if (status === "cancelado" && prevStatus !== "cancelado" && order.stock_discounted) {
-      if (!skipStock) {
+    // Al cancelar: devolver stock (para que el producto vuelva al catálogo) y
+    // eliminar el débito en cuenta corriente. El stock se descuenta al ENVIAR
+    // el pedido (al crearse, anotado en el presupuesto vinculado) o al
+    // entregarlo; en ambos casos hay que devolverlo acá.
+    if (status === "cancelado" && prevStatus !== "cancelado" && stockCurrentlyOut) {
+      // Los hijos absorbidos por un pedido unificado no devuelven stock por su
+      // cuenta: lo maneja el pedido padre.
+      if (order.unified_parent_id == null) {
         const items = db.prepare(
           "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
         ).all(id);
@@ -1961,6 +1977,14 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
         for (const it of items) {
           if (it.product_id) retStock.run(it.quantity, it.product_id);
         }
+      }
+      // Mantener en sync el presupuesto vinculado: cancelarlo y limpiar su flag
+      // para no devolver stock dos veces si luego se cancela desde Presupuestos.
+      if (anyLinkedBudget) {
+        db.prepare(
+          "UPDATE budgets SET status = 'cancelado', stock_discounted = 0," +
+          "  updated_at = datetime('now') WHERE id = ? AND status != 'facturado'"
+        ).run(anyLinkedBudget.id);
       }
       db.prepare(
         "DELETE FROM account_movements WHERE order_id = ? AND type = 'debit'"

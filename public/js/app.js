@@ -868,6 +868,13 @@
       clearedIds.forEach(refreshCardForProduct);
       closeDrawers();
       flashOrderSaved(out.order.id);
+      // El server ya descontó el stock al enviar el pedido. Refrescamos el
+      // catálogo para que los productos que quedaron en 0 desaparezcan de la
+      // grilla sin tener que recargar la página.
+      try {
+        state.products = await api(productsUrl());
+        renderProducts();
+      } catch (_) {}
     } catch (e) {
       if (popup && !popup.closed) popup.close();
       // TypeError = error de red (Failed to fetch), con o sin navigator.onLine.
