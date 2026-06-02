@@ -1853,13 +1853,38 @@
     if (anyDrawerOpen()) closeDrawers();
   });
 
-  // VENTA / PRESUPUESTOS: ahora vive en su propia pagina /ventas con
-  // public/js/ventas.js. El boton "🧾 Venta" del header redirige alla.
+  // VENTA / PRESUPUESTOS: vive en su propia pagina /ventas (public/ventas.html
+  // + public/js/ventas.js). El boton "🧾 Venta" la abre como modal flotante
+  // embebido (iframe) sobre el catalogo, en vez de navegar. El iframe carga
+  // /ventas?modal=1, que oculta su topbar para verse como un modal limpio.
+  const ventasModal      = document.getElementById("ventas-modal");
+  const ventasModalFrame = document.getElementById("ventas-modal-frame");
+  const ventasModalClose = document.getElementById("ventas-modal-close");
 
-  // Botón 🧾 Venta en el header del catálogo: navega a la página dedicada /ventas
-  if (els.ventaBtn) {
-    els.ventaBtn.addEventListener("click", () => { window.location.href = "/ventas"; });
+  function openVentasModal() {
+    if (!ventasModal || !ventasModalFrame) { window.location.href = "/ventas"; return; }
+    // Cargar recien al abrir (y recargar siempre para datos frescos).
+    ventasModalFrame.src = "/ventas?modal=1";
+    ventasModal.hidden = false;
+    document.body.style.overflow = "hidden";
   }
+  function closeVentasModal() {
+    if (!ventasModal) return;
+    ventasModal.hidden = true;
+    document.body.style.overflow = "";
+    // Liberar el iframe para no dejar la pagina corriendo en segundo plano.
+    if (ventasModalFrame) ventasModalFrame.src = "about:blank";
+  }
+
+  if (els.ventaBtn) {
+    els.ventaBtn.addEventListener("click", openVentasModal);
+  }
+  if (ventasModalClose) ventasModalClose.addEventListener("click", closeVentasModal);
+  // Cerrar con Escape (NO al clickear el backdrop, por consistencia con el
+  // resto de los modales del proyecto, que no se cierran al clickear afuera).
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && ventasModal && !ventasModal.hidden) closeVentasModal();
+  });
 
   // ── Menú hamburguesa del topbar ──
   // Click en ☰ → toggle. Click adentro de un item (no en el select) → cierra.

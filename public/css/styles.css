@@ -2975,6 +2975,64 @@ label.cats-check input[type="checkbox"] {
   padding: 20px 24px;
   box-shadow: 0 10px 28px rgba(15,23,42,.09);
 }
+
+/* ====== Ventas/Presupuestos embebido como modal flotante (?modal=1) ======
+   Cuando /ventas se carga dentro del iframe del catálogo, ocultamos el topbar
+   y aplanamos la tarjeta interna: el marco lo da el panel del modal (#ventas-modal). */
+html.in-modal .topbar { display: none; }
+html.in-modal body { background: #fff; }
+html.in-modal .ventas-main { padding: 14px 14px 40px; }
+html.in-modal .ventas-wrap {
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  max-width: none;
+  padding: 8px 18px;
+}
+
+/* Overlay del modal de Ventas en el catálogo (index.html) */
+.ventas-modal {
+  position: fixed; inset: 0;
+  background: rgba(17,24,39,.55);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1200;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.ventas-modal[hidden] { display: none; }
+.ventas-modal-panel {
+  position: relative;
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #cbd5e1;
+  border-top: 5px solid #f59e0b;
+  box-shadow: 0 24px 70px rgba(0,0,0,.45), 0 0 0 1px rgba(0,0,0,.06);
+  width: min(1200px, 100%);
+  height: min(920px, calc(100dvh - 48px));
+  overflow: hidden;
+}
+.ventas-modal-frame { width: 100%; height: 100%; border: 0; display: block; }
+.ventas-modal-x {
+  position: absolute; top: 10px; right: 12px; z-index: 5;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: none; cursor: pointer;
+  background: rgba(0,0,0,.6); color: #fff;
+  font-size: 17px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.3);
+}
+.ventas-modal-x:hover { background: rgba(0,0,0,.82); }
+@media (max-width: 720px) {
+  .ventas-modal { padding: 0; }
+  .ventas-modal-panel {
+    width: 100%;
+    height: 100dvh;
+    border-radius: 0;
+    border-top-width: 4px;
+  }
+}
 .ventas-header-row {
   display: flex;
   align-items: center;

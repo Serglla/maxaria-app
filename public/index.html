@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Catálogo</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260602g" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260602h" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -217,10 +217,16 @@
 
   <!-- El módulo de presupuestos (Venta) vive en su propia página /ventas
        (ver public/ventas.html + public/js/ventas.js). El botón "🧾 Venta"
-       del header redirige allá. -->
+       lo abre como modal flotante embebido (iframe) sobre el catálogo. -->
+  <div id="ventas-modal" class="ventas-modal" hidden>
+    <div class="ventas-modal-panel">
+      <button type="button" id="ventas-modal-close" class="ventas-modal-x" title="Cerrar" aria-label="Cerrar">✕</button>
+      <iframe id="ventas-modal-frame" class="ventas-modal-frame" title="Ventas y presupuestos" src="about:blank"></iframe>
+    </div>
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="/js/offline.js"></script>
-  <script src="/js/app.js?v=20260530b"></script>
+  <script src="/js/app.js?v=20260602a"></script>
 </body>
 </html>
