@@ -1717,15 +1717,20 @@
           <label>Notas
             <input type="text" name="notes" maxlength="500" />
           </label>
+          <label>Actualizar costo de productos
+            <select name="cost_policy" id="pur-cost-policy">
+              <option value="higher" selected>Solo si el nuevo costo es mayor</option>
+              <option value="always">Siempre (usar el costo de esta compra)</option>
+              <option value="never">No actualizar el costo</option>
+            </select>
+            <span class="muted small" style="display:block;margin-top:3px">Al actualizar el costo, los precios de venta suben en la misma proporción (mantienen el margen).</span>
+          </label>
         </div>
 
         <div class="purchase-items-section">
           <div class="purchase-items-header">
             <strong>Productos comprados</strong>
-            <div class="purchase-prod-search-wrap">
-              <input type="search" id="pur-prod-search" class="admin-search" placeholder="Buscar producto para agregar..." autocomplete="off" />
-              <div id="pur-prod-results" class="pur-prod-results" hidden></div>
-            </div>
+            <button type="button" class="btn btn-primary btn-small" id="pur-add-products-btn">+ Agregar productos</button>
           </div>
           <table class="admin-table" id="pur-items-table">
             <thead>
@@ -1739,7 +1744,7 @@
               </tr>
             </thead>
             <tbody id="pur-items-tbody">
-              <tr id="pur-items-empty"><td colspan="6" class="muted">Agregá productos usando el buscador de arriba.</td></tr>
+              <tr id="pur-items-empty"><td colspan="6" class="muted">Agregá productos con el botón "+ Agregar productos".</td></tr>
             </tbody>
             <tfoot>
               <tr>
@@ -1757,6 +1762,36 @@
           <button type="submit" class="btn btn-primary" id="pur-submit-btn">Guardar compra</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Modal: selección múltiple de productos para compra -->
+  <div class="admin-modal" id="pur-picker-modal" hidden style="z-index:1300">
+    <div class="admin-modal-box" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+      <h3>Agregar productos</h3>
+      <input type="search" id="pur-picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="margin-bottom:10px" />
+      <div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;min-height:200px">
+        <table class="admin-table" id="pur-picker-table">
+          <thead>
+            <tr>
+              <th style="width:34px"><input type="checkbox" id="pur-picker-all" title="Seleccionar todos" /></th>
+              <th>Producto</th>
+              <th class="num" style="width:80px">Cant.</th>
+              <th class="num" style="width:110px">Costo actual</th>
+              <th class="num" style="width:70px">Stock</th>
+            </tr>
+          </thead>
+          <tbody id="pur-picker-tbody">
+            <tr><td colspan="5" class="muted">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="admin-modal-foot" style="display:flex;align-items:center;gap:10px">
+        <span id="pur-picker-count" class="muted small">0 seleccionados</span>
+        <span style="flex:1"></span>
+        <button type="button" class="btn" id="pur-picker-cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="pur-picker-confirm" disabled>Agregar seleccionados</button>
+      </div>
     </div>
   </div>
 
@@ -2297,6 +2332,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260601i"></script>
+  <script src="/js/admin.js?v=20260602a"></script>
 </body>
 </html>

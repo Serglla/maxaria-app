@@ -3419,12 +3419,48 @@ app.get("/api/admin/purchases", requireAdmin, (req, res) => {
   res.json(rows);
 });
 
+// Aplica la política de actualización de costo al registrar/editar una compra.
+// policy: 'higher' (solo si el nuevo costo supera al actual), 'always' (siempre),
+// 'never' (no tocar). Si se actualiza el costo y había un costo previo > 0, se
+// ajustan los precios de venta en la misma proporción para mantener el margen.
+// Debe llamarse DENTRO de una transacción.
+const PURCHASE_COST_POLICIES = ["higher", "always", "never"];
+function applyPurchaseCostUpdate(productId, newCostRaw, policy) {
+  if (!productId || policy === "never") return;
+  const prod = db.prepare(
+    "SELECT cost, price_minorista, price_revendedor, price_mayorista, price_vip, price_publico" +
+    "  FROM products WHERE id = ?"
+  ).get(productId);
+  if (!prod) return;
+  const oldCost = Number(prod.cost) || 0;
+  const newCost = Math.max(0, Number(newCostRaw) || 0);
+  const shouldUpdate = policy === "always" || (policy === "higher" && newCost > oldCost);
+  if (!shouldUpdate) return;
+  if (oldCost > 0 && newCost > 0) {
+    // Mantener margen: cada precio de venta se mueve en la misma proporción.
+    const ratio = newCost / oldCost;
+    db.prepare(
+      "UPDATE products SET cost = ?," +
+      "  price_minorista  = CAST(ROUND(price_minorista  * ?) AS INTEGER)," +
+      "  price_revendedor = CAST(ROUND(price_revendedor * ?) AS INTEGER)," +
+      "  price_mayorista  = CAST(ROUND(price_mayorista  * ?) AS INTEGER)," +
+      "  price_vip        = CAST(ROUND(price_vip        * ?) AS INTEGER)," +
+      "  price_publico    = CAST(ROUND(price_publico    * ?) AS INTEGER)" +
+      "  WHERE id = ?"
+    ).run(newCost, ratio, ratio, ratio, ratio, ratio, productId);
+  } else {
+    // Sin costo previo no se puede mantener margen: solo seteamos el costo.
+    db.prepare("UPDATE products SET cost = ? WHERE id = ?").run(newCost, productId);
+  }
+}
+
 app.post("/api/admin/purchases", requireAdmin, (req, res) => {
   const b = req.body || {};
   const supplier_id  = b.supplier_id ? Number(b.supplier_id) : null;
   const reference    = String(b.reference || "").trim().slice(0, 200) || null;
   const notes        = String(b.notes || "").trim().slice(0, 500) || null;
   const received_at  = String(b.received_at || "").trim() || null;
+  const cost_policy  = PURCHASE_COST_POLICIES.includes(b.cost_policy) ? b.cost_policy : "higher";
   const rawItems     = Array.isArray(b.items) ? b.items : [];
 
   if (!rawItems.length) return res.status(400).json({ error: "La compra debe tener al menos 1 item" });
@@ -3474,7 +3510,10 @@ app.post("/api/admin/purchases", requireAdmin, (req, res) => {
     for (const l of lines) {
       insItem.run(purchaseId, l.product_id, l.product_code, l.product_name,
                   l.quantity, l.unit_cost, l.subtotal);
-      if (l.product_id) updStock.run(l.quantity, l.product_id);
+      if (l.product_id) {
+        updStock.run(l.quantity, l.product_id);
+        applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy);
+      }
     }
   })();
 
@@ -3512,6 +3551,7 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
   const reference   = String(b.reference || "").trim().slice(0, 200) || null;
   const notes       = String(b.notes || "").trim().slice(0, 500) || null;
   const received_at = String(b.received_at || "").trim() || null;
+  const cost_policy = PURCHASE_COST_POLICIES.includes(b.cost_policy) ? b.cost_policy : "higher";
   const rawItems    = Array.isArray(b.items) ? b.items : [];
 
   if (!rawItems.length) return res.status(400).json({ error: "La compra debe tener al menos 1 item" });
@@ -3563,7 +3603,10 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     const incStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
     for (const l of lines) {
       insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_cost, l.subtotal);
-      if (l.product_id) incStock.run(l.quantity, l.product_id);
+      if (l.product_id) {
+        incStock.run(l.quantity, l.product_id);
+        applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy);
+      }
     }
   })();
 

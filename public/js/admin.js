@@ -266,6 +266,15 @@
     purItemsEmpty: document.getElementById("pur-items-empty"),
     purItemsTotal: document.getElementById("pur-items-total"),
     purSubmitBtn: document.getElementById("pur-submit-btn"),
+    // Picker de múltiple selección de productos (compra)
+    purAddProductsBtn: document.getElementById("pur-add-products-btn"),
+    purPickerModal: document.getElementById("pur-picker-modal"),
+    purPickerSearch: document.getElementById("pur-picker-search"),
+    purPickerAll: document.getElementById("pur-picker-all"),
+    purPickerTbody: document.getElementById("pur-picker-tbody"),
+    purPickerCount: document.getElementById("pur-picker-count"),
+    purPickerConfirm: document.getElementById("pur-picker-confirm"),
+    purPickerCancel: document.getElementById("pur-picker-cancel"),
 
     // Pagos
     paySearch: document.getElementById("pay-search"),
@@ -377,6 +386,8 @@
     // Items pendientes del formulario de nueva/editar compra
     purchaseItems: [],
     editingPurchaseId: null,
+    // Selección del picker de productos de compra: Map<product_id, qty>
+    purPickerSelected: new Map(),
     // Todos los productos (cache para el buscador de compras)
     allProducts: [],
     allProductsLoaded: false,
@@ -3735,7 +3746,7 @@
   function renderPurchaseItems() {
     if (!els.purItemsTbody) return;
     if (!state.purchaseItems.length) {
-      els.purItemsTbody.innerHTML = '<tr id="pur-items-empty"><td colspan="6" class="muted">Agregá productos usando el buscador de arriba.</td></tr>';
+      els.purItemsTbody.innerHTML = '<tr id="pur-items-empty"><td colspan="6" class="muted">Agregá productos con el botón "+ Agregar productos".</td></tr>';
       recalcPurchaseTotal();
       return;
     }
@@ -3752,19 +3763,20 @@
     recalcPurchaseTotal();
   }
 
-  function addPurchaseItem(product) {
+  function addPurchaseItem(product, qty) {
+    const addQty = Math.max(1, Math.floor(Number(qty) || 1));
     const existing = state.purchaseItems.find((it) => it.product_id === product.id);
     if (existing) {
-      existing.quantity += 1;
+      existing.quantity += addQty;
       existing.subtotal = existing.quantity * existing.unit_cost;
     } else {
       state.purchaseItems.push({
         product_id: product.id,
         product_code: product.code || "",
         product_name: product.name || "",
-        quantity: 1,
+        quantity: addQty,
         unit_cost: product.cost || 0,
-        subtotal: product.cost || 0,
+        subtotal: (product.cost || 0) * addQty,
       });
     }
     renderPurchaseItems();
@@ -3799,45 +3811,120 @@
     });
   }
 
-  // Buscador de productos en modal de compra
-  if (els.purProdSearch) {
-    els.purProdSearch.addEventListener("input", debounce(async () => {
-      const q = els.purProdSearch.value.trim().toLowerCase();
-      if (!q) { if (els.purProdResults) els.purProdResults.hidden = true; return; }
-      await ensureAllProducts();
-      const matches = state.allProducts.filter((p) =>
-        (p.code || "").toLowerCase().includes(q) ||
-        (p.name || "").toLowerCase().includes(q)
-      ).slice(0, 12);
-      if (!els.purProdResults) return;
-      if (!matches.length) {
-        els.purProdResults.innerHTML = '<div class="pur-prod-result-item muted">Sin resultados</div>';
-        els.purProdResults.hidden = false;
-        return;
-      }
-      els.purProdResults.innerHTML = matches.map((p) =>
-        '<div class="pur-prod-result-item" data-id="' + p.id + '">' +
-        '<code>' + escapeHtml(p.code || "") + '</code> · ' + escapeHtml(p.name || "") +
-        ' <span class="muted">Stock: ' + (p.stock || 0) + '</span>' +
-        '</div>'
-      ).join("");
-      els.purProdResults.hidden = false;
-    }, 200));
+  // ---- Picker de selección múltiple de productos (compra) ----
+  // Inspirado en el picker de /ventas: checkbox + cantidad por fila, "agregar
+  // seleccionados" al confirmar. Usa el cache state.allProducts.
+  function renderPurPicker(filter) {
+    if (!els.purPickerTbody) return;
+    let list = state.allProducts || [];
+    if (filter) {
+      const q = filter.trim().toLowerCase();
+      list = list.filter((p) => (p.name || "").toLowerCase().includes(q) || (p.code || "").toLowerCase().includes(q));
+    }
+    if (!list.length) {
+      els.purPickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:16px;text-align:center">Sin resultados</td></tr>';
+      return;
+    }
+    els.purPickerTbody.innerHTML = list.map((p) => {
+      const sel = state.purPickerSelected.has(p.id);
+      const qty = sel ? state.purPickerSelected.get(p.id) : "";
+      return '<tr data-pid="' + p.id + '">' +
+        '<td><input type="checkbox" class="pur-pick-cb" data-pid="' + p.id + '"' + (sel ? " checked" : "") + ' /></td>' +
+        '<td><div>' + escapeHtml(p.name || "") + '</div><code class="muted">' + escapeHtml(p.code || "") + '</code></td>' +
+        '<td class="num"><input type="number" class="cell-input cell-num pur-pick-qty" data-pid="' + p.id + '" min="1" step="1" value="' + qty + '" placeholder="1" style="width:64px" /></td>' +
+        '<td class="num">' + fmtPrice(p.cost || 0) + '</td>' +
+        '<td class="num" style="color:' + ((p.stock || 0) > 0 ? "#059669" : "#9ca3af") + '">' + (p.stock || 0) + '</td>' +
+      '</tr>';
+    }).join("");
+  }
 
-    els.purProdSearch.addEventListener("blur", () => {
-      setTimeout(() => { if (els.purProdResults) els.purProdResults.hidden = true; }, 200);
+  function updatePurPickerCount() {
+    if (els.purPickerCount) {
+      const n = state.purPickerSelected.size;
+      els.purPickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados");
+    }
+    if (els.purPickerConfirm) els.purPickerConfirm.disabled = state.purPickerSelected.size === 0;
+  }
+
+  async function openPurPicker() {
+    await ensureAllProducts();
+    state.purPickerSelected.clear();
+    if (els.purPickerSearch) els.purPickerSearch.value = "";
+    if (els.purPickerAll) els.purPickerAll.checked = false;
+    renderPurPicker("");
+    updatePurPickerCount();
+    if (els.purPickerModal) els.purPickerModal.hidden = false;
+    setTimeout(() => { if (els.purPickerSearch) els.purPickerSearch.focus(); }, 60);
+  }
+
+  function closePurPicker() { if (els.purPickerModal) els.purPickerModal.hidden = true; }
+
+  if (els.purAddProductsBtn) els.purAddProductsBtn.addEventListener("click", openPurPicker);
+  if (els.purPickerCancel)   els.purPickerCancel.addEventListener("click", closePurPicker);
+
+  if (els.purPickerSearch) {
+    els.purPickerSearch.addEventListener("input", debounce(() => renderPurPicker(els.purPickerSearch.value), 180));
+  }
+
+  if (els.purPickerModal) {
+    // Checkbox de fila / "seleccionar todos"
+    els.purPickerModal.addEventListener("change", (e) => {
+      if (e.target.classList.contains("pur-pick-cb")) {
+        const pid = Number(e.target.dataset.pid);
+        const tr = e.target.closest("tr[data-pid]");
+        const qInp = tr ? tr.querySelector(".pur-pick-qty") : null;
+        if (e.target.checked) {
+          const q = qInp ? Math.max(1, Math.floor(Number(qInp.value) || 0)) : 1;
+          state.purPickerSelected.set(pid, q || 1);
+          if (qInp && !qInp.value) qInp.value = "1";
+        } else {
+          state.purPickerSelected.delete(pid);
+          if (qInp) qInp.value = "";
+        }
+        updatePurPickerCount();
+      } else if (e.target.id === "pur-picker-all") {
+        const all = e.target.checked;
+        els.purPickerTbody.querySelectorAll(".pur-pick-cb").forEach((cb) => {
+          cb.checked = all;
+          const pid = Number(cb.dataset.pid);
+          const tr = cb.closest("tr[data-pid]");
+          const qInp = tr ? tr.querySelector(".pur-pick-qty") : null;
+          if (all) {
+            const q = qInp ? Math.max(1, Math.floor(Number(qInp.value) || 0)) : 1;
+            state.purPickerSelected.set(pid, q || 1);
+            if (qInp && !qInp.value) qInp.value = "1";
+          } else {
+            state.purPickerSelected.delete(pid);
+            if (qInp) qInp.value = "";
+          }
+        });
+        updatePurPickerCount();
+      }
+    });
+
+    // Tipear cantidad marca el checkbox y guarda la cantidad.
+    els.purPickerModal.addEventListener("input", (e) => {
+      if (!e.target.classList.contains("pur-pick-qty")) return;
+      const pid = Number(e.target.dataset.pid);
+      const raw = e.target.value;
+      if (raw === "") return;
+      const q = Math.max(1, Math.floor(Number(raw) || 0));
+      state.purPickerSelected.set(pid, q);
+      const tr = e.target.closest("tr[data-pid]");
+      const cb = tr ? tr.querySelector(".pur-pick-cb") : null;
+      if (cb && !cb.checked) cb.checked = true;
+      updatePurPickerCount();
     });
   }
 
-  if (els.purProdResults) {
-    els.purProdResults.addEventListener("mousedown", (e) => {
-      const item = e.target.closest(".pur-prod-result-item[data-id]");
-      if (!item) return;
-      const id = Number(item.dataset.id);
-      const prod = state.allProducts.find((p) => p.id === id);
-      if (prod) addPurchaseItem(prod);
-      if (els.purProdSearch) els.purProdSearch.value = "";
-      if (els.purProdResults) els.purProdResults.hidden = true;
+  if (els.purPickerConfirm) {
+    els.purPickerConfirm.addEventListener("click", () => {
+      state.purPickerSelected.forEach((qty, pid) => {
+        const prod = (state.allProducts || []).find((p) => p.id === pid);
+        if (prod) addPurchaseItem(prod, qty);
+      });
+      state.purPickerSelected.clear();
+      closePurPicker();
     });
   }
 
@@ -3887,6 +3974,7 @@
         reference: fd.get("reference"),
         notes: fd.get("notes"),
         received_at: received_at_raw ? received_at_raw.replace("T", " ") : null,
+        cost_policy: fd.get("cost_policy") || "higher",
         items: state.purchaseItems.map((it) => ({
           product_id: it.product_id,
           product_code: it.product_code,
