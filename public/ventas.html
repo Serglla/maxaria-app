@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Ventas</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260602e" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260602f" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -186,6 +186,9 @@
       </div>
       <div class="picker-search-wrap">
         <input type="search" id="picker-search" placeholder="Buscar por nombre o código…" autocomplete="off" />
+        <label id="picker-nostock-wrap" class="picker-nostock-toggle" hidden>
+          <input type="checkbox" id="picker-show-nostock" /> Ver también productos sin stock
+        </label>
       </div>
       <div class="picker-body">
         <table class="picker-table">
@@ -227,6 +230,6 @@
     </div>
   </div>
 
-  <script src="/js/ventas.js?v=20260602c"></script>
+  <script src="/js/ventas.js?v=20260602d"></script>
 </body>
 </html>

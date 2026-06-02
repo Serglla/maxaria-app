@@ -85,6 +85,8 @@
     pickerClose:   document.getElementById("picker-close-btn"),
     pickerCancel:  document.getElementById("picker-cancel-btn"),
     pickerSearch:  document.getElementById("picker-search"),
+    pickerNoStockWrap: document.getElementById("picker-nostock-wrap"),
+    pickerShowNoStock: document.getElementById("picker-show-nostock"),
     pickerCheckAll:document.getElementById("picker-check-all"),
     pickerTbody:   document.getElementById("picker-tbody"),
     pickerCount:   document.getElementById("picker-selected-count"),
@@ -109,6 +111,8 @@
     pricing: "base:minorista",
     // Base con la que se cargó allProducts (para refrescar el picker al cambiar).
     pricedFor: null,
+    // Si el picker muestra también los productos sin stock (solo admin).
+    pickerShowNoStock: false,
     // Map<pid, qty>: productos seleccionados en el picker con su cantidad.
     // El usuario puede tildar el checkbox (qty=1 por default) o tipear una
     // cantidad directamente en la columna "Cant." (eso marca el checkbox).
@@ -721,6 +725,10 @@
   function vRenderPicker(filter) {
     if (!vEls.pickerTbody) return;
     let list = vState.allProducts;
+    // Por defecto se ocultan los productos sin stock; el checkbox los muestra.
+    if (!vState.pickerShowNoStock) {
+      list = list.filter((p) => (p.stock || 0) > 0);
+    }
     if (filter) {
       const q = filter.trim().toLowerCase();
       list = list.filter((p) => (p.name||"").toLowerCase().includes(q) || (p.code||"").toLowerCase().includes(q));
@@ -736,7 +744,8 @@
       const isSel = vState.pickerSelected.has(p.id);
       const chk = isSel ? " checked" : "";
       const qty = isSel ? vState.pickerSelected.get(p.id) : "";
-      return '<tr data-pid="' + p.id + '"><td><input type="checkbox" class="vpicker-cb" data-pid="' + p.id + '"' + chk + ' /></td>' +
+      const noStock = (p.stock || 0) <= 0;
+      return '<tr data-pid="' + p.id + '"' + (noStock ? ' class="vpicker-nostock"' : '') + '><td><input type="checkbox" class="vpicker-cb" data-pid="' + p.id + '"' + chk + ' /></td>' +
         '<td>' + img + '</td>' +
         '<td><div style="font-weight:500">' + vEsc(p.name) + '</div>' +
           '<div class="muted" style="font-size:11px">' + vEsc(p.code||"") + '</div></td>' +
@@ -852,6 +861,14 @@
     });
   }
 
+  // Toggle "ver productos sin stock" (admin): re-renderiza respetando la búsqueda.
+  if (vEls.pickerShowNoStock) {
+    vEls.pickerShowNoStock.addEventListener("change", () => {
+      vState.pickerShowNoStock = vEls.pickerShowNoStock.checked;
+      vRenderPicker(vEls.pickerSearch ? vEls.pickerSearch.value : "");
+    });
+  }
+
   if (vEls.pickerConfirm) {
     vEls.pickerConfirm.addEventListener("click", () => {
       // pickerSelected es Map<pid, qty>. Usamos la qty que el usuario tipeó
@@ -886,6 +903,12 @@
       vState.pickerSelected.clear();
       if (vEls.pickerSearch)   vEls.pickerSearch.value = "";
       if (vEls.pickerCheckAll) vEls.pickerCheckAll.checked = false;
+      // El toggle "ver sin stock" es solo para admin (los demás no reciben
+      // productos sin stock del server). Arranca destildado en cada apertura.
+      const isAdmin = me.level === 99;
+      if (vEls.pickerNoStockWrap) vEls.pickerNoStockWrap.hidden = !isAdmin;
+      vState.pickerShowNoStock = false;
+      if (vEls.pickerShowNoStock) vEls.pickerShowNoStock.checked = false;
       vRenderPicker("");
       vPickerCount();
       vEls.picker.hidden = false;
