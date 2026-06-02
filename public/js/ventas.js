@@ -756,10 +756,12 @@
   }
 
   function vPickerCount() {
-    if (!vEls.pickerCount) return;
     const n = vState.pickerSelected.size;
-    vEls.pickerCount.textContent = n + (n===1?" seleccionado":" seleccionados");
-    if (vEls.pickerConfirm) vEls.pickerConfirm.disabled = n === 0;
+    if (vEls.pickerCount) vEls.pickerCount.textContent = n + (n===1?" seleccionado":" seleccionados");
+    if (vEls.pickerConfirm) {
+      vEls.pickerConfirm.disabled = n === 0;
+      vEls.pickerConfirm.textContent = n > 0 ? "Agregar seleccionados (" + n + ")" : "Agregar seleccionados";
+    }
   }
 
   function vClosePicker() { if (vEls.picker) vEls.picker.hidden = true; }

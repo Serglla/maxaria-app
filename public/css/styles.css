@@ -3233,7 +3233,7 @@ label.cats-check input[type="checkbox"] {
   padding: 8px 20px;
   border-bottom: 1px solid #e5e7eb;
 }
-.ventas-page .picker-search-wrap input {
+.ventas-page .picker-search-wrap input[type="search"] {
   width: 100%;
   border: 1px solid #d1d5db;
   border-radius: 6px;
@@ -3265,12 +3265,15 @@ label.cats-check input[type="checkbox"] {
 .ventas-page .picker-nostock-toggle {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
   margin-top: 8px;
   font-size: 12.5px;
   color: #475569;
   cursor: pointer;
+  white-space: nowrap;
 }
+.ventas-page .picker-nostock-toggle input { flex: none; width: 16px; height: 16px; margin: 0; }
 .ventas-page .picker-nostock-toggle[hidden] { display: none; }
 .ventas-page .picker-nostock-toggle input { cursor: pointer; }
 .ventas-page .picker-foot {
