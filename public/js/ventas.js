@@ -238,7 +238,10 @@
     vState.pricing = (vEls.priceList && vEls.priceList.value) || "base:minorista";
     vUpdatePricingHint();
     if (opts.reprice && vState.items.length) {
-      const ok = confirm("¿Recalcular los precios de los artículos cargados con esta lista?\n\nLos precios editados a mano se van a reemplazar.");
+      const ok = await vConfirm(
+        "Los precios que hayas editado a mano se van a reemplazar por los de esta lista.",
+        { title: "¿Recalcular precios?", okText: "Recalcular", cancelText: "No, dejar como está" }
+      );
       if (ok) await vRepriceItems();
     }
   }
@@ -262,6 +265,52 @@
     clearTimeout(t._hideT);
     t._hideT = setTimeout(() => { t.style.opacity = "0"; }, 1800);
   }
+
+  // Confirmación propia (modal in-app) que reemplaza al confirm() nativo del
+  // navegador (que muestra el dominio y no se puede estilar). Devuelve una
+  // Promise<boolean>. opts: { title, okText, cancelText, danger }.
+  // Regla del proyecto: los modales NO se cierran al clickear afuera.
+  const vConfEls = {
+    modal:  document.getElementById("ventas-confirm-modal"),
+    title:  document.getElementById("ventas-confirm-title"),
+    msg:    document.getElementById("ventas-confirm-msg"),
+    ok:     document.getElementById("ventas-confirm-ok"),
+    cancel: document.getElementById("ventas-confirm-cancel"),
+  };
+  let vConfResolve = null;
+  function vCloseConfirm(result) {
+    if (vConfEls.modal) vConfEls.modal.hidden = true;
+    const r = vConfResolve; vConfResolve = null;
+    if (r) r(result);
+  }
+  function vConfirm(message, opts) {
+    opts = opts || {};
+    return new Promise((resolve) => {
+      // Fallback al confirm nativo si el modal no está en el DOM.
+      if (!vConfEls.modal) { resolve(window.confirm(message)); return; }
+      // Si había una confirmación abierta, resolvela como cancelada.
+      if (vConfResolve) { const prev = vConfResolve; vConfResolve = null; prev(false); }
+      vConfEls.title.textContent  = opts.title || "Confirmar";
+      vConfEls.msg.textContent    = message || "";
+      vConfEls.ok.textContent     = opts.okText || "Aceptar";
+      vConfEls.cancel.textContent = opts.cancelText || "Cancelar";
+      vConfEls.ok.className = "btn btn-primary";
+      vConfEls.ok.style.cssText = opts.danger
+        ? "background:#dc2626;border-color:#dc2626;color:#fff"
+        : "";
+      vConfResolve = resolve;
+      vConfEls.modal.hidden = false;
+      try { vConfEls.ok.focus(); } catch (_) {}
+    });
+  }
+  if (vConfEls.ok)     vConfEls.ok.addEventListener("click", () => vCloseConfirm(true));
+  if (vConfEls.cancel) vConfEls.cancel.addEventListener("click", () => vCloseConfirm(false));
+  // Teclado: Enter confirma, Esc cancela (mientras el modal está abierto).
+  document.addEventListener("keydown", (e) => {
+    if (!vConfEls.modal || vConfEls.modal.hidden || !vConfResolve) return;
+    if (e.key === "Escape") { e.preventDefault(); vCloseConfirm(false); }
+    else if (e.key === "Enter") { e.preventDefault(); vCloseConfirm(true); }
+  });
 
   function vUpdateStatusUI() {
     const st = vState.editingStatus;
@@ -578,7 +627,11 @@
   if (vEls.form) vEls.form.addEventListener("submit", (e) => { e.preventDefault(); vSave("enviado"); });
 
   if (vEls.cancelBtn) vEls.cancelBtn.addEventListener("click", async () => {
-    if (!vState.editingId || !confirm("¿Cancelar este presupuesto?")) return;
+    if (!vState.editingId) return;
+    const ok = await vConfirm("El presupuesto va a quedar cancelado.", {
+      title: "¿Cancelar este presupuesto?", okText: "Sí, cancelar", cancelText: "Volver", danger: true,
+    });
+    if (!ok) return;
     await fetch("/api/budgets/" + vState.editingId + "/status", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({status:"cancelado"}) });
     vState.editingStatus = "cancelado"; vUpdateStatusUI(); vLoadBudgets();
   });
@@ -590,18 +643,22 @@
 
   if (vEls.invoiceBtn) vEls.invoiceBtn.addEventListener("click", async () => {
     if (!vState.editingId) return;
-    if (!confirm("Facturar este presupuesto?\n\nSe va a descontar el stock de los artículos y, si hay un cliente con cuenta corriente, se le va a debitar el total.")) return;
+    const ok = await vConfirm(
+      "Se va a descontar el stock de los artículos y, si hay un cliente con cuenta corriente, se le va a debitar el total.",
+      { title: "¿Facturar este presupuesto?", okText: "Facturar" }
+    );
+    if (!ok) return;
     vEls.invoiceBtn.disabled = true;
     try {
       const r = await fetch("/api/budgets/" + vState.editingId + "/invoice", { method:"POST" });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) { alert(data.error || "No se pudo facturar"); vEls.invoiceBtn.disabled = false; return; }
+      if (!r.ok) { vToast(data.error || "No se pudo facturar", true); vEls.invoiceBtn.disabled = false; return; }
       vState.editingStatus = "facturado";
       vUpdateStatusUI();
       vLoadBudgets();
-      alert("Facturado correctamente." + (data.debited ? "\nSe debitó el total en la cuenta corriente del cliente." : "\nVenta a consumidor final: no se tocó cuenta corriente."));
+      vToast(data.debited ? "Facturado · se debitó en cuenta corriente" : "Facturado · venta a consumidor final");
     } catch (_) {
-      alert("Error de conexión al facturar");
+      vToast("Error de conexión al facturar", true);
       vEls.invoiceBtn.disabled = false;
     }
   });

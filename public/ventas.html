@@ -207,6 +207,20 @@
     </div>
   </div>
 
-  <script src="/js/ventas.js?v=20260602a"></script>
+  <!-- MODAL: Confirmación propia (reemplaza confirm() nativo del navegador) -->
+  <div id="ventas-confirm-modal" class="admin-modal" hidden style="z-index:1400">
+    <div class="admin-modal-box" style="max-width:420px">
+      <h3 id="ventas-confirm-title">Confirmar</h3>
+      <div class="admin-modal-body">
+        <p id="ventas-confirm-msg" style="white-space:pre-line"></p>
+      </div>
+      <div class="admin-modal-foot">
+        <button type="button" class="btn" id="ventas-confirm-cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="ventas-confirm-ok">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/ventas.js?v=20260602b"></script>
 </body>
 </html>
