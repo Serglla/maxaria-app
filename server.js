@@ -325,6 +325,11 @@ try { db.exec("ALTER TABLE budgets ADD COLUMN order_id INTEGER REFERENCES orders
 // Indica si el presupuesto ya descontó stock (al crearse). Evita doble descuento
 // en facturar/entregar y permite devolver el stock si se cancela.
 try { db.exec("ALTER TABLE budgets ADD COLUMN stock_discounted INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+// Base de precios elegida al armar el presupuesto: "base:<nivel>" (minorista,
+// revendedor, mayorista, vip, publico) o "list:<id>" (lista personalizada).
+// Sirve para reabrir el presupuesto mostrando la lista usada y poder recalcular.
+// NULL = presupuestos viejos (se infiere del cliente al abrir).
+try { db.exec("ALTER TABLE budgets ADD COLUMN price_basis TEXT"); } catch (_) {}
 
 // Migracion: stock minimo por producto (0 = sin alerta)
 try { db.exec("ALTER TABLE products ADD COLUMN stock_min INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
@@ -1008,23 +1013,55 @@ app.get("/api/clients", requireLogin, (req, res) => {
   // - Admin: ve todos los clientes activos (lo usa /ventas para armar presupuestos).
   // - Vendedor propio: ve todos los clientes activos.
   // - Vendedor tercerizado: solo los clientes que tiene asignados.
+  // Incluimos la lista de precios asignada (solo si está activa) para que la
+  // página de presupuestos pueda preseleccionar la base de precios del cliente.
   let sql =
-    "SELECT id, username, full_name, level FROM users" +
-    "  WHERE level IN (1,2,3,4) AND active = 1";
+    "SELECT u.id, u.username, u.full_name, u.level," +
+    "       pl.id AS price_list_id, pl.name AS price_list_name" +
+    "  FROM users u" +
+    "  LEFT JOIN price_lists pl ON pl.id = u.price_list_id AND pl.active = 1" +
+    "  WHERE u.level IN (1,2,3,4) AND u.active = 1";
   const params = [];
   if (level === 5) {
     const me = db.prepare("SELECT is_tercerizado FROM users WHERE id = ?").get(req.session.userId) || {};
     if (Number(me.is_tercerizado) === 1) {
-      sql += " AND assigned_vendedor_id = ?";
+      sql += " AND u.assigned_vendedor_id = ?";
       params.push(req.session.userId);
     }
   }
-  sql += " ORDER BY full_name, username";
+  sql += " ORDER BY u.full_name, u.username";
   const rows = db.prepare(sql).all(...params);
   res.json(rows.map((r) => ({
     id: r.id, username: r.username, full_name: r.full_name,
     level: r.level, levelName: levelName(r.level),
+    price_list_id: r.price_list_id || null,
+    price_list_name: r.price_list_name || null,
   })));
+});
+
+// Opciones de precio seleccionables al armar un presupuesto: los niveles base
+// del catálogo + las listas personalizadas activas. La página de Ventas las usa
+// para el selector "Lista de precios" del formulario.
+app.get("/api/price-options", requireVendedorOrAdmin, (req, res) => {
+  const levels = [
+    { value: "base:minorista",  label: "Minorista" },
+    { value: "base:revendedor", label: "Revendedor" },
+    { value: "base:mayorista",  label: "Mayorista" },
+    { value: "base:vip",        label: "VIP" },
+    { value: "base:publico",    label: "Público" },
+  ];
+  const lists = db.prepare(
+    "SELECT id, name, base_level, markup_percent FROM price_lists" +
+    "  WHERE active = 1 ORDER BY name"
+  ).all().map((l) => ({
+    value: "list:" + l.id,
+    id: l.id,
+    name: l.name,
+    base_level: l.base_level,
+    markup_percent: Number(l.markup_percent) || 0,
+    label: l.name + " (" + l.base_level + (Number(l.markup_percent) ? " " + l.markup_percent + "%" : "") + ")",
+  }));
+  res.json({ levels, lists });
 });
 
 // Vendedor selecciona (o deselecciona) el cliente que está atendiendo.
@@ -1535,7 +1572,48 @@ app.get("/api/products", requireLogin, (req, res) => {
   let noPrice = false;
   let vendorCostCfg = null; // override para vendedor sin cliente con lista propia
 
-  if (req.session.level === 5) {
+  // Override de precios (admin nivel 99 o vendedor nivel 5): permite ver el
+  // catálogo "como" un nivel base o una lista personalizada. Lo usa la vista
+  // "ver como nivel" del catálogo (admin) y el armado de presupuestos en /ventas
+  // (admin y vendedores), para que el picker muestre el precio del cliente.
+  //   - as_list_id=N   → lista personalizada N (markup sobre su columna base)
+  //   - as_base=<base> → nivel base directo (minorista|revendedor|mayorista|vip|publico)
+  //   - as_level=N     → nivel base por número 1..4 (compat. con el catálogo)
+  const canOverride = req.session.level === 99 || req.session.level === 5;
+  let overrideApplied = false;
+  if (canOverride && req.query.as_list_id != null) {
+    const listId = Number(req.query.as_list_id);
+    const list = db.prepare(
+      "SELECT id, base_level, markup_percent FROM price_lists WHERE id = ?"
+    ).get(listId);
+    if (list) {
+      vendorCostCfg = {
+        kind: "list",
+        listId: list.id,
+        column: priceColumnForBaseLevel(list.base_level),
+        markup_percent: Number(list.markup_percent) || 0,
+      };
+      effectiveUserId = null;
+      overrideApplied = true;
+    }
+  } else if (canOverride && req.query.as_base != null) {
+    const base = String(req.query.as_base).trim().toLowerCase();
+    // No exponemos "costo" como base de venta de un presupuesto.
+    if (["minorista", "revendedor", "mayorista", "vip", "publico"].includes(base)) {
+      vendorCostCfg = { kind: "level", column: priceColumnForBaseLevel(base) };
+      effectiveUserId = null; // override explícito: ignorar lista personalizada
+      overrideApplied = true;
+    }
+  } else if (canOverride && req.query.as_level != null) {
+    const asLvl = Number(req.query.as_level);
+    if ([1, 2, 3, 4].includes(asLvl)) {
+      effectiveLevel = asLvl;
+      effectiveUserId = null; // admin "viendo como N": ignorar lista personalizada
+      overrideApplied = true;
+    }
+  }
+
+  if (!overrideApplied && req.session.level === 5) {
     if (req.session.vendedorClientId) {
       effectiveLevel = req.session.vendedorClientLevel;
       effectiveUserId = req.session.vendedorClientId;
@@ -1556,29 +1634,6 @@ app.get("/api/products", requireLogin, (req, res) => {
       } else {
         noPrice = true; // vendedor propio sin cliente, o sin nivel: "Seleccioná un cliente"
       }
-    }
-  } else if (req.session.level === 99 && req.query.as_level != null) {
-    const asLvl = Number(req.query.as_level);
-    if ([1, 2, 3, 4].includes(asLvl)) {
-      effectiveLevel = asLvl;
-      effectiveUserId = null; // admin "viendo como N": ignorar lista personalizada
-    }
-  } else if (req.session.level === 99 && req.query.as_list_id != null) {
-    // Admin viendo como lista personalizada (L1, L2, etc): aplica la fórmula
-    // de markup sobre la columna base de la lista, igual que un cliente con
-    // esa lista asignada.
-    const listId = Number(req.query.as_list_id);
-    const list = db.prepare(
-      "SELECT id, base_level, markup_percent FROM price_lists WHERE id = ?"
-    ).get(listId);
-    if (list) {
-      vendorCostCfg = {
-        kind: "list",
-        listId: list.id,
-        column: priceColumnForBaseLevel(list.base_level),
-        markup_percent: Number(list.markup_percent) || 0,
-      };
-      effectiveUserId = null;
     }
   }
 
@@ -4368,6 +4423,7 @@ app.post("/api/budgets", requireVendedorOrAdmin, (req, res) => {
   const discountPct = Number(b.discount_percent) || 0;
   const surchargePct = Number(b.surcharge_percent) || 0;
   const notes = b.notes || null;
+  const priceBasis = b.price_basis || null;
   const items = Array.isArray(b.items) ? b.items : [];
 
   // Calcular totales
@@ -4387,10 +4443,10 @@ app.post("/api/budgets", requireVendedorOrAdmin, (req, res) => {
   const insertBudget = db.transaction(() => {
     const r = db.prepare(
       "INSERT INTO budgets (number, client_id, client_name, vendedor_id, payment_method, currency," +
-      "  discount_percent, surcharge_percent, subtotal, total, notes, status, stock_discounted)" +
-      "  VALUES (?,?,?,?,?,?,?,?,?,?,?,'borrador',1)"
+      "  discount_percent, surcharge_percent, subtotal, total, notes, price_basis, status, stock_discounted)" +
+      "  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'borrador',1)"
     ).run(number, clientId, clientName, vendedorId, payMethod, currency,
-          discountPct, surchargePct, subtotal, total, notes);
+          discountPct, surchargePct, subtotal, total, notes, priceBasis);
     const bid = r.lastInsertRowid;
     const insItem = db.prepare(
       "INSERT INTO budget_items (budget_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +
@@ -4429,6 +4485,7 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
   const discountPct = Number(b.discount_percent) || 0;
   const surchargePct = Number(b.surcharge_percent) || 0;
   const notes = b.notes || null;
+  const priceBasis = b.price_basis || null;
   const items = Array.isArray(b.items) ? b.items : [];
 
   let subtotal = 0;
@@ -4446,10 +4503,10 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
   const updateBudget = db.transaction(() => {
     db.prepare(
       "UPDATE budgets SET client_id=?, client_name=?, payment_method=?, currency=?," +
-      "  discount_percent=?, surcharge_percent=?, subtotal=?, total=?, notes=?," +
+      "  discount_percent=?, surcharge_percent=?, subtotal=?, total=?, notes=?, price_basis=?," +
       "  updated_at=datetime('now') WHERE id=?"
     ).run(clientId, clientName, payMethod, currency, discountPct, surchargePct,
-          subtotal, total, notes, budget.id);
+          subtotal, total, notes, priceBasis, budget.id);
     db.prepare("DELETE FROM budget_items WHERE budget_id = ?").run(budget.id);
     const insItem = db.prepare(
       "INSERT INTO budget_items (budget_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +

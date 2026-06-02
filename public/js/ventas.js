@@ -63,6 +63,8 @@
     tbody:         document.getElementById("budgets-tbody"),
     form:          document.getElementById("budget-form"),
     client:        document.getElementById("budget-client"),
+    priceList:     document.getElementById("budget-price-list"),
+    priceListHint: document.getElementById("budget-price-list-hint"),
     payment:       document.getElementById("budget-payment"),
     itemsTbody:    document.getElementById("budget-items-tbody"),
     notes:         document.getElementById("budget-notes"),
@@ -97,6 +99,16 @@
     items: [],
     allProducts: [],
     productsLoaded: false,
+    // Clientes crudos de /api/clients (con price_list_id) para defaultear la lista.
+    clientsRaw: [],
+    // Opciones del selector de lista de precios (/api/price-options).
+    priceOptions: null,
+    priceOptionsLoaded: false,
+    // Base de precios elegida: "base:<nivel>" o "list:<id>". Define qué precio
+    // muestra el picker y con qué se recalculan los ítems.
+    pricing: "base:minorista",
+    // Base con la que se cargó allProducts (para refrescar el picker al cambiar).
+    pricedFor: null,
     // Map<pid, qty>: productos seleccionados en el picker con su cantidad.
     // El usuario puede tildar el checkbox (qty=1 por default) o tipear una
     // cantidad directamente en la columna "Cant." (eso marca el checkbox).
@@ -117,6 +129,118 @@
 
   function vBadgeHtml(status) {
     return '<span class="budget-badge ' + (V_STATUS_BADGE[status]||"") + '">' + vEsc(V_STATUS_LABELS[status]||status) + '</span>';
+  }
+
+  // ── Lista de precios (base de precios del presupuesto) ──
+  const V_LEVEL_BASE = { 1: "minorista", 2: "revendedor", 3: "mayorista", 4: "vip" };
+
+  function vClientById(id) {
+    return (vState.clientsRaw || []).find((c) => Number(c.id) === Number(id)) || null;
+  }
+
+  // Base de precios que le corresponde por default a un cliente: su lista
+  // personalizada si tiene una activa, sino el nivel del cliente. Sin cliente
+  // (consumidor final) cae a minorista.
+  function vDefaultPricingForClient(clientId) {
+    if (!clientId) return "base:minorista";
+    const c = vClientById(clientId);
+    if (!c) return "base:minorista";
+    if (c.price_list_id) return "list:" + c.price_list_id;
+    return "base:" + (V_LEVEL_BASE[Number(c.level)] || "minorista");
+  }
+
+  // Querystring para /api/products según la base elegida.
+  function vPricingQuery() {
+    const p = vState.pricing || "";
+    if (p.indexOf("list:") === 0) return "?as_list_id=" + encodeURIComponent(p.slice(5));
+    if (p.indexOf("base:") === 0) return "?as_base=" + encodeURIComponent(p.slice(5));
+    return "";
+  }
+
+  async function vLoadPriceOptions() {
+    if (vState.priceOptionsLoaded) return;
+    try {
+      const data = await fetch("/api/price-options").then((r) => r.ok ? r.json() : null);
+      if (data) {
+        vState.priceOptions = data;
+        vState.priceOptionsLoaded = true;
+        vBuildPriceListSelect();
+      }
+    } catch (_) {}
+  }
+
+  function vBuildPriceListSelect() {
+    if (!vEls.priceList || !vState.priceOptions) return;
+    const { levels, lists } = vState.priceOptions;
+    let html = '<optgroup label="Niveles">' +
+      (levels || []).map((o) => '<option value="' + o.value + '">' + vEsc(o.label) + '</option>').join("") +
+      '</optgroup>';
+    if (lists && lists.length) {
+      html += '<optgroup label="Listas personalizadas">' +
+        lists.map((o) => '<option value="' + o.value + '">' + vEsc(o.label) + '</option>').join("") +
+        '</optgroup>';
+    }
+    vEls.priceList.innerHTML = html;
+  }
+
+  // Setea el selector + estado sin recalcular ítems (usado al abrir el form).
+  function vSetPricing(value) {
+    vState.pricing = value || "base:minorista";
+    if (vEls.priceList) {
+      vEls.priceList.value = vState.pricing;
+      // Si el value no existe (lista borrada/inactiva), caer a minorista.
+      if (vEls.priceList.value !== vState.pricing) {
+        vEls.priceList.value = "base:minorista";
+        vState.pricing = vEls.priceList.value || "base:minorista";
+      }
+    }
+    vUpdatePricingHint();
+  }
+
+  function vUpdatePricingHint() {
+    if (!vEls.priceListHint) return;
+    const clientId = vEls.client && vEls.client.value ? Number(vEls.client.value) : null;
+    let txt;
+    if (!clientId) {
+      txt = "Consumidor final — elegí la base de precios.";
+    } else {
+      const c = vClientById(clientId);
+      if (c && c.price_list_id) txt = "El cliente tiene asignada la lista: " + (c.price_list_name || ("#" + c.price_list_id)) + ".";
+      else if (c) txt = "El cliente usa precios de nivel: " + (c.levelName || "") + ".";
+      else txt = "";
+    }
+    if (clientId && vState.pricing !== vDefaultPricingForClient(clientId)) {
+      txt += " (Modificado para este presupuesto)";
+    }
+    vEls.priceListHint.textContent = txt;
+  }
+
+  // Recalcula unit_price de todos los ítems con producto según la base actual.
+  async function vRepriceItems() {
+    if (!vState.items.length) return;
+    await vLoadProducts(); // garantiza allProducts con la base actual
+    const byId = new Map(vState.allProducts.map((p) => [p.id, p]));
+    vState.items.forEach((it) => {
+      if (!it.product_id) return;
+      const p = byId.get(it.product_id);
+      if (p && p.price != null) {
+        it.unit_price = Number(p.price) || 0;
+        it.subtotal = Math.round((Number(it.quantity) || 1) * it.unit_price * (1 - (Number(it.discount_percent) || 0) / 100));
+      }
+    });
+    vRenderItems();
+  }
+
+  // Aplica el cambio de base: actualiza estado/hint, invalida el cache del
+  // picker y (si se pide y hay ítems) recalcula precios previa confirmación.
+  async function vApplyPricing(opts) {
+    opts = opts || {};
+    vState.pricing = (vEls.priceList && vEls.priceList.value) || "base:minorista";
+    vUpdatePricingHint();
+    if (opts.reprice && vState.items.length) {
+      const ok = confirm("¿Recalcular los precios de los artículos cargados con esta lista?\n\nLos precios editados a mano se van a reemplazar.");
+      if (ok) await vRepriceItems();
+    }
   }
 
   // Toast efímero para confirmar acciones (guardado, error). Autocontenido:
@@ -272,6 +396,21 @@
   if (vEls.discount)  vEls.discount.addEventListener("input",  vRecalc);
   if (vEls.surcharge) vEls.surcharge.addEventListener("input", vRecalc);
 
+  // Al cambiar el cliente: defaultear la base de precios a la del cliente y
+  // ofrecer recalcular los ítems ya cargados.
+  if (vEls.client) {
+    vEls.client.addEventListener("change", async () => {
+      vSetPricing(vDefaultPricingForClient(vEls.client.value ? Number(vEls.client.value) : null));
+      await vApplyPricing({ reprice: true });
+    });
+  }
+  // Al cambiar la lista manualmente: aplicar y ofrecer recalcular.
+  if (vEls.priceList) {
+    vEls.priceList.addEventListener("change", async () => {
+      await vApplyPricing({ reprice: true });
+    });
+  }
+
   function vShowListView() {
     if (vEls.listView)  vEls.listView.hidden = false;
     if (vEls.formView)  vEls.formView.hidden = true;
@@ -337,7 +476,13 @@
     vState.editingId = id || null;
     vState.items = [];
     vState.editingStatus = "borrador";
+    // Cargar clientes y opciones de precio antes de defaultear la base.
     await vPopulateClients();
+    await vLoadPriceOptions();
+    // Invalidar el cache de productos del picker: la base puede cambiar.
+    vState.pricedFor = null;
+    vState.productsLoaded = false;
+    vState.allProducts = [];
 
     if (id) {
       try {
@@ -351,6 +496,9 @@
         if (vEls.surcharge)  vEls.surcharge.value = data.surcharge_percent || 0;
         if (vEls.notes)      vEls.notes.value = data.notes || "";
         vState.items = (data.items || []).map((it) => ({ ...it }));
+        // Base de precios usada: la guardada en el presupuesto, o la del cliente.
+        // No recalculamos al abrir: los ítems conservan sus precios guardados.
+        vSetPricing(data.price_basis || vDefaultPricingForClient(data.client_id || null));
       } catch (e) { return; }
     } else {
       if (vEls.formTitle)  vEls.formTitle.textContent = "Nuevo presupuesto";
@@ -361,6 +509,7 @@
       if (vEls.discount)   vEls.discount.value = 0;
       if (vEls.surcharge)  vEls.surcharge.value = 0;
       if (vEls.notes)      vEls.notes.value = "";
+      vSetPricing(vDefaultPricingForClient(me.vendedorClientId || null));
     }
     vUpdateStatusUI();
     vRenderItems();
@@ -376,6 +525,7 @@
       const r = await fetch("/api/clients");
       if (!r.ok) return;
       const clients = await r.json();
+      vState.clientsRaw = clients || [];
       vEls.client.innerHTML = '<option value="">Consumidor final</option>' +
         (clients || []).map((u) => '<option value="' + u.id + '">' + vEsc(u.full_name || u.username) + '</option>').join("");
     } catch (_) {}
@@ -399,6 +549,7 @@
       discount_percent: Number(vEls.discount  ? vEls.discount.value  : 0) || 0,
       surcharge_percent:Number(vEls.surcharge ? vEls.surcharge.value : 0) || 0,
       notes:            vEls.notes ? vEls.notes.value.trim() : "",
+      price_basis:      vState.pricing || null,
       status:           finalStatus,
       items:            vState.items,
     };
@@ -496,11 +647,13 @@
 
   // ── Picker de productos ──
   async function vLoadProducts() {
-    if (vState.productsLoaded) return;
+    // Refrescar si nunca se cargó o si cambió la base de precios.
+    if (vState.productsLoaded && vState.pricedFor === vState.pricing) return;
     try {
-      const data = await fetch("/api/products").then((r) => r.ok ? r.json() : []);
+      const data = await fetch("/api/products" + vPricingQuery()).then((r) => r.ok ? r.json() : []);
       vState.allProducts = data || [];
       vState.productsLoaded = true;
+      vState.pricedFor = vState.pricing;
     } catch (_) {}
   }
 
@@ -657,7 +810,7 @@
   if (vEls.addProductBtn) {
     vEls.addProductBtn.addEventListener("click", async () => {
       if (!vEls.picker) return;
-      if (!vState.productsLoaded) {
+      if (!vState.productsLoaded || vState.pricedFor !== vState.pricing) {
         if (vEls.pickerTbody) vEls.pickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Cargando…</td></tr>';
         await vLoadProducts();
       }

@@ -784,6 +784,39 @@ Sesión completa de expansión funcional. Todo en la misma branch de trabajo. Ca
 - **Stock mínimo** (`stock_min`): campo nuevo en ambos modales (default 0 = sin alerta). Migración idempotente en `server.js`: `ALTER TABLE products ADD COLUMN stock_min INTEGER NOT NULL DEFAULT 0`. Incluido en GET/PATCH/POST de `/api/admin/products`. En la tabla de productos: si `stock > 0` y `stock <= stock_min`, la celda aparece en naranja (`.text-warn`) con ⚠ y tooltip "Stock bajo (mínimo: N)".
 - **Cache busting**: `admin.js?v=20260601b`, `styles.css?v=20260601b`.
 
+### Sesión UX + Catálogo por cliente + Superadmin (1 junio 2026, tarde)
+
+Varios cambios en una misma sesión. Cache busting final de la sesión: `admin.js?v=20260601i`, `styles.css?v=20260601h`.
+
+**1. Fix modal sobredimensionado en mobile**
+- `styles.css`: `.admin-modal-box` ahora tiene `max-height: calc(100dvh - 32px)` (fallback `100vh`) + `overflow-y:auto`, y `.admin-modal-foot` es `position:sticky; bottom:0` con fondo blanco. Antes en celular el modal (ej: Generar catálogo PDF) se desbordaba y el botón del pie quedaba inalcanzable. Aplica a TODOS los modales del admin.
+
+**2. "Costo" como lista base de las listas de precios**
+- `server.js`: `PRICE_LIST_BASE_LEVELS` incluye `"costo"`; `priceColumnForBaseLevel("costo")` devuelve la columna `products.cost` (las demás siguen en `price_<nivel>`). Una lista con base Costo calcula `precio = round(cost / (1 - ganancia/100))`. En "Ver cambios" cae a columnas de minorista (no hay snapshot histórico de costo), igual que "publico".
+- Frontend: opción "Costo" en el select del modal "Nueva lista" (`admin.html`) y en el select inline de la tabla (`admin.js`).
+
+**3. Catálogo PDF "¿Para quién es?" (por cliente)**
+- Nuevo primer campo del modal: selector de cliente. Si se elige un cliente, el catálogo usa automáticamente su lista de precios efectiva y **hereda sus categorías permitidas** (`user_category_access` vía `applyCatalogClientCategories` en `admin.js`); el selector manual de lista se oculta. Si no se elige cliente, se elige lista/nivel a mano (niveles base + listas del sistema).
+- `server.js` `POST /api/admin/catalog/pdf`: nuevo `priceConfig.type==="client"` que resuelve el precio con `getEffectivePriceConfig(userId, level)`. `chgBaseLevel` unificado para la sección de cambios.
+- Nota: el reporte de Sergio de que "no heredaba" era **latencia del deploy de Railway + cache**, no un bug. Pendiente opcional: enforcement server-side de las categorías del cliente (que el catálogo respete sus categorías aunque el front mande "todas").
+
+**4. Categorías en grilla de 3 columnas (más estético)**
+- `styles.css`: `.cats-check-list` pasó a `display:grid; grid-template-columns:repeat(3,1fr)`; `label.cats-check` con fuente 12px, fila (no columna) y `.cats-check-lbl` con ellipsis para nombres largos. Aplica al modal "Categorías visibles" del usuario y al de "Categorías a incluir" del catálogo. Se limpió un bloque CSS corrupto duplicado (resto de truncamientos viejos). Ojo: `label.cats-check` necesita esa especificidad para ganarle a `.user-form label` (que forzaba `flex-direction:column` y 13px).
+- Botones **✔ Todas / ✘ Ninguna** agregados al modal "Categorías visibles" del usuario (antes solo los tenía el de catálogo).
+
+**5. Superadmin + usuarios privilegiados con permisos por sección**
+- **Objetivo**: una cuenta superadmin (la de Sergio) que crea desde la web otros usuarios que entran al panel pero con permisos limitados a las secciones (pestañas) que se les asignen.
+- **Schema** (migración idempotente al arranque en `server.js`): `users.is_superadmin` (0/1) y `users.admin_sections` (CSV de claves de sección). Bootstrap: marca como superadmin al level-99 de menor id (la cuenta `admin` original) una sola vez si todavía no hay ninguno.
+- **Catálogo de secciones** `ADMIN_SECTIONS` en `server.js` (claves = `data-tab` del sidebar). `sectionForAdminRequest(path)` mapea cada `/api/admin/*` a su sección. `getAdminPerms(userId)` lee `{isSuperadmin, sections}` de la DB.
+- **Enforcement** dentro de `requireAdmin`: el superadmin pasa siempre; un admin común recibe 403 si la sección de la ruta no está en su `admin_sections`; la sección `administradores` es exclusiva del superadmin. La lectura es por request (cambios de permisos aplican sin re-login). *Límite conocido*: endpoints compartidos que no usan `requireAdmin` (`/api/orders*`, `/api/categories`, `/api/clients`, `/api/orders/:id/deliver`) siguen accesibles a cualquier admin; el gating fuerte es sobre `/api/admin/*` + ocultar pestañas en el front.
+- **`/api/me`** (level 99): agrega `isSuperadmin` y `adminSections`.
+- **Endpoints nuevos `/api/admin/admins`** (solo superadmin): GET lista, POST crear `{username,password,full_name,sections[]}` (level 99, is_superadmin 0), PATCH `{full_name?,active?,sections?}` (no permite tocar al superadmin, otorgar superadmin, ni auto-desactivarse), POST `/:id/reset-password`.
+- **CLI** `scripts/create-admin.js`: acepta token `super` (5º arg / en lugar del nivel) para setear `is_superadmin=1`.
+- **Frontend**: en `bootstrap()` (`admin.js`) se ocultan las pestañas no permitidas para un admin no-superadmin y se aterriza en la primera permitida; la pestaña/sección "Administradores" solo se muestra al superadmin. Nueva sección en `admin.html` (sidebar grupo Sistema + panel con tabla) y 3 modales: crear admin (con checklist de secciones reusando `cats-check-list` + Todas/Ninguna), editar permisos, resetear clave. Toggle "Activo" con auto-save por fila.
+- **🔴 Bug encontrado y arreglado (importante)**: el helper `api()` de `admin.js` hacía `alert("Acceso denegado…")` **bloqueante** en cada 403. Con el enforcement nuevo, un admin sin la sección `config` recibía 403 en `/api/admin/dbinfo` (que `checkDbInfo()` llama en cada carga) → el `alert` **congelaba todo el panel** (y para los vendedores ya era un popup molesto en cada carga). Fix: `api()` usa `showToast` (no bloqueante) en vez de `alert`, y `checkDbInfo()` solo corre si el usuario puede ver `config`. **Regla**: al gatear secciones, no llamar de fondo a endpoints que el admin no tiene permitidos; y nunca usar `alert()` para errores de permiso (congela el hilo). En el preview, un `eval` de `1+1` que timeoutea = main thread bloqueado (típico de un alert/confirm sin cerrar).
+
+**Verificación (preview, sesión admin forjada)**: enforcement 200/403 correcto; gating de pestañas correcto (admin común ve solo sus secciones, superadmin ve todo + Administradores); tabla de admins renderiza bien. Todo `node --check` OK.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.
@@ -794,6 +827,7 @@ Sesión completa de expansión funcional. Todo en la misma branch de trabajo. Ca
 6. **Backups externos automáticos**: rclone a B2/S3/Drive.
 7. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
 8. **Decisión sobre `plain_password`**: eliminar el campo de la DB. Para mostrar la pass al admin al crear usuario, devolverla solo en la respuesta JSON de ese POST (sin persistir).
+9. **Enforcement server-side de categorías del cliente en el catálogo PDF** (opcional): en `POST /api/admin/catalog/pdf`, cuando `priceConfig.type==="client"`, intersectar/forzar `categoryIds` con las categorías permitidas del cliente (`user_category_access`), para que el PDF respete sus categorías aunque el front mande "todas". El front ya lo hereda; esto es defensa extra contra JS cacheado.
 
 ### Objetivo de negocio
 Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.
