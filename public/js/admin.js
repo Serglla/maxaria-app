@@ -3170,6 +3170,13 @@
       statusSel.addEventListener("change", async function() {
         var newStatus = statusSel.value;
         var orderId = Number(statusSel.dataset.orderId);
+        // Al cancelar se devuelve el stock de los productos del pedido: avisar.
+        if (newStatus === "cancelado") {
+          if (!confirm("Al cancelar el pedido, los productos vuelven al stock.\n\n¿Confirmás la cancelación?")) {
+            statusSel.value = order.status;
+            return;
+          }
+        }
         try {
           await api("/api/orders/" + orderId, {
             method: "PATCH",
@@ -3187,7 +3194,7 @@
               badge.className = "order-status " + newStatus;
             }
           }
-          showToast("Estado actualizado");
+          showToast(newStatus === "cancelado" ? "Pedido cancelado · los productos volvieron al stock" : "Estado actualizado");
         } catch (err) {
           showToast("Error: " + err.message, "error");
           statusSel.value = order.status;
@@ -5222,7 +5229,7 @@
   if (bEls.cancelBtn) {
     bEls.cancelBtn.addEventListener("click", async () => {
       if (!bState.editingId) return;
-      if (!confirm("¿Cancelar este presupuesto?")) return;
+      if (!confirm("Al cancelar el presupuesto, los productos vuelven al stock.\n\n¿Confirmás la cancelación?")) return;
       try {
         await api("/api/budgets/" + bState.editingId + "/status", { method: "PATCH", body: JSON.stringify({ status: "cancelado" }) });
         bState.editingStatus = "cancelado";

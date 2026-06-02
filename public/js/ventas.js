@@ -632,7 +632,7 @@
 
   if (vEls.cancelBtn) vEls.cancelBtn.addEventListener("click", async () => {
     if (!vState.editingId) return;
-    const ok = await vConfirm("El presupuesto va a quedar cancelado.", {
+    const ok = await vConfirm("Los productos del presupuesto van a volver al stock.", {
       title: "¿Cancelar este presupuesto?", okText: "Sí, cancelar", cancelText: "Volver", danger: true,
     });
     if (!ok) return;
