@@ -565,16 +565,54 @@
     }
   }
 
+  // Tope de cantidad segun el stock disponible del producto. No se puede
+  // agregar al carrito mas de lo que hay en stock. Si el stock no es un numero
+  // finito (desconocido), no se aplica tope.
+  function stockCapFor(id) {
+    const p = state.products.find((x) => x.id === id);
+    if (!p) return Infinity;
+    const s = Number(p.stock);
+    if (!Number.isFinite(s)) return Infinity;
+    return Math.max(0, s);
+  }
+
+  // Aviso flotante breve (ej: cuando se topea la cantidad por stock).
+  // Se crea una sola vez y reaparece en cada llamada; auto-desaparece.
+  let stockNoticeTimer = null;
+  function flashStockNotice(msg) {
+    let el = document.getElementById("stock-toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "stock-toast";
+      el.setAttribute("role", "status");
+      el.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);" +
+        "background:#1e293b;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;" +
+        "box-shadow:0 6px 20px rgba(0,0,0,.3);z-index:100000;max-width:90vw;text-align:center;" +
+        "opacity:0;transition:opacity .15s ease;pointer-events:none";
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.opacity = "1";
+    if (stockNoticeTimer) clearTimeout(stockNoticeTimer);
+    stockNoticeTimer = setTimeout(() => { el.style.opacity = "0"; }, 2200);
+  }
+
   function changeQty(id, delta) {
     if (state.me && state.me.level === 5 && !state.vendedorClient) return;
+    const cap = stockCapFor(id);
     const item = state.cart.get(id);
     if (item) {
-      item.qty += delta;
+      let next = item.qty + delta;
+      if (next > cap) { next = cap; flashStockNotice("Solo hay " + cap + " en stock"); }
+      item.qty = next;
       if (item.qty <= 0) state.cart.delete(id);
     } else if (delta > 0) {
       const p = state.products.find((x) => x.id === id);
       if (!p) return;
-      state.cart.set(id, { id: p.id, name: p.name, price: p.price, qty: delta, image: p.image_url });
+      let q = delta;
+      if (q > cap) { q = cap; flashStockNotice("Solo hay " + cap + " en stock"); }
+      if (q <= 0) return;
+      state.cart.set(id, { id: p.id, name: p.name, price: p.price, qty: q, image: p.image_url });
     } else {
       return;
     }
@@ -587,6 +625,8 @@
     if (state.me && state.me.level === 5 && !state.vendedorClient) return;
     let n = parseInt(String(rawValue).replace(/[^0-9]/g, ""), 10);
     if (!Number.isFinite(n) || n < 0) n = 0;
+    const cap = stockCapFor(id);
+    if (n > cap) { n = cap; flashStockNotice("Solo hay " + cap + " en stock"); }
     const item = state.cart.get(id);
     if (n <= 0) {
       if (item) state.cart.delete(id);
