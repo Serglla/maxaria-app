@@ -707,7 +707,11 @@
     // Refrescar si nunca se cargó o si cambió la base de precios.
     if (vState.productsLoaded && vState.pricedFor === vState.pricing) return;
     try {
-      const data = await fetch("/api/products" + vPricingQuery()).then((r) => r.ok ? r.json() : []);
+      const pq = vPricingQuery(); // "?as_..." o ""
+      let url = "/api/products" + pq;
+      // El admin ve también productos sin stock (para facturar a reponer).
+      if (me.level === 99) url += (pq ? "&" : "?") + "include_no_stock=1";
+      const data = await fetch(url).then((r) => r.ok ? r.json() : []);
       vState.allProducts = data || [];
       vState.productsLoaded = true;
       vState.pricedFor = vState.pricing;
@@ -738,7 +742,7 @@
           '<div class="muted" style="font-size:11px">' + vEsc(p.code||"") + '</div></td>' +
         '<td style="text-align:center"><input type="number" class="vpicker-qty" data-pid="' + p.id + '" min="1" step="1" inputmode="numeric" value="' + qty + '" placeholder="1" style="width:54px;text-align:center;padding:6px 4px;border:1px solid #d1d5db;border-radius:6px;font-size:14px" /></td>' +
         '<td style="text-align:right">' + vFmt(p.price) + '</td>' +
-        '<td style="text-align:right;color:' + (p.stock > 0 ? "#059669" : "#9ca3af") + '">' + (p.stock||0) + '</td></tr>';
+        '<td style="text-align:right;color:' + (p.stock > 0 ? "#059669" : "#dc2626") + '">' + (p.stock||0) + '</td></tr>';
     }).join("");
   }
 
@@ -837,6 +841,14 @@
     vEls.pickerSearch.addEventListener("input", (e) => {
       clearTimeout(vEls.pickerSearch._t);
       vEls.pickerSearch._t = setTimeout(() => vRenderPicker(e.target.value), 180);
+    });
+    // Al volver a clickear/enfocar el buscador (típicamente para buscar otro
+    // producto), se limpia solo y vuelve a mostrar el listado completo.
+    vEls.pickerSearch.addEventListener("focus", () => {
+      if (vEls.pickerSearch.value) {
+        vEls.pickerSearch.value = "";
+        vRenderPicker("");
+      }
     });
   }
 

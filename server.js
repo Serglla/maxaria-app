@@ -1649,11 +1649,17 @@ app.get("/api/products", requireLogin, (req, res) => {
   // getUserAllowedCategoryIds devuelve null (sin restricción) para level 5 sin cliente
   const allowedIds = getUserAllowedCategoryIds(effectiveUserId, effectiveLevel);
 
+  // Solo el admin puede pedir el catálogo incluyendo productos sin stock
+  // (lo usa el picker de presupuestos para facturar productos a reponer; el
+  // stock queda negativo). Para clientes/vendedores se mantiene el filtro.
+  const includeNoStock = req.session.level === 99 &&
+    (req.query.include_no_stock === "1" || req.query.include_no_stock === "true");
+
   let sql =
     "SELECT p.id, p.code, p.category_id, c.name AS category_name," +
     "       p.name, p.description, p.image_url, " + priceExpr + " AS price, p.stock" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
-    "  WHERE p.active = 1 AND p.stock > 0";
+    "  WHERE p.active = 1" + (includeNoStock ? "" : " AND p.stock > 0");
   const params = [...priceParams];
   if (allowedIds !== null && allowedIds.size > 0) {
     const placeholders = Array.from(allowedIds).map(() => "?").join(",");
@@ -4495,7 +4501,11 @@ app.post("/api/budgets", requireVendedorOrAdmin, (req, res) => {
       "INSERT INTO budget_items (budget_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +
       "  VALUES (?,?,?,?,?,?,?,?)"
     );
-    const updStockBudget = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+    // El admin puede facturar productos sin stock (se reponen y entregan luego):
+    // ahí el stock queda en negativo. Vendedores/clientes mantienen el clamp en 0.
+    const updStockBudget = Number(u.level) === 99
+      ? db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?")
+      : db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
     for (const it of computedItems) {
       insItem.run(bid, it.product_id || null, it.product_code || "", it.product_name || "",
                   it.quantity, it.unit_price, it.discount_percent, it.subtotal);
