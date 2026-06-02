@@ -552,9 +552,53 @@
     }
     // En paralelo, chequear dbinfo (no bloqueamos el render principal por esto).
     // Solo si el usuario puede ver Configuración (sino el endpoint da 403).
+    // Usar state.me (no `me`): `me` es const dentro del try y acá estamos
+    // fuera del try → referenciarlo tiraba ReferenceError y abortaba el resto
+    // del bootstrap (checkDbInfo y el aviso de pedidos no llegaban a correr).
     const canConfig = !state.isAdmin ? false
-      : (me.isSuperadmin || (Array.isArray(me.adminSections) && me.adminSections.includes("config")));
+      : !!(state.me && (state.me.isSuperadmin || (Array.isArray(state.me.adminSections) && state.me.adminSections.includes("config"))));
     if (canConfig) checkDbInfo();
+    // Al entrar al sistema, avisar al admin cuántos pedidos hay pendientes de
+    // entregar (recibidos por el catálogo/vendedores y todavía sin entregar).
+    if (state.isAdmin) notifyPendingOrders();
+  }
+
+  // ---------- Notificación de pedidos pendientes (al ingresar) ----------
+  async function notifyPendingOrders() {
+    // Mostrar una sola vez por sesión del navegador (no en cada cambio de tab).
+    try { if (sessionStorage.getItem("maxaria_orders_notified") === "1") return; } catch (_) {}
+    try {
+      const d = await api("/api/admin/dashboard");
+      try { sessionStorage.setItem("maxaria_orders_notified", "1"); } catch (_) {}
+      const active = Array.isArray(d.activeOrders) ? d.activeOrders : [];
+      const total = active.reduce((s, r) => s + (Number(r.cnt) || 0), 0);
+      if (total > 0) showOrdersNotice(total);
+    } catch (_) { /* silencioso: es solo un aviso */ }
+  }
+
+  function showOrdersNotice(total) {
+    let el = document.getElementById("orders-notice");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "orders-notice";
+      el.className = "orders-notice";
+      el.addEventListener("click", (e) => {
+        if (e.target.classList.contains("orders-notice-x")) { el.remove(); return; }
+        const pedBtn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "pedidos");
+        if (pedBtn) pedBtn.click();
+        el.remove();
+      });
+      document.body.appendChild(el);
+    }
+    const plural = total === 1 ? "pedido pendiente" : "pedidos pendientes";
+    el.innerHTML =
+      '<span class="orders-notice-bell">🔔</span>' +
+      '<span class="orders-notice-txt">Tenés <strong>' + total + "</strong> " + plural +
+        " de entrega.<br><span class=\"orders-notice-cta\">Ver pedidos →</span></span>" +
+      '<button class="orders-notice-x" type="button" aria-label="Cerrar">✕</button>';
+    el.hidden = false;
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { if (el && el.parentNode) el.remove(); }, 12000);
   }
 
   // ---------- DB info / banner ----------

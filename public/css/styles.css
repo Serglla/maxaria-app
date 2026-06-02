@@ -1935,6 +1935,38 @@ button { font: inherit; cursor: pointer; }
 .admin-pager .btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* Modal de import */
+/* Notificación de pedidos pendientes que aparece al ingresar el admin */
+.orders-notice {
+  position: fixed; top: 64px; right: 20px; z-index: 1500;
+  display: flex; align-items: flex-start; gap: 10px;
+  background: #fffbeb;
+  border: 1px solid #f59e0b;
+  border-left: 5px solid #f59e0b;
+  border-radius: 12px;
+  padding: 12px 14px;
+  max-width: 320px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.20);
+  cursor: pointer;
+  font-size: 13px;
+  color: #92400e;
+  animation: ordersNoticeIn .2s ease;
+}
+.orders-notice[hidden] { display: none; }
+@keyframes ordersNoticeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.orders-notice-bell { font-size: 18px; line-height: 1.2; }
+.orders-notice-txt { flex: 1; line-height: 1.4; }
+.orders-notice-txt strong { font-size: 15px; }
+.orders-notice-cta { color: #b45309; font-weight: 600; }
+.orders-notice-x {
+  background: transparent; border: none; cursor: pointer;
+  color: #92400e; font-size: 14px; line-height: 1; padding: 0 2px;
+  opacity: .6; flex-shrink: 0;
+}
+.orders-notice-x:hover { opacity: 1; }
+@media (max-width: 720px) {
+  .orders-notice { top: auto; bottom: 16px; right: 12px; left: 12px; max-width: none; }
+}
+
 .admin-modal {
   position: fixed; inset: 0;
   background: rgba(17,24,39,.55);

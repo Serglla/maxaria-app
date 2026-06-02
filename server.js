@@ -4615,16 +4615,29 @@ app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, (req, res) => {
   if (budget.status === "facturado") return res.status(409).json({ error: "El presupuesto ya esta facturado" });
 
   db.transaction(() => {
-    // Al cancelar: devolver stock si fue descontado al crear
-    if (status === "cancelado" && budget.status !== "cancelado" && budget.stock_discounted) {
-      const budgetItems = db.prepare(
-        "SELECT product_id, quantity FROM budget_items WHERE budget_id = ?"
-      ).all(budget.id);
-      const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
-      for (const it of budgetItems) {
-        if (it.product_id) retStock.run(it.quantity, it.product_id);
+    if (status === "cancelado" && budget.status !== "cancelado") {
+      // Al cancelar: devolver stock si fue descontado al crear
+      if (budget.stock_discounted) {
+        const budgetItems = db.prepare(
+          "SELECT product_id, quantity FROM budget_items WHERE budget_id = ?"
+        ).all(budget.id);
+        const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
+        for (const it of budgetItems) {
+          if (it.product_id) retStock.run(it.quantity, it.product_id);
+        }
+        db.prepare("UPDATE budgets SET stock_discounted = 0 WHERE id = ?").run(budget.id);
       }
-      db.prepare("UPDATE budgets SET stock_discounted = 0 WHERE id = ?").run(budget.id);
+      // Sincronizar el pedido vinculado: si el presupuesto nació de un pedido
+      // del catálogo, cancelar también ese pedido para que no siga figurando
+      // como "por entregar" en la pestaña Pedidos. Solo si el pedido sigue
+      // activo (no tocar entregados ni ya cancelados). El stock ya se devolvió
+      // arriba desde el presupuesto, así que no se vuelve a tocar.
+      if (budget.order_id) {
+        db.prepare(
+          "UPDATE orders SET status = 'cancelado', stock_discounted = 0" +
+          " WHERE id = ? AND status IN ('pendiente','enviado','preparando')"
+        ).run(budget.order_id);
+      }
     }
     db.prepare("UPDATE budgets SET status=?, updated_at=datetime('now') WHERE id=?").run(status, budget.id);
   })();
