@@ -4823,13 +4823,15 @@ app.post("/api/budgets", requireVendedorOrAdmin, requireSectionForAdmin("ventas"
   const total = Math.round(afterDiscount * (1 + surchargePct / 100));
   const number = nextBudgetNumber();
 
+  const VALID_BUDGET_STATUSES = ["borrador", "enviado", "aceptado", "cancelado"];
+  const initialStatus = VALID_BUDGET_STATUSES.includes(b.status) ? b.status : "borrador";
   const insertBudget = db.transaction(() => {
     const r = db.prepare(
       "INSERT INTO budgets (number, client_id, client_name, vendedor_id, payment_method, currency," +
       "  discount_percent, surcharge_percent, subtotal, total, notes, price_basis, status, stock_discounted)" +
-      "  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'borrador',1)"
+      "  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)"
     ).run(number, clientId, clientName, vendedorId, payMethod, currency,
-          discountPct, surchargePct, subtotal, total, notes, priceBasis);
+          discountPct, surchargePct, subtotal, total, notes, priceBasis, initialStatus);
     const bid = r.lastInsertRowid;
     const insItem = db.prepare(
       "INSERT INTO budget_items (budget_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +

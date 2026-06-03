@@ -3127,12 +3127,16 @@
     if (els.noNotes) els.noNotes.value = "";
     if (els.noStatus) els.noStatus.value = "pendiente";
     noRenderItems();
-    // Poblar select de clientes
+    // Poblar select de clientes (level 1-4 activos).
+    // Usa state.users si ya están cargados; si no, los carga ahora.
     if (els.noClient) {
       els.noClient.innerHTML = '<option value="">Consumidor final</option>';
       try {
-        var clients = await api("/api/clients");
-        (clients || []).forEach(function(c) {
+        var allUsers = state.users && state.users.length ? state.users
+          : await api("/api/admin/users");
+        var clients = (allUsers || []).filter(function(u) { return Number(u.level) >= 1 && Number(u.level) <= 4 && u.active; });
+        clients.sort(function(a, b) { return (a.full_name || a.username).localeCompare(b.full_name || b.username); });
+        clients.forEach(function(c) {
           var opt = document.createElement("option");
           opt.value = c.id;
           opt.textContent = c.full_name || c.username;
