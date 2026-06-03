@@ -3378,10 +3378,12 @@
       ".meta-cell strong{font-size:13px;color:#111}" +
       "table{width:100%;border-collapse:collapse;margin-top:0}" +
       "thead tr{background:#1e3a5f}" +
-      "thead th{color:#fff;font-size:11px;font-weight:700;padding:7px 8px;text-align:left;letter-spacing:.03em}" +
+      "thead th{color:#fff;font-size:11px;font-weight:700;padding:7px 8px;text-align:left;letter-spacing:.03em;border-right:1px solid rgba(255,255,255,0.25)}" +
+      "thead th:last-child{border-right:none}" +
       "tbody tr{border-bottom:1px solid #e5e7eb}" +
       "tbody tr:nth-child(even){background:#f8fafc}" +
-      "tbody td{padding:6px 8px;font-size:12.5px;vertical-align:middle}" +
+      "tbody td{padding:6px 8px;font-size:12.5px;vertical-align:middle;border-right:1px solid #1e3a5f}" +
+      "tbody td:last-child{border-right:none}" +
       ".col-cod{color:#6b7280;width:60px}" +
       ".col-prod{font-weight:600}" +
       ".col-cant{text-align:center;font-weight:700;width:56px}" +
