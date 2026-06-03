@@ -870,6 +870,42 @@ function requireVendedorOrAdmin(req, res, next) {
   next();
 }
 
+// Gating por seccion para rutas COMPARTIDAS (no /api/admin/*) que sirven a la vez
+// a clientes (1-4), vendedores (5) y admins (99) -- p.ej. /api/orders, /api/budgets.
+// El enforcement por seccion de requireAdmin NO cubre estas rutas, asi que un
+// admin con secciones limitadas podia ver/tocar datos de una seccion que no tiene.
+// Estos helpers cierran ese hueco aplicando el chequeo de seccion SOLO al level 99:
+//   - superadmin: pasa siempre.
+//   - admin comun: 403 si no tiene la(s) seccion(es) requerida(s).
+//   - clientes y vendedores: pasan, y el scoping propio de la ruta sigue mandando.
+// Se encadenan DESPUES de requireLogin / requireVendedorOrAdmin, que ya validan login y nivel.
+function requireSectionForAdmin(sectionKey) {
+  return function (req, res, next) {
+    if (req.session && req.session.level === 99) {
+      const perms = getAdminPerms(req.session.userId);
+      if (!perms.isSuperadmin && !perms.sections.has(sectionKey)) {
+        return res.status(403).json({ error: "Sin permiso para esta sección" });
+      }
+    }
+    next();
+  };
+}
+
+// Igual que requireSectionForAdmin, pero alcanza con que el admin tenga AL MENOS
+// una de las secciones indicadas. Util para rutas que consumen varias pantallas
+// del panel (p.ej. la lista de clientes la usan Ventas, Cuentas, Pagos, etc.).
+function requireAnySectionForAdmin(sectionKeys) {
+  return function (req, res, next) {
+    if (req.session && req.session.level === 99) {
+      const perms = getAdminPerms(req.session.userId);
+      if (!perms.isSuperadmin && !sectionKeys.some((k) => perms.sections.has(k))) {
+        return res.status(403).json({ error: "Sin permiso para esta sección" });
+      }
+    }
+    next();
+  };
+}
+
 // Upload de Excel en memoria (no se escribe a disco). Limite 10MB.
 const excelUpload = multer({
   storage: multer.memoryStorage(),
@@ -1020,7 +1056,7 @@ app.get("/api/me", requireLogin, (req, res) => {
 
 // Lista de clientes (level 1-4) para que un vendedor (level 5) pueda elegir
 // a quién está atendiendo. Solo accesible por vendedores.
-app.get("/api/clients", requireLogin, (req, res) => {
+app.get("/api/clients", requireLogin, requireAnySectionForAdmin(["ventas", "cuentas", "pagos", "pedidos", "vendedores"]), (req, res) => {
   const level = req.session.level;
   if (level !== 5 && level !== 99) {
     return res.status(403).json({ error: "Solo vendedores o admin" });
@@ -1805,7 +1841,7 @@ app.post("/api/orders", requireLogin, (req, res) => {
   res.json({ ok: true, order: { id: orderId, total: total, items: lines.length } });
 });
 
-app.get("/api/orders", requireLogin, (req, res) => {
+app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, res) => {
   const isAdmin = req.session.level === 99;
   const isVendedor = req.session.level === 5;
 
@@ -1856,7 +1892,7 @@ app.get("/api/orders", requireLogin, (req, res) => {
   res.json(rows);
 });
 
-app.get("/api/orders/:id", requireLogin, (req, res) => {
+app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
   const isAdmin = req.session.level === 99;
@@ -1896,7 +1932,7 @@ app.get("/api/orders/:id", requireLogin, (req, res) => {
 });
 
 // ----- Cambio de estado (admin o vendedor asignado) -----
-app.patch("/api/orders/:id", requireLogin, (req, res) => {
+app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req, res) => {
   const isAdmin = req.session.level === 99;
   const isVendedor = req.session.level === 5;
   if (!isAdmin && !isVendedor)
@@ -3316,7 +3352,7 @@ app.patch("/api/admin/orders/:id/assign", requireAdmin, (req, res) => {
 
 // Registrar entrega de un pedido (admin o vendedor asignado)
 // Body: { delivered_to, efectivo_amount, transferencia_amount, notes }
-app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, (req, res) => {
+app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdmin("entregas"), (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
 
@@ -4491,7 +4527,7 @@ function canAccessBudget(user, budget) {
 }
 
 // GET /api/budgets — lista (filtrada por vendedor si level 5)
-app.get("/api/budgets", requireVendedorOrAdmin, (req, res) => {
+app.get("/api/budgets", requireVendedorOrAdmin, requireSectionForAdmin("ventas"), (req, res) => {
   const u = { id: req.session.userId, level: req.session.level };
   const isAdmin = Number(u.level) === 99;
   const rows = db.prepare(
@@ -4510,7 +4546,7 @@ app.get("/api/budgets", requireVendedorOrAdmin, (req, res) => {
 });
 
 // GET /api/budgets/:id — detalle con items
-app.get("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
+app.get("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("ventas"), (req, res) => {
   const u = { id: req.session.userId, level: req.session.level };
   const budget = db.prepare(
     "SELECT b.*, v.full_name AS vendedor_name, cl.full_name AS client_full_name" +
@@ -4530,7 +4566,7 @@ app.get("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
 });
 
 // POST /api/budgets — crear presupuesto
-app.post("/api/budgets", requireVendedorOrAdmin, (req, res) => {
+app.post("/api/budgets", requireVendedorOrAdmin, requireSectionForAdmin("ventas"), (req, res) => {
   const u = { id: req.session.userId, level: req.session.level };
   const b = req.body || {};
   const vendedorId = Number(u.level) === 99 ? (b.vendedor_id || u.id) : u.id;
@@ -4593,7 +4629,7 @@ app.post("/api/budgets", requireVendedorOrAdmin, (req, res) => {
 });
 
 // PUT /api/budgets/:id — actualizar presupuesto completo
-app.put("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
+app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("ventas"), (req, res) => {
   const u = { id: req.session.userId, level: req.session.level };
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
@@ -4649,7 +4685,7 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
 });
 
 // PATCH /api/budgets/:id/status — cambiar estado
-app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, (req, res) => {
+app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, requireSectionForAdmin("ventas"), (req, res) => {
   const u = { id: req.session.userId, level: req.session.level };
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
@@ -4693,7 +4729,7 @@ app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, (req, res) => {
 // crea una order con sus items, le descuenta stock y (si hay cliente real,
 // distinto de "consumidor final") genera el debito en cuenta corriente.
 // Marca el presupuesto como 'facturado' y guarda order_id para trazabilidad.
-app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, (req, res) => {
+app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, requireSectionForAdmin("ventas"), (req, res) => {
   const u = { id: req.session.userId, level: req.session.level };
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
@@ -4765,7 +4801,7 @@ app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, (req, res) => {
 });
 
 // DELETE /api/budgets/:id
-app.delete("/api/budgets/:id", requireVendedorOrAdmin, (req, res) => {
+app.delete("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("ventas"), (req, res) => {
   const u = { id: req.session.userId, level: req.session.level };
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
