@@ -282,6 +282,7 @@
     purPickerCount: document.getElementById("pur-picker-count"),
     purPickerConfirm: document.getElementById("pur-picker-confirm"),
     purPickerCancel: document.getElementById("pur-picker-cancel"),
+    purPickerNew: document.getElementById("pur-picker-new"),
 
     // Pagos
     paySearch: document.getElementById("pay-search"),
@@ -2624,6 +2625,7 @@
         m.hidden = true;
         if (m.id === "supplier-create-modal") state.supplierCreatedFromPurchase = false;
         if (m.id === "purchase-create-modal") resetPurchaseModal();
+        if (m.id === "new-product-modal") { m.style.zIndex = ""; npForPurchase = false; }
       }
     });
   });
@@ -2632,6 +2634,8 @@
     document.querySelectorAll(".admin-modal:not([hidden])").forEach((m) => { m.hidden = true; });
     state.supplierCreatedFromPurchase = false;
     resetPurchaseModal();
+    if (newProdModal) newProdModal.style.zIndex = "";
+    npForPurchase = false;
   });
 
   // ---------- Config ----------
@@ -4200,6 +4204,18 @@
     openEditProdModal(src);
     if (editProdModal) editProdModal.style.zIndex = "1400";
   }
+
+  // Crear un producto NUEVO desde cero (en blanco) sin salir del selector de
+  // Compras. Abre el modal "Nuevo producto" por encima del picker (z-index
+  // 1400); al guardar, el handler de npSaveBtn detecta npForPurchase y deja el
+  // producto cargado en el cache + preseleccionado en el picker.
+  let npForPurchase = false;
+  function purNewProduct() {
+    npOpenModal();
+    npForPurchase = true;
+    if (newProdModal) newProdModal.style.zIndex = "1400";
+  }
+  if (els.purPickerNew) els.purPickerNew.addEventListener("click", purNewProduct);
 
   if (els.purCreateBtn) {
     els.purCreateBtn.addEventListener("click", async () => {
@@ -6026,6 +6042,8 @@
   }
 
   function npOpenModal() {
+    npForPurchase = false;
+    if (newProdModal) newProdModal.style.zIndex = "";
     npFillCategories();
     const codeEl = document.getElementById("np-code");
     if (codeEl) codeEl.value = npSuggestCode();
@@ -6114,8 +6132,24 @@
         state.products.unshift(result.product);
         populateCategoryFilter(state.products);
         applyFilters();
-        showToast("Producto creado: " + name);
-        if (newProdModal) newProdModal.hidden = true;
+        // Si se creó desde el selector de Compras, dejarlo cargado en el cache
+        // del picker y preseleccionado con cantidad 1, listo para agregar a la
+        // compra (el stock arranca en 0; la compra le suma stock al guardar).
+        if (npForPurchase && result.product) {
+          state.allProducts = state.allProducts || [];
+          state.allProducts.push(result.product);
+          if (state.purPickerSelected) state.purPickerSelected.set(result.product.id, 1);
+          if (els.purPickerSearch) els.purPickerSearch.value = String(result.product.code || "");
+          if (els.purPickerModal && !els.purPickerModal.hidden) {
+            renderPurPicker(els.purPickerSearch ? els.purPickerSearch.value : "");
+            updatePurPickerCount();
+          }
+          showToast("Producto creado (código " + result.product.code + ") y seleccionado para la compra.");
+        } else {
+          showToast("Producto creado: " + name);
+        }
+        if (newProdModal) { newProdModal.hidden = true; newProdModal.style.zIndex = ""; }
+        npForPurchase = false;
       } catch (e) {
         alert(e.message || "Error al crear producto");
       } finally {
