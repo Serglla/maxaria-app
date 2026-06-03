@@ -3350,41 +3350,80 @@
       var sub = Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)) || 0;
       total += sub;
       return "<tr>" +
-        "<td>" + escapeHtml(it.product_code || "") + "</td>" +
-        "<td>" + escapeHtml(it.product_name || "") + "</td>" +
-        "<td style='text-align:center;font-weight:600'>" + escapeHtml(String(it.quantity)) + "</td>" +
-        "<td style='text-align:right'>$" + Number(it.unit_price || 0).toLocaleString("es-AR") + "</td>" +
-        "<td style='text-align:right;font-weight:600'>$" + sub.toLocaleString("es-AR") + "</td>" +
+        "<td class='col-cod'>" + escapeHtml(it.product_code || "") + "</td>" +
+        "<td class='col-prod'>" + escapeHtml(it.product_name || "") + "</td>" +
+        "<td class='col-cant'>" + escapeHtml(String(it.quantity)) + "</td>" +
+        "<td class='col-price'>$" + Number(it.unit_price || 0).toLocaleString("es-AR") + "</td>" +
+        "<td class='col-sub'>$" + sub.toLocaleString("es-AR") + "</td>" +
         "</tr>";
     }).join("");
     var totalUnidades = items.reduce(function(s, it) { return s + (Number(it.quantity) || 0); }, 0);
+    var budgetRef = order.budget_number ? "<p class='ref'>Facturado desde presupuesto " + escapeHtml(order.budget_number) + "</p>" : "";
     var html = "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
       "<title>Remito pedido #" + order.id + "</title>" +
-      "<style>body{font-family:sans-serif;font-size:13px;margin:24px;color:#111}" +
-      "h1{font-size:18px;margin:0 0 4px}.sub{color:#6b7280;font-size:12px;margin:0 0 12px}" +
-      "table{width:100%;border-collapse:collapse;margin-top:10px}" +
-      "th,td{padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:left}" +
-      "th{background:#f1f5f9;font-size:12px;color:#6b7280}" +
-      ".meta{margin:8px 0}.meta strong{color:#374151}" +
-      ".total-box{margin-top:12px;text-align:right;font-size:14px}" +
-      ".grand-total{font-size:18px;font-weight:700;color:#1e3a5f}" +
-      ".sign{margin-top:42px;display:flex;justify-content:space-between;gap:40px}" +
-      ".sign div{flex:1;border-top:1px solid #9ca3af;padding-top:4px;text-align:center;color:#6b7280;font-size:12px}" +
-      ".notes{margin-top:16px;color:#6b7280}@media print{body{margin:12px}}</style>" +
+      "<style>" +
+      "*{box-sizing:border-box}" +
+      "body{font-family:Arial,sans-serif;font-size:13px;margin:28px 32px;color:#111}" +
+      ".header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}" +
+      ".header-left h1{font-size:20px;font-weight:800;margin:0 0 2px;color:#1e3a5f}" +
+      ".header-left .status{font-size:11px;color:#6b7280;margin:0}" +
+      ".header-right{text-align:right}" +
+      ".header-right .remito-label{font-size:11px;color:#6b7280;margin:0 0 1px;text-transform:uppercase;letter-spacing:.05em}" +
+      ".header-right .remito-num{font-size:22px;font-weight:800;color:#1e3a5f;margin:0}" +
+      ".meta-row{display:flex;gap:0;border-top:2px solid #1e3a5f;border-bottom:1px solid #d1d5db;padding:8px 0;margin-bottom:0;font-size:12.5px}" +
+      ".meta-cell{flex:1;padding:0 12px;border-right:1px solid #d1d5db}" +
+      ".meta-cell:first-child{padding-left:0}" +
+      ".meta-cell:last-child{border-right:none}" +
+      ".meta-cell span{display:block;font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;margin-bottom:1px}" +
+      ".meta-cell strong{font-size:13px;color:#111}" +
+      "table{width:100%;border-collapse:collapse;margin-top:0}" +
+      "thead tr{background:#1e3a5f}" +
+      "thead th{color:#fff;font-size:11px;font-weight:700;padding:7px 8px;text-align:left;letter-spacing:.03em}" +
+      "tbody tr{border-bottom:1px solid #e5e7eb}" +
+      "tbody tr:nth-child(even){background:#f8fafc}" +
+      "tbody td{padding:6px 8px;font-size:12.5px;vertical-align:middle}" +
+      ".col-cod{color:#6b7280;width:60px}" +
+      ".col-prod{font-weight:600}" +
+      ".col-cant{text-align:center;font-weight:700;width:56px}" +
+      ".col-price{text-align:right;width:90px;color:#374151}" +
+      ".col-sub{text-align:right;width:90px;font-weight:700}" +
+      ".summary-row{display:flex;justify-content:flex-end;align-items:baseline;gap:32px;border-top:2px solid #1e3a5f;padding:10px 8px 0}" +
+      ".summary-meta{font-size:12px;color:#6b7280}" +
+      ".grand-total{font-size:20px;font-weight:800;color:#1e3a5f}" +
+      ".notes{margin-top:12px;font-size:12px;color:#6b7280;font-style:italic}" +
+      ".ref{margin-top:10px;font-size:11px;color:#9ca3af;font-style:italic}" +
+      "@media print{body{margin:14px 18px}}" +
+      "</style>" +
       "</head><body>" +
-      "<h1>" + escapeHtml(appName) + " — Remito de pedido N° " + order.id + "</h1>" +
-      "<p class='sub'>Estado: " + escapeHtml(statusNames[order.status] || order.status || "") + "</p>" +
-      "<p class='meta'><strong>Fecha:</strong> " + date +
-        " &nbsp;·&nbsp; <strong>Cliente:</strong> " + escapeHtml(clientText) +
-        (vendText ? " &nbsp;·&nbsp; <strong>Vendedor:</strong> " + escapeHtml(vendText) : "") + "</p>" +
-      "<table><thead><tr><th>Cód.</th><th>Producto</th><th style='text-align:center'>Cant.</th>" +
-      "<th style='text-align:right'>P. Unit.</th><th style='text-align:right'>Subtotal</th></tr></thead>" +
-      "<tbody>" + (rows || "<tr><td colspan='5'>Sin items</td></tr>") + "</tbody></table>" +
-      "<div class='total-box'>" +
-      "<div style='color:#6b7280'>" + items.length + " ítems · " + totalUnidades + " unidades</div>" +
-      "<div class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</div></div>" +
-      (order.notes ? "<p class='notes'><em>" + escapeHtml(order.notes) + "</em></p>" : "") +
-      "<div class='sign'><div>Preparó</div><div>Entregó</div><div>Recibí conforme</div></div>" +
+      "<div class='header'>" +
+        "<div class='header-left'>" +
+          "<h1>" + escapeHtml(appName) + "</h1>" +
+          "<p class='status'>Estado: " + escapeHtml(statusNames[order.status] || order.status || "") + "</p>" +
+        "</div>" +
+        "<div class='header-right'>" +
+          "<p class='remito-label'>Remito de pedido</p>" +
+          "<p class='remito-num'>N° " + order.id + "</p>" +
+        "</div>" +
+      "</div>" +
+      "<div class='meta-row'>" +
+        "<div class='meta-cell'><span>Fecha</span><strong>" + date + "</strong></div>" +
+        "<div class='meta-cell'><span>Cliente</span><strong>" + escapeHtml(clientText) + "</strong></div>" +
+        (vendText ? "<div class='meta-cell'><span>Vendedor</span><strong>" + escapeHtml(vendText) + "</strong></div>" : "") +
+      "</div>" +
+      "<table><thead><tr>" +
+        "<th>Cód.</th><th>Producto</th>" +
+        "<th style='text-align:center'>Cant.</th>" +
+        "<th style='text-align:right'>P. Unit.</th>" +
+        "<th style='text-align:right'>Subtotal</th>" +
+      "</tr></thead>" +
+      "<tbody>" + (rows || "<tr><td colspan='5' style='padding:10px;color:#6b7280'>Sin items</td></tr>") + "</tbody>" +
+      "</table>" +
+      "<div class='summary-row'>" +
+        "<span class='summary-meta'>" + items.length + " ítems &nbsp;·&nbsp; " + totalUnidades + " unidades</span>" +
+        "<span class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</span>" +
+      "</div>" +
+      (order.notes ? "<p class='notes'>" + escapeHtml(order.notes) + "</p>" : "") +
+      budgetRef +
       "</body></html>";
     var w = window.open("", "_blank");
     if (w) { w.document.write(html); w.document.close(); w.focus(); w.print(); }
