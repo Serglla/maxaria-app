@@ -2165,6 +2165,8 @@ app.delete("/api/admin/orders/:id", requireAdmin, (req, res) => {
       const upd = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
       ois.forEach((it) => upd.run(it.quantity, it.product_id));
     }
+    // Desligar presupuestos que referencian este pedido (FK: budgets.order_id).
+    db.prepare("UPDATE budgets SET order_id = NULL WHERE order_id = ?").run(id);
     // Eliminar movimiento de cuenta corriente asociado si existe.
     db.prepare("DELETE FROM account_movements WHERE order_id = ?").run(id);
     db.prepare("DELETE FROM order_items WHERE order_id = ?").run(id);
