@@ -3670,6 +3670,26 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
       }
       db.prepare("UPDATE orders SET stock_discounted = 1 WHERE id = ?").run(id);
     }
+
+    // Crédito automático por el cobro registrado en la entrega.
+    // Si es edición de entrega existente, revocar el crédito anterior y crear el nuevo.
+    const cobrado = efectivo + transferencia;
+    if (!order.is_unified) {
+      // Revocar crédito previo de entrega (si existe)
+      db.prepare(
+        "DELETE FROM account_movements WHERE order_id = ? AND type = 'credit' AND description LIKE 'Cobro entrega%'"
+      ).run(id);
+      // Crear nuevo crédito si hay monto cobrado
+      if (cobrado > 0) {
+        const parts = [];
+        if (efectivo > 0) parts.push("efectivo $" + efectivo.toLocaleString("es-AR"));
+        if (transferencia > 0) parts.push("transferencia $" + transferencia.toLocaleString("es-AR"));
+        db.prepare(
+          "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+          " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
+        ).run(order.user_id, cobrado, "Cobro entrega #" + id + " (" + parts.join(" + ") + ")", id);
+      }
+    }
   })();
 
   res.json({ ok: true, delivery_id: deliveryId, order_id: id });
