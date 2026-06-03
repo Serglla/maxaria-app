@@ -808,9 +808,20 @@
       "<div class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</div></div>" +
       (notes ? "<p style='margin-top:16px;color:#6b7280'><em>" + vEsc(notes) + "</em></p>" : "") +
       "</body></html>";
-    const w = window.open("","_blank");
-    if (w) { w.document.write(html); w.document.close(); w.print(); }
+    vPrintHtml(html);
   });
+
+  function vPrintHtml(html) {
+    const iframe = document.createElement("iframe");
+    iframe.style.cssText = "position:fixed;width:0;height:0;border:0;left:-9999px;top:-9999px";
+    document.body.appendChild(iframe);
+    iframe.contentDocument.open();
+    iframe.contentDocument.write(html);
+    iframe.contentDocument.close();
+    iframe.contentWindow.focus();
+    iframe.contentWindow.print();
+    setTimeout(() => { document.body.removeChild(iframe); }, 1000);
+  }
 
   // ── Picker de productos ──
   async function vLoadProducts() {

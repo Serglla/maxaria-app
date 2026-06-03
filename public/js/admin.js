@@ -3427,9 +3427,19 @@
       (order.notes ? "<p class='notes'>" + escapeHtml(order.notes) + "</p>" : "") +
       budgetRef +
       "</body></html>";
-    var w = window.open("", "_blank");
-    if (w) { w.document.write(html); w.document.close(); w.focus(); w.print(); }
-    else { showToast("Permití las ventanas emergentes para imprimir", "error"); }
+    printHtml(html);
+  }
+
+  function printHtml(html) {
+    var iframe = document.createElement("iframe");
+    iframe.style.cssText = "position:fixed;width:0;height:0;border:0;left:-9999px;top:-9999px";
+    document.body.appendChild(iframe);
+    iframe.contentDocument.open();
+    iframe.contentDocument.write(html);
+    iframe.contentDocument.close();
+    iframe.contentWindow.focus();
+    iframe.contentWindow.print();
+    setTimeout(function() { document.body.removeChild(iframe); }, 1000);
   }
 
   // ---- Edición inline de los items de un pedido (estados pre-entrega) ----
