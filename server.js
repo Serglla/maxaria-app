@@ -799,6 +799,7 @@ function sectionForAdminRequest(p) {
   if (has("dashboard"))   return "dashboard";
   if (has("products") || has("import-excel") || has("stock-adjustments") || has("catalog")) return "productos";
   if (has("price-lists")) return "price-lists";
+  if (has("ventas"))      return "ventas";
   if (has("orders"))      return "pedidos";
   if (has("deliveries"))  return "entregas";
   if (has("users"))       return "usuarios";
@@ -1889,6 +1890,39 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
     "  FROM orders o WHERE o.user_id = ?" +
     "  ORDER BY o.created_at DESC LIMIT 200"
   ).all(req.session.userId);
+  res.json(rows);
+});
+
+// GET /api/admin/ventas — registro de ventas concretadas = TODOS los pedidos
+// entregados. A diferencia de /api/orders (vista operativa con LIMIT 200 sobre
+// pedidos recientes), Ventas es un registro historico: una venta entregada hace
+// meses NO debe desaparecer al acumularse pedidos nuevos. Por eso tiene su
+// propia consulta, sin el tope de 200 y ordenada por fecha de entrega.
+// Se excluyen los pedidos unificados del tercerizado (los hijos individuales son
+// las ventas reales; el unificado es solo el consolidado para el admin) para no
+// duplicar el total vendido.
+app.get("/api/admin/ventas", requireAdmin, (req, res) => {
+  // Filtro opcional por fecha de entrega (fallback fecha de creación si la venta
+  // no tiene registro de entrega). from/to en formato YYYY-MM-DD, inclusivos.
+  const { from, to } = req.query;
+  const where = ["o.status = 'entregado'", "COALESCE(o.is_unified,0) = 0"];
+  const params = [];
+  const dateExpr = "date(COALESCE(d.delivered_at, o.created_at))";
+  if (from) { where.push(dateExpr + " >= ?"); params.push(from); }
+  if (to)   { where.push(dateExpr + " <= ?"); params.push(to); }
+  const sql =
+    "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
+    "       u.username, u.full_name," +
+    "       o.assigned_vendedor_id," +
+    "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
+    "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
+    "  FROM orders o" +
+    "  JOIN users u ON u.id = o.user_id" +
+    "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
+    "  LEFT JOIN deliveries d ON d.order_id = o.id" +
+    "  WHERE " + where.join(" AND ") +
+    "  ORDER BY COALESCE(d.delivered_at, o.created_at) DESC LIMIT 1000";
+  const rows = db.prepare(sql).all(...params);
   res.json(rows);
 });
 

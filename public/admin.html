@@ -2139,6 +2139,9 @@
   <section class="tab-panel" id="tab-ventas" hidden>
     <div class="admin-toolbar">
       <input type="search" id="ventas-search" class="admin-search" placeholder="Buscar venta (# o cliente)…" autocomplete="off" />
+      <label class="admin-filter">Desde <input type="date" id="ventas-from" class="admin-input" style="width:140px" /></label>
+      <label class="admin-filter">Hasta <input type="date" id="ventas-to" class="admin-input" style="width:140px" /></label>
+      <button class="btn btn-small btn-ghost" id="ventas-clear-dates" type="button" title="Quitar el filtro de fechas">Limpiar</button>
       <span class="admin-spacer"></span>
       <span id="ventas-summary" class="muted small"></span>
     </div>
@@ -2383,6 +2386,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260603k"></script>
+  <script src="/js/admin.js?v=20260603m"></script>
 </body>
 </html>

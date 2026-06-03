@@ -60,6 +60,9 @@
     ventasList: document.getElementById("ventas-list"),
     ventasSummary: document.getElementById("ventas-summary"),
     ventasSearch: document.getElementById("ventas-search"),
+    ventasFrom: document.getElementById("ventas-from"),
+    ventasTo: document.getElementById("ventas-to"),
+    ventasClearDates: document.getElementById("ventas-clear-dates"),
     armadoList: document.getElementById("armado-list"),
     armadoCount: document.getElementById("armado-count"),
     armadoReload: document.getElementById("armado-reload"),
@@ -3756,7 +3759,9 @@
     if (state.ordersLoaded) renderOrders();
     renderArmado();
     renderEntregasQueue();
-    renderVentasOrders();
+    // Ventas tiene su propia fuente (endpoint dedicado); re-traerla para que un
+    // pedido recién entregado aparezca sin recargar la página.
+    if (els.ventasList) loadVentasOrders();
   }
 
   // Pestaña Ventas: registro de ventas concretadas = pedidos ENTREGADOS.
@@ -3765,7 +3770,7 @@
   function renderVentasOrders() {
     if (!els.ventasList) return;
     const q = (els.ventasSearch ? els.ventasSearch.value.trim().toLowerCase() : "");
-    let list = (state.orders || []).filter((o) => o.status === "entregado");
+    let list = (state.ventasOrders || []).slice();
     if (q) {
       list = list.filter((o) =>
         String(o.id).includes(q) ||
@@ -3786,9 +3791,18 @@
     wireOrderCards(els.ventasList, list, renderVentasOrders);
   }
 
-  // Asegura state.orders cargado y renderiza la pestaña Ventas.
+  // Trae TODOS los pedidos entregados (endpoint dedicado, sin el tope de 200 de
+  // /api/orders) y renderiza la pestaña Ventas.
   async function loadVentasOrders() {
-    if (!state.ordersLoaded) await loadOrders();
+    if (!els.ventasList) return;
+    const qs = [];
+    if (els.ventasFrom && els.ventasFrom.value) qs.push("from=" + encodeURIComponent(els.ventasFrom.value));
+    if (els.ventasTo && els.ventasTo.value) qs.push("to=" + encodeURIComponent(els.ventasTo.value));
+    try {
+      state.ventasOrders = await api("/api/admin/ventas" + (qs.length ? "?" + qs.join("&") : ""));
+    } catch (e) {
+      state.ventasOrders = [];
+    }
     renderVentasOrders();
   }
 
@@ -7094,6 +7108,13 @@
 
   // ─────── Buscador de la pestaña Ventas (pedidos entregados) ───────
   if (els.ventasSearch) els.ventasSearch.addEventListener("input", debounce(renderVentasOrders, 150));
+  if (els.ventasFrom) els.ventasFrom.addEventListener("change", loadVentasOrders);
+  if (els.ventasTo) els.ventasTo.addEventListener("change", loadVentasOrders);
+  if (els.ventasClearDates) els.ventasClearDates.addEventListener("click", () => {
+    if (els.ventasFrom) els.ventasFrom.value = "";
+    if (els.ventasTo) els.ventasTo.value = "";
+    loadVentasOrders();
+  });
 
   // ─────── Fin PRESUPUESTOS / VENTAS ───────
 
