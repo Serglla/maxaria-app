@@ -4316,6 +4316,161 @@ async function pLimit(fns, concurrency) {
   return results;
 }
 
+// ── Helper: genera PDF de remito/presupuesto con pdfkit ──────────────────
+function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, total, totalUnidades, notes, extraLine }) {
+  const doc = new PDFDocument({ size: "A4", margin: 36, autoFirstPage: true });
+  res.setHeader("Content-Type", "application/pdf");
+  doc.pipe(res);
+
+  const BLU = "#1e3a5f", GREY = "#6b7280", BLACK = "#111111", AMB = "#d97706";
+  const MX = 36, MW = 595 - 72; // márgenes
+
+  // ── Header ──
+  doc.font("Helvetica-Bold").fontSize(17).fillColor(BLU).text(title, MX, 36, { continued: false });
+  doc.font("Helvetica").fontSize(9).fillColor(GREY).text("Estado: " + docLabel, MX, 58);
+  const rnW = doc.widthOfString("N° " + docNum);
+  doc.font("Helvetica").fontSize(9).fillColor(GREY).text("REMITO DE PEDIDO", MX, 36, { align: "right" });
+  doc.font("Helvetica-Bold").fontSize(20).fillColor(BLU).text("N° " + docNum, MX, 48, { align: "right" });
+
+  // ── Línea azul superior ──
+  let cy = 72;
+  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(2).strokeColor(BLU).stroke();
+
+  // ── Meta row ──
+  cy += 6;
+  const cellW = MW / metaCells.length;
+  metaCells.forEach((cell, i) => {
+    const cx = MX + i * cellW;
+    doc.font("Helvetica").fontSize(7.5).fillColor(GREY).text(cell.label.toUpperCase(), cx, cy);
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(BLACK).text(cell.value, cx, cy + 9, { width: cellW - 4, ellipsis: true });
+    if (i < metaCells.length - 1) {
+      doc.moveTo(cx + cellW - 2, cy).lineTo(cx + cellW - 2, cy + 22).lineWidth(0.5).strokeColor("#d1d5db").stroke();
+    }
+  });
+
+  // ── Línea azul bajo meta ──
+  cy += 26;
+  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(1).strokeColor("#d1d5db").stroke();
+  cy += 6;
+
+  // ── Encabezado tabla ──
+  const COL = { cod: 50, prod: MW - 50 - 52 - 90 - 90, cant: 52, price: 90, sub: 90 };
+  const colX = {
+    cod: MX,
+    prod: MX + COL.cod,
+    cant: MX + COL.cod + COL.prod,
+    price: MX + COL.cod + COL.prod + COL.cant,
+    sub: MX + COL.cod + COL.prod + COL.cant + COL.price,
+  };
+  doc.rect(MX, cy, MW, 20).fill(BLU);
+  doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff");
+  doc.text("CÓD.", colX.cod, cy + 6);
+  doc.text("PRODUCTO", colX.prod, cy + 6);
+  doc.text("CANT.", colX.cant, cy + 6, { width: COL.cant, align: "center" });
+  doc.text("P. UNIT.", colX.price, cy + 6, { width: COL.price, align: "right" });
+  doc.text("SUBTOTAL", colX.sub, cy + 6, { width: COL.sub, align: "right" });
+  cy += 20;
+
+  // ── Filas de items ──
+  const ROW_H = 18;
+  items.forEach((it, idx) => {
+    if (cy + ROW_H > 800) { doc.addPage(); cy = 36; }
+    if (idx % 2 === 1) doc.rect(MX, cy, MW, ROW_H).fill("#f8fafc");
+    doc.font("Helvetica").fontSize(9).fillColor(GREY).text(String(it.product_code || ""), colX.cod, cy + 5, { width: COL.cod });
+    doc.fillColor(BLACK).font("Helvetica-Bold").text(String(it.product_name || ""), colX.prod, cy + 5, { width: COL.prod - 4, ellipsis: true });
+    doc.font("Helvetica-Bold").fillColor(BLACK).text(String(it.quantity), colX.cant, cy + 5, { width: COL.cant, align: "center" });
+    doc.font("Helvetica").fillColor(GREY).text("$" + Number(it.unit_price || 0).toLocaleString("es-AR"), colX.price, cy + 5, { width: COL.price, align: "right" });
+    doc.font("Helvetica-Bold").fillColor(BLACK).text("$" + Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)).toLocaleString("es-AR"), colX.sub, cy + 5, { width: COL.sub, align: "right" });
+    // separadores verticales azules
+    [colX.prod, colX.cant, colX.price, colX.sub].forEach((x) => {
+      doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
+    });
+    cy += ROW_H;
+  });
+
+  // ── Línea azul cierre ──
+  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(2).strokeColor(BLU).stroke();
+  cy += 8;
+
+  // ── Summary ──
+  doc.font("Helvetica").fontSize(9).fillColor(GREY)
+    .text(items.length + " ítems · " + totalUnidades + " unidades", MX, cy);
+  doc.font("Helvetica-Bold").fontSize(16).fillColor(BLU)
+    .text("TOTAL: $" + total.toLocaleString("es-AR"), MX, cy - 2, { align: "right" });
+  cy += 20;
+
+  if (extraLine) {
+    doc.font("Helvetica-Oblique").fontSize(8).fillColor(GREY).text(extraLine, MX, cy);
+    cy += 14;
+  }
+  if (notes) {
+    doc.font("Helvetica-Oblique").fontSize(9).fillColor(GREY).text(notes, MX, cy);
+  }
+
+  doc.end();
+}
+
+// Genera PDF del remito de un pedido — GET /api/admin/orders/:id/pdf
+app.get("/api/admin/orders/:id/pdf", requireVendedorOrAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID inválido" });
+  const order = db.prepare(
+    "SELECT o.*, u.full_name, u.username, v.full_name AS vendedor_full_name, v.username AS vendedor_username " +
+    "FROM orders o LEFT JOIN users u ON u.id=o.user_id LEFT JOIN users v ON v.id=o.assigned_vendedor_id WHERE o.id=?"
+  ).get(id);
+  if (!order) return res.status(404).json({ error: "No encontrado" });
+  const items = db.prepare("SELECT * FROM order_items WHERE order_id=? ORDER BY id").all(id);
+  const appName = (db.prepare("SELECT value FROM settings WHERE key='app_name'").get() || {}).value || "Maxaria";
+  const clientName = order.full_name || order.username || "Consumidor final";
+  const vendText = order.vendedor_full_name || order.vendedor_username || "";
+  const date = new Date(order.created_at || Date.now()).toLocaleDateString("es-AR");
+  const STATUS_LABELS = { pendiente: "Pendiente", enviado: "Enviado", preparando: "En armado", listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado" };
+  const total = items.reduce((s, it) => s + Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)), 0);
+  const totalUnidades = items.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+  const safeClient = clientName.replace(/[^\w\s\-áéíóúüñÁÉÍÓÚÜÑ]/g, "").trim();
+  const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+  res.setHeader("Content-Disposition", 'attachment; filename="' + safeClient + " " + dateSlug + '.pdf"');
+  const metaCells = [
+    { label: "Fecha", value: date },
+    { label: "Cliente", value: clientName },
+    ...(vendText ? [{ label: "Vendedor", value: vendText }] : []),
+  ];
+  const extraLine = order.budget_number ? "Facturado desde presupuesto " + order.budget_number : "";
+  buildRemitoPdf(res, {
+    title: appName, docLabel: STATUS_LABELS[order.status] || order.status,
+    docNum: String(id), date, metaCells, items, total, totalUnidades,
+    notes: order.notes || "", extraLine,
+  });
+});
+
+// Genera PDF del presupuesto — GET /api/budgets/:id/pdf
+app.get("/api/budgets/:id/pdf", requireVendedorOrAdmin, requireSectionForAdmin("ventas"), (req, res) => {
+  const u = { id: req.session.userId, level: req.session.level };
+  const budget = db.prepare("SELECT * FROM budgets WHERE id=?").get(req.params.id);
+  if (!budget) return res.status(404).json({ error: "No encontrado" });
+  if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
+  const items = db.prepare("SELECT * FROM budget_items WHERE budget_id=? ORDER BY id").all(budget.id);
+  const appName = (db.prepare("SELECT value FROM settings WHERE key='app_name'").get() || {}).value || "Maxaria";
+  const clientName = budget.client_name || "Consumidor final";
+  const date = new Date(budget.created_at || Date.now()).toLocaleDateString("es-AR");
+  const STATUS_LABELS = { borrador: "Borrador", enviado: "Enviado", aceptado: "Aceptado", cancelado: "Cancelado", facturado: "Facturado" };
+  const total = Number(budget.total) || 0;
+  const totalUnidades = items.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+  const safeClient = clientName.replace(/[^\w\s\-áéíóúüñÁÉÍÓÚÜÑ]/g, "").trim();
+  const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+  res.setHeader("Content-Disposition", 'attachment; filename="' + safeClient + " " + dateSlug + '.pdf"');
+  const metaCells = [
+    { label: "Fecha", value: date },
+    { label: "Cliente", value: clientName },
+    { label: "Forma de pago", value: budget.payment_method || "Efectivo" },
+  ];
+  buildRemitoPdf(res, {
+    title: appName, docLabel: STATUS_LABELS[budget.status] || budget.status,
+    docNum: budget.number || String(budget.id), date, metaCells, items, total, totalUnidades,
+    notes: budget.notes || "", extraLine: "",
+  });
+});
+
 app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   const body = req.body || {};
   const pConf = body.priceConfig || {};

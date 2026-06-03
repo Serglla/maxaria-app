@@ -3401,6 +3401,7 @@
     var actionsRow = '<div class="order-items-actions">' +
       (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar items</button>' : "") +
       '<button type="button" class="btn btn-small order-print">🖨 Imprimir remito</button>' +
+      '<button type="button" class="btn btn-small order-share">📤 Compartir</button>' +
       "</div>";
     var itemsHtml = '<div class="order-items-box">' + itemsTable + actionsRow + "</div>";
 
@@ -3509,6 +3510,23 @@
     if (printBtn) {
       printBtn.addEventListener("click", function() { printOrderRemito(order); });
     }
+
+    var shareBtn = detailEl.querySelector(".order-share");
+    if (shareBtn) {
+      shareBtn.addEventListener("click", async function() {
+        var clientName = order.full_name || order.username || "Pedido";
+        var dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+        var fileName = clientName + " " + dateSlug + ".pdf";
+        shareBtn.disabled = true;
+        shareBtn.textContent = "…";
+        try {
+          await shareDocPdf("/api/admin/orders/" + order.id + "/pdf", fileName);
+        } finally {
+          shareBtn.disabled = false;
+          shareBtn.textContent = "📤 Compartir";
+        }
+      });
+    }
   }
 
   // Imprime un remito del pedido (lo que se preparó para entregar): productos,
@@ -3604,6 +3622,30 @@
       budgetRef +
       "</body></html>";
     printHtml(html);
+  }
+
+  // Descarga el PDF de la URL dada y lo comparte vía Web Share API si está disponible,
+  // o lo descarga directamente si el navegador no soporta sharing de archivos.
+  async function shareDocPdf(url, fileName) {
+    try {
+      var resp = await fetch(url);
+      if (!resp.ok) throw new Error("Error " + resp.status);
+      var blob = await resp.blob();
+      var file = new File([blob], fileName, { type: "application/pdf" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: fileName });
+      } else {
+        // Fallback: descargar el archivo
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") showToast("No se pudo compartir: " + e.message, "error");
+    }
   }
 
   function printHtml(html) {

@@ -92,6 +92,7 @@
     pickerTbody:   document.getElementById("picker-tbody"),
     pickerCount:   document.getElementById("picker-selected-count"),
     pickerConfirm: document.getElementById("picker-confirm-btn"),
+    shareBtn:         document.getElementById("budget-share-btn"),
     quickClientBtn:   document.getElementById("quick-client-btn"),
     quickClientModal: document.getElementById("quick-client-modal"),
     qcName:           document.getElementById("qc-name"),
@@ -777,6 +778,36 @@
     } catch (_) {
       vToast("Error de conexión al facturar", true);
       vEls.invoiceBtn.disabled = false;
+    }
+  });
+
+  if (vEls.shareBtn) vEls.shareBtn.addEventListener("click", async () => {
+    if (!vState.editingId) { vToast("Guardá el presupuesto primero", true); return; }
+    const client = vEls.client ? (vEls.client.options[vEls.client.selectedIndex]||{}).text||"Presupuesto" : "Presupuesto";
+    const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+    const fileName = client + " " + dateSlug + ".pdf";
+    vEls.shareBtn.disabled = true;
+    vEls.shareBtn.textContent = "…";
+    try {
+      const resp = await fetch("/api/budgets/" + vState.editingId + "/pdf");
+      if (!resp.ok) throw new Error("Error " + resp.status);
+      const blob = await resp.blob();
+      const file = new File([blob], fileName, { type: "application/pdf" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: fileName });
+      } else {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") vToast("No se pudo compartir: " + e.message, true);
+    } finally {
+      vEls.shareBtn.disabled = false;
+      vEls.shareBtn.textContent = "📤 Compartir";
     }
   });
 
