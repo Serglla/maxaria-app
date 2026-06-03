@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260603g" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260603h" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -1830,6 +1830,37 @@
     </div>
   </div>
 
+  <!-- Modal: selección de productos para editar un PEDIDO (mismo sistema que el
+       armador de presupuestos: buscar, tildar, cantidad, "Agregar seleccionados") -->
+  <div class="admin-modal" id="oie-picker-modal" hidden style="z-index:1500">
+    <div class="admin-modal-box" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+      <h3>Agregar productos al pedido</h3>
+      <input type="search" id="oie-picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="margin-bottom:10px" />
+      <div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;min-height:200px">
+        <table class="admin-table" id="oie-picker-table">
+          <thead>
+            <tr>
+              <th style="width:34px"><input type="checkbox" id="oie-picker-all" title="Seleccionar todos" /></th>
+              <th>Producto</th>
+              <th class="num" style="width:80px">Cant.</th>
+              <th class="num" style="width:110px">Precio</th>
+              <th class="num" style="width:70px">Stock</th>
+            </tr>
+          </thead>
+          <tbody id="oie-picker-tbody">
+            <tr><td colspan="5" class="muted">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="admin-modal-foot" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span id="oie-picker-count" class="muted small">0 seleccionados</span>
+        <span style="flex:1"></span>
+        <button type="button" class="btn" id="oie-picker-cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="oie-picker-confirm" disabled>Agregar seleccionados</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal registrar pago -->
   <div class="admin-modal" id="payment-create-modal" hidden>
     <div class="admin-modal-box">
@@ -2367,6 +2398,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260603g"></script>
+  <script src="/js/admin.js?v=20260603h"></script>
 </body>
 </html>

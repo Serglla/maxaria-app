@@ -283,6 +283,14 @@
     purPickerConfirm: document.getElementById("pur-picker-confirm"),
     purPickerCancel: document.getElementById("pur-picker-cancel"),
     purPickerNew: document.getElementById("pur-picker-new"),
+    // Picker de productos para editar un pedido (mismo sistema que presupuestos)
+    oiePickerModal: document.getElementById("oie-picker-modal"),
+    oiePickerSearch: document.getElementById("oie-picker-search"),
+    oiePickerAll: document.getElementById("oie-picker-all"),
+    oiePickerTbody: document.getElementById("oie-picker-tbody"),
+    oiePickerCount: document.getElementById("oie-picker-count"),
+    oiePickerConfirm: document.getElementById("oie-picker-confirm"),
+    oiePickerCancel: document.getElementById("oie-picker-cancel"),
 
     // Pagos
     paySearch: document.getElementById("pay-search"),
@@ -3358,13 +3366,11 @@
     function render() {
       box.innerHTML =
         '<div class="order-items-edit">' +
+          '<div class="oie-head"><strong>Artículos</strong>' +
+            '<button type="button" class="btn btn-small btn-primary oie-add-btn">+ Agregar productos</button></div>' +
           "<table><thead><tr><th>Código</th><th>Producto</th><th>Cant.</th>" +
           '<th class="num">P. Unit.</th><th class="num">Subtotal</th><th></th></tr></thead>' +
           "<tbody class=\"oie-tbody\">" + rowsHtml() + "</tbody></table>" +
-          '<div class="oie-add">' +
-            '<input type="search" class="admin-search oie-search" placeholder="Buscar producto para agregar…" autocomplete="off">' +
-            '<div class="oie-results" hidden></div>' +
-          "</div>" +
           '<div class="oie-foot">' +
             '<span class="oie-total-lbl">Total: <strong class="oie-total">' + fmtPrice(recalc()) + "</strong></span>" +
             '<span style="flex:1"></span>' +
@@ -3401,50 +3407,11 @@
           render();
         });
       }
-      var search = box.querySelector(".oie-search");
-      var results = box.querySelector(".oie-results");
-      if (search && results) {
-        var renderResults = function() {
-          var q = search.value.trim().toLowerCase();
-          if (!q) { results.hidden = true; results.innerHTML = ""; return; }
-          var matches = (state.allProducts || []).filter(function(p) {
-            return (p.name || "").toLowerCase().indexOf(q) !== -1 || (p.code || "").toLowerCase().indexOf(q) !== -1;
-          }).slice(0, 12);
-          if (!matches.length) { results.hidden = false; results.innerHTML = '<div class="oie-res-empty muted">Sin resultados</div>'; return; }
-          results.hidden = false;
-          results.innerHTML = matches.map(function(p) {
-            return '<div class="oie-res-item" data-pid="' + p.id + '"><span>' + escapeHtml(p.name || "") +
-              ' <code class="muted">' + escapeHtml(p.code || "") + "</code></span>" +
-              '<span class="muted">stock ' + (p.stock || 0) + "</span></div>";
-          }).join("");
-        };
-        search.addEventListener("input", debounce(renderResults, 150));
-        results.addEventListener("click", function(e) {
-          var item = e.target.closest(".oie-res-item");
-          if (!item) return;
-          var pid = Number(item.dataset.pid);
-          var prod = (state.allProducts || []).find(function(p) { return p.id === pid; });
-          if (!prod) return;
-          var existing = editItems.find(function(it) { return it.product_id === pid; });
-          if (existing) {
-            existing.quantity += 1;
-          } else {
-            // Precio sugerido por el nivel del cliente (el admin lo puede ajustar).
-            var col = ORDER_LEVEL_PRICE_COL[order.client_level] || "price_minorista";
-            editItems.push({
-              product_id: prod.id,
-              product_code: prod.code || "",
-              product_name: prod.name || "",
-              quantity: 1,
-              unit_price: Math.max(0, Number(prod[col]) || 0),
-            });
-          }
-          search.value = "";
-          results.hidden = true;
-          results.innerHTML = "";
-          render();
-        });
-      }
+      var addBtn = box.querySelector(".oie-add-btn");
+      if (addBtn) addBtn.addEventListener("click", function() {
+        var col = ORDER_LEVEL_PRICE_COL[order.client_level] || "price_minorista";
+        openOrderItemPicker(editItems, col, render);
+      });
       var cancelBtn = box.querySelector(".oie-cancel");
       if (cancelBtn) cancelBtn.addEventListener("click", function() { renderOrderDetail(detailEl, order); wireOrderDetail(detailEl, order); });
       var saveBtn = box.querySelector(".oie-save");
@@ -3483,6 +3450,146 @@
       showToast("Error: " + err.message, "error");
       saveBtn.disabled = false;
     }
+  }
+
+  // ---- Picker de productos del editor de pedidos (mismo sistema que el
+  // armador de presupuestos: buscar, tildar, cantidad, "Agregar seleccionados").
+  // Comparte la mecánica del picker de Compras. Al confirmar, agrega los
+  // productos elegidos a los items del pedido en edición. ----
+  var oieAddCtx = null;                 // { editItems, priceCol, rerender }
+  var oiePickerSelected = new Map();    // pid -> cantidad
+
+  async function openOrderItemPicker(editItems, priceCol, rerender) {
+    oieAddCtx = { editItems: editItems, priceCol: priceCol, rerender: rerender };
+    oiePickerSelected.clear();
+    await ensureAllProducts();
+    if (els.oiePickerSearch) els.oiePickerSearch.value = "";
+    if (els.oiePickerAll) els.oiePickerAll.checked = false;
+    renderOiePicker("");
+    updateOiePickerCount();
+    if (els.oiePickerModal) els.oiePickerModal.hidden = false;
+    setTimeout(function() { if (els.oiePickerSearch) els.oiePickerSearch.focus(); }, 60);
+  }
+
+  function closeOiePicker() { if (els.oiePickerModal) els.oiePickerModal.hidden = true; oieAddCtx = null; }
+
+  function renderOiePicker(filter) {
+    if (!els.oiePickerTbody) return;
+    var col = oieAddCtx ? oieAddCtx.priceCol : "price_minorista";
+    var list = state.allProducts || [];
+    if (filter) {
+      var q = filter.trim().toLowerCase();
+      list = list.filter(function(p) {
+        return (p.name || "").toLowerCase().indexOf(q) !== -1 || (p.code || "").toLowerCase().indexOf(q) !== -1;
+      });
+    }
+    if (!list.length) {
+      els.oiePickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:16px;text-align:center">Sin resultados</td></tr>';
+      return;
+    }
+    els.oiePickerTbody.innerHTML = list.map(function(p) {
+      var sel = oiePickerSelected.has(p.id);
+      var qty = sel ? oiePickerSelected.get(p.id) : "";
+      var price = Math.max(0, Number(p[col]) || 0);
+      return '<tr data-pid="' + p.id + '">' +
+        '<td><input type="checkbox" class="oie-pick-cb" data-pid="' + p.id + '"' + (sel ? " checked" : "") + ' /></td>' +
+        '<td><div>' + escapeHtml(p.name || "") + '</div><code class="muted">' + escapeHtml(p.code || "") + '</code></td>' +
+        '<td class="num"><input type="number" class="cell-input cell-num oie-pick-qty" data-pid="' + p.id + '" min="1" step="1" value="' + qty + '" placeholder="1" style="width:60px" /></td>' +
+        '<td class="num">' + fmtPrice(price) + '</td>' +
+        '<td class="num" style="color:' + ((p.stock || 0) > 0 ? "#059669" : "#9ca3af") + '">' + (p.stock || 0) + '</td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  function updateOiePickerCount() {
+    if (els.oiePickerCount) {
+      var n = oiePickerSelected.size;
+      els.oiePickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados");
+    }
+    if (els.oiePickerConfirm) els.oiePickerConfirm.disabled = oiePickerSelected.size === 0;
+  }
+
+  if (els.oiePickerSearch) {
+    els.oiePickerSearch.addEventListener("input", debounce(function() { renderOiePicker(els.oiePickerSearch.value); }, 160));
+  }
+  if (els.oiePickerCancel) els.oiePickerCancel.addEventListener("click", closeOiePicker);
+  if (els.oiePickerModal) {
+    els.oiePickerModal.addEventListener("click", function(e) {
+      if (e.target.matches("[data-close]")) closeOiePicker();
+    });
+    // Tildar fila / seleccionar todos
+    els.oiePickerModal.addEventListener("change", function(e) {
+      if (e.target.classList.contains("oie-pick-cb")) {
+        var pid = Number(e.target.dataset.pid);
+        var tr = e.target.closest("tr[data-pid]");
+        var qInp = tr ? tr.querySelector(".oie-pick-qty") : null;
+        if (e.target.checked) {
+          var q = qInp ? Math.max(1, Math.floor(Number(qInp.value) || 0)) : 1;
+          oiePickerSelected.set(pid, q || 1);
+          if (qInp && !qInp.value) qInp.value = "1";
+        } else {
+          oiePickerSelected.delete(pid);
+          if (qInp) qInp.value = "";
+        }
+        updateOiePickerCount();
+      } else if (e.target.id === "oie-picker-all") {
+        var all = e.target.checked;
+        els.oiePickerTbody.querySelectorAll(".oie-pick-cb").forEach(function(cb) {
+          cb.checked = all;
+          var pid = Number(cb.dataset.pid);
+          var tr = cb.closest("tr[data-pid]");
+          var qInp = tr ? tr.querySelector(".oie-pick-qty") : null;
+          if (all) {
+            var q = qInp ? Math.max(1, Math.floor(Number(qInp.value) || 0)) : 1;
+            oiePickerSelected.set(pid, q || 1);
+            if (qInp && !qInp.value) qInp.value = "1";
+          } else {
+            oiePickerSelected.delete(pid);
+            if (qInp) qInp.value = "";
+          }
+        });
+        updateOiePickerCount();
+      }
+    });
+    // Tipear cantidad marca el checkbox y guarda la cantidad
+    els.oiePickerModal.addEventListener("input", function(e) {
+      if (!e.target.classList.contains("oie-pick-qty")) return;
+      var pid = Number(e.target.dataset.pid);
+      if (e.target.value === "") return;
+      var q = Math.max(1, Math.floor(Number(e.target.value) || 0));
+      oiePickerSelected.set(pid, q);
+      var tr = e.target.closest("tr[data-pid]");
+      var cb = tr ? tr.querySelector(".oie-pick-cb") : null;
+      if (cb && !cb.checked) cb.checked = true;
+      updateOiePickerCount();
+    });
+  }
+  if (els.oiePickerConfirm) {
+    els.oiePickerConfirm.addEventListener("click", function() {
+      if (!oieAddCtx) { closeOiePicker(); return; }
+      var editItems = oieAddCtx.editItems;
+      var col = oieAddCtx.priceCol;
+      var rerender = oieAddCtx.rerender;
+      oiePickerSelected.forEach(function(qty, pid) {
+        var prod = (state.allProducts || []).find(function(p) { return p.id === pid; });
+        if (!prod) return;
+        var addQty = Math.max(1, Math.floor(Number(qty) || 1));
+        var existing = editItems.find(function(it) { return it.product_id === pid; });
+        if (existing) {
+          existing.quantity += addQty;
+        } else {
+          editItems.push({
+            product_id: prod.id,
+            product_code: prod.code || "",
+            product_name: prod.name || "",
+            quantity: addQty,
+            unit_price: Math.max(0, Number(prod[col]) || 0),
+          });
+        }
+      });
+      closeOiePicker();
+      if (typeof rerender === "function") rerender();
+    });
   }
 
   // Filtro de la pestaña Pedidos: por estado (default "inbox" = por armar),
