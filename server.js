@@ -1900,7 +1900,7 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
   let order;
   if (isAdmin) {
     order = db.prepare(
-      "SELECT o.*, u.username, u.full_name," +
+      "SELECT o.*, u.username, u.full_name, u.level AS client_level," +
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
       "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
       "  FROM orders o JOIN users u ON u.id = o.user_id" +
@@ -2081,8 +2081,14 @@ app.get("/api/my-notifications", requireLogin, (req, res) => {
 app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID inválido" });
-  const order = db.prepare("SELECT id, user_id FROM orders WHERE id = ?").get(id);
+  const order = db.prepare(
+    "SELECT id, user_id, total, status, stock_discounted, unified_parent_id, is_unified FROM orders WHERE id = ?"
+  ).get(id);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+  // No se editan pedidos ya entregados o cancelados (estados finales).
+  if (order.status === "entregado" || order.status === "cancelado") {
+    return res.status(409).json({ error: "No se puede editar un pedido " + order.status });
+  }
 
   const rawItems = req.body && Array.isArray(req.body.items) ? req.body.items : [];
   if (!rawItems.length) return res.status(400).json({ error: "El pedido debe tener al menos 1 item" });
@@ -2118,7 +2124,28 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
   }
   if (!lines.length) return res.status(400).json({ error: "Ningún item válido" });
 
+  // ¿El stock de este pedido ya está descontado? Si lo está (p.ej. un pedido que
+  // viene de un presupuesto facturado, que descuenta al crearse), al cambiar los
+  // items hay que ajustar el stock por la diferencia para que quede consistente.
+  // Si todavía no está descontado (pedido del catálogo pre-entrega), no se toca:
+  // el descuento se hará al entregar, ya con los items nuevos. Los pedidos
+  // unificados / hijos absorbidos no ajustan stock por su cuenta.
+  const linkedBudgetOut = db.prepare(
+    "SELECT stock_discounted FROM budgets WHERE order_id = ? AND stock_discounted = 1 LIMIT 1"
+  ).get(id);
+  const anyLinkedBudget = db.prepare("SELECT id FROM budgets WHERE order_id = ? LIMIT 1").get(id);
+  const skipStock = order.unified_parent_id != null || !!order.is_unified;
+  const stockCurrentlyOut = anyLinkedBudget ? !!linkedBudgetOut : !!order.stock_discounted;
+
   db.transaction(() => {
+    // Si el stock estaba descontado: devolver el de los items viejos antes de
+    // borrarlos, para después descontar el de los nuevos.
+    if (stockCurrentlyOut && !skipStock) {
+      const oldItems = db.prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?").all(id);
+      const incStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
+      for (const oi of oldItems) if (oi.product_id) incStock.run(oi.quantity, oi.product_id);
+    }
+
     db.prepare("DELETE FROM order_items WHERE order_id = ?").run(id);
     const ins = db.prepare(
       "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit)" +
@@ -2128,6 +2155,19 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
       ins.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
     }
     db.prepare("UPDATE orders SET total = ? WHERE id = ?").run(total, id);
+
+    // Descontar el stock de los items nuevos si el pedido lo tenía descontado.
+    if (stockCurrentlyOut && !skipStock) {
+      const decStock = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+      for (const l of lines) if (l.product_id) decStock.run(l.quantity, l.product_id);
+    }
+
+    // Mantener en sync el débito de cuenta corriente si ya existe (pedidos
+    // entregados o presupuestos facturados generan un débito por el total).
+    if (!order.is_unified) {
+      const deb = db.prepare("SELECT id FROM account_movements WHERE order_id = ? AND type = 'debit' LIMIT 1").get(id);
+      if (deb) db.prepare("UPDATE account_movements SET amount = ? WHERE id = ?").run(total, deb.id);
+    }
   })();
 
   const updatedItems = db.prepare(

@@ -3185,9 +3185,16 @@
     }
   }
 
+  // Estados en los que el admin puede editar los items del pedido (todo lo
+  // anterior a la entrega). Una vez entregado o cancelado, queda bloqueado.
+  var ORDER_EDITABLE_STATUSES = ["pendiente", "enviado", "preparando", "listo"];
+  function orderItemsEditable(order) {
+    return state.isAdmin && ORDER_EDITABLE_STATUSES.indexOf(order.status) !== -1;
+  }
+
   function renderOrderDetail(detailEl, order) {
     var items = order.items || [];
-    var itemsHtml = items.length
+    var itemsTable = items.length
       ? "<table><thead><tr>" +
           "<th>Código</th><th>Producto</th><th>Cant.</th>" +
           '<th class="num">P. Unit.</th><th class="num">Subtotal</th>' +
@@ -3203,6 +3210,11 @@
         }).join("") +
         "</tbody></table>"
       : '<p class="muted">Sin items.</p>';
+    // Botón para entrar al modo edición de items (solo estados pre-entrega).
+    var editBtn = orderItemsEditable(order)
+      ? '<div class="order-items-actions"><button type="button" class="btn btn-small order-edit-items">✏️ Editar items</button></div>'
+      : "";
+    var itemsHtml = '<div class="order-items-box">' + itemsTable + editBtn + "</div>";
 
     var statuses = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
     var statusNames = { pendiente: "Pendiente", enviado: "Enviado", preparando: "Preparando", listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado" };
@@ -3296,6 +3308,180 @@
           showToast("Error: " + err.message, "error");
         }
       });
+    }
+
+    var editItemsBtn = detailEl.querySelector(".order-edit-items");
+    if (editItemsBtn) {
+      editItemsBtn.addEventListener("click", function() {
+        enterOrderItemsEdit(detailEl, order);
+      });
+    }
+  }
+
+  // ---- Edición inline de los items de un pedido (estados pre-entrega) ----
+  // Permite cambiar cantidades/precios, quitar y agregar productos. Al guardar
+  // hace PUT /api/admin/orders/:id/items (el server recalcula total y ajusta
+  // stock si el pedido ya lo tenía descontado).
+  var ORDER_LEVEL_PRICE_COL = { 1: "price_minorista", 2: "price_revendedor", 3: "price_mayorista", 4: "price_vip" };
+
+  async function enterOrderItemsEdit(detailEl, order) {
+    var box = detailEl.querySelector(".order-items-box");
+    if (!box) return;
+    await ensureAllProducts();
+    // Copia editable de los items actuales.
+    var editItems = (order.items || []).map(function(it) {
+      return {
+        product_id: it.product_id,
+        product_code: it.product_code || "",
+        product_name: it.product_name || "",
+        quantity: Math.max(1, Number(it.quantity) || 1),
+        unit_price: Math.max(0, Number(it.unit_price) || 0),
+      };
+    });
+
+    function recalc() {
+      return editItems.reduce(function(s, it) { return s + it.unit_price * it.quantity; }, 0);
+    }
+    function rowsHtml() {
+      if (!editItems.length) return '<tr><td colspan="6" class="muted" style="padding:10px">Agregá al menos un producto.</td></tr>';
+      return editItems.map(function(it, idx) {
+        return '<tr data-idx="' + idx + '">' +
+          "<td><code>" + escapeHtml(it.product_code) + "</code></td>" +
+          "<td>" + escapeHtml(it.product_name) + "</td>" +
+          '<td><input type="number" class="cell-input cell-num oie-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:64px"></td>' +
+          '<td class="num"><input type="number" class="cell-input cell-num oie-price" min="0" step="1" value="' + it.unit_price + '" data-idx="' + idx + '" style="width:90px"></td>' +
+          '<td class="num oie-sub">' + fmtPrice(it.unit_price * it.quantity) + "</td>" +
+          '<td><button type="button" class="btn btn-small oie-rm" data-idx="' + idx + '">✕</button></td>' +
+        "</tr>";
+      }).join("");
+    }
+    function render() {
+      box.innerHTML =
+        '<div class="order-items-edit">' +
+          "<table><thead><tr><th>Código</th><th>Producto</th><th>Cant.</th>" +
+          '<th class="num">P. Unit.</th><th class="num">Subtotal</th><th></th></tr></thead>' +
+          "<tbody class=\"oie-tbody\">" + rowsHtml() + "</tbody></table>" +
+          '<div class="oie-add">' +
+            '<input type="search" class="admin-search oie-search" placeholder="Buscar producto para agregar…" autocomplete="off">' +
+            '<div class="oie-results" hidden></div>' +
+          "</div>" +
+          '<div class="oie-foot">' +
+            '<span class="oie-total-lbl">Total: <strong class="oie-total">' + fmtPrice(recalc()) + "</strong></span>" +
+            '<span style="flex:1"></span>' +
+            '<button type="button" class="btn btn-small oie-cancel">Cancelar</button>' +
+            '<button type="button" class="btn btn-small btn-primary oie-save">Guardar cambios</button>' +
+          "</div>" +
+        "</div>";
+      wire();
+    }
+    function updateTotal() {
+      var t = box.querySelector(".oie-total");
+      if (t) t.textContent = fmtPrice(recalc());
+    }
+    function wire() {
+      var tbody = box.querySelector(".oie-tbody");
+      if (tbody) {
+        tbody.addEventListener("input", function(e) {
+          var idx = e.target.dataset.idx != null ? Number(e.target.dataset.idx) : -1;
+          if (idx < 0 || !editItems[idx]) return;
+          if (e.target.classList.contains("oie-qty")) {
+            editItems[idx].quantity = Math.max(1, Math.floor(Number(e.target.value) || 1));
+          } else if (e.target.classList.contains("oie-price")) {
+            editItems[idx].unit_price = Math.max(0, Math.round(Number(e.target.value) || 0));
+          }
+          var tr = e.target.closest("tr");
+          var sub = tr ? tr.querySelector(".oie-sub") : null;
+          if (sub) sub.textContent = fmtPrice(editItems[idx].unit_price * editItems[idx].quantity);
+          updateTotal();
+        });
+        tbody.addEventListener("click", function(e) {
+          var rm = e.target.closest(".oie-rm");
+          if (!rm) return;
+          editItems.splice(Number(rm.dataset.idx), 1);
+          render();
+        });
+      }
+      var search = box.querySelector(".oie-search");
+      var results = box.querySelector(".oie-results");
+      if (search && results) {
+        var renderResults = function() {
+          var q = search.value.trim().toLowerCase();
+          if (!q) { results.hidden = true; results.innerHTML = ""; return; }
+          var matches = (state.allProducts || []).filter(function(p) {
+            return (p.name || "").toLowerCase().indexOf(q) !== -1 || (p.code || "").toLowerCase().indexOf(q) !== -1;
+          }).slice(0, 12);
+          if (!matches.length) { results.hidden = false; results.innerHTML = '<div class="oie-res-empty muted">Sin resultados</div>'; return; }
+          results.hidden = false;
+          results.innerHTML = matches.map(function(p) {
+            return '<div class="oie-res-item" data-pid="' + p.id + '"><span>' + escapeHtml(p.name || "") +
+              ' <code class="muted">' + escapeHtml(p.code || "") + "</code></span>" +
+              '<span class="muted">stock ' + (p.stock || 0) + "</span></div>";
+          }).join("");
+        };
+        search.addEventListener("input", debounce(renderResults, 150));
+        results.addEventListener("click", function(e) {
+          var item = e.target.closest(".oie-res-item");
+          if (!item) return;
+          var pid = Number(item.dataset.pid);
+          var prod = (state.allProducts || []).find(function(p) { return p.id === pid; });
+          if (!prod) return;
+          var existing = editItems.find(function(it) { return it.product_id === pid; });
+          if (existing) {
+            existing.quantity += 1;
+          } else {
+            // Precio sugerido por el nivel del cliente (el admin lo puede ajustar).
+            var col = ORDER_LEVEL_PRICE_COL[order.client_level] || "price_minorista";
+            editItems.push({
+              product_id: prod.id,
+              product_code: prod.code || "",
+              product_name: prod.name || "",
+              quantity: 1,
+              unit_price: Math.max(0, Number(prod[col]) || 0),
+            });
+          }
+          search.value = "";
+          results.hidden = true;
+          results.innerHTML = "";
+          render();
+        });
+      }
+      var cancelBtn = box.querySelector(".oie-cancel");
+      if (cancelBtn) cancelBtn.addEventListener("click", function() { renderOrderDetail(detailEl, order); wireOrderDetail(detailEl, order); });
+      var saveBtn = box.querySelector(".oie-save");
+      if (saveBtn) saveBtn.addEventListener("click", function() { saveOrderItems(detailEl, order, editItems, saveBtn); });
+    }
+    render();
+  }
+
+  async function saveOrderItems(detailEl, order, editItems, saveBtn) {
+    if (!editItems.length) { showToast("El pedido debe tener al menos un item", "error"); return; }
+    saveBtn.disabled = true;
+    try {
+      var resp = await api("/api/admin/orders/" + order.id + "/items", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: editItems.map(function(it) {
+          return { product_id: it.product_id, product_code: it.product_code, product_name: it.product_name,
+                   quantity: it.quantity, unit_price: it.unit_price };
+        }) }),
+      });
+      // Refrescar el objeto del pedido con los items/total nuevos.
+      order.items = resp.items || [];
+      order.total = resp.total;
+      var o = (state.orders || []).find(function(x) { return x.id === order.id; });
+      if (o) o.total = resp.total;
+      // Stock pudo cambiar: invalidar cache de productos del picker de Compras.
+      state.allProductsLoaded = false;
+      showToast("Pedido #" + order.id + " actualizado");
+      // Volver a la vista de detalle (solo lectura) ya con los datos nuevos.
+      renderOrderDetail(detailEl, order);
+      wireOrderDetail(detailEl, order);
+      // Actualizar el total mostrado en la tarjeta y mantener las vistas en sync.
+      var card = detailEl.closest(".order-card");
+      if (card) { var tot = card.querySelector(".order-total"); if (tot) tot.textContent = fmtPrice(resp.total); }
+    } catch (err) {
+      showToast("Error: " + err.message, "error");
+      saveBtn.disabled = false;
     }
   }
 

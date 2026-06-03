@@ -815,6 +815,34 @@ button { font: inherit; cursor: pointer; }
   color: #6b7280;
   font-size: 12px;
 }
+
+/* Edición de items de un pedido (modo inline en el detalle) */
+.order-items-actions { margin-top: 6px; }
+.order-items-edit { margin-top: 6px; }
+.order-items-edit .cell-input {
+  border: 1px solid #d1d5db; border-radius: 6px; padding: 3px 6px; font-size: 13px;
+}
+.order-items-edit .cell-num { text-align: right; }
+.oie-add { position: relative; margin-top: 8px; }
+.oie-add .oie-search { width: 100%; }
+.oie-results {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 20;
+  background: #fff; border: 1px solid #d1d5db; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12); max-height: 240px; overflow-y: auto; margin-top: 2px;
+}
+.oie-res-item {
+  display: flex; justify-content: space-between; gap: 10px; align-items: center;
+  padding: 7px 10px; cursor: pointer; font-size: 13px; border-bottom: 1px solid #f3f4f6;
+}
+.oie-res-item:last-child { border-bottom: none; }
+.oie-res-item:hover { background: #eff6ff; }
+.oie-res-empty { padding: 8px 10px; font-size: 13px; }
+.oie-foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 10px; padding-top: 8px; border-top: 1px dashed #e5e7eb;
+}
+.oie-total-lbl { font-size: 13px; }
+.oie-total { font-size: 15px; color: #1e3a5f; }
 .drawer-head {
   display: flex;
   align-items: center;
@@ -3137,6 +3165,26 @@ html.in-modal .ventas-wrap {
 .ventas-items-table td { padding: 5px 8px; }
 .ventas-row { cursor: pointer; }
 .ventas-row:hover td { background: #f8fafc; }
+
+/* Presupuesto aceptado pero todavia sin facturar (no genero pedido aun) */
+.ventas-row--por-facturar td { background: #fffbeb; }
+.ventas-row--por-facturar:hover td { background: #fef3c7; }
+.ventas-row--por-facturar td:first-child { box-shadow: inset 3px 0 0 #f59e0b; }
+.budget-pend-note {
+  display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 600;
+  color: #b45309; white-space: nowrap;
+}
+
+/* Banner-resumen de aceptados sin facturar */
+.budget-pending-banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 10px 14px;
+  background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px;
+  color: #92400e; font-size: 13px;
+}
+.budget-pending-banner__txt { flex: 1; min-width: 200px; }
+.budget-pending-banner strong { color: #b45309; }
+.budget-pending-banner .btn { flex-shrink: 0; }
 
 .ventas-items-section { margin-bottom: 14px; }
 .ventas-items-head {

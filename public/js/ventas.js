@@ -59,6 +59,7 @@
     backBtn:       document.getElementById("budget-back-btn"),
     search:        document.getElementById("budget-search"),
     filterStatus:  document.getElementById("budget-filter-status"),
+    pendingBanner: document.getElementById("budget-pending-banner"),
     newBtn:        document.getElementById("new-budget-btn"),
     tbody:         document.getElementById("budgets-tbody"),
     form:          document.getElementById("budget-form"),
@@ -492,6 +493,10 @@
 
   function vRenderList() {
     if (!vEls.tbody) return;
+    // Banner-resumen: presupuestos aceptados sin facturar (sobre la lista
+    // completa, no la filtrada). Un 'aceptado' siempre está pendiente de
+    // facturar — al facturar pasa a 'facturado'.
+    vRenderPendingBanner();
     const q = (vEls.search ? vEls.search.value.trim().toLowerCase() : "");
     const stf = vEls.filterStatus ? vEls.filterStatus.value : "all";
     let list = vState.list;
@@ -501,16 +506,39 @@
       vEls.tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">Sin presupuestos.</td></tr>';
       return;
     }
-    vEls.tbody.innerHTML = list.map((b) =>
-      '<tr data-bid="' + b.id + '" class="ventas-row">' +
+    vEls.tbody.innerHTML = list.map((b) => {
+      const pend = b.status === "aceptado";
+      return '<tr data-bid="' + b.id + '" class="ventas-row' + (pend ? ' ventas-row--por-facturar' : '') + '">' +
       '<td style="font-weight:600">' + vEsc(b.number) + '</td>' +
       '<td>' + vFmtDate(b.created_at) + '</td>' +
       '<td>' + vEsc(b.client_name) + '</td>' +
       '<td style="text-align:right;font-weight:600">' + vFmt(b.total) + '</td>' +
-      '<td>' + vBadgeHtml(b.status) + '</td>' +
-      '<td style="text-align:right"><button type="button" class="btn" style="font-size:12px;padding:3px 10px" data-open="' + b.id + '">Abrir</button></td>' +
-      '</tr>'
-    ).join("");
+      '<td>' + vBadgeHtml(b.status) +
+        (pend ? ' <span class="budget-pend-note">⚠ falta facturar</span>' : '') + '</td>' +
+      '<td style="text-align:right">' +
+        (pend
+          ? '<button type="button" class="btn btn-primary" style="font-size:12px;padding:3px 10px" data-open="' + b.id + '">Facturar →</button>'
+          : '<button type="button" class="btn" style="font-size:12px;padding:3px 10px" data-open="' + b.id + '">Abrir</button>') +
+      '</td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  function vRenderPendingBanner() {
+    if (!vEls.pendingBanner) return;
+    const n = (vState.list || []).filter((b) => b.status === "aceptado").length;
+    if (!n) { vEls.pendingBanner.hidden = true; vEls.pendingBanner.innerHTML = ""; return; }
+    const plural = n === 1 ? "presupuesto aceptado" : "presupuestos aceptados";
+    vEls.pendingBanner.hidden = false;
+    vEls.pendingBanner.innerHTML =
+      '<span class="budget-pending-banner__txt">🧾 Tenés <strong>' + n + '</strong> ' + plural +
+      ' sin facturar. Facturalos para que se generen los pedidos.</span>' +
+      '<button type="button" class="btn" id="budget-pending-filter">Ver pendientes</button>';
+    const fb = document.getElementById("budget-pending-filter");
+    if (fb) fb.addEventListener("click", () => {
+      if (vEls.filterStatus) vEls.filterStatus.value = "aceptado";
+      vRenderList();
+    });
   }
 
   if (vEls.tbody) {
