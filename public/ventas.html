@@ -93,9 +93,12 @@
             <div class="ventas-form-grid">
             <label>
               Cliente
-              <select id="budget-client" class="admin-select" style="width:100%;margin-top:4px">
-                <option value="">Consumidor final</option>
-              </select>
+              <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+                <select id="budget-client" class="admin-select" style="flex:1">
+                  <option value="">Consumidor final</option>
+                </select>
+                <button type="button" id="quick-client-btn" class="btn" title="Crear cliente nuevo" style="flex-shrink:0;padding:6px 10px;font-size:13px;white-space:nowrap">+ Nuevo</button>
+              </div>
             </label>
             <label>
               Lista de precios
@@ -225,6 +228,32 @@
     </div>
   </div>
 
+  <!-- MODAL: Crear cliente rápido -->
+  <div id="quick-client-modal" class="admin-modal" hidden style="z-index:1400">
+    <div class="admin-modal-box" style="max-width:420px">
+      <h3 style="margin:0 0 4px">Nuevo cliente</h3>
+      <p style="font-size:12px;color:#6b7280;margin:0 0 16px">El admin puede asignarle usuario y contraseña después desde el panel.</p>
+      <div class="admin-modal-body" style="display:flex;flex-direction:column;gap:12px">
+        <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
+          Nombre completo *
+          <input type="text" id="qc-name" class="admin-input" placeholder="Ej: Discandi SRL" style="margin-top:4px;width:100%" autocomplete="off" />
+        </label>
+        <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
+          Teléfono
+          <input type="tel" id="qc-phone" class="admin-input" placeholder="Ej: 3442484286" style="margin-top:4px;width:100%" autocomplete="off" />
+        </label>
+        <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
+          Lista de precios
+          <select id="qc-price-list" class="admin-select" style="margin-top:4px;width:100%"></select>
+        </label>
+      </div>
+      <div class="admin-modal-foot">
+        <button type="button" class="btn" id="qc-cancel-btn">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="qc-save-btn">Crear cliente</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: Confirmación propia (reemplaza confirm() nativo del navegador) -->
   <div id="ventas-confirm-modal" class="admin-modal" hidden style="z-index:1400">
     <div class="admin-modal-box" style="max-width:420px">
@@ -239,6 +268,6 @@
     </div>
   </div>
 
-  <script src="/js/ventas.js?v=20260603f"></script>
+  <script src="/js/ventas.js?v=20260603g"></script>
 </body>
 </html>

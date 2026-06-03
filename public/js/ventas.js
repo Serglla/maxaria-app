@@ -92,6 +92,13 @@
     pickerTbody:   document.getElementById("picker-tbody"),
     pickerCount:   document.getElementById("picker-selected-count"),
     pickerConfirm: document.getElementById("picker-confirm-btn"),
+    quickClientBtn:   document.getElementById("quick-client-btn"),
+    quickClientModal: document.getElementById("quick-client-modal"),
+    qcName:           document.getElementById("qc-name"),
+    qcPhone:          document.getElementById("qc-phone"),
+    qcPriceList:      document.getElementById("qc-price-list"),
+    qcCancelBtn:      document.getElementById("qc-cancel-btn"),
+    qcSaveBtn:        document.getElementById("qc-save-btn"),
   };
 
   const vState = {
@@ -611,6 +618,77 @@
         (clients || []).map((u) => '<option value="' + u.id + '">' + vEsc(u.full_name || u.username) + '</option>').join("");
     } catch (_) {}
   }
+
+  // ── Modal "Crear cliente rápido" ──────────────────────────────────────────
+
+  async function vOpenQuickClient() {
+    if (!vEls.quickClientModal) return;
+    // Poblar el select de listas de precios con las opciones disponibles.
+    try {
+      const r = await fetch("/api/admin/price-lists");
+      if (r.ok) {
+        const lists = await r.json();
+        vEls.qcPriceList.innerHTML = '<option value="">— Sin lista (por nivel)</option>' +
+          (lists || []).filter(l => l.active).map(l =>
+            '<option value="' + l.id + '">' + vEsc(l.name) + '</option>'
+          ).join("");
+      }
+    } catch (_) {}
+    vEls.qcName.value = "";
+    vEls.qcPhone.value = "";
+    vEls.qcPriceList.value = "";
+    vEls.quickClientModal.hidden = false;
+    vEls.qcName.focus();
+  }
+
+  function vCloseQuickClient() {
+    if (vEls.quickClientModal) vEls.quickClientModal.hidden = true;
+  }
+
+  async function vSaveQuickClient() {
+    const name = (vEls.qcName.value || "").trim();
+    if (!name) { vEls.qcName.focus(); return; }
+    vEls.qcSaveBtn.disabled = true;
+    vEls.qcSaveBtn.textContent = "Creando…";
+    try {
+      const body = {
+        full_name: name,
+        phone: (vEls.qcPhone.value || "").trim() || null,
+        price_list_id: vEls.qcPriceList.value ? Number(vEls.qcPriceList.value) : null,
+      };
+      const r = await fetch("/api/admin/quick-client", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert(err.error || "Error al crear el cliente");
+        return;
+      }
+      const newClient = await r.json();
+      // Agregar al estado y al select, y seleccionarlo.
+      vState.clientsRaw.push(newClient);
+      const opt = document.createElement("option");
+      opt.value = newClient.id;
+      opt.textContent = newClient.full_name || newClient.username;
+      vEls.client.appendChild(opt);
+      vEls.client.value = newClient.id;
+      vEls.client.dispatchEvent(new Event("change"));
+      vCloseQuickClient();
+    } catch (e) {
+      alert("Error de red: " + e.message);
+    } finally {
+      vEls.qcSaveBtn.disabled = false;
+      vEls.qcSaveBtn.textContent = "Crear cliente";
+    }
+  }
+
+  if (vEls.quickClientBtn) vEls.quickClientBtn.addEventListener("click", vOpenQuickClient);
+  if (vEls.qcCancelBtn) vEls.qcCancelBtn.addEventListener("click", vCloseQuickClient);
+  if (vEls.qcSaveBtn) vEls.qcSaveBtn.addEventListener("click", vSaveQuickClient);
+  if (vEls.qcName) vEls.qcName.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") { e.preventDefault(); vSaveQuickClient(); }
+  });
 
   async function vSave(targetStatus) {
     const clientId = vEls.client && vEls.client.value ? Number(vEls.client.value) : null;
