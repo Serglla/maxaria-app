@@ -1905,6 +1905,14 @@ button { font: inherit; cursor: pointer; }
 .admin-table .row-oos:hover { background: #ffedd5; }
 .admin-table .row-inactive { opacity: .55; }
 
+/* Selector de productos de Compras: entra en el ancho del modal (sin el
+   min-width gigante de .admin-table) para que la columna "Cant." quede a la
+   vista sin scroll horizontal, igual que el picker del presupuesto. El id pisa
+   el min-width de .admin-table (y el de la media query mobile) por especificidad. */
+#pur-picker-table { min-width: 0; }
+#pur-picker-table thead th { white-space: normal; }
+#pur-picker-table tbody td { word-break: break-word; }
+
 .cell-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #6b7280; white-space: nowrap; }
 .cell-cat { font-size: 12px; white-space: nowrap; }
 .cell-input {

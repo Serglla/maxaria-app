@@ -2193,6 +2193,49 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
   }
 });
 
+// Duplicar un producto ("crear gemelo"): crea una copia con TODOS los mismos
+// campos (nombre, categoría, descripción, imagen, costo, precios/comisiones,
+// stock_min, activo) pero con un código nuevo correlativo (el mayor código
+// numérico + 1). El stock arranca en 0 porque es un SKU nuevo que todavía no se
+// recibió: la compra que se está cargando le sumará el stock. Lo usa el menú
+// contextual "Crear producto basado en este" del selector de Compras.
+app.post("/api/admin/products/:id/duplicate", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const src = db.prepare("SELECT * FROM products WHERE id = ?").get(id);
+  if (!src) return res.status(404).json({ error: "Producto no encontrado" });
+
+  // Código correlativo: el mayor valor numérico entre los códigos existentes + 1.
+  const codes = db.prepare("SELECT code FROM products").all();
+  let maxNum = 0;
+  for (const row of codes) {
+    const n = parseInt(String(row.code || "").trim(), 10);
+    if (!isNaN(n) && n > maxNum) maxNum = n;
+  }
+  let newCode = String(maxNum + 1);
+  // Garantizar unicidad por las dudas (si hubiera un código no numérico igual).
+  while (db.prepare("SELECT 1 FROM products WHERE code = ?").get(newCode)) {
+    maxNum++;
+    newCode = String(maxNum + 1);
+  }
+
+  const r = db.prepare(
+    "INSERT INTO products (code, category_id, name, description, image_url, cost," +
+    " price_minorista, price_revendedor, price_mayorista, price_vip, price_publico," +
+    " stock, stock_min, active)" +
+    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+  ).run(
+    newCode, src.category_id, src.name, src.description || null, src.image_url || null,
+    src.cost, src.price_minorista, src.price_revendedor, src.price_mayorista,
+    src.price_vip, src.price_publico, 0, src.stock_min || 0,
+    src.active != null ? src.active : 1
+  );
+  const created = db.prepare(
+    "SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE p.id=?"
+  ).get(r.lastInsertRowid);
+  res.json({ ok: true, product: created, source_id: id });
+});
+
 // Editar campos puntuales de un producto
 app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);

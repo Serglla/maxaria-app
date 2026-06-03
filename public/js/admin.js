@@ -4034,6 +4034,17 @@
 
   if (els.purPickerSearch) {
     els.purPickerSearch.addEventListener("input", debounce(() => renderPurPicker(els.purPickerSearch.value), 180));
+    // Al volver a clickear/enfocar el buscador, se limpia para arrancar una
+    // búsqueda nueva (flujo de depósito: buscar, cargar cantidad, repetir).
+    // La selección hecha hasta ahora se conserva (sigue tildada al re-renderizar).
+    const purClearSearchOnReuse = () => {
+      if (els.purPickerSearch.value) {
+        els.purPickerSearch.value = "";
+        renderPurPicker("");
+      }
+    };
+    els.purPickerSearch.addEventListener("focus", purClearSearchOnReuse);
+    els.purPickerSearch.addEventListener("click", purClearSearchOnReuse);
   }
 
   if (els.purPickerModal) {
@@ -4096,6 +4107,88 @@
       state.purPickerSelected.clear();
       closePurPicker();
     });
+  }
+
+  // ---- Menú contextual: "Crear producto basado en este" (clic derecho) ----
+  // En el selector de productos de Compras, el clic derecho sobre una fila
+  // permite crear un gemelo del producto (copia con código nuevo correlativo) y
+  // abre su edición. Al guardar, el gemelo queda seleccionado y listo para
+  // cargarlo a la compra.
+  let purCtxMenu = null;
+  function hidePurCtxMenu() { if (purCtxMenu) purCtxMenu.style.display = "none"; }
+  function ensurePurCtxMenu() {
+    if (purCtxMenu) return purCtxMenu;
+    purCtxMenu = document.createElement("div");
+    purCtxMenu.id = "pur-ctx-menu";
+    purCtxMenu.style.cssText = "position:fixed;z-index:1450;display:none;background:#fff;" +
+      "border:1px solid #d1d5db;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);" +
+      "padding:4px;min-width:240px";
+    document.body.appendChild(purCtxMenu);
+    document.addEventListener("click", hidePurCtxMenu);
+    document.addEventListener("scroll", hidePurCtxMenu, true);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") hidePurCtxMenu(); });
+    return purCtxMenu;
+  }
+
+  if (els.purPickerTbody) {
+    els.purPickerTbody.addEventListener("contextmenu", (e) => {
+      const tr = e.target.closest("tr[data-pid]");
+      if (!tr) return;
+      e.preventDefault();
+      const pid = Number(tr.dataset.pid);
+      const src = (state.allProducts || []).find((p) => p.id === pid);
+      if (!src) return;
+      const menu = ensurePurCtxMenu();
+      menu.innerHTML = "";
+      const head = document.createElement("div");
+      head.style.cssText = "padding:6px 10px;color:#6b7280;border-bottom:1px solid #eee;" +
+        "margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;font-size:12px";
+      head.textContent = (src.name || "") + " · " + (src.code || "");
+      menu.appendChild(head);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.style.cssText = "display:block;width:100%;text-align:left;background:none;border:none;" +
+        "padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#111827";
+      btn.textContent = "📋 Crear producto basado en este";
+      btn.addEventListener("mouseenter", () => { btn.style.background = "#f3f4f6"; });
+      btn.addEventListener("mouseleave", () => { btn.style.background = "none"; });
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        hidePurCtxMenu();
+        purDuplicateProduct(src);
+      });
+      menu.appendChild(btn);
+      menu.style.display = "block";
+      const mw = menu.offsetWidth, mh = menu.offsetHeight;
+      let x = e.clientX, y = e.clientY;
+      if (x + mw > window.innerWidth)  x = Math.max(8, window.innerWidth  - mw - 8);
+      if (y + mh > window.innerHeight) y = Math.max(8, window.innerHeight - mh - 8);
+      menu.style.left = x + "px";
+      menu.style.top  = y + "px";
+    });
+  }
+
+  async function purDuplicateProduct(src) {
+    try {
+      const res = await api("/api/admin/products/" + src.id + "/duplicate", { method: "POST" });
+      const np = res && res.product;
+      if (!np) throw new Error("No se pudo crear el gemelo");
+      // Sumar a los caches (selector de Compras + tabla de Productos)
+      state.allProducts = state.allProducts || [];
+      state.allProducts.push(np);
+      if (Array.isArray(state.products)) state.products.unshift(np);
+      // Dejarlo seleccionado y visible en el selector para cargarlo a la compra
+      if (state.purPickerSelected) state.purPickerSelected.set(np.id, 1);
+      if (els.purPickerSearch) els.purPickerSearch.value = String(np.code || "");
+      renderPurPicker(els.purPickerSearch ? els.purPickerSearch.value : "");
+      updatePurPickerCount();
+      showToast("Gemelo creado (código " + np.code + "). Editá lo que necesites.");
+      // Abrir edición por encima del selector (z-index 1300)
+      openEditProdModal(np);
+      if (editProdModal) editProdModal.style.zIndex = "1400";
+    } catch (err) {
+      showToast(err.message || "Error al crear el gemelo", "error");
+    }
   }
 
   if (els.purCreateBtn) {
@@ -5732,6 +5825,9 @@
 
   function openEditProdModal(p) {
     editProdId = p.id;
+    // z-index normal; el flujo "crear gemelo" lo sube luego para apilarse
+    // por encima del selector de Compras (z-index 1300).
+    if (editProdModal) editProdModal.style.zIndex = "";
     epFillCategories();
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
     set("ep-code",      p.code      || "");
@@ -5818,19 +5914,26 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        // Actualizar state local
+        // category_name según la categoría elegida
+        let catName = "";
+        if (epCatSelect && epCatSelect.value) {
+          const opt = epCatSelect.options[epCatSelect.selectedIndex];
+          if (opt) catName = opt.text;
+        }
+        // Actualizar state local (tabla de Productos)
         const p = state.products.find((x) => x.id === editProdId);
-        if (p) {
-          Object.assign(p, body);
-          // category_name necesita buscarse
-          if (epCatSelect && epCatSelect.value) {
-            const opt = epCatSelect.options[epCatSelect.selectedIndex];
-            if (opt) p.category_name = opt.text;
-          } else { p.category_name = ""; }
+        if (p) { Object.assign(p, body); p.category_name = catName; }
+        // Mantener sincronizado el cache del selector de Compras y, si está
+        // abierto, re-renderizarlo para reflejar los cambios del gemelo.
+        const ap = (state.allProducts || []).find((x) => x.id === editProdId);
+        if (ap) { Object.assign(ap, body); ap.category_name = catName; }
+        if (els.purPickerModal && !els.purPickerModal.hidden) {
+          renderPurPicker(els.purPickerSearch ? els.purPickerSearch.value : "");
+          updatePurPickerCount();
         }
         applyFilters();
         showToast("Producto guardado");
-        if (editProdModal) editProdModal.hidden = true;
+        if (editProdModal) { editProdModal.hidden = true; editProdModal.style.zIndex = ""; }
       } catch (e) {
         alert(e.message || "Error al guardar");
       } finally {
