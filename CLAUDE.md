@@ -851,11 +851,54 @@ Síntoma (Sergio, con captura): en el picker de Compras solo se veía checkbox +
 
 **Pendiente de versionado**: al cierre de esta sesión las tres features están en disco local, sin `git add/commit/push` ni deploy en Railway.
 
+### Compras (crear producto en el picker) + Edición de pedidos estilo presupuesto + Remito + Badges (3 junio 2026, sesión tarde)
+
+Sesión de cuatro features encadenadas, todas verificadas en preview con `testadmin` (clave `Claude123!`, conviene blanquearla). Cache busting final: `admin.js?v=20260603j`, `styles.css?v=20260603j` (también bumpeado en `index.html` y `ventas.html`). Todo en disco local, sin `git commit/push` ni deploy.
+
+**1. Crear producto nuevo desde el selector de Compras**
+- El picker de Compras (`pur-picker-modal`) ya tenía menú contextual (clic derecho) con "Clonar" y "Editar" sobre un producto existente. Faltaba crear uno **desde cero**.
+- `public/admin.html`: botón **"➕ Crear producto nuevo"** en el pie del `pur-picker-modal`.
+- `public/js/admin.js`: bandera `npForPurchase`. `purNewProduct()` abre el modal "Nuevo producto" por encima del picker (z-index 1400). En el handler de `npSaveBtn`, si `npForPurchase`, el producto creado se agrega a `state.allProducts`, queda **preseleccionado con cantidad 1** y filtrado por su código en el picker, listo para cargar a la compra (stock arranca en 0; la compra le suma). Reset de bandera/z-index en `npOpenModal` (apertura normal) y en los cierres genéricos (data-close + Escape).
+- **Nota**: la edición de compras YA cargadas ya funcionaba de antes (botón "Editar compra" → modal con items → `PUT /api/admin/purchases/:id` que revierte stock viejo y suma el nuevo). Esta sesión solo agregó el "crear producto nuevo".
+
+**2. Edición de items de un PEDIDO en estados pre-entrega (Pedidos / Armado / Listo)**
+Pedido: Sergio quería poder editar el pedido mientras está en Pedidos o Armado, porque en el proceso cambia.
+- **Server** `PUT /api/admin/orders/:id/items` (ya existía, reemplaza items + recalcula total) se hizo **stock-aware**: bloquea editar pedidos `entregado`/`cancelado` (409); si el stock del pedido **ya estaba descontado** (`stockCurrentlyOut` = vía budget vinculado con `stock_discounted=1` o `orders.stock_discounted`), **revierte el stock de los items viejos y descuenta el de los nuevos** dentro de la transacción (respeta `skipStock` para unificados/hijos). Si todavía no estaba descontado (pedido del catálogo pre-entrega), no toca stock. Mantiene en sync el **débito de cuenta corriente** si existe (actualiza `amount` al nuevo total). Se agregó `u.level AS client_level` al `GET /api/orders/:id` (admin) para sugerir precio al agregar productos.
+- **Frontend** (`admin.js`): en el detalle del pedido (al desplegar la tarjeta) aparece **"✏️ Editar items"** solo para admin y en estados `pendiente/enviado/preparando/listo` (`ORDER_EDITABLE_STATUSES`). Modo edición inline: cambiar cantidades y precios (recalcula en vivo), quitar líneas, total, **Guardar cambios / Cancelar**. Al guardar hace el PUT, refresca el objeto del pedido, el total de la tarjeta, invalida `allProductsLoaded` (stock pudo cambiar) y vuelve a vista solo-lectura.
+
+**3. El "Agregar productos" del editor de pedidos = mismo sistema que el armador de presupuestos**
+Sergio: "la edición del pedido debe ser igual al sistema de armar un presupuesto, el [de presupuesto] es más [completo]".
+- En vez del buscador inline, ahora hay un botón **"+ Agregar productos"** que abre un **modal de selección múltiple** `oie-picker-modal` (`public/admin.html`), con buscador, check por fila, cantidad por producto, precio (según nivel del cliente) y stock, contador y "Agregar seleccionados". Misma mecánica que el picker de Compras y el del armador de presupuestos.
+- `admin.js`: controlador `openOrderItemPicker(editItems, priceCol, rerender)` con estado propio (`oieAddCtx`, `oiePickerSelected`) — no interfiere con el picker de Compras. Al confirmar agrega los elegidos a los items del pedido (suma cantidad si ya estaba). Precio sugerido por `ORDER_LEVEL_PRICE_COL[client_level]` (fallback minorista; el admin lo ajusta). CSS override `#oie-picker-table { min-width:0 }` (como el de Compras). Se eliminó el buscador inline viejo (`.oie-add`/`.oie-results`).
+
+**4. Badges/remarcos más notorios y distinguibles (Pedidos, Armado, Entregas, dashboard y todos los modales)**
+Sergio: que los badges de estado (PENDIENTE/ENVIADO/etc.) y el de vendedor sean más notorios, como el highlight de presupuestos aceptados.
+- `styles.css`: **`.order-status`** ahora 12px / peso 800 / borde de color 1.5px / fondos más saturados / sombrita. Paleta por estado: pendiente ámbar, enviado azul, preparando índigo, listo fucsia, entregado verde, cancelado rojo (bg + border + color coherentes).
+- **`.order-tag`** (dashboard "últimos pedidos", notificaciones del catálogo y tags unified/grouped): 11px / 800 / borde, misma paleta.
+- **`.vend-badge`**: pill violeta con borde + ícono **"👤 "** vía `::before`. **`.delivery-badge`**: pill verde con borde + ícono **"💵 "**.
+- **`.budget-badge`** (lista /ventas + armador): 12px / 800 / MAYÚSCULAS / borde, para igualar la prominencia.
+- Verificado por estilos computados (el screenshot del preview se cuelga, pero el eval responde). La DB local no tenía pedidos con vendedor, el `.vend-badge` se verificó inyectando el elemento.
+
+**5. Imprimir remito del pedido (responde a "¿cuándo/dónde imprimo lo preparado para entregar?")**
+Antes NO había print de pedidos (solo de presupuestos en `/ventas` y en el detalle de presupuesto del admin). Ahora:
+- `admin.js`: botón **"🖨 Imprimir remito"** en el detalle del pedido (todos los estados; útil en Armado/Listo). Función `printOrderRemito(order)` abre ventana e imprime un remito con: nombre app + N° pedido + estado, fecha/cliente/vendedor, tabla (código, producto, cantidad, P. unit., subtotal), resumen "N ítems · N unidades", TOTAL, observaciones y líneas de firma **Preparó / Entregó / Recibí conforme**. Usa `state.me.app_name`. Mismo mecanismo `window.open` + `print()` que el print de presupuestos.
+- CSS: `.order-items-actions` pasó a flex-row con gap (conviven "Editar items" y "Imprimir remito").
+- **Pendiente opcional ofrecido a Sergio**: una variante del remito **sin precios** (solo productos y cantidades) para el depósito, dejando la de precios para el cliente. Quedó sin confirmar.
+
+**6. Pestaña "Ventas" del admin repropósito: ahora son los pedidos ENTREGADOS**
+Sergio: "¿la sección Ventas para qué sería hoy?" → decidió que **Ventas = los pedidos que pasaron por Armado y Entregas y se entregaron** (las ventas concretadas). Antes el tab `tab-ventas` mostraba presupuestos `facturado` (de `bState`, con "Ver" que abría el budget-overlay).
+- `admin.html`: el tab pasó de tabla (`ventas-table`/`ventas-tbody`) a **lista de tarjetas** `<div id="ventas-list" class="admin-orders-list">` + buscador + `#ventas-summary` (cuenta + total vendido) + nota explicativa.
+- `admin.js`: `renderVentasOrders()` filtra `state.orders` a `status === "entregado"`, busca por #/cliente/vendedor, muestra "N ventas · $total" y renderiza con el mismo `orderCardHtml` + `wireOrderCards` del circuito (detalle expandible con items, badge de cobro, botón "🖨 Imprimir remito"; "Editar items" no aparece porque entregado no es editable). `loadVentasOrders()` asegura `state.orders`. Enganchado a `refreshOrderViews()` (al marcar un pedido entregado aparece acá solo). El dispatcher del tab y el handler dedicado llaman `loadVentasOrders`; el buscador llama `renderVentasOrders`.
+- Se eliminó la `renderVentas()` vieja (facturados) y su wiring huérfano. El módulo de presupuestos del admin (`bEls`/`bState`/`openBudgetForm`/`budget-overlay`) quedó **inerte/dead code** (ya no se invoca); no se tocó. Los presupuestos se crean/gestionan en la página `/ventas`. Cache busting `admin.js?v=20260603k`.
+
+**Indicador de presupuestos aceptados sin facturar (también esta tanda, sesión previa del mismo día)**
+- En `/ventas`: banner-resumen "Tenés N presupuestos aceptados sin facturar…" + botón "Ver pendientes" (filtra a `aceptado`); filas `aceptado` resaltadas (fondo ámbar + acento naranja + nota "⚠ falta facturar") y botón "Abrir" → "Facturar →". Recordatorio del flujo: un presupuesto **Aceptado NO es un pedido**; recién al **Facturar** (`POST /api/budgets/:id/invoice`, requiere estado `aceptado`) se crea la fila en `orders` (status `pendiente`) y entra al circuito. Esto respondió la duda de Sergio de "dónde fue el pedido aceptado de Discandi" (estaba como presupuesto aceptado sin facturar).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.
 2. **Cuenta corriente con proveedores**: simétrico a lo que ya existe para clientes — registrar deuda que genera cada orden de compra y los pagos a proveedores.
-3. **Remito PDF por entrega**: documento de entrega descargable/enviable por WA (reutiliza la infra del catálogo PDF).
+3. **Remito PDF por entrega**: ya existe el **remito por impresión HTML** (botón "🖨 Imprimir remito" en el detalle del pedido, 3 jun). Falta la versión **PDF descargable/enviable por WA** (reutiliza la infra del catálogo PDF) y, si Sergio confirma, la variante **sin precios** para el depósito.
 4. **Alerta de stock mínimo en dashboard**: el campo `stock_min` ya existe en productos (implementado 1 jun). Falta: indicador en dashboard + lista de "reponer".
 5. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias.
 6. **Backups externos automáticos**: rclone a B2/S3/Drive.

@@ -57,6 +57,9 @@
     ordersStatusFilter: document.getElementById("orders-status-filter"),
     ordersCount: document.getElementById("orders-count"),
     ordersList: document.getElementById("orders-list"),
+    ventasList: document.getElementById("ventas-list"),
+    ventasSummary: document.getElementById("ventas-summary"),
+    ventasSearch: document.getElementById("ventas-search"),
     armadoList: document.getElementById("armado-list"),
     armadoCount: document.getElementById("armado-count"),
     armadoReload: document.getElementById("armado-reload"),
@@ -840,10 +843,7 @@
       if (tab === "cuentas" && !state.accountsLoaded) loadAccounts();
       if (tab === "caja") loadCaja();
       if (tab === "administradores") loadAdmins();
-      if (tab === "ventas") {
-        if (!bState.loaded) loadBudgets();
-        // renderVentas se llama desde el handler de tab específico (async)
-      }
+      if (tab === "ventas") loadVentasOrders(); // siempre recargar (refleja entregas nuevas)
     });
   });
 
@@ -3756,6 +3756,40 @@
     if (state.ordersLoaded) renderOrders();
     renderArmado();
     renderEntregasQueue();
+    renderVentasOrders();
+  }
+
+  // Pestaña Ventas: registro de ventas concretadas = pedidos ENTREGADOS.
+  // Un pedido que recorrió Pedidos → Armado → Entregas y se marcó entregado
+  // "pasa a Ventas". Reusa la tarjeta del circuito (detalle, cobro, remito).
+  function renderVentasOrders() {
+    if (!els.ventasList) return;
+    const q = (els.ventasSearch ? els.ventasSearch.value.trim().toLowerCase() : "");
+    let list = (state.orders || []).filter((o) => o.status === "entregado");
+    if (q) {
+      list = list.filter((o) =>
+        String(o.id).includes(q) ||
+        (o.username || "").toLowerCase().includes(q) ||
+        (o.full_name || "").toLowerCase().includes(q) ||
+        (o.vendedor_full_name || o.vendedor_username || "").toLowerCase().includes(q)
+      );
+    }
+    if (els.ventasSummary) {
+      const totalVendido = list.reduce((s, o) => s + (Number(o.total) || 0), 0);
+      els.ventasSummary.textContent = list.length + (list.length === 1 ? " venta · " : " ventas · ") + fmtPrice(totalVendido);
+    }
+    if (!list.length) {
+      els.ventasList.innerHTML = '<p class="muted">Todavía no hay ventas (pedidos entregados).</p>';
+      return;
+    }
+    els.ventasList.innerHTML = list.map(orderCardHtml).join("");
+    wireOrderCards(els.ventasList, list, renderVentasOrders);
+  }
+
+  // Asegura state.orders cargado y renderiza la pestaña Ventas.
+  async function loadVentasOrders() {
+    if (!state.ordersLoaded) await loadOrders();
+    renderVentasOrders();
   }
 
   function renderArmado() {
@@ -5658,34 +5692,8 @@
     }).join("");
   }
 
-  // Tab Ventas: muestra solo presupuestos facturados (= vendidos)
-  function renderVentas() {
-    const ventasEl = document.getElementById("ventas-tbody");
-    if (!ventasEl) return;
-    const q = (document.getElementById("ventas-search") || {}).value
-      ? document.getElementById("ventas-search").value.trim().toLowerCase() : "";
-    let list = bState.list.filter((b) => b.status === "facturado");
-    if (q) list = list.filter((b) =>
-      (b.number || "").toLowerCase().includes(q) ||
-      (b.client_name || "").toLowerCase().includes(q) ||
-      (b.vendedor_name || "").toLowerCase().includes(q));
-    if (!list.length) {
-      ventasEl.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Sin ventas registradas.</td></tr>';
-      return;
-    }
-    ventasEl.innerHTML = list.map((b) =>
-      '<tr style="cursor:pointer" data-budget-id="' + b.id + '">' +
-      '<td style="padding:7px 10px;font-weight:600">' + escapeHtml(b.number) + '</td>' +
-      '<td style="padding:7px 10px">' + formatDate(b.created_at) + '</td>' +
-      '<td style="padding:7px 10px">' + escapeHtml(b.client_name) + '</td>' +
-      '<td style="padding:7px 10px">' + escapeHtml(b.vendedor_name || "—") + '</td>' +
-      '<td style="padding:7px 10px">' + escapeHtml(b.payment_method) + '</td>' +
-      '<td style="padding:7px 10px;text-align:right;font-weight:600">' + fmtPrice(b.total) + '</td>' +
-      '<td style="padding:7px 10px;text-align:right">' +
-        '<button type="button" class="btn" style="font-size:12px;padding:3px 10px" data-open-budget="' + b.id + '">Ver</button>' +
-      '</td>' +
-    '</tr>').join("");
-  }
+  // (La pestaña Ventas ya no lista presupuestos facturados; ahora lista pedidos
+  //  ENTREGADOS vía renderVentasOrders, junto al resto del circuito de pedidos.)
 
   // Click en una fila o en el botón "Abrir"
   if (bEls.tbody) {
@@ -5917,20 +5925,8 @@
     });
   }
 
-  // Buscador de Ventas
-  const ventasSearchEl = document.getElementById("ventas-search");
-  if (ventasSearchEl) ventasSearchEl.addEventListener("input", debounce(renderVentas, 200));
-
-  // Click en fila de Ventas (abre el presupuesto facturado para consultarlo)
-  const ventasTbodyEl = document.getElementById("ventas-tbody");
-  if (ventasTbodyEl) {
-    ventasTbodyEl.addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-open-budget]");
-      if (btn) { openBudgetForm(Number(btn.dataset.openBudget)); return; }
-      const tr = e.target.closest("tr[data-budget-id]");
-      if (tr) openBudgetForm(Number(tr.dataset.budgetId));
-    });
-  }
+  // (El buscador de la pestaña Ventas se cablea junto a renderVentasOrders;
+  //  la pestaña ahora lista pedidos ENTREGADOS, no presupuestos facturados.)
 
   // Nuevo presupuesto
   if (bEls.newBtn) {
@@ -7096,15 +7092,8 @@
     });
   }
 
-  // ─────── Handler de tab Ventas (facturados) ───────
-  els.tabBtns.forEach((btn) => {
-    if (btn.dataset.tab === "ventas") {
-      btn.addEventListener("click", async () => {
-        if (!bState.loaded) { await loadBudgets(); }
-        renderVentas();
-      });
-    }
-  });
+  // ─────── Buscador de la pestaña Ventas (pedidos entregados) ───────
+  if (els.ventasSearch) els.ventasSearch.addEventListener("input", debounce(renderVentasOrders, 150));
 
   // ─────── Fin PRESUPUESTOS / VENTAS ───────
 

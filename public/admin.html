@@ -2138,27 +2138,12 @@
   <!-- Solo muestra presupuestos en estado 'facturado' (= vendidos). -->
   <section class="tab-panel" id="tab-ventas" hidden>
     <div class="admin-toolbar">
-      <input type="search" id="ventas-search" class="admin-search" placeholder="Buscar venta…" autocomplete="off" />
+      <input type="search" id="ventas-search" class="admin-search" placeholder="Buscar venta (# o cliente)…" autocomplete="off" />
       <span class="admin-spacer"></span>
+      <span id="ventas-summary" class="muted small"></span>
     </div>
-    <div class="admin-table-wrap">
-      <table class="admin-table" id="ventas-table">
-        <thead>
-          <tr>
-            <th>N°</th>
-            <th>Fecha</th>
-            <th>Cliente</th>
-            <th>Vendedor</th>
-            <th>Forma de pago</th>
-            <th style="text-align:right">Total</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="ventas-tbody">
-          <tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <p class="muted small" style="margin:0 0 10px">Ventas concretadas: pedidos ya <strong>entregados</strong> (completaron el circuito Armado → Entregas). Tocá una para ver el detalle, el cobro o imprimir el remito.</p>
+    <div id="ventas-list" class="admin-orders-list"></div>
   </section>
 
   <!-- Modal editar producto -->
@@ -2398,6 +2383,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260603j"></script>
+  <script src="/js/admin.js?v=20260603k"></script>
 </body>
 </html>
