@@ -820,7 +820,7 @@ button { font: inherit; cursor: pointer; }
 }
 
 /* Edición de items de un pedido (modo inline en el detalle) */
-.order-items-actions { margin-top: 6px; }
+.order-items-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
 .order-items-edit { margin-top: 6px; }
 .order-items-edit .cell-input {
   border: 1px solid #d1d5db; border-radius: 6px; padding: 3px 6px; font-size: 13px;

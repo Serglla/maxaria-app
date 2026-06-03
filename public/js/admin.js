@@ -3218,11 +3218,12 @@
         }).join("") +
         "</tbody></table>"
       : '<p class="muted">Sin items.</p>';
-    // Botón para entrar al modo edición de items (solo estados pre-entrega).
-    var editBtn = orderItemsEditable(order)
-      ? '<div class="order-items-actions"><button type="button" class="btn btn-small order-edit-items">✏️ Editar items</button></div>'
-      : "";
-    var itemsHtml = '<div class="order-items-box">' + itemsTable + editBtn + "</div>";
+    // Acciones: editar items (solo estados pre-entrega) e imprimir remito (siempre).
+    var actionsRow = '<div class="order-items-actions">' +
+      (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar items</button>' : "") +
+      '<button type="button" class="btn btn-small order-print">🖨 Imprimir remito</button>' +
+      "</div>";
+    var itemsHtml = '<div class="order-items-box">' + itemsTable + actionsRow + "</div>";
 
     var statuses = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
     var statusNames = { pendiente: "Pendiente", enviado: "Enviado", preparando: "Preparando", listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado" };
@@ -3324,6 +3325,67 @@
         enterOrderItemsEdit(detailEl, order);
       });
     }
+
+    var printBtn = detailEl.querySelector(".order-print");
+    if (printBtn) {
+      printBtn.addEventListener("click", function() { printOrderRemito(order); });
+    }
+  }
+
+  // Imprime un remito del pedido (lo que se preparó para entregar): productos,
+  // cantidades, precios y total + espacio para firma. Abre ventana e imprime.
+  function printOrderRemito(order) {
+    var statusNames = { pendiente: "Pendiente", enviado: "Enviado", preparando: "En armado",
+      listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado" };
+    var appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
+    var clientText = order.full_name || order.username || "—";
+    var vendText = order.vendedor_full_name || order.vendedor_username || "";
+    var date = new Date().toLocaleDateString("es-AR");
+    var items = order.items || [];
+    var total = 0;
+    var rows = items.map(function(it) {
+      var sub = Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)) || 0;
+      total += sub;
+      return "<tr>" +
+        "<td>" + escapeHtml(it.product_code || "") + "</td>" +
+        "<td>" + escapeHtml(it.product_name || "") + "</td>" +
+        "<td style='text-align:center;font-weight:600'>" + escapeHtml(String(it.quantity)) + "</td>" +
+        "<td style='text-align:right'>$" + Number(it.unit_price || 0).toLocaleString("es-AR") + "</td>" +
+        "<td style='text-align:right;font-weight:600'>$" + sub.toLocaleString("es-AR") + "</td>" +
+        "</tr>";
+    }).join("");
+    var totalUnidades = items.reduce(function(s, it) { return s + (Number(it.quantity) || 0); }, 0);
+    var html = "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
+      "<title>Remito pedido #" + order.id + "</title>" +
+      "<style>body{font-family:sans-serif;font-size:13px;margin:24px;color:#111}" +
+      "h1{font-size:18px;margin:0 0 4px}.sub{color:#6b7280;font-size:12px;margin:0 0 12px}" +
+      "table{width:100%;border-collapse:collapse;margin-top:10px}" +
+      "th,td{padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:left}" +
+      "th{background:#f1f5f9;font-size:12px;color:#6b7280}" +
+      ".meta{margin:8px 0}.meta strong{color:#374151}" +
+      ".total-box{margin-top:12px;text-align:right;font-size:14px}" +
+      ".grand-total{font-size:18px;font-weight:700;color:#1e3a5f}" +
+      ".sign{margin-top:42px;display:flex;justify-content:space-between;gap:40px}" +
+      ".sign div{flex:1;border-top:1px solid #9ca3af;padding-top:4px;text-align:center;color:#6b7280;font-size:12px}" +
+      ".notes{margin-top:16px;color:#6b7280}@media print{body{margin:12px}}</style>" +
+      "</head><body>" +
+      "<h1>" + escapeHtml(appName) + " — Remito de pedido N° " + order.id + "</h1>" +
+      "<p class='sub'>Estado: " + escapeHtml(statusNames[order.status] || order.status || "") + "</p>" +
+      "<p class='meta'><strong>Fecha:</strong> " + date +
+        " &nbsp;·&nbsp; <strong>Cliente:</strong> " + escapeHtml(clientText) +
+        (vendText ? " &nbsp;·&nbsp; <strong>Vendedor:</strong> " + escapeHtml(vendText) : "") + "</p>" +
+      "<table><thead><tr><th>Cód.</th><th>Producto</th><th style='text-align:center'>Cant.</th>" +
+      "<th style='text-align:right'>P. Unit.</th><th style='text-align:right'>Subtotal</th></tr></thead>" +
+      "<tbody>" + (rows || "<tr><td colspan='5'>Sin items</td></tr>") + "</tbody></table>" +
+      "<div class='total-box'>" +
+      "<div style='color:#6b7280'>" + items.length + " ítems · " + totalUnidades + " unidades</div>" +
+      "<div class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</div></div>" +
+      (order.notes ? "<p class='notes'><em>" + escapeHtml(order.notes) + "</em></p>" : "") +
+      "<div class='sign'><div>Preparó</div><div>Entregó</div><div>Recibí conforme</div></div>" +
+      "</body></html>";
+    var w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); w.focus(); w.print(); }
+    else { showToast("Permití las ventanas emergentes para imprimir", "error"); }
   }
 
   // ---- Edición inline de los items de un pedido (estados pre-entrega) ----
