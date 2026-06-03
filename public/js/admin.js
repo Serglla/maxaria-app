@@ -4109,11 +4109,13 @@
     });
   }
 
-  // ---- Menú contextual: "Crear producto basado en este" (clic derecho) ----
-  // En el selector de productos de Compras, el clic derecho sobre una fila
-  // permite crear un gemelo del producto (copia con código nuevo correlativo) y
-  // abre su edición. Al guardar, el gemelo queda seleccionado y listo para
-  // cargarlo a la compra.
+  // ---- Menú contextual del selector de Compras (clic derecho) ----
+  // Sobre una fila ofrece dos acciones:
+  //  • "Clonar este producto": crea un gemelo (copia con código nuevo
+  //    correlativo) y abre su edición; al guardar queda seleccionado y listo
+  //    para cargarlo a la compra.
+  //  • "Editar este producto": abre la edición del producto seleccionado.
+  // Ambas abren el modal de edición por encima del selector (z-index 1400).
   let purCtxMenu = null;
   function hidePurCtxMenu() { if (purCtxMenu) purCtxMenu.style.display = "none"; }
   function ensurePurCtxMenu() {
@@ -4145,19 +4147,19 @@
         "margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;font-size:12px";
       head.textContent = (src.name || "") + " · " + (src.code || "");
       menu.appendChild(head);
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.style.cssText = "display:block;width:100%;text-align:left;background:none;border:none;" +
-        "padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#111827";
-      btn.textContent = "📋 Crear producto basado en este";
-      btn.addEventListener("mouseenter", () => { btn.style.background = "#f3f4f6"; });
-      btn.addEventListener("mouseleave", () => { btn.style.background = "none"; });
-      btn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        hidePurCtxMenu();
-        purDuplicateProduct(src);
-      });
-      menu.appendChild(btn);
+      const mkItem = (label, onClick) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.style.cssText = "display:block;width:100%;text-align:left;background:none;border:none;" +
+          "padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#111827";
+        b.textContent = label;
+        b.addEventListener("mouseenter", () => { b.style.background = "#f3f4f6"; });
+        b.addEventListener("mouseleave", () => { b.style.background = "none"; });
+        b.addEventListener("click", (ev) => { ev.stopPropagation(); hidePurCtxMenu(); onClick(); });
+        menu.appendChild(b);
+      };
+      mkItem("📋 Clonar este producto", () => purDuplicateProduct(src));
+      mkItem("✏️ Editar este producto", () => purEditProduct(src));
       menu.style.display = "block";
       const mw = menu.offsetWidth, mh = menu.offsetHeight;
       let x = e.clientX, y = e.clientY;
@@ -4189,6 +4191,14 @@
     } catch (err) {
       showToast(err.message || "Error al crear el gemelo", "error");
     }
+  }
+
+  // Editar el producto seleccionado, con el modal por encima del selector. El
+  // handler de guardado del modal ya sincroniza el cache del picker y lo
+  // re-renderiza si está abierto.
+  function purEditProduct(src) {
+    openEditProdModal(src);
+    if (editProdModal) editProdModal.style.zIndex = "1400";
   }
 
   if (els.purCreateBtn) {
