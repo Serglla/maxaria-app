@@ -842,6 +842,11 @@ Síntoma (Sergio, con captura): en el picker de Compras solo se veía checkbox +
 - **`styles.css`**: override por id `#pur-picker-table { min-width: 0 }` (+ `white-space: normal` en th, `word-break` en td) — el id pisa el `.admin-table` por especificidad. Ahora la columna **Cant.** queda visible sin scroll horizontal, igual que en el presupuesto.
 - **`admin.js`**: al clickear/enfocar el buscador del picker (`focus` + `click`), se limpia y muestra la lista completa, para arrancar una búsqueda nueva (flujo de depósito: buscar → cargar cantidad → repetir). La selección hecha hasta ahí **se conserva** (sigue tildada al re-renderizar). Nota: se usó `focus` **y** `click` porque el `focus` programático no dispara en el entorno de preview (`document.hasFocus()` false); `click` es lo que el usuario pidió literalmente y dispara siempre.
 
+**4. Código de producto editable en el modal de edición (Productos)**
+- El campo "Código" del modal "Editar producto" (`#ep-code`) era `disabled`; ahora es editable.
+- `PATCH /api/admin/products/:id` acepta `code`: valida que no esté vacío y que **no lo tenga otro producto** (`SELECT id WHERE code=? AND id!=?` → 409 "Ya existe un producto con el código X"); además try/catch sobre el UPDATE por el índice UNIQUE como red de seguridad.
+- El handler de guardado (`admin.js` `epSaveBtn`) manda `code` en el body y exige no vacío; ante el 409 el `api()` tira el error, el `catch` hace `alert(msg)` y **no cierra el modal** (no permite ingresar el duplicado). Al guardar OK, `Object.assign(p, body)` actualiza `p.code` en `state.products` y `state.allProducts`.
+
 **Nota operativa**: para verificar en preview se usó la cuenta preexistente `testadmin` (level 99) con la clave reseteada a `Claude123!` vía `npm run create-admin`. Conviene blanquearla. Los datos de prueba (pedido #7, producto gemelo code 4085) se restauraron/borraron al cerrar.
 
 **Pendiente de versionado**: al cierre de esta sesión las tres features están en disco local, sin `git add/commit/push` ni deploy en Railway.

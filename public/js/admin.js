@@ -5903,8 +5903,11 @@
       const get = (id) => { const el = document.getElementById(id); return el ? el.value : ""; };
       const name = get("ep-name").trim();
       if (!name) { alert("El nombre es obligatorio."); return; }
+      const code = get("ep-code").trim();
+      if (!code) { alert("El código es obligatorio."); return; }
       const activeChk = document.getElementById("ep-active");
       const body = {
+        code,
         name,
         category_id:      epCatSelect && epCatSelect.value ? Number(epCatSelect.value) : null,
         stock:            Number(get("ep-stock"))        || 0,

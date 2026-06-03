@@ -2240,18 +2240,30 @@ app.post("/api/admin/products/:id/duplicate", requireAdmin, (req, res) => {
 app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
+  const body = req.body || {};
+
+  // El código es editable pero debe ser único: si se manda y ya lo tiene OTRO
+  // producto, se rechaza con 409 (el frontend muestra el aviso y no cierra).
+  if ("code" in body) {
+    const code = String(body.code || "").trim();
+    if (!code) return res.status(400).json({ error: "El código no puede estar vacío" });
+    const dup = db.prepare("SELECT id FROM products WHERE code = ? AND id != ?").get(code, id);
+    if (dup) return res.status(409).json({ error: "Ya existe un producto con el código " + code });
+  }
+
   const allowed = [
-    "name", "cost", "price_minorista", "price_revendedor",
+    "code", "name", "cost", "price_minorista", "price_revendedor",
     "price_mayorista", "price_vip", "price_publico", "stock", "stock_min", "active", "image_url",
   ];
   const sets = [];
   const vals = [];
   for (const k of allowed) {
-    if (k in (req.body || {})) {
+    if (k in body) {
       sets.push(k + " = ?");
       // Numericos: parsear; texto: trim. active: 0/1.
-      let v = req.body[k];
+      let v = body[k];
       if (k === "name") v = String(v || "").trim().slice(0, 200);
+      else if (k === "code") v = String(v || "").trim().slice(0, 50);
       else if (k === "image_url") v = String(v || "").trim().slice(0, 500) || null;
       else if (k === "active") v = v ? 1 : 0;
       else { v = Number(v); if (!isFinite(v)) v = 0; v = Math.round(v); }
@@ -2261,8 +2273,13 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
   sets.push("updated_at = datetime('now')");
   vals.push(id);
-  const r = db.prepare("UPDATE products SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
-  if (!r.changes) return res.status(404).json({ error: "Producto no encontrado" });
+  try {
+    const r = db.prepare("UPDATE products SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+    if (!r.changes) return res.status(404).json({ error: "Producto no encontrado" });
+  } catch (e) {
+    if (e.message && e.message.includes("UNIQUE")) return res.status(409).json({ error: "Código duplicado" });
+    throw e;
+  }
   res.json({ ok: true, id: id });
 });
 
