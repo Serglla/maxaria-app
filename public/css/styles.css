@@ -3873,3 +3873,43 @@ html.in-modal .ventas-wrap {
    ═══════════════════════════════════════════ */
 .stock-adj-plus  { color: #15803d; font-weight: 700; }
 .stock-adj-minus { color: #dc2626; font-weight: 700; }
+
+/* ─────────────────────────────────────────────────────────────────────
+   PWA Window Controls Overlay — funde el área del título con el topbar
+   ───────────────────────────────────────────────────────────────────── */
+@media (display-mode: window-controls-overlay) {
+  :root {
+    --wco-x:      env(titlebar-area-x, 0px);
+    --wco-y:      env(titlebar-area-y, 0px);
+    --wco-w:      env(titlebar-area-width, 100%);
+    --wco-h:      env(titlebar-area-height, 0px);
+  }
+
+  /* Capa fija que cubre exactamente la zona de la barra de título,
+     con el mismo color que el topbar, ocultando la URL/ícono de Chrome */
+  body::before {
+    content: '';
+    position: fixed;
+    top: var(--wco-y);
+    left: var(--wco-x);
+    width: var(--wco-w);
+    height: var(--wco-h);
+    background: #1e3a8a;   /* color del topbar del catálogo */
+    z-index: 99999;
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  /* Admin usa un azul ligeramente distinto */
+  body.admin-page::before {
+    background: #1e3a5f;
+  }
+
+  /* El topbar baja el contenido para no quedar tapado por ::before */
+  .topbar {
+    padding-top: var(--wco-h);
+  }
+  .topbar-inner {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}

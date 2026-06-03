@@ -10,7 +10,7 @@
   "display_override": ["window-controls-overlay", "standalone"],
   "orientation": "any",
   "background_color": "#ffffff",
-  "theme_color": "#0f172a",
+  "theme_color": "#1e3a5f",
   "categories": ["business", "shopping", "productivity"],
   "icons": [
     {
