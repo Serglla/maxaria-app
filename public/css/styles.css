@@ -694,6 +694,7 @@ button { font: inherit; cursor: pointer; }
 .order-status.pendiente   { background: #fef3c7; color: #92400e; }
 .order-status.enviado     { background: #dbeafe; color: #1e40af; }
 .order-status.preparando  { background: #e0e7ff; color: #3730a3; }
+.order-status.listo       { background: #fae8ff; color: #86198f; }
 .order-status.entregado   { background: #d1fae5; color: #065f46; }
 .order-status.cancelado   { background: #fee2e2; color: #991b1b; }
 .order-tag {
@@ -708,6 +709,32 @@ button { font: inherit; cursor: pointer; }
 }
 .order-tag.tag-unified { background: #ede9fe; color: #5b21b6; }
 .order-tag.tag-grouped { background: #fef9c3; color: #854d0e; }
+.order-tag.tag-pendiente  { background: #fef3c7; color: #92400e; }
+.order-tag.tag-enviado    { background: #dbeafe; color: #1e40af; }
+.order-tag.tag-preparando { background: #e0e7ff; color: #3730a3; }
+.order-tag.tag-listo      { background: #fae8ff; color: #86198f; }
+.order-tag.tag-entregado  { background: #d1fae5; color: #065f46; }
+.order-tag.tag-cancelado  { background: #fee2e2; color: #991b1b; }
+
+/* Encabezado de las colas del circuito (Armado / Para entregar) */
+.armado-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 8px;
+}
+.armado-queue-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.armado-sep {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 22px 0 14px;
+}
 
 /* Pedido unificado: barra superior del drawer "Mis pedidos" para el vendedor tercerizado */
 .dispatch-bar {

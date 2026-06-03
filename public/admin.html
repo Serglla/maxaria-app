@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260602i" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260603a" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -72,6 +72,9 @@
           <div class="admin-sidebar-group-title">Operaciones</div>
           <button class="tab-btn admin-sidebar-item" data-tab="pedidos" type="button">
             <span class="admin-sidebar-item-icon">📋</span>Pedidos
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="armado" type="button">
+            <span class="admin-sidebar-item-icon">🔧</span>Armado
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="entregas" type="button">
             <span class="admin-sidebar-item-icon">🚚</span>Entregas
@@ -1105,6 +1108,15 @@
 
     <!-- ===== TAB ENTREGAS ===== -->
     <section class="tab-panel" id="tab-entregas" hidden>
+      <div class="armado-queue-head">
+        <h3 class="armado-queue-title">🚚 Para entregar <span id="ent-queue-count" class="muted"></span></h3>
+        <button class="btn btn-small" id="ent-queue-reload" type="button">↺ Actualizar</button>
+      </div>
+      <div id="ent-queue" class="admin-orders-list">
+        <p class="muted">Cargando…</p>
+      </div>
+      <hr class="armado-sep" />
+      <h3 class="armado-queue-title">Historial de entregas</h3>
       <div class="admin-toolbar">
         <input type="search" id="ent-search" class="admin-search" placeholder="Buscar por pedido, vendedor, cliente..." autocomplete="off" />
         <select id="ent-vend-filter" class="admin-select" title="Filtrar por vendedor">
@@ -1138,6 +1150,16 @@
     <section class="tab-panel" id="tab-pedidos" hidden>
       <div class="admin-toolbar">
         <input type="search" id="orders-search" class="admin-search" placeholder="Buscar por # o cliente..." autocomplete="off" />
+        <select id="orders-status-filter" class="admin-select" title="Filtrar por estado">
+          <option value="inbox">Por armar (pendiente/enviado)</option>
+          <option value="all">Todos</option>
+          <option value="pendiente">Pendiente</option>
+          <option value="enviado">Enviado</option>
+          <option value="preparando">Preparando</option>
+          <option value="listo">Listo para entregar</option>
+          <option value="entregado">Entregado</option>
+          <option value="cancelado">Cancelado</option>
+        </select>
         <select id="orders-client-filter" class="admin-select" title="Filtrar por cliente">
           <option value="all">Todos los clientes</option>
         </select>
@@ -1145,6 +1167,18 @@
         <span id="orders-count" class="muted">…</span>
       </div>
       <div id="orders-list" class="admin-orders-list">
+        <p class="muted">Cargando…</p>
+      </div>
+    </section>
+
+    <!-- ===== TAB ARMADO ===== -->
+    <section class="tab-panel" id="tab-armado" hidden>
+      <div class="armado-queue-head">
+        <h3 class="armado-queue-title">🔧 En armado <span id="armado-count" class="muted"></span></h3>
+        <button class="btn btn-small" id="armado-reload" type="button">↺ Actualizar</button>
+      </div>
+      <p class="muted" style="margin:0 0 10px">Pedidos en preparación. Cuando estén armados, pasalos a Entregas.</p>
+      <div id="armado-list" class="admin-orders-list">
         <p class="muted">Cargando…</p>
       </div>
     </section>
@@ -2332,6 +2366,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260602d"></script>
+  <script src="/js/admin.js?v=20260603a"></script>
 </body>
 </html>

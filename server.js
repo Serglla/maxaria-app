@@ -280,6 +280,20 @@ try { db.exec("ALTER TABLE order_items ADD COLUMN vendedor_cost_unit INTEGER"); 
 try { db.exec("ALTER TABLE orders ADD COLUMN is_unified INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 try { db.exec("ALTER TABLE orders ADD COLUMN unified_parent_id INTEGER REFERENCES orders(id)"); } catch (_) {}
 
+// Migracion: Circuito de pedidos (Pedidos -> Armado -> Entregas -> Entregado).
+// - orders.notified_status: ultimo estado del que se le notifico al cliente.
+//   Sirve para avisarle al ingresar al catalogo cuando su pedido avanza a
+//   "preparando" (en armado), "listo" (listo para entregar) o "entregado".
+//   NULL = todavia no se le notifico de ningun estado.
+// El UPDATE inicializa los pedidos ya existentes con su estado actual para que
+// la primera carga despues del deploy NO dispare notificaciones retroactivas
+// (solo los cambios futuros notifican). Corre una sola vez: en boots siguientes
+// el ALTER lanza (la columna ya existe) y el catch evita re-ejecutar el UPDATE.
+try {
+  db.exec("ALTER TABLE orders ADD COLUMN notified_status TEXT");
+  db.exec("UPDATE orders SET notified_status = status");
+} catch (_) {}
+
 // Migracion: Presupuestos / Ventas.
 // - budgets: cabecera del presupuesto (cliente, vendedor, totales, estado).
 // - budget_items: lineas del presupuesto (producto, cantidad, precio, descuento).
@@ -760,6 +774,7 @@ const ADMIN_SECTIONS = [
   { key: "productos",   label: "Productos" },
   { key: "price-lists", label: "Listas de precios" },
   { key: "pedidos",     label: "Pedidos" },
+  { key: "armado",      label: "Armado" },
   { key: "entregas",    label: "Entregas" },
   { key: "ventas",      label: "Ventas" },
   { key: "usuarios",    label: "Usuarios" },
@@ -1889,7 +1904,7 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
   const { status } = req.body || {};
-  const valid = ["pendiente", "enviado", "preparando", "entregado", "cancelado"];
+  const valid = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
   if (!valid.includes(status))
     return res.status(400).json({ error: "Estado invalido. Valores: " + valid.join(", ") });
 
@@ -1994,6 +2009,36 @@ app.patch("/api/orders/:id", requireLogin, (req, res) => {
   })();
 
   res.json({ ok: true, id: id, status: status });
+});
+
+// ----- Notificaciones de circuito para el cliente -----
+// Devuelve los pedidos del usuario logueado cuyo estado avanzo a "preparando"
+// (en armado), "listo" (listo para entregar) o "entregado" desde la ultima vez
+// que se le notifico, y los marca como notificados. El catalogo llama a este
+// endpoint al ingresar para mostrarle un aviso ("tu pedido se esta preparando").
+app.get("/api/my-notifications", requireLogin, (req, res) => {
+  const uid = req.session.userId;
+  const rows = db.prepare(
+    "SELECT id, status FROM orders" +
+    "  WHERE user_id = ? AND status IN ('preparando','listo','entregado')" +
+    "    AND COALESCE(is_unified,0) = 0" +
+    "    AND (notified_status IS NULL OR notified_status != status)" +
+    "  ORDER BY id DESC LIMIT 20"
+  ).all(uid);
+  if (rows.length) {
+    const upd = db.prepare("UPDATE orders SET notified_status = status WHERE id = ?");
+    db.transaction(() => { for (const r of rows) upd.run(r.id); })();
+  }
+  const MSG = {
+    preparando: "se está preparando",
+    listo: "está listo para entregar",
+    entregado: "fue entregado",
+  };
+  res.json(rows.map((r) => ({
+    order_id: r.id,
+    status: r.status,
+    message: "Tu pedido #" + r.id + " " + (MSG[r.status] || ("pasó a " + r.status)),
+  })));
 });
 
 // Editar items de un pedido (solo admin): reemplaza todos los items y recalcula el total
@@ -4674,9 +4719,14 @@ app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, (req, res) => {
   let orderId;
   try {
     db.transaction(() => {
+      // El pedido entra al circuito en estado 'pendiente' (seccion Pedidos) y
+      // recorre Armado -> Entregas -> Entregado como cualquier otro. El stock ya
+      // se desconto al crear el presupuesto (stock_discounted=1) y la cuenta se
+      // debita aca abajo, asi que al llegar a 'entregado' el PATCH no vuelve a
+      // procesar (chequea !order.stock_discounted).
       const r = db.prepare(
         "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id, stock_discounted, created_at)" +
-        " VALUES (?, 'entregado', ?, ?, ?, 1, datetime('now'))"
+        " VALUES (?, 'pendiente', ?, ?, ?, 1, datetime('now'))"
       ).run(
         userIdForOrder,
         budget.total,
@@ -5051,7 +5101,7 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
   // Pedidos activos por estado
   const activeOrders = db.prepare(
     "SELECT status, COUNT(*) AS cnt FROM orders" +
-    " WHERE status IN ('pendiente','enviado','preparando') AND COALESCE(is_unified,0)=0" +
+    " WHERE status IN ('pendiente','enviado','preparando','listo') AND COALESCE(is_unified,0)=0" +
     " GROUP BY status"
   ).all();
 

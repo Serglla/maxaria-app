@@ -54,8 +54,15 @@
     // Pedidos
     ordersSearch: document.getElementById("orders-search"),
     ordersClientFilter: document.getElementById("orders-client-filter"),
+    ordersStatusFilter: document.getElementById("orders-status-filter"),
     ordersCount: document.getElementById("orders-count"),
     ordersList: document.getElementById("orders-list"),
+    armadoList: document.getElementById("armado-list"),
+    armadoCount: document.getElementById("armado-count"),
+    armadoReload: document.getElementById("armado-reload"),
+    entQueue: document.getElementById("ent-queue"),
+    entQueueCount: document.getElementById("ent-queue-count"),
+    entQueueReload: document.getElementById("ent-queue-reload"),
 
     // Modal imagen
     imgModal: document.getElementById("img-modal"),
@@ -734,8 +741,8 @@
       setV("dash-stock-ok",   d.stockOk   || 0);
 
       // Últimos pedidos
-      const STATUS_LABEL = { pendiente:"Pendiente", enviado:"Enviado", preparando:"Preparando", entregado:"Entregado", cancelado:"Cancelado" };
-      const STATUS_CLS   = { pendiente:"tag-pendiente", enviado:"tag-enviado", preparando:"tag-preparando", entregado:"tag-entregado", cancelado:"tag-cancelado" };
+      const STATUS_LABEL = { pendiente:"Pendiente", enviado:"Enviado", preparando:"Preparando", listo:"Listo", entregado:"Entregado", cancelado:"Cancelado" };
+      const STATUS_CLS   = { pendiente:"tag-pendiente", enviado:"tag-enviado", preparando:"tag-preparando", listo:"tag-listo", entregado:"tag-entregado", cancelado:"tag-cancelado" };
       const tbody = document.getElementById("dash-recent-tbody");
       if (tbody) {
         if (!d.recentOrders || !d.recentOrders.length) {
@@ -812,7 +819,11 @@
         if (!state.priceListsLoaded) loadPriceLists();
         else renderPriceLists();
       }
-      if (tab === "entregas" && !state.entregasLoaded) loadEntregas();
+      if (tab === "armado") loadArmado(); // siempre recargar (refleja avances)
+      if (tab === "entregas") {
+        if (!state.entregasLoaded) loadEntregas();
+        loadEntregasQueue(); // siempre recargar la cola "para entregar"
+      }
       if (tab === "proveedores" && !state.suppliersLoaded) loadSuppliers();
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
@@ -2273,10 +2284,13 @@
         });
         els.deliveryModal.hidden = true;
         showToast("Entrega registrada para pedido #" + state.deliveryTargetOrderId);
-        // Recargar pedidos y entregas para reflejar el nuevo estado
+        // Recargar pedidos y entregas para reflejar el nuevo estado (el pedido
+        // pasa a "entregado" y sale de la cola "para entregar").
         state.ordersLoaded = false;
         state.entregasLoaded = false;
-        loadOrders();
+        await loadOrders();      // refresca state.orders + Pedidos
+        refreshOrderViews();     // actualiza Armado y la cola de Entregas
+        loadEntregas();          // recarga el historial de entregas
       } catch (err) {
         els.deliveryFormMsg.textContent = "Error: " + err.message;
         els.deliveryFormMsg.className = "config-msg err";
@@ -3088,7 +3102,7 @@
 
   function orderCardHtml(o) {
     var statusLabels = {
-      pendiente: "Pendiente", preparando: "Preparando",
+      pendiente: "Pendiente", preparando: "Preparando", listo: "Listo para entregar",
       enviado: "Enviado", entregado: "Entregado", cancelado: "Cancelado"
     };
     var statusLabel = statusLabels[o.status] || o.status || "";
@@ -3116,6 +3130,18 @@
         '" data-has-delivery="' + hasDelivery + '" type="button">' + delivLabel + "</button>";
     }
 
+    // Botón para avanzar el pedido a la siguiente etapa del circuito.
+    // Solo el admin maneja Armado/Entregas; el vendedor solo puede marcar
+    // "entregado" (el PATCH le rechaza otros estados).
+    var advBtn = "";
+    if (state.isAdmin && (o.status === "pendiente" || o.status === "enviado")) {
+      advBtn = '<button class="btn btn-small btn-primary btn-advance" data-id="' + o.id +
+        '" data-to="preparando" type="button">→ Armado</button>';
+    } else if (state.isAdmin && o.status === "preparando") {
+      advBtn = '<button class="btn btn-small btn-primary btn-advance" data-id="' + o.id +
+        '" data-to="listo" type="button">→ Entregas</button>';
+    }
+
     return '<article class="order-card" data-id="' + o.id + '">' +
       '<div class="order-head">' +
         '<div>' +
@@ -3127,6 +3153,7 @@
         "</div>" +
         '<div class="order-card-right">' +
           '<span class="order-total">' + totalLabel + "</span>" +
+          advBtn +
           delivBtn +
         "</div>" +
       "</div>" +
@@ -3173,8 +3200,8 @@
         "</tbody></table>"
       : '<p class="muted">Sin items.</p>';
 
-    var statuses = ["pendiente", "preparando", "enviado", "entregado", "cancelado"];
-    var statusNames = { pendiente: "Pendiente", preparando: "Preparando", enviado: "Enviado", entregado: "Entregado", cancelado: "Cancelado" };
+    var statuses = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
+    var statusNames = { pendiente: "Pendiente", enviado: "Enviado", preparando: "Preparando", listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado" };
     var statusOpts = statuses.map(function(s) {
       return '<option value="' + s + '"' + (order.status === s ? " selected" : "") + ">" + statusNames[s] + "</option>";
     }).join("");
@@ -3229,11 +3256,12 @@
           });
           var o = state.orders.find(function(x) { return x.id === orderId; });
           if (o) o.status = newStatus;
+          refreshOrderViews();
           var card = detailEl.closest(".order-card");
           if (card) {
             var badge = card.querySelector(".order-status");
             if (badge) {
-              var labels = { pendiente: "Pendiente", preparando: "Preparando", enviado: "Enviado", entregado: "Entregado", cancelado: "Cancelado" };
+              var labels = { pendiente: "Pendiente", preparando: "Preparando", listo: "Listo para entregar", enviado: "Enviado", entregado: "Entregado", cancelado: "Cancelado" };
               badge.textContent = labels[newStatus] || newStatus;
               badge.className = "order-status " + newStatus;
             }
@@ -3267,10 +3295,18 @@
     }
   }
 
-  function renderOrders() {
+  // Filtro de la pestaña Pedidos: por estado (default "inbox" = por armar),
+  // por cliente y por texto de búsqueda.
+  function filterPedidos() {
     const q = els.ordersSearch.value.trim().toLowerCase();
     const clientFilter = els.ordersClientFilter.value; // "all" | username
-    let list = state.orders;
+    const statusFilter = els.ordersStatusFilter ? els.ordersStatusFilter.value : "inbox";
+    let list = state.orders || [];
+    if (statusFilter === "inbox") {
+      list = list.filter((o) => o.status === "pendiente" || o.status === "enviado");
+    } else if (statusFilter !== "all") {
+      list = list.filter((o) => o.status === statusFilter);
+    }
     if (clientFilter !== "all") {
       list = list.filter((o) => (o.username || "") === clientFilter);
     }
@@ -3281,21 +3317,30 @@
         (o.full_name || "").toLowerCase().includes(q)
       );
     }
+    return list;
+  }
+
+  function renderOrders() {
+    const list = filterPedidos();
     els.ordersCount.textContent = list.length + (list.length === 1 ? " pedido" : " pedidos");
     if (!list.length) {
       els.ordersList.innerHTML = '<p class="muted">Sin pedidos.</p>';
       return;
     }
     els.ordersList.innerHTML = list.map(orderCardHtml).join("");
-    els.ordersList.querySelectorAll(".order-card").forEach((card) => {
-      // Click en header abre/cierra el detalle (pero no en los botones)
+    wireOrderCards(els.ordersList, list, renderOrders);
+  }
+
+  // Cablea los handlers de cada tarjeta de pedido: abrir detalle, registrar
+  // entrega y avanzar de etapa. Se reusa en Pedidos, Armado y cola de Entregas.
+  function wireOrderCards(container, list, reload) {
+    container.querySelectorAll(".order-card").forEach((card) => {
       const head = card.querySelector(".order-head");
       if (head) head.addEventListener("click", (e) => {
-        if (e.target.closest(".btn-deliver")) return;
+        if (e.target.closest(".btn-deliver") || e.target.closest(".btn-advance")) return;
         toggleOrderDetail(card, Number(card.dataset.id));
       });
 
-      // Boton de registrar entrega
       const deliverBtn = card.querySelector(".btn-deliver");
       if (deliverBtn) {
         deliverBtn.addEventListener("click", (e) => {
@@ -3316,11 +3361,85 @@
           openDeliveryModal(orderId, "Pedido #" + orderId + (totalLabel ? " · " + totalLabel : ""), existingDelivery);
         });
       }
+
+      const advBtn = card.querySelector(".btn-advance");
+      if (advBtn) {
+        advBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const orderId = Number(advBtn.dataset.id);
+          const to = advBtn.dataset.to;
+          advBtn.disabled = true;
+          try {
+            await api("/api/orders/" + orderId, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: to }),
+            });
+            const o = (state.orders || []).find((x) => x.id === orderId);
+            if (o) o.status = to;
+            showToast(to === "preparando"
+              ? "Pedido #" + orderId + " pasó a Armado"
+              : "Pedido #" + orderId + " listo para entregar");
+            if (typeof reload === "function") reload();
+            refreshOrderViews();
+          } catch (err) {
+            advBtn.disabled = false;
+            showToast("Error: " + err.message, "error");
+          }
+        });
+      }
     });
+  }
+
+  // Re-renderiza las vistas del circuito que dependen de state.orders, para que
+  // al avanzar un pedido desaparezca de una vista y aparezca en la otra.
+  function refreshOrderViews() {
+    if (state.ordersLoaded) renderOrders();
+    renderArmado();
+    renderEntregasQueue();
+  }
+
+  function renderArmado() {
+    if (!els.armadoList) return;
+    const list = (state.orders || []).filter((o) => o.status === "preparando");
+    if (els.armadoCount) els.armadoCount.textContent = "(" + list.length + ")";
+    if (!list.length) {
+      els.armadoList.innerHTML = '<p class="muted">No hay pedidos en armado.</p>';
+      return;
+    }
+    els.armadoList.innerHTML = list.map(orderCardHtml).join("");
+    wireOrderCards(els.armadoList, list, renderArmado);
+  }
+
+  function renderEntregasQueue() {
+    if (!els.entQueue) return;
+    const list = (state.orders || []).filter((o) => o.status === "listo");
+    if (els.entQueueCount) els.entQueueCount.textContent = "(" + list.length + ")";
+    if (!list.length) {
+      els.entQueue.innerHTML = '<p class="muted">No hay pedidos listos para entregar.</p>';
+      return;
+    }
+    els.entQueue.innerHTML = list.map(orderCardHtml).join("");
+    wireOrderCards(els.entQueue, list, renderEntregasQueue);
+  }
+
+  // Asegura state.orders cargado y renderiza la pestaña Armado.
+  async function loadArmado() {
+    if (!state.ordersLoaded) await loadOrders();
+    renderArmado();
+  }
+
+  // Asegura state.orders cargado y renderiza la cola "para entregar".
+  async function loadEntregasQueue() {
+    if (!state.ordersLoaded) await loadOrders();
+    renderEntregasQueue();
   }
 
   els.ordersSearch.addEventListener("input", debounce(renderOrders, 150));
   els.ordersClientFilter.addEventListener("change", renderOrders);
+  if (els.ordersStatusFilter) els.ordersStatusFilter.addEventListener("change", renderOrders);
+  if (els.armadoReload) els.armadoReload.addEventListener("click", loadArmado);
+  if (els.entQueueReload) els.entQueueReload.addEventListener("click", loadEntregasQueue);
 
   // ---------- Modal de imagen de producto ----------
   const imgState = { productId: null };
@@ -6056,8 +6175,8 @@
   function rptPct(num, den) { return den > 0 ? Math.round(num / den * 100) + "%" : "—"; }
   function rptDate(s) { return (s || "").slice(0, 10).split("-").reverse().join("/"); }
 
-  const STATUS_LABEL = { pendiente:"Pendiente", enviado:"Enviado", preparando:"Preparando", entregado:"Entregado", cancelado:"Cancelado" };
-  const STATUS_CLS   = { pendiente:"tag-pendiente", enviado:"tag-enviado", preparando:"tag-preparando", entregado:"tag-entregado", cancelado:"tag-cancelado" };
+  const STATUS_LABEL = { pendiente:"Pendiente", enviado:"Enviado", preparando:"Preparando", listo:"Listo", entregado:"Entregado", cancelado:"Cancelado" };
+  const STATUS_CLS   = { pendiente:"tag-pendiente", enviado:"tag-enviado", preparando:"tag-preparando", listo:"tag-listo", entregado:"tag-entregado", cancelado:"tag-cancelado" };
 
   // Setea el rango "este mes" por default
   function rptSetDefaultRange() {

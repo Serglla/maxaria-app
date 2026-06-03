@@ -179,6 +179,11 @@
       }
       renderVendedorBar();
       renderUser(); renderCategories(); renderProducts();
+      // Avisar al cliente si alguno de sus pedidos avanzó de etapa (en
+      // preparación / listo para entregar / entregado) desde la última visita.
+      if (me.level >= 1 && me.level <= 4) {
+        api("/api/my-notifications").then(notifyOrderUpdates).catch(() => {});
+      }
     } catch (e) { console.error(e); }
   }
 
@@ -1364,6 +1369,41 @@
     '</article>';
   }
 
+  // Etiqueta legible del estado del pedido (para el cliente).
+  const STATUS_LABELS = {
+    pendiente: "Pendiente", enviado: "Enviado", preparando: "En preparación",
+    listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado",
+  };
+  function statusLabel(s) {
+    return STATUS_LABELS[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
+  }
+
+  // Banner superior con avisos del estado de los pedidos del cliente. Se llena
+  // al ingresar al catálogo desde /api/my-notifications y se puede cerrar.
+  function notifyOrderUpdates(items) {
+    if (!items || !items.length) return;
+    let bar = document.getElementById("order-notif-bar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "order-notif-bar";
+      bar.setAttribute("role", "status");
+      bar.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:99999;" +
+        "background:#1e3a5f;color:#fff;padding:12px 16px;font-size:14px;line-height:1.4;" +
+        "box-shadow:0 4px 14px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:4px;" +
+        "max-height:60vh;overflow-y:auto";
+      document.body.appendChild(bar);
+    }
+    const lines = items.map((n) =>
+      '<div>📦 ' + escapeHtml(n.message) + '</div>'
+    ).join("");
+    bar.innerHTML = lines +
+      '<button id="order-notif-close" type="button" style="align-self:flex-end;margin-top:4px;' +
+      'background:#fbbf24;color:#1e293b;border:none;border-radius:8px;padding:6px 14px;' +
+      'font-weight:700;cursor:pointer">Entendido</button>';
+    const close = document.getElementById("order-notif-close");
+    if (close) close.addEventListener("click", () => { bar.remove(); });
+  }
+
   function orderCardHtml(o, isAdmin, isTerc) {
     const date = formatDate(o.created_at);
     const who = (isAdmin || isTerc) && o.username
@@ -1384,7 +1424,7 @@
       '<header class="order-head" title="Click para ver el detalle">' +
         dispatchCb +
         '<div>' +
-          '<h4>Pedido #' + o.id + ' <span class="order-status ' + escapeHtml(o.status) + '">' + escapeHtml(o.status) + '</span>' + tagsHtml + '</h4>' +
+          '<h4>Pedido #' + o.id + ' <span class="order-status ' + escapeHtml(o.status) + '">' + escapeHtml(statusLabel(o.status)) + '</span>' + tagsHtml + '</h4>' +
           '<div class="meta">' + date + who + '</div>' +
         '</div>' +
         '<div class="order-total">' + fmtPrice(o.total) + '</div>' +
@@ -1413,10 +1453,10 @@
         '</tr>'
       ).join("");
 
-      const statusOptions = ["pendiente", "enviado", "preparando", "entregado", "cancelado"];
+      const statusOptions = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
       const statusOptHtml = statusOptions.map((s) =>
         '<option value="' + s + '"' + (s === o.status ? " selected" : "") + '>' +
-          s.charAt(0).toUpperCase() + s.slice(1) +
+          statusLabel(s) +
         '</option>'
       ).join("");
 
