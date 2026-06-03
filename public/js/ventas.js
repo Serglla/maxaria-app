@@ -623,17 +623,22 @@
 
   async function vOpenQuickClient() {
     if (!vEls.quickClientModal) return;
-    // Poblar el select de listas de precios con las opciones disponibles.
-    try {
-      const r = await fetch("/api/admin/price-lists");
-      if (r.ok) {
-        const lists = await r.json();
-        vEls.qcPriceList.innerHTML = '<option value="">— Sin lista (por nivel)</option>' +
-          (lists || []).filter(l => l.active).map(l =>
-            '<option value="' + l.id + '">' + vEsc(l.name) + '</option>'
-          ).join("");
+    // Asegurar que las opciones de precio estén cargadas.
+    await vLoadPriceOptions();
+    // Poblar el select con las mismas opciones que el selector de lista del presupuesto.
+    if (vState.priceOptions) {
+      const { levels, lists } = vState.priceOptions;
+      let html = '<option value="">— Sin asignar</option>' +
+        '<optgroup label="Niveles base">' +
+        (levels || []).map(o => '<option value="' + o.value + '">' + vEsc(o.label) + '</option>').join("") +
+        '</optgroup>';
+      if (lists && lists.length) {
+        html += '<optgroup label="Listas personalizadas">' +
+          lists.map(o => '<option value="' + o.value + '">' + vEsc(o.label) + '</option>').join("") +
+          '</optgroup>';
       }
-    } catch (_) {}
+      vEls.qcPriceList.innerHTML = html;
+    }
     vEls.qcName.value = "";
     vEls.qcPhone.value = "";
     vEls.qcPriceList.value = "";
@@ -651,10 +656,12 @@
     vEls.qcSaveBtn.disabled = true;
     vEls.qcSaveBtn.textContent = "Creando…";
     try {
+      const pricingVal = vEls.qcPriceList.value || "";
       const body = {
         full_name: name,
         phone: (vEls.qcPhone.value || "").trim() || null,
-        price_list_id: vEls.qcPriceList.value ? Number(vEls.qcPriceList.value) : null,
+        price_list_id: pricingVal.startsWith("list:") ? Number(pricingVal.slice(5)) : null,
+        level_base: pricingVal.startsWith("base:") ? pricingVal.slice(5) : null,
       };
       const r = await fetch("/api/admin/quick-client", {
         method: "POST", headers: { "Content-Type": "application/json" },

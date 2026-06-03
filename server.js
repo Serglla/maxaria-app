@@ -2449,20 +2449,24 @@ app.post("/api/admin/quick-client", requireVendedorOrAdmin, (req, res) => {
   const fullName = String(b.full_name || "").trim();
   if (!fullName) return res.status(400).json({ error: "El nombre es obligatorio" });
   const phone = String(b.phone || "").trim() || null;
+  // Precio: lista personalizada o nivel base.
   const priceListId = b.price_list_id ? Number(b.price_list_id) : null;
   if (priceListId) {
     const pl = db.prepare("SELECT id FROM price_lists WHERE id = ? AND active = 1").get(priceListId);
     if (!pl) return res.status(400).json({ error: "Lista de precios inválida" });
   }
-  // Generar un username interno único y no colisionante, no expuesto al cliente.
+  const LEVEL_BASE_MAP = { minorista: 1, revendedor: 2, mayorista: 3, vip: 4, publico: 1 };
+  const levelBase = String(b.level_base || "").trim().toLowerCase();
+  const userLevel = priceListId ? 1 : (LEVEL_BASE_MAP[levelBase] || 1);
+  // Generar un username interno único, no expuesto al cliente.
   const base = "cliente_" + Date.now();
   const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(base);
   const username = existing ? base + "_" + Math.floor(Math.random() * 1000) : base;
   const stmt = db.prepare(
     "INSERT INTO users (username, password_hash, full_name, phone, level, active, price_list_id) " +
-    "VALUES (?, '', ?, ?, 1, 1, ?)"
+    "VALUES (?, '', ?, ?, ?, 1, ?)"
   );
-  const result = stmt.run(username, fullName, phone, priceListId);
+  const result = stmt.run(username, fullName, phone, userLevel, priceListId);
   const newUser = db.prepare(
     "SELECT u.id, u.full_name, u.username, u.level, u.price_list_id, pl.name AS price_list_name " +
     "FROM users u LEFT JOIN price_lists pl ON pl.id = u.price_list_id WHERE u.id = ?"
