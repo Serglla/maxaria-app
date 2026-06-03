@@ -298,6 +298,17 @@
     oiePickerConfirm: document.getElementById("oie-picker-confirm"),
     oiePickerCancel: document.getElementById("oie-picker-cancel"),
 
+    // Modal crear pedido desde admin
+    newOrderBtn:    document.getElementById("new-order-btn"),
+    newOrderModal:  document.getElementById("new-order-modal"),
+    noClient:       document.getElementById("no-client"),
+    noStatus:       document.getElementById("no-status"),
+    noAddBtn:       document.getElementById("no-add-btn"),
+    noItemsTbody:   document.getElementById("no-items-tbody"),
+    noTotalDisp:    document.getElementById("no-total-disp"),
+    noNotes:        document.getElementById("no-notes"),
+    noSaveBtn:      document.getElementById("no-save-btn"),
+
     // Pagos
     paySearch: document.getElementById("pay-search"),
     payMethodFilter: document.getElementById("pay-method-filter"),
@@ -3066,6 +3077,160 @@
   }
   els.importClose.addEventListener("click", () => { els.importModal.hidden = true; });
 
+  // ---------- Crear pedido desde admin ----------
+  var noItems = [];   // items del nuevo pedido en construcción
+
+  function noRecalc() {
+    return noItems.reduce(function(s, it) { return s + it.unit_price * it.quantity; }, 0);
+  }
+
+  function noRenderItems() {
+    if (!els.noItemsTbody) return;
+    if (!noItems.length) {
+      els.noItemsTbody.innerHTML = '<tr><td colspan="6" class="muted" style="padding:12px;text-align:center">Sin artículos. Usá "+ Agregar productos".</td></tr>';
+    } else {
+      els.noItemsTbody.innerHTML = noItems.map(function(it, idx) {
+        return '<tr>' +
+          '<td><code>' + escapeHtml(it.product_code) + '</code></td>' +
+          '<td>' + escapeHtml(it.product_name) + '</td>' +
+          '<td style="text-align:right"><input type="number" class="cell-input cell-num no-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:60px"></td>' +
+          '<td style="text-align:right">' + fmtPrice(it.unit_price) + '</td>' +
+          '<td style="text-align:right;font-weight:600">' + fmtPrice(it.unit_price * it.quantity) + '</td>' +
+          '<td><button type="button" class="btn btn-small no-rm" data-idx="' + idx + '">✕</button></td>' +
+          '</tr>';
+      }).join("");
+      // qty change
+      els.noItemsTbody.querySelectorAll(".no-qty").forEach(function(inp) {
+        inp.addEventListener("input", function() {
+          var idx = Number(this.dataset.idx);
+          noItems[idx].quantity = Math.max(1, Math.floor(Number(this.value) || 1));
+          noUpdateTotal();
+        });
+      });
+      // remove
+      els.noItemsTbody.querySelectorAll(".no-rm").forEach(function(btn) {
+        btn.addEventListener("click", function() {
+          noItems.splice(Number(this.dataset.idx), 1);
+          noRenderItems();
+        });
+      });
+    }
+    noUpdateTotal();
+  }
+
+  function noUpdateTotal() {
+    if (els.noTotalDisp) els.noTotalDisp.textContent = "Total: " + fmtPrice(noRecalc());
+  }
+
+  async function noOpenModal() {
+    noItems = [];
+    if (els.noNotes) els.noNotes.value = "";
+    if (els.noStatus) els.noStatus.value = "pendiente";
+    noRenderItems();
+    // Poblar select de clientes
+    if (els.noClient) {
+      els.noClient.innerHTML = '<option value="">Consumidor final</option>';
+      try {
+        var clients = await api("/api/clients");
+        (clients || []).forEach(function(c) {
+          var opt = document.createElement("option");
+          opt.value = c.id;
+          opt.textContent = c.full_name || c.username;
+          els.noClient.appendChild(opt);
+        });
+      } catch (_) {}
+    }
+    if (els.newOrderModal) els.newOrderModal.hidden = false;
+  }
+
+  function noCloseModal() {
+    if (els.newOrderModal) els.newOrderModal.hidden = true;
+  }
+
+  async function noSave() {
+    if (!noItems.length) { showToast("Agregá al menos un artículo", "error"); return; }
+    els.noSaveBtn.disabled = true;
+    try {
+      var order = await api("/api/admin/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: els.noClient && els.noClient.value ? Number(els.noClient.value) : null,
+          status: els.noStatus ? els.noStatus.value : "pendiente",
+          notes: els.noNotes ? els.noNotes.value.trim() : "",
+          items: noItems.map(function(it) {
+            return { product_id: it.product_id, product_code: it.product_code,
+                     product_name: it.product_name, quantity: it.quantity, unit_price: it.unit_price };
+          }),
+        }),
+      });
+      // Insertar en state y re-renderizar
+      if (!state.orders) state.orders = [];
+      state.orders.unshift(order);
+      populateClientFilter(state.orders);
+      renderOrders();
+      noCloseModal();
+      showToast("Pedido #" + order.id + " creado");
+    } catch (e) {
+      showToast("Error: " + e.message, "error");
+    } finally {
+      els.noSaveBtn.disabled = false;
+    }
+  }
+
+  // Usa el mismo picker de productos que la edición de pedidos (oie-picker-modal)
+  // pero al confirmar agrega a noItems en vez de a editItems.
+  function noOpenPicker() {
+    var priceCol = "price_minorista";
+    if (els.noClient && els.noClient.value) {
+      var clientId = Number(els.noClient.value);
+      var users = state.users || [];
+      var client = users.find(function(u) { return u.id === clientId; });
+      if (client) {
+        var levelMap = { 1: "price_minorista", 2: "price_revendedor", 3: "price_mayorista", 4: "price_vip" };
+        priceCol = levelMap[Number(client.level)] || "price_minorista";
+      }
+    }
+    // Reutilizar openOrderItemPicker con un objeto editItems proxy que al
+    // confirmar vuelca a noItems y llama noRenderItems.
+    var proxy = noItems;
+    openOrderItemPicker(proxy, priceCol, noRenderItems);
+  }
+
+  if (els.newOrderBtn) els.newOrderBtn.addEventListener("click", noOpenModal);
+  if (els.noAddBtn) els.noAddBtn.addEventListener("click", noOpenPicker);
+  if (els.noSaveBtn) els.noSaveBtn.addEventListener("click", noSave);
+  if (els.newOrderModal) {
+    els.newOrderModal.addEventListener("click", function(e) {
+      if (e.target.matches("[data-close='new-order-modal']")) noCloseModal();
+    });
+  }
+
+  // ---------- Eliminar pedido ----------
+  async function deleteOrder(id) {
+    var order = (state.orders || []).find(function(o) { return o.id === id; });
+    if (order && order.status === "entregado") {
+      showToast("No se puede eliminar un pedido entregado", "error"); return;
+    }
+    var confirmed = await vConfirm("¿Eliminar pedido #" + id + "?\nEsta acción no se puede deshacer.");
+    if (!confirmed) return;
+    try {
+      await api("/api/admin/orders/" + id, { method: "DELETE" });
+      state.orders = (state.orders || []).filter(function(o) { return o.id !== id; });
+      populateClientFilter(state.orders);
+      renderOrders();
+      refreshOrderViews();
+      showToast("Pedido #" + id + " eliminado");
+    } catch (e) {
+      showToast("Error: " + e.message, "error");
+    }
+  }
+
+  // vConfirm: usa el confirm nativo si no hay modal de confirmación.
+  function vConfirm(msg) {
+    return Promise.resolve(window.confirm(msg));
+  }
+
   // ---------- Pedidos ----------
   async function loadOrders() {
     try {
@@ -3157,6 +3322,12 @@
         '" data-to="listo" type="button">→ Entregas</button>';
     }
 
+    var delBtn = "";
+    if (state.isAdmin && o.status !== "entregado") {
+      delBtn = '<button class="btn btn-small btn-delete-order" data-id="' + o.id +
+        '" type="button" title="Eliminar pedido" style="color:#ef4444;border-color:#ef4444">✕</button>';
+    }
+
     return '<article class="order-card" data-id="' + o.id + '">' +
       '<div class="order-head">' +
         '<div>' +
@@ -3170,6 +3341,7 @@
           '<span class="order-total">' + totalLabel + "</span>" +
           advBtn +
           delivBtn +
+          delBtn +
         "</div>" +
       "</div>" +
       '<div class="order-detail" hidden></div>' +
@@ -3750,7 +3922,7 @@
     container.querySelectorAll(".order-card").forEach((card) => {
       const head = card.querySelector(".order-head");
       if (head) head.addEventListener("click", (e) => {
-        if (e.target.closest(".btn-deliver") || e.target.closest(".btn-advance")) return;
+        if (e.target.closest(".btn-deliver") || e.target.closest(".btn-advance") || e.target.closest(".btn-delete-order")) return;
         toggleOrderDetail(card, Number(card.dataset.id));
       });
 
@@ -3772,6 +3944,14 @@
           }
           const totalLabel = orderObj ? fmtPrice(orderObj.total) : "";
           openDeliveryModal(orderId, "Pedido #" + orderId + (totalLabel ? " · " + totalLabel : ""), existingDelivery);
+        });
+      }
+
+      const delOrderBtn = card.querySelector(".btn-delete-order");
+      if (delOrderBtn) {
+        delOrderBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          deleteOrder(Number(delOrderBtn.dataset.id));
         });
       }
 

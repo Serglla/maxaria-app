@@ -1165,6 +1165,7 @@
         </select>
         <span class="admin-spacer"></span>
         <span id="orders-count" class="muted">…</span>
+        <button type="button" class="btn btn-primary" id="new-order-btn" style="font-size:12px;padding:5px 12px">+ Crear pedido</button>
       </div>
       <div id="orders-list" class="admin-orders-list">
         <p class="muted">Cargando…</p>
@@ -1845,6 +1846,56 @@
     </div>
   </div>
 
+  <!-- Modal: Crear pedido desde admin -->
+  <div class="admin-modal" id="new-order-modal" hidden style="z-index:1300">
+    <div class="admin-modal-box" style="max-width:680px;max-height:calc(100dvh - 32px);overflow-y:auto">
+      <h3 style="margin:0 0 16px">Nuevo pedido</h3>
+      <div class="admin-modal-body" style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
+            Cliente *
+            <select id="no-client" class="admin-select" style="margin-top:4px;width:100%">
+              <option value="">Consumidor final</option>
+            </select>
+          </label>
+          <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
+            Estado inicial
+            <select id="no-status" class="admin-select" style="margin-top:4px;width:100%">
+              <option value="pendiente">Pendiente</option>
+              <option value="enviado">Enviado</option>
+              <option value="preparando">Preparando</option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">Artículos</span>
+            <button type="button" class="btn btn-primary" id="no-add-btn" style="font-size:12px;padding:4px 10px">+ Agregar productos</button>
+          </div>
+          <table class="admin-table" style="min-width:0">
+            <thead><tr>
+              <th>Código</th><th>Producto</th>
+              <th style="text-align:right;width:70px">Cant.</th>
+              <th style="text-align:right;width:100px">P. Unit.</th>
+              <th style="text-align:right;width:100px">Subtotal</th>
+              <th style="width:32px"></th>
+            </tr></thead>
+            <tbody id="no-items-tbody"><tr><td colspan="6" class="muted" style="padding:12px;text-align:center">Sin artículos. Usá "+ Agregar productos".</td></tr></tbody>
+          </table>
+          <div style="text-align:right;margin-top:8px;font-size:15px;font-weight:700" id="no-total-disp">Total: $0</div>
+        </div>
+        <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
+          Observaciones
+          <textarea id="no-notes" class="admin-input" rows="2" placeholder="Notas internas…" style="margin-top:4px;width:100%;resize:vertical"></textarea>
+        </label>
+      </div>
+      <div class="admin-modal-foot" style="position:sticky;bottom:0;background:#fff;padding-top:12px">
+        <button type="button" class="btn" data-close="new-order-modal">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="no-save-btn">Crear pedido</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: selección de productos para editar un PEDIDO (mismo sistema que el
        armador de presupuestos: buscar, tildar, cantidad, "Agregar seleccionados") -->
   <div class="admin-modal" id="oie-picker-modal" hidden style="z-index:1500">
@@ -2386,6 +2437,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260603q"></script>
+  <script src="/js/admin.js?v=20260603r"></script>
 </body>
 </html>

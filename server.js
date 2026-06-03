@@ -2111,6 +2111,69 @@ app.get("/api/my-notifications", requireLogin, (req, res) => {
   })));
 });
 
+// Crear pedido desde el panel admin (sin restricciones de vendedor/WA).
+app.post("/api/admin/orders", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const items = Array.isArray(b.items) ? b.items : [];
+  if (!items.length) return res.status(400).json({ error: "El pedido debe tener al menos un artículo" });
+  const status = ["pendiente","enviado","preparando"].includes(b.status) ? b.status : "pendiente";
+  const notes = String(b.notes || "").trim() || null;
+  const clientId = b.client_id ? Number(b.client_id) : null;
+  // Resolver vendedor asignado del cliente si tiene uno.
+  let assignedVendedorId = null;
+  if (clientId) {
+    const client = db.prepare("SELECT assigned_vendedor_id FROM users WHERE id = ?").get(clientId);
+    if (client && client.assigned_vendedor_id) assignedVendedorId = client.assigned_vendedor_id;
+  }
+  const userId = clientId || req.session.userId;
+  const total = items.reduce((s, it) => s + Math.round((it.unit_price || 0) * (it.quantity || 1)), 0);
+  const result = db.transaction(() => {
+    const orderId = db.prepare(
+      "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id) VALUES (?,?,?,?,?)"
+    ).run(userId, status, total, notes, assignedVendedorId).lastInsertRowid;
+    const ins = db.prepare(
+      "INSERT INTO order_items (order_id,product_id,product_code,product_name,quantity,unit_price,subtotal) " +
+      "VALUES (?,?,?,?,?,?,?)"
+    );
+    items.forEach((it) => {
+      const qty = Math.max(1, Math.round(Number(it.quantity) || 1));
+      const price = Math.round(Number(it.unit_price) || 0);
+      ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, qty * price);
+    });
+    return orderId;
+  })();
+  const order = db.prepare(
+    "SELECT o.*, u.username, u.full_name, " +
+    "v.full_name AS vendedor_full_name, v.username AS vendedor_username " +
+    "FROM orders o LEFT JOIN users u ON u.id = o.user_id " +
+    "LEFT JOIN users v ON v.id = o.assigned_vendedor_id WHERE o.id = ?"
+  ).get(result);
+  res.json(order);
+});
+
+// Eliminar un pedido (solo admin, no entregados).
+app.delete("/api/admin/orders/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID inválido" });
+  const order = db.prepare("SELECT id, status, stock_discounted FROM orders WHERE id = ?").get(id);
+  if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+  if (order.status === "entregado") return res.status(409).json({ error: "No se puede eliminar un pedido ya entregado" });
+  db.transaction(() => {
+    // Devolver stock si ya había sido descontado.
+    if (order.stock_discounted) {
+      const ois = db.prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?").all(id);
+      const upd = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
+      ois.forEach((it) => upd.run(it.quantity, it.product_id));
+    }
+    // Eliminar movimiento de cuenta corriente asociado si existe.
+    db.prepare("DELETE FROM account_movements WHERE order_id = ?").run(id);
+    db.prepare("DELETE FROM order_items WHERE order_id = ?").run(id);
+    db.prepare("DELETE FROM deliveries WHERE order_id = ?").run(id);
+    db.prepare("DELETE FROM orders WHERE id = ?").run(id);
+  })();
+  res.json({ ok: true });
+});
+
 // Editar items de un pedido (solo admin): reemplaza todos los items y recalcula el total
 app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
