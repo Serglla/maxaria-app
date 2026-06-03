@@ -781,39 +781,106 @@
   });
 
   if (vEls.printBtn) vEls.printBtn.addEventListener("click", () => {
-    const num    = vEls.formNumber ? vEls.formNumber.textContent : "Nuevo";
-    const client = vEls.client ? (vEls.client.options[vEls.client.selectedIndex]||{}).text||"Consumidor final" : "Consumidor final";
-    const pay    = vEls.payment ? vEls.payment.value : "";
-    const discPct= vEls.discount  ? Number(vEls.discount.value)  : 0;
-    const surPct = vEls.surcharge ? Number(vEls.surcharge.value) : 0;
-    const notes  = vEls.notes ? vEls.notes.value : "";
-    let subtotal = 0; vState.items.forEach((it) => { subtotal += Number(it.subtotal)||0; });
-    const afterDisc = Math.round(subtotal*(1-discPct/100));
-    const total = Math.round(afterDisc*(1+surPct/100));
-    const rows = vState.items.map((it) =>
-      "<tr><td>" + vEsc(it.product_code) + "</td><td>" + vEsc(it.product_name) +
-      "</td><td style='text-align:right'>" + Math.round(it.quantity) +
-      "</td><td style='text-align:right'>$" + Number(it.unit_price).toLocaleString("es-AR") +
-      "</td><td style='text-align:right'>" + (Number(it.discount_percent)||0) + "%" +
-      "</td><td style='text-align:right;font-weight:600'>$" + Number(it.subtotal).toLocaleString("es-AR") + "</td></tr>"
-    ).join("");
+    const num     = vEls.formNumber ? vEls.formNumber.textContent : "Nuevo";
+    const client  = vEls.client ? (vEls.client.options[vEls.client.selectedIndex]||{}).text||"Consumidor final" : "Consumidor final";
+    const pay     = vEls.payment ? vEls.payment.value : "";
+    const discPct = vEls.discount  ? Number(vEls.discount.value)  : 0;
+    const surPct  = vEls.surcharge ? Number(vEls.surcharge.value) : 0;
+    const notes   = vEls.notes ? vEls.notes.value : "";
+    const date    = new Date().toLocaleDateString("es-AR");
     const appName = me.app_name || "Maxaria";
-    const html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Presupuesto " + num + "</title>" +
-      "<style>body{font-family:sans-serif;font-size:13px;margin:24px}h1{font-size:18px}" +
-      "table{width:100%;border-collapse:collapse;margin-top:12px}th,td{padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:left}" +
-      "th{background:#f1f5f9;font-size:12px;color:#6b7280}.total-box{margin-top:12px;text-align:right;font-size:14px}" +
-      ".grand-total{font-size:18px;font-weight:700;color:#d97706}</style></head><body>" +
-      "<h1>" + vEsc(appName) + " — Presupuesto N° " + vEsc(num) + "</h1>" +
-      "<p><strong>Fecha:</strong> " + new Date().toLocaleDateString("es-AR") +
-      " &nbsp; <strong>Cliente:</strong> " + vEsc(client) +
-      " &nbsp; <strong>Pago:</strong> " + vEsc(pay) + "</p>" +
-      "<table><thead><tr><th>Cód.</th><th>Artículo</th><th>Cant.</th><th>Precio</th><th>Desc%</th><th>Subtotal</th></tr></thead>" +
-      "<tbody>" + rows + "</tbody></table>" +
-      "<div class='total-box'>" +
-      (discPct ? "<div>Descuento " + discPct + "%: — $" + (subtotal-afterDisc).toLocaleString("es-AR") + "</div>" : "") +
-      (surPct  ? "<div>Recargo "  + surPct  + "%: + $" + (total-afterDisc).toLocaleString("es-AR")    + "</div>" : "") +
-      "<div class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</div></div>" +
-      (notes ? "<p style='margin-top:16px;color:#6b7280'><em>" + vEsc(notes) + "</em></p>" : "") +
+    const status  = vState.editingStatus || "borrador";
+    const STATUS_LABELS = { borrador: "Borrador", enviado: "Enviado", aceptado: "Aceptado", cancelado: "Cancelado", facturado: "Facturado" };
+
+    let subtotal = 0;
+    vState.items.forEach((it) => { subtotal += Number(it.subtotal) || 0; });
+    const afterDisc = Math.round(subtotal * (1 - discPct / 100));
+    const total = Math.round(afterDisc * (1 + surPct / 100));
+    const totalUnidades = vState.items.reduce((s, it) => s + (Math.round(Number(it.quantity)) || 0), 0);
+
+    const rows = vState.items.map((it) => {
+      const disc = Number(it.discount_percent) || 0;
+      return "<tr>" +
+        "<td class='col-cod'>" + vEsc(it.product_code || "") + "</td>" +
+        "<td class='col-prod'>" + vEsc(it.product_name || "") + "</td>" +
+        "<td class='col-cant'>" + Math.round(it.quantity) + "</td>" +
+        "<td class='col-price'>$" + Number(it.unit_price || 0).toLocaleString("es-AR") + "</td>" +
+        (disc ? "<td class='col-disc'>" + disc + "%</td>" : "<td class='col-disc' style='color:#9ca3af'>—</td>") +
+        "<td class='col-sub'>$" + Number(it.subtotal || 0).toLocaleString("es-AR") + "</td>" +
+        "</tr>";
+    }).join("");
+
+    const html = "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
+      "<title>Presupuesto " + vEsc(num) + "</title>" +
+      "<style>" +
+      "*{box-sizing:border-box}" +
+      "body{font-family:Arial,sans-serif;font-size:13px;margin:28px 32px;color:#111}" +
+      ".header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}" +
+      ".header-left h1{font-size:20px;font-weight:800;margin:0 0 2px;color:#1e3a5f}" +
+      ".header-left .status{font-size:11px;color:#6b7280;margin:0}" +
+      ".header-right{text-align:right}" +
+      ".header-right .doc-label{font-size:11px;color:#6b7280;margin:0 0 1px;text-transform:uppercase;letter-spacing:.05em}" +
+      ".header-right .doc-num{font-size:18px;font-weight:800;color:#1e3a5f;margin:0}" +
+      ".meta-row{display:flex;gap:0;border-top:2px solid #1e3a5f;border-bottom:1px solid #d1d5db;padding:8px 0;margin-bottom:0;font-size:12.5px}" +
+      ".meta-cell{flex:1;padding:0 12px;border-right:1px solid #d1d5db}" +
+      ".meta-cell:first-child{padding-left:0}" +
+      ".meta-cell:last-child{border-right:none}" +
+      ".meta-cell span{display:block;font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;margin-bottom:1px}" +
+      ".meta-cell strong{font-size:13px;color:#111}" +
+      "table{width:100%;border-collapse:collapse}" +
+      "thead tr{background:#1e3a5f}" +
+      "thead th{color:#fff;font-size:11px;font-weight:700;padding:7px 8px;text-align:left;letter-spacing:.03em;border-right:1px solid rgba(255,255,255,0.25)}" +
+      "thead th:last-child{border-right:none}" +
+      "tbody tr{border-bottom:1px solid #e5e7eb}" +
+      "tbody tr:nth-child(even){background:#f8fafc}" +
+      "tbody td{padding:6px 8px;font-size:12.5px;vertical-align:middle;border-right:1px solid #1e3a5f}" +
+      "tbody td:last-child{border-right:none}" +
+      ".col-cod{color:#6b7280;width:60px}" +
+      ".col-prod{font-weight:600}" +
+      ".col-cant{text-align:center;font-weight:700;width:52px}" +
+      ".col-price{text-align:right;width:90px;color:#374151}" +
+      ".col-disc{text-align:center;width:52px;color:#374151}" +
+      ".col-sub{text-align:right;width:90px;font-weight:700}" +
+      ".summary-row{display:flex;justify-content:flex-end;align-items:baseline;gap:24px;border-top:2px solid #1e3a5f;padding:10px 8px 0}" +
+      ".summary-meta{font-size:12px;color:#6b7280}" +
+      ".adjustments{font-size:12px;color:#6b7280;margin-top:4px;text-align:right}" +
+      ".grand-total{font-size:20px;font-weight:800;color:#1e3a5f}" +
+      ".notes{margin-top:12px;font-size:12px;color:#6b7280;font-style:italic}" +
+      "@media print{body{margin:14px 18px}}" +
+      "</style></head><body>" +
+      "<div class='header'>" +
+        "<div class='header-left'>" +
+          "<h1>" + vEsc(appName) + "</h1>" +
+          "<p class='status'>Estado: " + vEsc(STATUS_LABELS[status] || status) + "</p>" +
+        "</div>" +
+        "<div class='header-right'>" +
+          "<p class='doc-label'>Presupuesto</p>" +
+          "<p class='doc-num'>N° " + vEsc(num) + "</p>" +
+        "</div>" +
+      "</div>" +
+      "<div class='meta-row'>" +
+        "<div class='meta-cell'><span>Fecha</span><strong>" + date + "</strong></div>" +
+        "<div class='meta-cell'><span>Cliente</span><strong>" + vEsc(client) + "</strong></div>" +
+        "<div class='meta-cell'><span>Forma de pago</span><strong>" + vEsc(pay) + "</strong></div>" +
+      "</div>" +
+      "<table><thead><tr>" +
+        "<th>Cód.</th><th>Artículo</th>" +
+        "<th style='text-align:center'>Cant.</th>" +
+        "<th style='text-align:right'>Precio unit.</th>" +
+        "<th style='text-align:center'>Desc%</th>" +
+        "<th style='text-align:right'>Subtotal</th>" +
+      "</tr></thead>" +
+      "<tbody>" + (rows || "<tr><td colspan='6' style='padding:10px;color:#6b7280'>Sin artículos</td></tr>") + "</tbody>" +
+      "</table>" +
+      "<div class='summary-row'>" +
+        "<span class='summary-meta'>" + vState.items.length + " artículos &nbsp;·&nbsp; " + totalUnidades + " unidades</span>" +
+        "<span class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</span>" +
+      "</div>" +
+      (discPct || surPct ? "<div class='adjustments'>" +
+        (discPct ? "Descuento " + discPct + "%: — $" + (subtotal - afterDisc).toLocaleString("es-AR") + "&nbsp;&nbsp;" : "") +
+        (surPct  ? "Recargo "  + surPct  + "%: + $" + (total - afterDisc).toLocaleString("es-AR") : "") +
+      "</div>" : "") +
+      (notes ? "<p class='notes'>" + vEsc(notes) + "</p>" : "") +
       "</body></html>";
     vPrintHtml(html);
   });
