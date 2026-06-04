@@ -419,6 +419,26 @@ db.exec(
   "CREATE INDEX IF NOT EXISTS idx_stock_adj_date ON stock_adjustments(created_at);"
 );
 
+// ─── Pedidos de cotizacion ────────────────────────────────────────────────────
+db.exec(
+  "CREATE TABLE IF NOT EXISTS purchase_requests (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  supplier_id INTEGER REFERENCES suppliers(id)," +
+  "  notes TEXT," +
+  "  status TEXT NOT NULL DEFAULT 'borrador'," +
+  "  created_by INTEGER REFERENCES users(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE TABLE IF NOT EXISTS purchase_request_items (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  request_id INTEGER NOT NULL REFERENCES purchase_requests(id) ON DELETE CASCADE," +
+  "  product_id INTEGER REFERENCES products(id)," +
+  "  product_code TEXT NOT NULL DEFAULT ''," +
+  "  product_name TEXT NOT NULL DEFAULT ''," +
+  "  quantity INTEGER NOT NULL DEFAULT 1" +
+  ");"
+);
+
 // ─── Caja: cuentas y movimientos ─────────────────────────────────────────────
 db.exec(
   "CREATE TABLE IF NOT EXISTS cash_accounts (" +
@@ -3982,6 +4002,90 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     "  FROM purchase_items WHERE purchase_order_id = ? ORDER BY id"
   ).all(id);
   res.json({ ok: true, purchase: Object.assign({}, purchase, { items: items }) });
+});
+
+// ===== Pedidos de cotizacion =====
+
+app.get("/api/admin/purchase-requests", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT pr.*, s.name AS supplier_name," +
+    "  (SELECT COUNT(*) FROM purchase_request_items WHERE request_id = pr.id) AS items_count" +
+    "  FROM purchase_requests pr" +
+    "  LEFT JOIN suppliers s ON s.id = pr.supplier_id" +
+    "  ORDER BY pr.created_at DESC LIMIT 500"
+  ).all();
+  res.json(rows);
+});
+
+app.post("/api/admin/purchase-requests", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const supplier_id = Number(b.supplier_id) || null;
+  const notes       = String(b.notes || "").trim().slice(0, 1000) || null;
+  const items       = Array.isArray(b.items) ? b.items : [];
+  if (!items.length) return res.status(400).json({ error: "Agregar al menos un producto" });
+
+  const ins = db.prepare(
+    "INSERT INTO purchase_requests (supplier_id, notes, status, created_by) VALUES (?, ?, 'borrador', ?)"
+  );
+  const insItem = db.prepare(
+    "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity)" +
+    " VALUES (?, ?, ?, ?, ?)"
+  );
+  let newId;
+  db.transaction(() => {
+    const info = ins.run(supplier_id, notes, req.session.userId || null);
+    newId = info.lastInsertRowid;
+    for (const it of items) {
+      const pid  = Number(it.product_id) || null;
+      const code = String(it.product_code || "").trim();
+      const name = String(it.product_name || "").trim();
+      const qty  = Math.max(1, Number(it.quantity) || 1);
+      if (!name && !pid) continue;
+      insItem.run(newId, pid, code, name, qty);
+    }
+  })();
+
+  const created = db.prepare(
+    "SELECT pr.*, s.name AS supplier_name FROM purchase_requests pr" +
+    "  LEFT JOIN suppliers s ON s.id = pr.supplier_id WHERE pr.id = ?"
+  ).get(newId);
+  res.status(201).json({ ok: true, request: created });
+});
+
+app.get("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const row = db.prepare(
+    "SELECT pr.*, s.name AS supplier_name FROM purchase_requests pr" +
+    "  LEFT JOIN suppliers s ON s.id = pr.supplier_id WHERE pr.id = ?"
+  ).get(id);
+  if (!row) return res.status(404).json({ error: "No encontrado" });
+  const items = db.prepare(
+    "SELECT * FROM purchase_request_items WHERE request_id = ? ORDER BY id"
+  ).all(id);
+  res.json(Object.assign({}, row, { items }));
+});
+
+app.patch("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const b  = req.body || {};
+  const row = db.prepare("SELECT id FROM purchase_requests WHERE id = ?").get(id);
+  if (!row) return res.status(404).json({ error: "No encontrado" });
+  const allowed = ["status", "notes"];
+  const sets = []; const params = [];
+  for (const k of allowed) {
+    if (k in b) { sets.push(k + " = ?"); params.push(b[k]); }
+  }
+  if (!sets.length) return res.status(400).json({ error: "Sin campos" });
+  params.push(id);
+  db.prepare("UPDATE purchase_requests SET " + sets.join(", ") + " WHERE id = ?").run(...params);
+  res.json({ ok: true });
+});
+
+app.delete("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const info = db.prepare("DELETE FROM purchase_requests WHERE id = ?").run(id);
+  if (!info.changes) return res.status(404).json({ error: "No encontrado" });
+  res.json({ ok: true });
 });
 
 // ===== Pagos =====

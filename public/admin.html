@@ -108,6 +108,9 @@
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="proveedores" type="button">
             <span class="admin-sidebar-item-icon">🏪</span>Proveedores
           </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="cotizaciones" type="button">
+            <span class="admin-sidebar-item-icon">📋</span>Cotizaciones
+          </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="compras" type="button">
             <span class="admin-sidebar-item-icon">📥</span>Compras
           </button>
@@ -1204,6 +1207,39 @@
       </div>
     </section>
 
+    <!-- ===== TAB COTIZACIONES ===== -->
+    <section class="tab-panel" id="tab-cotizaciones" hidden>
+      <div class="admin-toolbar">
+        <select id="pcot-sup-filter" class="admin-select" title="Filtrar por proveedor">
+          <option value="all">Todos los proveedores</option>
+        </select>
+        <select id="pcot-status-filter" class="admin-select" title="Filtrar por estado">
+          <option value="all">Todos los estados</option>
+          <option value="borrador">Borrador</option>
+          <option value="enviado">Enviado</option>
+        </select>
+        <span class="admin-spacer"></span>
+        <span id="pcot-count" class="muted">…</span>
+        <button class="btn btn-primary" id="pcot-create-btn" type="button">+ Nueva cotización</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="pcot-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Proveedor</th>
+              <th>Notas</th>
+              <th>Estado</th>
+              <th class="num">Productos</th>
+              <th>Fecha</th>
+              <th style="width:80px"></th>
+            </tr>
+          </thead>
+          <tbody id="pcot-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- ===== TAB COMPRAS ===== -->
     <section class="tab-panel" id="tab-compras" hidden>
       <div class="admin-toolbar">
@@ -1955,6 +1991,82 @@
       </form>
     </div>
   </div>
+  <!-- Modal: picker de productos para cotización -->
+  <div class="admin-modal" id="pcot-picker-modal" hidden style="z-index:1300">
+    <div class="admin-modal-box" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+      <h3>Agregar productos a cotizar</h3>
+      <input type="search" id="pcot-picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="margin-bottom:10px" />
+      <div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;min-height:200px">
+        <table class="admin-table" id="pcot-picker-table">
+          <thead>
+            <tr>
+              <th style="width:34px"><input type="checkbox" id="pcot-picker-all" title="Seleccionar todos" /></th>
+              <th>Producto</th>
+              <th class="num" style="width:80px">Cant.</th>
+              <th class="num" style="width:70px">Stock</th>
+            </tr>
+          </thead>
+          <tbody id="pcot-picker-tbody">
+            <tr><td colspan="4" class="muted">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="admin-modal-foot" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span id="pcot-picker-count" class="muted small">0 seleccionados</span>
+        <span style="flex:1"></span>
+        <button type="button" class="btn" id="pcot-picker-cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="pcot-picker-confirm" disabled>Agregar seleccionados</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: crear pedido de cotización -->
+  <div class="admin-modal" id="pcot-create-modal" hidden style="z-index:1200">
+    <div class="admin-modal-box" style="max-width:680px;max-height:calc(100dvh - 32px);overflow-y:auto">
+      <h3 id="pcot-modal-title">Nueva cotización</h3>
+      <div class="admin-modal-body" style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
+            Proveedor <span class="muted" style="font-weight:400;text-transform:none">(opcional)</span>
+            <select id="pcot-form-supplier" class="admin-select" style="margin-top:4px;width:100%">
+              <option value="">Sin proveedor</option>
+            </select>
+          </label>
+          <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
+            Estado
+            <select id="pcot-form-status" class="admin-select" style="margin-top:4px;width:100%">
+              <option value="borrador">Borrador</option>
+              <option value="enviado">Enviado</option>
+            </select>
+          </label>
+        </div>
+        <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
+          Notas
+          <textarea id="pcot-form-notes" class="admin-input" rows="2" placeholder="Observaciones, condiciones, etc…" style="margin-top:4px;width:100%;resize:vertical"></textarea>
+        </label>
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">Productos a cotizar</span>
+            <button type="button" class="btn btn-primary" id="pcot-add-btn" style="font-size:12px;padding:4px 10px">+ Agregar productos</button>
+          </div>
+          <table class="admin-table" style="min-width:0">
+            <thead><tr>
+              <th>Código</th><th>Producto</th>
+              <th style="text-align:right;width:80px">Cant.</th>
+              <th style="width:32px"></th>
+            </tr></thead>
+            <tbody id="pcot-items-tbody"><tr><td colspan="4" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="admin-modal-foot" style="position:sticky;bottom:0;background:#fff;padding-top:12px">
+        <p id="pcot-create-msg" class="config-msg" style="min-height:16px;margin:0 auto 0 0"></p>
+        <button type="button" class="btn" id="pcot-cancel-btn">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="pcot-save-btn">Guardar cotización</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal catálogo PDF -->
   <div class="admin-modal" id="catalog-modal" hidden>
     <div class="admin-modal-box" style="max-width:540px">
@@ -2422,6 +2534,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260604a"></script>
+  <script src="/js/admin.js?v=20260604b"></script>
 </body>
 </html>

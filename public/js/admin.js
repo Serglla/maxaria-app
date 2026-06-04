@@ -262,6 +262,29 @@
 
     purAddSupBtn: document.getElementById("pur-add-sup-btn"),
 
+    // Cotizaciones (pedidos de cotización)
+    pcotCreateBtn: document.getElementById("pcot-create-btn"),
+    pcotCreateModal: document.getElementById("pcot-create-modal"),
+    pcotModalTitle: document.getElementById("pcot-modal-title"),
+    pcotTbody: document.getElementById("pcot-tbody"),
+    pcotCount: document.getElementById("pcot-count"),
+    pcotSupFilter: document.getElementById("pcot-sup-filter"),
+    pcotStatusFilter: document.getElementById("pcot-status-filter"),
+    pcotFormSupplier: document.getElementById("pcot-form-supplier"),
+    pcotFormStatus: document.getElementById("pcot-form-status"),
+    pcotFormNotes: document.getElementById("pcot-form-notes"),
+    pcotItemsTbody: document.getElementById("pcot-items-tbody"),
+    pcotAddBtn: document.getElementById("pcot-add-btn"),
+    pcotSaveBtn: document.getElementById("pcot-save-btn"),
+    pcotCancelBtn: document.getElementById("pcot-cancel-btn"),
+    pcotCreateMsg: document.getElementById("pcot-create-msg"),
+    pcotPickerModal: document.getElementById("pcot-picker-modal"),
+    pcotPickerSearch: document.getElementById("pcot-picker-search"),
+    pcotPickerAll: document.getElementById("pcot-picker-all"),
+    pcotPickerTbody: document.getElementById("pcot-picker-tbody"),
+    pcotPickerCount: document.getElementById("pcot-picker-count"),
+    pcotPickerConfirm: document.getElementById("pcot-picker-confirm"),
+    pcotPickerCancel: document.getElementById("pcot-picker-cancel"),
     // Compras
     purSupFilter: document.getElementById("pur-sup-filter"),
     purMonthFilter: document.getElementById("pur-month-filter"),
@@ -409,6 +432,10 @@
     suppliers: [],
     suppliersLoaded: false,
     supplierCreatedFromPurchase: false,
+    cotizaciones: [],
+    cotizacionesLoaded: false,
+    cotizacionItems: [],       // items del modal de creación
+    cotPickerSelected: new Map(), // product_id -> {qty, product}
     purchases: [],
     purchasesLoaded: false,
     payments: [],
@@ -850,6 +877,7 @@
         loadEntregasQueue(); // siempre recargar la cola "para entregar"
       }
       if (tab === "proveedores" && !state.suppliersLoaded) loadSuppliers();
+      if (tab === "cotizaciones") loadCotizaciones();
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
@@ -5059,6 +5087,354 @@
       }
     });
   }
+
+  // ========== COTIZACIONES ==========
+
+  async function loadCotizaciones() {
+    try {
+      if (els.pcotTbody) els.pcotTbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando…</td></tr>';
+      state.cotizaciones = await api("/api/admin/purchase-requests");
+      state.cotizacionesLoaded = true;
+      if (!state.suppliersLoaded) {
+        try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+      }
+      populatePcotSupFilter();
+      renderCotizaciones();
+    } catch (e) {
+      if (els.pcotTbody) els.pcotTbody.innerHTML = '<tr><td colspan="7" class="muted">Error cargando cotizaciones</td></tr>';
+    }
+  }
+
+  function populatePcotSupFilter() {
+    if (!els.pcotSupFilter) return;
+    const current = els.pcotSupFilter.value;
+    const seen = new Map();
+    state.cotizaciones.forEach((c) => {
+      if (c.supplier_id && !seen.has(c.supplier_id))
+        seen.set(c.supplier_id, c.supplier_name || ("Proveedor #" + c.supplier_id));
+    });
+    els.pcotSupFilter.innerHTML = '<option value="all">Todos los proveedores</option>';
+    Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1], "es")).forEach(([id, name]) => {
+      const o = document.createElement("option"); o.value = String(id); o.textContent = name;
+      els.pcotSupFilter.appendChild(o);
+    });
+    if (current && els.pcotSupFilter.querySelector('[value="' + current + '"]')) els.pcotSupFilter.value = current;
+  }
+
+  function renderCotizaciones() {
+    if (!els.pcotTbody) return;
+    const supF    = els.pcotSupFilter    ? els.pcotSupFilter.value    : "all";
+    const statusF = els.pcotStatusFilter ? els.pcotStatusFilter.value : "all";
+    let list = state.cotizaciones;
+    if (supF    !== "all") list = list.filter((c) => String(c.supplier_id) === supF);
+    if (statusF !== "all") list = list.filter((c) => c.status === statusF);
+    if (els.pcotCount) els.pcotCount.textContent = list.length + (list.length === 1 ? " cotización" : " cotizaciones");
+    if (!list.length) {
+      els.pcotTbody.innerHTML = '<tr><td colspan="7" class="muted">Sin cotizaciones.</td></tr>';
+      return;
+    }
+    els.pcotTbody.innerHTML = list.map(cotizacionRowHtml).join("");
+    els.pcotTbody.querySelectorAll("tr.pcot-row").forEach((tr) => {
+      tr.addEventListener("click", () => toggleCotizacionDetail(tr));
+    });
+    els.pcotTbody.querySelectorAll(".pcot-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const id = Number(btn.dataset.id);
+        if (!confirm("¿Eliminar cotización #" + id + "?")) return;
+        try {
+          await api("/api/admin/purchase-requests/" + id, { method: "DELETE" });
+          state.cotizaciones = state.cotizaciones.filter((c) => c.id !== id);
+          state.cotizacionesLoaded = false;
+          renderCotizaciones();
+          showToast("Cotización eliminada");
+        } catch (err) { showToast("Error: " + err.message, "err"); }
+      });
+    });
+  }
+
+  function cotizacionRowHtml(c) {
+    const statusChip = c.status === "enviado"
+      ? '<span class="tag tag-unified" style="background:#22c55e;color:#fff">Enviado</span>'
+      : '<span class="tag" style="background:#f3f4f6;color:#6b7280">Borrador</span>';
+    return '<tr class="pcot-row pur-row" data-id="' + c.id + '" style="cursor:pointer">' +
+      '<td class="cell-code">#' + c.id + '</td>' +
+      '<td>' + escapeHtml(c.supplier_name || "—") + '</td>' +
+      '<td class="muted small-cell">' + escapeHtml((c.notes || "").slice(0, 60) || "—") + '</td>' +
+      '<td>' + statusChip + '</td>' +
+      '<td class="num">' + (c.items_count || 0) + '</td>' +
+      '<td class="muted small-cell">' + formatDate(c.created_at) + '</td>' +
+      '<td style="text-align:center"><button class="btn pcot-delete-btn" data-id="' + c.id + '" style="padding:2px 8px;font-size:12px" title="Eliminar">🗑</button></td>' +
+    '</tr>' +
+    '<tr class="pcot-detail-row" data-for="' + c.id + '" hidden>' +
+      '<td colspan="7" class="pur-detail-cell"><span class="muted">Cargando…</span></td>' +
+    '</tr>';
+  }
+
+  async function toggleCotizacionDetail(tr) {
+    const id = Number(tr.dataset.id);
+    const detailRow = els.pcotTbody.querySelector('tr.pcot-detail-row[data-for="' + id + '"]');
+    if (!detailRow) return;
+    if (!detailRow.hidden) { detailRow.hidden = true; return; }
+    detailRow.hidden = false;
+    if (detailRow.dataset.loaded) return;
+    try {
+      const data = await api("/api/admin/purchase-requests/" + id);
+      detailRow.dataset.loaded = "1";
+      if (!data.items || !data.items.length) {
+        detailRow.querySelector("td").innerHTML = '<span class="muted">Sin productos.</span>'; return;
+      }
+      const rows = data.items.map((it) =>
+        '<tr><td class="cell-code">' + escapeHtml(it.product_code || "—") + '</td>' +
+        '<td>' + escapeHtml(it.product_name) + '</td>' +
+        '<td class="num">' + it.quantity + '</td></tr>'
+      ).join("");
+      detailRow.querySelector("td").innerHTML =
+        '<table class="admin-table" style="margin:4px 0"><thead><tr>' +
+        '<th>Código</th><th>Producto</th><th class="num">Cant.</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+    } catch (_) {
+      detailRow.querySelector("td").innerHTML = '<span class="muted">Error cargando detalle.</span>';
+    }
+  }
+
+  function populatePcotFormSupplier() {
+    if (!els.pcotFormSupplier) return;
+    els.pcotFormSupplier.innerHTML = '<option value="">Sin proveedor</option>';
+    state.suppliers.filter((s) => s.active).forEach((s) => {
+      const o = document.createElement("option"); o.value = String(s.id); o.textContent = s.name;
+      els.pcotFormSupplier.appendChild(o);
+    });
+  }
+
+  function renderCotizacionItems() {
+    if (!els.pcotItemsTbody) return;
+    if (!state.cotizacionItems.length) {
+      els.pcotItemsTbody.innerHTML = '<tr><td colspan="4" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr>';
+      return;
+    }
+    els.pcotItemsTbody.innerHTML = state.cotizacionItems.map((it, idx) =>
+      '<tr>' +
+      '<td class="cell-code">' + escapeHtml(it.product_code || "—") + '</td>' +
+      '<td>' + escapeHtml(it.product_name) + '</td>' +
+      '<td style="text-align:right;width:80px">' +
+        '<input type="number" min="1" value="' + it.quantity + '" style="width:60px;text-align:right" ' +
+        'data-cot-idx="' + idx + '" class="admin-input pcot-qty-input">' +
+      '</td>' +
+      '<td><button type="button" class="btn pcot-remove-item" data-cot-idx="' + idx + '" ' +
+        'style="padding:2px 6px;font-size:12px">✕</button></td>' +
+      '</tr>'
+    ).join("");
+    // qty change
+    els.pcotItemsTbody.querySelectorAll(".pcot-qty-input").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        const i = Number(inp.dataset.cotIdx);
+        state.cotizacionItems[i].quantity = Math.max(1, Number(inp.value) || 1);
+      });
+    });
+    // remove
+    els.pcotItemsTbody.querySelectorAll(".pcot-remove-item").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const i = Number(btn.dataset.cotIdx);
+        state.cotizacionItems.splice(i, 1);
+        renderCotizacionItems();
+      });
+    });
+  }
+
+  // Picker de productos para cotizaciones
+  function renderCotPickerRows(filter) {
+    if (!els.pcotPickerTbody) return;
+    const q = (filter || "").toLowerCase().trim();
+    const prods = q
+      ? state.allProducts.filter((p) => p.name.toLowerCase().includes(q) || (p.code || "").toLowerCase().includes(q))
+      : state.allProducts;
+    if (!prods.length) {
+      els.pcotPickerTbody.innerHTML = '<tr><td colspan="4" class="muted">Sin resultados.</td></tr>';
+      return;
+    }
+    els.pcotPickerTbody.innerHTML = prods.map((p) => {
+      const sel = state.cotPickerSelected.has(p.id);
+      const qty  = sel ? state.cotPickerSelected.get(p.id).qty : 1;
+      return '<tr class="' + (p.stock <= 0 ? "" : "") + '">' +
+        '<td style="width:34px"><input type="checkbox" class="pcot-pick-cb" data-id="' + p.id + '" ' + (sel ? "checked" : "") + '></td>' +
+        '<td>' +
+          '<span class="cell-code" style="font-size:11px;margin-right:4px">' + escapeHtml(p.code || "") + '</span>' +
+          escapeHtml(p.name) +
+        '</td>' +
+        '<td class="num" style="width:80px">' +
+          '<input type="number" min="1" value="' + qty + '" class="admin-input pcot-pick-qty" data-id="' + p.id + '" ' +
+          'style="width:60px;text-align:right">' +
+        '</td>' +
+        '<td class="num" style="width:70px;color:' + (p.stock > 0 ? "#16a34a" : "#ef4444") + '">' + p.stock + '</td>' +
+      '</tr>';
+    }).join("");
+    // checkbox wiring
+    els.pcotPickerTbody.querySelectorAll(".pcot-pick-cb").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const pid = Number(cb.dataset.id);
+        const qtyInp = els.pcotPickerTbody.querySelector('.pcot-pick-qty[data-id="' + pid + '"]');
+        const qty = Math.max(1, Number(qtyInp ? qtyInp.value : 1) || 1);
+        const prod = state.allProducts.find((p) => p.id === pid);
+        if (cb.checked) { state.cotPickerSelected.set(pid, { qty, product: prod }); }
+        else { state.cotPickerSelected.delete(pid); }
+        updateCotPickerCount();
+      });
+    });
+    // qty change updates selection
+    els.pcotPickerTbody.querySelectorAll(".pcot-pick-qty").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        const pid = Number(inp.dataset.id);
+        if (state.cotPickerSelected.has(pid)) {
+          state.cotPickerSelected.get(pid).qty = Math.max(1, Number(inp.value) || 1);
+        }
+      });
+    });
+    // select-all checkbox sync
+    if (els.pcotPickerAll) {
+      const cbs = Array.from(els.pcotPickerTbody.querySelectorAll(".pcot-pick-cb"));
+      els.pcotPickerAll.checked = cbs.length > 0 && cbs.every((c) => c.checked);
+      els.pcotPickerAll.indeterminate = !els.pcotPickerAll.checked && cbs.some((c) => c.checked);
+    }
+  }
+
+  function updateCotPickerCount() {
+    const n = state.cotPickerSelected.size;
+    if (els.pcotPickerCount) els.pcotPickerCount.textContent = n + " seleccionado" + (n !== 1 ? "s" : "");
+    if (els.pcotPickerConfirm) els.pcotPickerConfirm.disabled = n === 0;
+  }
+
+  function initCotizacionesListeners() {
+    if (!els.pcotCreateBtn) return;
+
+    // Abrir modal de creación
+    els.pcotCreateBtn.addEventListener("click", async () => {
+      state.cotizacionItems = [];
+      state.cotPickerSelected = new Map();
+      if (els.pcotFormSupplier) els.pcotFormSupplier.value = "";
+      if (els.pcotFormStatus)   els.pcotFormStatus.value = "borrador";
+      if (els.pcotFormNotes)    els.pcotFormNotes.value = "";
+      if (els.pcotCreateMsg)    { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
+      renderCotizacionItems();
+      if (!state.suppliersLoaded) {
+        try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+      }
+      populatePcotFormSupplier();
+      await ensureAllProducts();
+      if (els.pcotCreateModal) els.pcotCreateModal.hidden = false;
+    });
+
+    // Cancelar modal de creación
+    if (els.pcotCancelBtn) els.pcotCancelBtn.addEventListener("click", () => {
+      if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
+    });
+
+    // Abrir picker
+    if (els.pcotAddBtn) els.pcotAddBtn.addEventListener("click", () => {
+      state.cotPickerSelected = new Map();
+      // Pre-marcar los que ya están en la lista
+      state.cotizacionItems.forEach((it) => {
+        if (it.product_id) {
+          const prod = state.allProducts.find((p) => p.id === it.product_id);
+          state.cotPickerSelected.set(it.product_id, { qty: it.quantity, product: prod });
+        }
+      });
+      if (els.pcotPickerSearch) els.pcotPickerSearch.value = "";
+      renderCotPickerRows("");
+      updateCotPickerCount();
+      if (els.pcotPickerModal) els.pcotPickerModal.hidden = false;
+    });
+
+    // Buscar en picker
+    if (els.pcotPickerSearch) {
+      els.pcotPickerSearch.addEventListener("input", () => {
+        renderCotPickerRows(els.pcotPickerSearch.value);
+        updateCotPickerCount();
+      });
+    }
+
+    // Select-all en picker
+    if (els.pcotPickerAll) {
+      els.pcotPickerAll.addEventListener("change", () => {
+        const checked = els.pcotPickerAll.checked;
+        els.pcotPickerTbody.querySelectorAll(".pcot-pick-cb").forEach((cb) => {
+          const pid = Number(cb.dataset.id);
+          const qtyInp = els.pcotPickerTbody.querySelector('.pcot-pick-qty[data-id="' + pid + '"]');
+          const qty = Math.max(1, Number(qtyInp ? qtyInp.value : 1) || 1);
+          const prod = state.allProducts.find((p) => p.id === pid);
+          if (checked) { state.cotPickerSelected.set(pid, { qty, product: prod }); cb.checked = true; }
+          else { state.cotPickerSelected.delete(pid); cb.checked = false; }
+        });
+        updateCotPickerCount();
+      });
+    }
+
+    // Cancelar picker
+    if (els.pcotPickerCancel) els.pcotPickerCancel.addEventListener("click", () => {
+      if (els.pcotPickerModal) els.pcotPickerModal.hidden = true;
+    });
+
+    // Confirmar picker
+    if (els.pcotPickerConfirm) els.pcotPickerConfirm.addEventListener("click", () => {
+      // Mezcla seleccionados con los que ya estaban (por product_id)
+      const existing = new Map(state.cotizacionItems.map((it) => [it.product_id, it]));
+      state.cotPickerSelected.forEach(({ qty, product }, pid) => {
+        if (existing.has(pid)) { existing.get(pid).quantity = qty; }
+        else if (product) {
+          state.cotizacionItems.push({
+            product_id: product.id, product_code: product.code || "",
+            product_name: product.name, quantity: qty,
+          });
+        }
+      });
+      // Eliminar los que no están en la selección
+      state.cotizacionItems = state.cotizacionItems.filter(
+        (it) => !it.product_id || state.cotPickerSelected.has(it.product_id)
+      );
+      renderCotizacionItems();
+      if (els.pcotPickerModal) els.pcotPickerModal.hidden = true;
+    });
+
+    // Guardar cotización
+    if (els.pcotSaveBtn) els.pcotSaveBtn.addEventListener("click", async () => {
+      if (!state.cotizacionItems.length) {
+        if (els.pcotCreateMsg) { els.pcotCreateMsg.textContent = "Agregá al menos 1 producto."; els.pcotCreateMsg.className = "config-msg err"; }
+        return;
+      }
+      const supplier_id = Number(els.pcotFormSupplier ? els.pcotFormSupplier.value : 0) || null;
+      const status      = els.pcotFormStatus  ? els.pcotFormStatus.value  : "borrador";
+      const notes       = els.pcotFormNotes   ? els.pcotFormNotes.value.trim() : "";
+      const items = state.cotizacionItems.map((it) => ({
+        product_id: it.product_id, product_code: it.product_code,
+        product_name: it.product_name, quantity: it.quantity,
+      }));
+      els.pcotSaveBtn.disabled = true;
+      els.pcotSaveBtn.textContent = "Guardando…";
+      try {
+        const res = await api("/api/admin/purchase-requests", {
+          method: "POST",
+          body: JSON.stringify({ supplier_id, notes: notes || null, status, items }),
+        });
+        state.cotizaciones.unshift(Object.assign({}, res.request, { items_count: items.length }));
+        state.cotizacionesLoaded = false;
+        populatePcotSupFilter();
+        renderCotizaciones();
+        if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
+        showToast("✅ Cotización creada");
+      } catch (err) {
+        if (els.pcotCreateMsg) { els.pcotCreateMsg.textContent = "Error: " + err.message; els.pcotCreateMsg.className = "config-msg err"; }
+      } finally {
+        els.pcotSaveBtn.disabled = false;
+        els.pcotSaveBtn.textContent = "Guardar cotización";
+      }
+    });
+
+    // Filtros
+    if (els.pcotSupFilter)    els.pcotSupFilter.addEventListener("change",    renderCotizaciones);
+    if (els.pcotStatusFilter) els.pcotStatusFilter.addEventListener("change", renderCotizaciones);
+  }
+
+  initCotizacionesListeners();
 
   // ========== PAGOS ==========
 
