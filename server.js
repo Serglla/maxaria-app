@@ -4087,6 +4087,43 @@ app.patch("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+app.put("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
+  const id  = Number(req.params.id);
+  const b   = req.body || {};
+  const row = db.prepare("SELECT id FROM purchase_requests WHERE id = ?").get(id);
+  if (!row) return res.status(404).json({ error: "No encontrado" });
+
+  const supplier_id = Number(b.supplier_id) || null;
+  const notes       = String(b.notes || "").trim().slice(0, 1000) || null;
+  const status      = ["borrador","enviado"].includes(b.status) ? b.status : "borrador";
+  const items       = Array.isArray(b.items) ? b.items : [];
+  if (!items.length) return res.status(400).json({ error: "Agregar al menos un producto" });
+
+  const delItems = db.prepare("DELETE FROM purchase_request_items WHERE request_id = ?");
+  const insItem  = db.prepare(
+    "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity, unit_price)" +
+    " VALUES (?, ?, ?, ?, ?, ?)"
+  );
+  db.transaction(() => {
+    db.prepare("UPDATE purchase_requests SET supplier_id=?, notes=?, status=? WHERE id=?").run(supplier_id, notes, status, id);
+    delItems.run(id);
+    for (const it of items) {
+      const pid   = Number(it.product_id) || null;
+      const code  = String(it.product_code || "").trim();
+      const name  = String(it.product_name || "").trim();
+      const qty   = Math.max(1, Number(it.quantity) || 1);
+      const price = Number(it.unit_price) || null;
+      if (!name && !pid) continue;
+      insItem.run(id, pid, code, name, qty, price);
+    }
+  })();
+  const updated = db.prepare(
+    "SELECT pr.*, s.name AS supplier_name FROM purchase_requests pr" +
+    "  LEFT JOIN suppliers s ON s.id = pr.supplier_id WHERE pr.id = ?"
+  ).get(id);
+  res.json({ ok: true, request: updated });
+});
+
 app.delete("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   const info = db.prepare("DELETE FROM purchase_requests WHERE id = ?").run(id);

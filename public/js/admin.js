@@ -277,6 +277,8 @@
     pcotAddBtn: document.getElementById("pcot-add-btn"),
     pcotSaveBtn: document.getElementById("pcot-save-btn"),
     pcotCancelBtn: document.getElementById("pcot-cancel-btn"),
+    pcotConvertBtn: document.getElementById("pcot-convert-btn"),
+    pcotItemsTfoot: document.getElementById("pcot-items-tfoot"),
     pcotCreateMsg: document.getElementById("pcot-create-msg"),
     pcotPickerModal: document.getElementById("pcot-picker-modal"),
     pcotPickerSearch: document.getElementById("pcot-picker-search"),
@@ -440,6 +442,7 @@
     cotizacionesLoaded: false,
     cotizacionItems: [],       // items del modal de creación
     cotPickerSelected: new Map(), // product_id -> {qty, product}
+    editingCotizacionId: null, // null = nueva, número = editar existente
     purchases: [],
     purchasesLoaded: false,
     payments: [],
@@ -5153,6 +5156,12 @@
     els.pcotTbody.querySelectorAll("tr.pcot-row").forEach((tr) => {
       tr.addEventListener("click", () => toggleCotizacionDetail(tr));
     });
+    els.pcotTbody.querySelectorAll(".pcot-edit-btn").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await openEditCotizacion(Number(btn.dataset.id));
+      });
+    });
     els.pcotTbody.querySelectorAll(".pcot-delete-btn").forEach((btn) => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
@@ -5180,7 +5189,10 @@
       '<td>' + statusChip + '</td>' +
       '<td class="num">' + (c.items_count || 0) + '</td>' +
       '<td class="muted small-cell">' + formatDate(c.created_at) + '</td>' +
-      '<td style="text-align:center"><button class="btn pcot-delete-btn" data-id="' + c.id + '" style="padding:2px 8px;font-size:12px" title="Eliminar">🗑</button></td>' +
+      '<td style="text-align:center;white-space:nowrap">' +
+        '<button class="btn pcot-edit-btn" data-id="' + c.id + '" style="padding:2px 7px;font-size:12px;margin-right:3px" title="Editar">✏️</button>' +
+        '<button class="btn pcot-delete-btn" data-id="' + c.id + '" style="padding:2px 7px;font-size:12px" title="Eliminar">🗑</button>' +
+      '</td>' +
     '</tr>' +
     '<tr class="pcot-detail-row" data-for="' + c.id + '" hidden>' +
       '<td colspan="7" class="pur-detail-cell"><span class="muted">Cargando…</span></td>' +
@@ -5226,35 +5238,70 @@
   function renderCotizacionItems() {
     if (!els.pcotItemsTbody) return;
     if (!state.cotizacionItems.length) {
-      els.pcotItemsTbody.innerHTML = '<tr><td colspan="6" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr>';
+      els.pcotItemsTbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr>';
+      if (els.pcotItemsTfoot) els.pcotItemsTfoot.innerHTML = "";
       return;
     }
+    let totalSubtotal = 0, totalDiff = 0;
     els.pcotItemsTbody.innerHTML = state.cotizacionItems.map((it, idx) => {
-      const upb = it.units_per_bulto > 1 ? it.units_per_bulto : 0;
-      const bultos = upb ? Math.ceil(it.quantity / upb) : null;
-      const bultoCell = upb
-        ? '<td style="text-align:center">' +
-            '<input type="number" min="1" value="' + bultos + '" style="width:52px;text-align:center" ' +
-            'data-cot-idx="' + idx + '" class="admin-input pcot-bulto-input" title="' + upb + ' und/bulto">' +
-            '<div style="font-size:10px;color:#9ca3af;margin-top:1px">' + upb + ' und/bulto</div>' +
-          '</td>'
-        : '<td style="text-align:center;color:#d1d5db">—</td>';
+      const upb      = it.units_per_bulto || 1;
+      const bultos   = upb > 1 ? Math.ceil(it.quantity / upb) : "";
+      const costoAct = it.current_cost || 0;
+      const precio   = it.unit_price || 0;
+      const subtotal = precio * it.quantity;
+      const diffUnit = precio - costoAct;
+      const diffTotal = diffUnit * it.quantity;
+      const diffPct  = costoAct > 0 ? ((diffUnit / costoAct) * 100).toFixed(1) : null;
+      totalSubtotal += subtotal;
+      totalDiff     += diffTotal;
+      const diffColor = diffUnit > 0 ? "#ef4444" : diffUnit < 0 ? "#16a34a" : "#9ca3af";
+      const diffLabel = (diffUnit >= 0 ? "+" : "") + fmtPrice(diffTotal) +
+        (diffPct !== null ? ' <span style="font-size:10px">(' + (diffUnit >= 0 ? "+" : "") + diffPct + '%)</span>' : "");
+      const bultoCell =
+        '<td style="text-align:center;white-space:nowrap">' +
+          '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">' +
+            '<div style="display:flex;align-items:center;gap:3px">' +
+              '<input type="number" min="1" step="1" value="' + upb + '" ' +
+              'style="width:44px;text-align:center;font-size:12px" ' +
+              'data-cot-idx="' + idx + '" class="admin-input pcot-upb-input" title="Unidades por bulto">' +
+              '<span style="font-size:10px;color:#9ca3af">und</span>' +
+            '</div>' +
+            (upb > 1 ? '<div style="font-size:11px;color:#f59e0b;font-weight:600">= ' + bultos + ' bulto' + (bultos !== 1 ? 's' : '') + '</div>' : '<div style="font-size:10px;color:#d1d5db">—</div>') +
+          '</div>' +
+        '</td>';
       return '<tr>' +
         '<td class="cell-code">' + escapeHtml(it.product_code || "—") + '</td>' +
         '<td>' + escapeHtml(it.product_name) + '</td>' +
+        '<td style="text-align:right;color:#6b7280">' + (costoAct ? fmtPrice(costoAct) : '—') + '</td>' +
         '<td style="text-align:right">' +
           '<input type="number" min="0" step="1" value="' + (it.unit_price || "") + '" placeholder="0" ' +
           'style="width:80px;text-align:right" data-cot-idx="' + idx + '" class="admin-input pcot-price-input">' +
         '</td>' +
         '<td style="text-align:right">' +
-          '<input type="number" min="1" value="' + it.quantity + '" style="width:60px;text-align:right" ' +
+          '<input type="number" min="1" value="' + it.quantity + '" style="width:55px;text-align:right" ' +
           'data-cot-idx="' + idx + '" class="admin-input pcot-qty-input">' +
         '</td>' +
+        '<td style="text-align:right;font-weight:600">' + (precio ? fmtPrice(subtotal) : '—') + '</td>' +
+        '<td style="text-align:right;font-weight:600;color:' + diffColor + '">' + (precio && costoAct ? diffLabel : '—') + '</td>' +
         bultoCell +
         '<td><button type="button" class="btn pcot-remove-item" data-cot-idx="' + idx + '" ' +
           'style="padding:2px 6px;font-size:12px">✕</button></td>' +
         '</tr>';
     }).join("");
+
+    // Tfoot con totales
+    if (els.pcotItemsTfoot) {
+      const totalDiffColor = totalDiff > 0 ? "#ef4444" : totalDiff < 0 ? "#16a34a" : "#9ca3af";
+      els.pcotItemsTfoot.innerHTML =
+        '<tr style="background:#f8fafc;font-weight:700">' +
+        '<td colspan="5" style="text-align:right;padding:6px 8px">Total</td>' +
+        '<td style="text-align:right;padding:6px 8px">' + fmtPrice(totalSubtotal) + '</td>' +
+        '<td style="text-align:right;padding:6px 8px;color:' + totalDiffColor + '">' +
+          (totalDiff !== 0 ? (totalDiff > 0 ? "+" : "") + fmtPrice(totalDiff) : "—") +
+        '</td>' +
+        '<td colspan="2"></td>' +
+        '</tr>';
+    }
 
     // precio change
     els.pcotItemsTbody.querySelectorAll(".pcot-price-input").forEach((inp) => {
@@ -5263,29 +5310,35 @@
         state.cotizacionItems[i].unit_price = Number(inp.value) || null;
       });
     });
-    // qty change → actualiza bultos display
+    // qty change → re-render para actualizar el badge de bultos
     els.pcotItemsTbody.querySelectorAll(".pcot-qty-input").forEach((inp) => {
       inp.addEventListener("change", () => {
         const i = Number(inp.dataset.cotIdx);
         state.cotizacionItems[i].quantity = Math.max(1, Number(inp.value) || 1);
-        // sincronizar campo bultos si existe
-        const bultoInp = els.pcotItemsTbody.querySelector('.pcot-bulto-input[data-cot-idx="' + i + '"]');
-        if (bultoInp) {
-          const upb = state.cotizacionItems[i].units_per_bulto || 1;
-          bultoInp.value = Math.ceil(state.cotizacionItems[i].quantity / upb);
-        }
+        renderCotizacionItems();
       });
     });
-    // bultos change → actualiza qty
-    els.pcotItemsTbody.querySelectorAll(".pcot-bulto-input").forEach((inp) => {
+    // und/bulto change → guarda en item + en producto + re-render
+    els.pcotItemsTbody.querySelectorAll(".pcot-upb-input").forEach((inp) => {
       inp.addEventListener("change", () => {
         const i = Number(inp.dataset.cotIdx);
-        const upb = state.cotizacionItems[i].units_per_bulto || 1;
-        const bultos = Math.max(1, Number(inp.value) || 1);
-        inp.value = bultos;
-        state.cotizacionItems[i].quantity = bultos * upb;
-        const qtyInp = els.pcotItemsTbody.querySelector('.pcot-qty-input[data-cot-idx="' + i + '"]');
-        if (qtyInp) qtyInp.value = state.cotizacionItems[i].quantity;
+        const upb = Math.max(1, Number(inp.value) || 1);
+        state.cotizacionItems[i].units_per_bulto = upb;
+        // Persistir en el producto del cache
+        const pid = state.cotizacionItems[i].product_id;
+        if (pid) {
+          const ap = (state.allProducts || []).find((p) => p.id === pid);
+          if (ap) ap.units_per_bulto = upb;
+          const sp = (state.products || []).find((p) => p.id === pid);
+          if (sp) sp.units_per_bulto = upb;
+          // Guardar en el servidor
+          api("/api/admin/products/" + pid, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ units_per_bulto: upb }),
+          }).catch(() => {});
+        }
+        renderCotizacionItems();
       });
     });
     // remove
@@ -5357,17 +5410,51 @@
     if (els.pcotPickerConfirm) els.pcotPickerConfirm.disabled = n === 0;
   }
 
+  async function openEditCotizacion(id) {
+    try {
+      const data = await api("/api/admin/purchase-requests/" + id);
+      state.editingCotizacionId = id;
+      state.cotizacionItems = (data.items || []).map((it) => {
+        const prod = (state.allProducts || []).find((p) => p.id === it.product_id);
+        return {
+          product_id: it.product_id, product_code: it.product_code,
+          product_name: it.product_name, quantity: it.quantity,
+          unit_price: it.unit_price || null,
+          current_cost: prod ? (prod.cost || 0) : 0,
+          units_per_bulto: prod ? (prod.units_per_bulto || 1) : 1,
+        };
+      });
+      state.cotPickerSelected = new Map();
+      if (els.pcotModalTitle) els.pcotModalTitle.textContent = "Editar cotización #" + id;
+      if (els.pcotFormStatus)   els.pcotFormStatus.value = data.status || "borrador";
+      if (els.pcotFormNotes)    els.pcotFormNotes.value  = data.notes  || "";
+      if (els.pcotCreateMsg)    { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
+      if (els.pcotConvertBtn)   els.pcotConvertBtn.hidden = false;
+      if (!state.suppliersLoaded) {
+        try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+      }
+      populatePcotFormSupplier();
+      if (els.pcotFormSupplier) els.pcotFormSupplier.value = String(data.supplier_id || "");
+      await ensureAllProducts();
+      renderCotizacionItems();
+      if (els.pcotCreateModal) els.pcotCreateModal.hidden = false;
+    } catch (err) { showToast("Error: " + err.message, "err"); }
+  }
+
   function initCotizacionesListeners() {
     if (!els.pcotCreateBtn) return;
 
     // Abrir modal de creación
     els.pcotCreateBtn.addEventListener("click", async () => {
+      state.editingCotizacionId = null;
       state.cotizacionItems = [];
       state.cotPickerSelected = new Map();
+      if (els.pcotModalTitle)   els.pcotModalTitle.textContent = "Nueva cotización";
       if (els.pcotFormSupplier) els.pcotFormSupplier.value = "";
       if (els.pcotFormStatus)   els.pcotFormStatus.value = "borrador";
       if (els.pcotFormNotes)    els.pcotFormNotes.value = "";
       if (els.pcotCreateMsg)    { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
+      if (els.pcotConvertBtn)   els.pcotConvertBtn.hidden = true;
       renderCotizacionItems();
       if (!state.suppliersLoaded) {
         try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
@@ -5405,7 +5492,7 @@
       state.cotizacionItems.forEach((it) => {
         if (it.product_id) {
           const prod = state.allProducts.find((p) => p.id === it.product_id);
-          state.cotPickerSelected.set(it.product_id, { qty: it.quantity, product: prod });
+          state.cotPickerSelected.set(it.product_id, { qty: it.quantity, product: prod, existingPrice: it.unit_price });
         }
       });
       if (els.pcotPickerSearch) els.pcotPickerSearch.value = "";
@@ -5454,6 +5541,23 @@
       });
     }
 
+    // Tipear cantidad marca el checkbox y guarda la cantidad (igual que pur-picker)
+    if (els.pcotPickerModal) {
+      els.pcotPickerModal.addEventListener("input", (e) => {
+        if (!e.target.classList.contains("pcot-pick-qty")) return;
+        const pid = Number(e.target.dataset.id);
+        const raw = e.target.value;
+        if (raw === "") return;
+        const q = Math.max(1, Math.floor(Number(raw) || 0));
+        const prod = state.allProducts.find((p) => p.id === pid);
+        state.cotPickerSelected.set(pid, { qty: q, product: prod });
+        const tr = e.target.closest("tr[data-pid]");
+        const cb = tr ? tr.querySelector(".pcot-pick-cb") : null;
+        if (cb && !cb.checked) cb.checked = true;
+        updateCotPickerCount();
+      });
+    }
+
     // Select-all en picker
     if (els.pcotPickerAll) {
       els.pcotPickerAll.addEventListener("change", () => {
@@ -5479,14 +5583,15 @@
     if (els.pcotPickerConfirm) els.pcotPickerConfirm.addEventListener("click", () => {
       // Mezcla seleccionados con los que ya estaban (por product_id)
       const existing = new Map(state.cotizacionItems.map((it) => [it.product_id, it]));
-      state.cotPickerSelected.forEach(({ qty, product }, pid) => {
+      state.cotPickerSelected.forEach(({ qty, product, existingPrice }, pid) => {
         if (existing.has(pid)) { existing.get(pid).quantity = qty; }
         else if (product) {
           state.cotizacionItems.push({
             product_id: product.id, product_code: product.code || "",
             product_name: product.name, quantity: qty,
             units_per_bulto: product.units_per_bulto || 1,
-            unit_price: null,
+            unit_price: existingPrice != null ? existingPrice : (product.cost || null),
+            current_cost: product.cost || 0,
           });
         }
       });
@@ -5512,19 +5617,25 @@
         product_name: it.product_name, quantity: it.quantity,
         unit_price: it.unit_price || null,
       }));
+      const isEdit   = !!state.editingCotizacionId;
+      const url      = isEdit ? "/api/admin/purchase-requests/" + state.editingCotizacionId : "/api/admin/purchase-requests";
+      const method   = isEdit ? "PUT" : "POST";
       els.pcotSaveBtn.disabled = true;
       els.pcotSaveBtn.textContent = "Guardando…";
       try {
-        const res = await api("/api/admin/purchase-requests", {
-          method: "POST",
-          body: JSON.stringify({ supplier_id, notes: notes || null, status, items }),
-        });
-        state.cotizaciones.unshift(Object.assign({}, res.request, { items_count: items.length }));
+        const res = await api(url, { method, body: JSON.stringify({ supplier_id, notes: notes || null, status, items }) });
+        const updated = Object.assign({}, res.request, { items_count: items.length });
+        if (isEdit) {
+          const idx = state.cotizaciones.findIndex((c) => c.id === state.editingCotizacionId);
+          if (idx >= 0) state.cotizaciones[idx] = updated; else state.cotizaciones.unshift(updated);
+        } else {
+          state.cotizaciones.unshift(updated);
+        }
         state.cotizacionesLoaded = false;
         populatePcotSupFilter();
         renderCotizaciones();
         if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
-        showToast("✅ Cotización creada");
+        showToast("✅ Cotización " + (isEdit ? "actualizada" : "creada"));
       } catch (err) {
         if (els.pcotCreateMsg) { els.pcotCreateMsg.textContent = "Error: " + err.message; els.pcotCreateMsg.className = "config-msg err"; }
       } finally {
@@ -5532,6 +5643,48 @@
         els.pcotSaveBtn.textContent = "Guardar cotización";
       }
     });
+
+    // Convertir en Compra
+    if (els.pcotConvertBtn) {
+      els.pcotConvertBtn.addEventListener("click", async () => {
+        if (!state.cotizacionItems.length) return;
+        // Guardar primero si hay cambios
+        if (els.pcotCreateMsg) { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
+        // Cerrar modal cotización y abrir modal de compra pre-rellenado
+        if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
+        // Esperar a que el modal de compra esté listo
+        state.purchaseItems = state.cotizacionItems.map((it) => ({
+          product_id:   it.product_id,
+          product_code: it.product_code,
+          product_name: it.product_name,
+          quantity:     it.quantity,
+          unit_cost:    it.unit_price || 0,
+          subtotal:     (it.unit_price || 0) * it.quantity,
+        }));
+        if (!state.suppliersLoaded) {
+          try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+        }
+        populatePurchaseSupplierSelect();
+        if (els.purchaseCreateForm) els.purchaseCreateForm.reset();
+        if (els.purchaseCreateMsg) els.purchaseCreateMsg.textContent = "";
+        // Pre-seleccionar proveedor
+        const supId = els.pcotFormSupplier ? els.pcotFormSupplier.value : "";
+        if (supId && els.purFormSupplier) els.purFormSupplier.value = supId;
+        // Fecha default = ahora
+        if (els.purchaseCreateForm) {
+          const dtInput = els.purchaseCreateForm.querySelector('[name="received_at"]');
+          if (dtInput) {
+            const now = new Date();
+            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+            dtInput.value = now.toISOString().slice(0, 16);
+          }
+        }
+        if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = "Nueva compra (desde cotización)";
+        renderPurchaseItems();
+        if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = false;
+        showToast("Cotización convertida — revisá y guardá la compra");
+      });
+    }
 
     // Filtros
     if (els.pcotSupFilter)    els.pcotSupFilter.addEventListener("change",    renderCotizaciones);
