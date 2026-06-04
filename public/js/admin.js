@@ -2676,7 +2676,7 @@
     m.addEventListener("click", (e) => {
       if (e.target.matches("[data-close]")) {
         m.hidden = true;
-        if (m.id === "supplier-create-modal") { state.supplierCreatedFromPurchase = false; state.supplierCreatedFromCotizacion = false; }
+        if (m.id === "supplier-create-modal") { state.supplierCreatedFromPurchase = false; state.supplierCreatedFromCotizacion = false; m.style.zIndex = ""; }
         if (m.id === "purchase-create-modal") resetPurchaseModal();
         if (m.id === "new-product-modal") { m.style.zIndex = ""; npForPurchase = false; npForCotizacion = false; }
       }
@@ -2687,6 +2687,7 @@
     document.querySelectorAll(".admin-modal:not([hidden])").forEach((m) => { m.hidden = true; });
     state.supplierCreatedFromPurchase = false;
     state.supplierCreatedFromCotizacion = false;
+    if (els.supplierCreateModal) els.supplierCreateModal.style.zIndex = "";
     resetPurchaseModal();
     if (newProdModal) newProdModal.style.zIndex = "";
     npForPurchase = false;
@@ -4508,6 +4509,7 @@
         // Si se creó desde el modal de cotización, actualizar su select y auto-seleccionarlo
         if (state.supplierCreatedFromCotizacion) {
           state.supplierCreatedFromCotizacion = false;
+          if (els.supplierCreateModal) els.supplierCreateModal.style.zIndex = "";
           populatePcotFormSupplier();
           if (els.pcotFormSupplier) els.pcotFormSupplier.value = String(out.supplier.id);
         }
@@ -5305,23 +5307,29 @@
     if (q)   prods = prods.filter((p) => p.name.toLowerCase().includes(q) || (p.code || "").toLowerCase().includes(q));
     if (cat) prods = prods.filter((p) => String(p.category_id) === cat);
     if (!prods.length) {
-      els.pcotPickerTbody.innerHTML = '<tr><td colspan="4" class="muted">Sin resultados.</td></tr>';
+      els.pcotPickerTbody.innerHTML = '<tr><td colspan="3" class="muted">Sin resultados.</td></tr>';
       return;
     }
     els.pcotPickerTbody.innerHTML = prods.map((p) => {
       const sel = state.cotPickerSelected.has(p.id);
-      const qty  = sel ? state.cotPickerSelected.get(p.id).qty : 1;
-      return '<tr class="' + (p.stock <= 0 ? "" : "") + '">' +
+      const qty = sel ? state.cotPickerSelected.get(p.id).qty : 1;
+      const stockColor = p.stock > 0 ? "#16a34a" : "#ef4444";
+      const stockLabel = "Stock: " + (p.stock || 0);
+      return '<tr>' +
         '<td style="width:34px"><input type="checkbox" class="pcot-pick-cb" data-id="' + p.id + '" ' + (sel ? "checked" : "") + '></td>' +
         '<td>' +
-          '<span class="cell-code" style="font-size:11px;margin-right:4px">' + escapeHtml(p.code || "") + '</span>' +
-          escapeHtml(p.name) +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+            '<div>' +
+              '<span class="cell-code" style="font-size:11px;margin-right:4px">' + escapeHtml(p.code || "") + '</span>' +
+              escapeHtml(p.name) +
+            '</div>' +
+            '<span style="flex-shrink:0;font-size:12px;font-weight:600;color:' + stockColor + ';white-space:nowrap">' + stockLabel + '</span>' +
+          '</div>' +
         '</td>' +
         '<td class="num" style="width:80px">' +
           '<input type="number" min="1" value="' + qty + '" class="admin-input pcot-pick-qty" data-id="' + p.id + '" ' +
           'style="width:60px;text-align:right">' +
         '</td>' +
-        '<td class="num" style="width:70px;color:' + (p.stock > 0 ? "#16a34a" : "#ef4444") + '">' + p.stock + '</td>' +
       '</tr>';
     }).join("");
     // checkbox wiring
@@ -5390,7 +5398,10 @@
         state.supplierCreatedFromCotizacion = true;
         if (els.supplierCreateForm) els.supplierCreateForm.reset();
         if (els.supplierCreateMsg) els.supplierCreateMsg.textContent = "";
-        if (els.supplierCreateModal) els.supplierCreateModal.hidden = false;
+        if (els.supplierCreateModal) {
+          els.supplierCreateModal.style.zIndex = "1400";
+          els.supplierCreateModal.hidden = false;
+        }
         setTimeout(() => {
           if (els.supplierCreateForm) els.supplierCreateForm.querySelector('[name="name"]').focus();
         }, 50);
