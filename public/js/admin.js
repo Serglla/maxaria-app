@@ -5631,7 +5631,7 @@
       els.pcotSaveBtn.disabled = true;
       els.pcotSaveBtn.textContent = "Guardando…";
       try {
-        const res = await api(url, { method, body: JSON.stringify({ supplier_id, notes: notes || null, status, items }) });
+        const res = await api(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ supplier_id, notes: notes || null, status, items }) });
         const updated = Object.assign({}, res.request, { items_count: items.length });
         if (isEdit) {
           const idx = state.cotizaciones.findIndex((c) => c.id === state.editingCotizacionId);
