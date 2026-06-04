@@ -3410,8 +3410,8 @@
     var statusOpts = statuses.map(function(s) {
       return '<option value="' + s + '"' + (order.status === s ? " selected" : "") + ">" + statusNames[s] + "</option>";
     }).join("");
-    var statusRow = '<div class="order-vend-row"><label>Estado</label>' +
-      '<select class="order-status-select cell-select" data-order-id="' + order.id + '">' + statusOpts + "</select></div>";
+    var statusRow = '<label>Estado<br>' +
+      '<select class="order-status-select cell-select" data-order-id="' + order.id + '">' + statusOpts + "</select></label>";
 
     var vendRow = "";
     if (state.isAdmin) {
@@ -3420,24 +3420,33 @@
           return '<option value="' + v.id + '"' + (order.assigned_vendedor_id === v.id ? " selected" : "") + ">" +
             escapeHtml(v.full_name || v.username) + "</option>";
         }).join("");
-      vendRow = '<div class="order-vend-row"><label>Vendedor</label>' +
-        '<select class="order-vend-select cell-select" data-order-id="' + order.id + '">' + vendOpts + "</select></div>";
+      vendRow = '<label>Vendedor<br>' +
+        '<select class="order-vend-select cell-select" data-order-id="' + order.id + '">' + vendOpts + "</select></label>";
     }
 
     var delivInfo = "";
     if (order.delivery_id) {
-      delivInfo = '<div class="order-notes">' +
-        "Recibido por: <strong>" + escapeHtml(order.delivered_to || "—") + "</strong> &nbsp;·&nbsp; " +
-        "Efectivo: <strong>" + fmtPrice(order.efectivo_amount || 0) + "</strong> &nbsp;·&nbsp; " +
-        "Transfer.: <strong>" + fmtPrice(order.transferencia_amount || 0) + "</strong>" +
+      delivInfo = '<div class="order-delivery-info">' +
+        '<span class="odi-label">Entrega</span>' +
+        '<span><strong>' + escapeHtml(order.delivered_to || "—") + "</strong></span>" +
+        '<span class="odi-sep">·</span>' +
+        '<span>Efectivo: <strong>' + fmtPrice(order.efectivo_amount || 0) + "</strong></span>" +
+        '<span class="odi-sep">·</span>' +
+        '<span>Transfer.: <strong>' + fmtPrice(order.transferencia_amount || 0) + "</strong></span>" +
       "</div>";
     }
 
     var notesHtml = order.notes
-      ? '<p class="order-notes">' + escapeHtml(order.notes) + "</p>"
+      ? '<p class="order-notes">📝 ' + escapeHtml(order.notes) + "</p>"
       : "";
 
-    detailEl.innerHTML = statusRow + vendRow + itemsHtml + notesHtml + delivInfo;
+    var budgetRef = order.budget_number
+      ? '<p class="order-budget-ref">Facturado desde presupuesto ' + escapeHtml(order.budget_number) + "</p>"
+      : "";
+
+    detailEl.innerHTML =
+      '<div class="order-detail-meta">' + statusRow + vendRow + "</div>" +
+      itemsHtml + notesHtml + delivInfo + budgetRef;
   }
 
   function wireOrderDetail(detailEl, order) {
