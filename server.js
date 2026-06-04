@@ -5550,16 +5550,25 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     " GROUP BY status"
   ).all();
 
-  // Cobros del mes
+  // Cobros del mes: pagos manuales + lo cobrado en entregas (efectivo + transferencia)
   const cobrosMonth = db.prepare(
-    "SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt" +
-    " FROM payments WHERE strftime('%Y-%m', created_at)=?"
-  ).get(monthIso);
+    "SELECT COALESCE(SUM(t),0) AS total, COUNT(*) AS cnt FROM (" +
+    "  SELECT amount AS t FROM payments WHERE strftime('%Y-%m',created_at)=?" +
+    "  UNION ALL" +
+    "  SELECT (efectivo_amount + transferencia_amount) AS t" +
+    "  FROM deliveries WHERE strftime('%Y-%m',delivered_at)=? AND (efectivo_amount+transferencia_amount)>0" +
+    ")"
+  ).get(monthIso, monthIso);
 
-  // Cobros hoy
+  // Cobros hoy: pagos manuales + lo cobrado en entregas de hoy
   const cobrosToday = db.prepare(
-    "SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE date(created_at)=?"
-  ).get(todayIso);
+    "SELECT COALESCE(SUM(t),0) AS total FROM (" +
+    "  SELECT amount AS t FROM payments WHERE date(created_at)=?" +
+    "  UNION ALL" +
+    "  SELECT (efectivo_amount + transferencia_amount) AS t" +
+    "  FROM deliveries WHERE date(delivered_at)=? AND (efectivo_amount+transferencia_amount)>0" +
+    ")"
+  ).get(todayIso, todayIso);
 
   // Deuda total clientes (saldo negativo = deben plata)
   const deuda = db.prepare(
@@ -5572,9 +5581,12 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     "SELECT COUNT(*) AS cnt FROM products WHERE active=1 AND stock=0"
   ).get();
 
-  // Stock bajo: activos con stock entre 1 y 5
+  // Stock bajo: activos con stock > 0 pero <= stock_min (si tienen mínimo definido),
+  // o entre 1 y 5 como fallback para los que no tienen stock_min configurado.
   const stockBajo = db.prepare(
-    "SELECT COUNT(*) AS cnt FROM products WHERE active=1 AND stock BETWEEN 1 AND 5"
+    "SELECT COUNT(*) AS cnt FROM products WHERE active=1 AND stock > 0 AND (" +
+    "  (stock_min > 0 AND stock <= stock_min) OR (COALESCE(stock_min,0)=0 AND stock BETWEEN 1 AND 5)" +
+    ")"
   ).get();
 
   // Total productos activos con stock > 0
@@ -5604,10 +5616,13 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     " ORDER BY saldo DESC LIMIT 5"
   ).all();
 
-  // Pedidos entregados hoy
+  // Pedidos entregados hoy: usar delivered_at de la tabla deliveries,
+  // no created_at del pedido (que puede ser de días/semanas atrás).
   const entregadosHoy = db.prepare(
-    "SELECT COUNT(*) AS cnt FROM orders" +
-    " WHERE status='entregado' AND COALESCE(is_unified,0)=0 AND date(created_at)=?"
+    "SELECT COUNT(DISTINCT d.order_id) AS cnt" +
+    " FROM deliveries d" +
+    " JOIN orders o ON o.id = d.order_id" +
+    " WHERE COALESCE(o.is_unified,0)=0 AND date(d.delivered_at)=?"
   ).get(todayIso);
 
   res.json({
