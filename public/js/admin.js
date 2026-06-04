@@ -5307,29 +5307,19 @@
     if (q)   prods = prods.filter((p) => p.name.toLowerCase().includes(q) || (p.code || "").toLowerCase().includes(q));
     if (cat) prods = prods.filter((p) => String(p.category_id) === cat);
     if (!prods.length) {
-      els.pcotPickerTbody.innerHTML = '<tr><td colspan="3" class="muted">Sin resultados.</td></tr>';
+      els.pcotPickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:16px;text-align:center">Sin resultados.</td></tr>';
       return;
     }
     els.pcotPickerTbody.innerHTML = prods.map((p) => {
-      const sel = state.cotPickerSelected.has(p.id);
-      const qty = sel ? state.cotPickerSelected.get(p.id).qty : 1;
-      const stockColor = p.stock > 0 ? "#16a34a" : "#ef4444";
-      const stockLabel = "Stock: " + (p.stock || 0);
-      return '<tr>' +
-        '<td style="width:34px"><input type="checkbox" class="pcot-pick-cb" data-id="' + p.id + '" ' + (sel ? "checked" : "") + '></td>' +
-        '<td>' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
-            '<div>' +
-              '<span class="cell-code" style="font-size:11px;margin-right:4px">' + escapeHtml(p.code || "") + '</span>' +
-              escapeHtml(p.name) +
-            '</div>' +
-            '<span style="flex-shrink:0;font-size:12px;font-weight:600;color:' + stockColor + ';white-space:nowrap">' + stockLabel + '</span>' +
-          '</div>' +
-        '</td>' +
-        '<td class="num" style="width:80px">' +
-          '<input type="number" min="1" value="' + qty + '" class="admin-input pcot-pick-qty" data-id="' + p.id + '" ' +
-          'style="width:60px;text-align:right">' +
-        '</td>' +
+      const sel   = state.cotPickerSelected.has(p.id);
+      const qty   = sel ? state.cotPickerSelected.get(p.id).qty : "";
+      const price = Math.max(0, Number(p.price_minorista) || 0);
+      return '<tr data-pid="' + p.id + '">' +
+        '<td><input type="checkbox" class="pcot-pick-cb" data-id="' + p.id + '"' + (sel ? " checked" : "") + ' /></td>' +
+        '<td><div>' + escapeHtml(p.name || "") + '</div><code class="muted">' + escapeHtml(p.code || "") + '</code></td>' +
+        '<td class="num"><input type="number" class="cell-input cell-num pcot-pick-qty" data-id="' + p.id + '" min="1" step="1" value="' + qty + '" placeholder="1" style="width:60px" /></td>' +
+        '<td class="num">' + fmtPrice(price) + '</td>' +
+        '<td class="num" style="color:' + ((p.stock || 0) > 0 ? "#059669" : "#9ca3af") + '">' + (p.stock || 0) + '</td>' +
       '</tr>';
     }).join("");
     // checkbox wiring
