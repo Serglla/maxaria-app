@@ -1716,10 +1716,11 @@ button { font: inherit; cursor: pointer; }
 
 .admin-table-wrap {
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #c9d4e8;
   border-radius: 10px;
   overflow: auto;
   max-height: calc(100vh - 240px);
+  box-shadow: 0 2px 8px rgba(30,58,95,.07);
 }
 
 /* ===== Actividad: sub-tabs y KPIs ===== */
@@ -1968,58 +1969,65 @@ button { font: inherit; cursor: pointer; }
   font-size: 13px;
   min-width: 1200px;
 }
+/* ── Cabecera: estilo remito — azul navy con texto blanco ── */
+.admin-table thead tr { background: #1e3a5f; }
 .admin-table thead th {
   position: sticky;
   top: 0;
-  background: #f3f4f6;
-  border-bottom: 1px solid #e5e7eb;
+  background: #1e3a5f;
+  border-right: 1px solid rgba(255,255,255,.18);
+  border-bottom: 2px solid #1e3a5f;
   text-align: left;
-  padding: 8px 10px;
-  font-weight: 600;
-  color: #374151;
-  font-size: 12px;
+  padding: 9px 10px;
+  font-weight: 700;
+  color: #fff;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: .3px;
+  letter-spacing: .05em;
   white-space: nowrap;
+  z-index: 1;
 }
+.admin-table thead th:last-child { border-right: none; }
 .admin-table thead th.num { text-align: right; }
 
-/* Headers ordenables: cursor pointer, hover y flechita */
+/* Headers ordenables */
 .admin-table thead th.sortable {
   cursor: pointer;
   user-select: none;
-  transition: background .12s ease, color .12s ease;
+  transition: background .12s;
 }
-.admin-table thead th.sortable:hover {
-  background: #e5e7eb;
-  color: #111827;
-}
+.admin-table thead th.sortable:hover { background: #274d7a; }
 .admin-table thead th.sortable .sort-arrow {
   display: inline-block;
   margin-left: 4px;
-  font-size: 10px;
+  font-size: 9px;
   width: 10px;
-  color: #9ca3af;
+  opacity: .65;
   vertical-align: middle;
 }
-.admin-table thead th.sortable.sort-asc .sort-arrow::before  { content: "▲"; color: #2563eb; }
-.admin-table thead th.sortable.sort-desc .sort-arrow::before { content: "▼"; color: #2563eb; }
+.admin-table thead th.sortable.sort-asc .sort-arrow::before  { content: "▲"; color: #93c5fd; opacity: 1; }
+.admin-table thead th.sortable.sort-desc .sort-arrow::before { content: "▼"; color: #93c5fd; opacity: 1; }
 .admin-table thead th.sortable.sort-asc,
-.admin-table thead th.sortable.sort-desc {
-  background: #e0e7ff;
-  color: #1e3a8a;
-}
+.admin-table thead th.sortable.sort-desc { background: #1a4f8a; }
 .admin-table thead th.sortable.num .sort-arrow { margin-left: 2px; }
+
+/* ── Cuerpo: filas alternadas + bordes visibles ── */
+.admin-table tbody tr { border-bottom: 1px solid #e2e8f0; }
+.admin-table tbody tr:nth-child(even) { background: #f4f7fc; }
+.admin-table tbody tr:nth-child(odd)  { background: #fff; }
+.admin-table tbody tr:hover { background: #e8eef8 !important; }
 .admin-table tbody td {
-  padding: 4px 8px;
-  border-bottom: 1px solid #f3f4f6;
+  padding: 6px 10px;
   vertical-align: middle;
+  border-right: 1px solid #e9eef5;
 }
-.admin-table tbody tr:hover { background: #fafbfc; }
+.admin-table tbody td:last-child { border-right: none; }
 .admin-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-.admin-table .row-oos { background: #fff7ed; }
-.admin-table .row-oos:hover { background: #ffedd5; }
-.admin-table .row-inactive { opacity: .55; }
+
+/* Filas especiales: prevalecen sobre el alternado */
+.admin-table .row-oos { background: #fff3e0 !important; }
+.admin-table .row-oos:hover { background: #ffe0b2 !important; }
+.admin-table .row-inactive { opacity: .5; }
 
 /* Selector de productos de Compras: entra en el ancho del modal (sin el
    min-width gigante de .admin-table) para que la columna "Cant." quede a la
