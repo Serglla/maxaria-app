@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260603n" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260603o" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -148,29 +148,29 @@
       </div>
 
       <!-- Fila 1: KPIs de ventas -->
-      <div class="dash-section-label">Ventas</div>
+      <div class="dash-section-label">💰 Ventas</div>
       <div class="dash-kpi-row">
-        <div class="dash-kpi">
+        <div class="dash-kpi dk-purple">
           <div class="dash-kpi-label">Hoy</div>
           <div class="dash-kpi-value" id="dash-sales-today">—</div>
           <div class="dash-kpi-sub" id="dash-sales-today-cnt"></div>
         </div>
-        <div class="dash-kpi">
+        <div class="dash-kpi dk-blue">
           <div class="dash-kpi-label">Esta semana</div>
           <div class="dash-kpi-value" id="dash-sales-week">—</div>
           <div class="dash-kpi-sub" id="dash-sales-week-cnt"></div>
         </div>
-        <div class="dash-kpi dash-kpi-accent">
+        <div class="dash-kpi dk-teal">
           <div class="dash-kpi-label">Este mes</div>
           <div class="dash-kpi-value" id="dash-sales-month">—</div>
           <div class="dash-kpi-sub" id="dash-sales-month-vs"></div>
         </div>
-        <div class="dash-kpi">
+        <div class="dash-kpi dk-emerald">
           <div class="dash-kpi-label">Cobros hoy</div>
           <div class="dash-kpi-value" id="dash-cobros-today">—</div>
           <div class="dash-kpi-sub">recibidos</div>
         </div>
-        <div class="dash-kpi">
+        <div class="dash-kpi dk-cyan">
           <div class="dash-kpi-label">Cobros del mes</div>
           <div class="dash-kpi-value" id="dash-cobros-month">—</div>
           <div class="dash-kpi-sub" id="dash-cobros-month-cnt"></div>
@@ -178,29 +178,29 @@
       </div>
 
       <!-- Fila 2: Estado operativo -->
-      <div class="dash-section-label">Operaciones</div>
+      <div class="dash-section-label">📦 Operaciones</div>
       <div class="dash-kpi-row">
-        <div class="dash-kpi dash-kpi-warn" id="dash-kpi-pendientes">
+        <div class="dash-kpi dk-amber" id="dash-kpi-pendientes">
           <div class="dash-kpi-label">Pendientes</div>
           <div class="dash-kpi-value" id="dash-orders-pendiente">—</div>
           <div class="dash-kpi-sub">por preparar</div>
         </div>
-        <div class="dash-kpi dash-kpi-warn" id="dash-kpi-enviados">
+        <div class="dash-kpi dk-indigo" id="dash-kpi-enviados">
           <div class="dash-kpi-label">Enviados</div>
           <div class="dash-kpi-value" id="dash-orders-enviado">—</div>
           <div class="dash-kpi-sub">a confirmar</div>
         </div>
-        <div class="dash-kpi dash-kpi-warn" id="dash-kpi-preparando">
+        <div class="dash-kpi dk-blue" id="dash-kpi-preparando">
           <div class="dash-kpi-label">En preparación</div>
           <div class="dash-kpi-value" id="dash-orders-preparando">—</div>
-          <div class="dash-kpi-sub">en curso</div>
+          <div class="dash-kpi-sub">en armado</div>
         </div>
-        <div class="dash-kpi dash-kpi-good">
+        <div class="dash-kpi dk-green">
           <div class="dash-kpi-label">Entregados hoy</div>
           <div class="dash-kpi-value" id="dash-entregados-hoy">—</div>
-          <div class="dash-kpi-sub">pedidos</div>
+          <div class="dash-kpi-sub">completados</div>
         </div>
-        <div class="dash-kpi dash-kpi-danger" id="dash-kpi-deuda">
+        <div class="dash-kpi dk-red" id="dash-kpi-deuda">
           <div class="dash-kpi-label">Deuda clientes</div>
           <div class="dash-kpi-value" id="dash-deuda-total">—</div>
           <div class="dash-kpi-sub">saldo total</div>
@@ -208,29 +208,29 @@
       </div>
 
       <!-- Fila 3: Stock -->
-      <div class="dash-section-label">Stock</div>
+      <div class="dash-section-label">🏷️ Stock</div>
       <div class="dash-kpi-row">
-        <div class="dash-kpi dash-kpi-danger">
+        <div class="dash-kpi dk-red">
           <div class="dash-kpi-label">Sin stock</div>
           <div class="dash-kpi-value" id="dash-stock-cero">—</div>
           <div class="dash-kpi-sub">productos activos</div>
         </div>
-        <div class="dash-kpi dash-kpi-warn">
-          <div class="dash-kpi-label">Stock bajo (1–5)</div>
+        <div class="dash-kpi dk-orange">
+          <div class="dash-kpi-label">Stock bajo</div>
           <div class="dash-kpi-value" id="dash-stock-bajo">—</div>
-          <div class="dash-kpi-sub">productos activos</div>
+          <div class="dash-kpi-sub">bajo mínimo</div>
         </div>
-        <div class="dash-kpi dash-kpi-good">
+        <div class="dash-kpi dk-green">
           <div class="dash-kpi-label">Con stock</div>
           <div class="dash-kpi-value" id="dash-stock-ok">—</div>
-          <div class="dash-kpi-sub">productos disponibles</div>
+          <div class="dash-kpi-sub">disponibles</div>
         </div>
       </div>
 
       <!-- Últimos pedidos + Top deudores -->
       <div class="dash-two-col">
-        <div>
-          <div class="dash-section-label">Últimos pedidos</div>
+        <div class="dash-table-card">
+          <div class="dash-section-label">📋 Últimos pedidos</div>
           <div class="admin-table-wrap">
             <table class="admin-table" id="dash-recent-table">
               <thead>
@@ -246,8 +246,8 @@
             </table>
           </div>
         </div>
-        <div>
-          <div class="dash-section-label">Mayores deudores</div>
+        <div class="dash-table-card">
+          <div class="dash-section-label">⚠️ Mayores deudores</div>
           <div class="admin-table-wrap">
             <table class="admin-table" id="dash-deudores-table">
               <thead>
@@ -2430,6 +2430,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260603w"></script>
+  <script src="/js/admin.js?v=20260603x"></script>
 </body>
 </html>
