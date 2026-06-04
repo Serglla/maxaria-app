@@ -285,6 +285,7 @@
     pcotPickerCount: document.getElementById("pcot-picker-count"),
     pcotPickerConfirm: document.getElementById("pcot-picker-confirm"),
     pcotPickerCancel: document.getElementById("pcot-picker-cancel"),
+    pcotAddSupBtn: document.getElementById("pcot-add-sup-btn"),
     // Compras
     purSupFilter: document.getElementById("pur-sup-filter"),
     purMonthFilter: document.getElementById("pur-month-filter"),
@@ -432,6 +433,7 @@
     suppliers: [],
     suppliersLoaded: false,
     supplierCreatedFromPurchase: false,
+    supplierCreatedFromCotizacion: false,
     cotizaciones: [],
     cotizacionesLoaded: false,
     cotizacionItems: [],       // items del modal de creación
@@ -2672,7 +2674,7 @@
     m.addEventListener("click", (e) => {
       if (e.target.matches("[data-close]")) {
         m.hidden = true;
-        if (m.id === "supplier-create-modal") state.supplierCreatedFromPurchase = false;
+        if (m.id === "supplier-create-modal") { state.supplierCreatedFromPurchase = false; state.supplierCreatedFromCotizacion = false; }
         if (m.id === "purchase-create-modal") resetPurchaseModal();
         if (m.id === "new-product-modal") { m.style.zIndex = ""; npForPurchase = false; }
       }
@@ -2682,6 +2684,7 @@
     if (e.key !== "Escape") return;
     document.querySelectorAll(".admin-modal:not([hidden])").forEach((m) => { m.hidden = true; });
     state.supplierCreatedFromPurchase = false;
+    state.supplierCreatedFromCotizacion = false;
     resetPurchaseModal();
     if (newProdModal) newProdModal.style.zIndex = "";
     npForPurchase = false;
@@ -4498,6 +4501,12 @@
           state.supplierCreatedFromPurchase = false;
           if (els.purFormSupplier) els.purFormSupplier.value = String(out.supplier.id);
         }
+        // Si se creó desde el modal de cotización, actualizar su select y auto-seleccionarlo
+        if (state.supplierCreatedFromCotizacion) {
+          state.supplierCreatedFromCotizacion = false;
+          populatePcotFormSupplier();
+          if (els.pcotFormSupplier) els.pcotFormSupplier.value = String(out.supplier.id);
+        }
       } catch (err) {
         if (els.supplierCreateMsg) { els.supplierCreateMsg.textContent = err.message; els.supplierCreateMsg.className = "config-msg err"; }
       }
@@ -5328,6 +5337,19 @@
     if (els.pcotCancelBtn) els.pcotCancelBtn.addEventListener("click", () => {
       if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
     });
+
+    // Botón ＋ para crear nuevo proveedor desde cotización
+    if (els.pcotAddSupBtn) {
+      els.pcotAddSupBtn.addEventListener("click", () => {
+        state.supplierCreatedFromCotizacion = true;
+        if (els.supplierCreateForm) els.supplierCreateForm.reset();
+        if (els.supplierCreateMsg) els.supplierCreateMsg.textContent = "";
+        if (els.supplierCreateModal) els.supplierCreateModal.hidden = false;
+        setTimeout(() => {
+          if (els.supplierCreateForm) els.supplierCreateForm.querySelector('[name="name"]').focus();
+        }, 50);
+      });
+    }
 
     // Abrir picker
     if (els.pcotAddBtn) els.pcotAddBtn.addEventListener("click", () => {

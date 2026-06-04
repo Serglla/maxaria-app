@@ -2028,9 +2028,12 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
             Proveedor <span class="muted" style="font-weight:400;text-transform:none">(opcional)</span>
-            <select id="pcot-form-supplier" class="admin-select" style="margin-top:4px;width:100%">
-              <option value="">Sin proveedor</option>
-            </select>
+            <div class="pur-supplier-row" style="margin-top:4px">
+              <select id="pcot-form-supplier" class="admin-select" style="width:100%">
+                <option value="">Sin proveedor</option>
+              </select>
+              <button type="button" class="btn btn-small" id="pcot-add-sup-btn" title="Crear nuevo proveedor">＋</button>
+            </div>
           </label>
           <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
             Estado
@@ -2534,6 +2537,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260604b"></script>
+  <script src="/js/admin.js?v=20260604c"></script>
 </body>
 </html>
