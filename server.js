@@ -2184,9 +2184,10 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     "SELECT id, user_id, total, status, stock_discounted, unified_parent_id, is_unified FROM orders WHERE id = ?"
   ).get(id);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
-  // No se editan pedidos ya entregados o cancelados (estados finales).
-  if (order.status === "entregado" || order.status === "cancelado") {
-    return res.status(409).json({ error: "No se puede editar un pedido " + order.status });
+  // Los pedidos cancelados no se editan (estado final sin vuelta atrás).
+  // Los entregados sí: puede haberse olvidado cargar un item y es necesario corregirlo.
+  if (order.status === "cancelado") {
+    return res.status(409).json({ error: "No se puede editar un pedido cancelado" });
   }
 
   const rawItems = req.body && Array.isArray(req.body.items) ? req.body.items : [];

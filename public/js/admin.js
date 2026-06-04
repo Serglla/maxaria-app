@@ -3372,9 +3372,9 @@
     }
   }
 
-  // Estados en los que el admin puede editar los items del pedido (todo lo
-  // anterior a la entrega). Una vez entregado o cancelado, queda bloqueado.
-  var ORDER_EDITABLE_STATUSES = ["pendiente", "enviado", "preparando", "listo"];
+  // Estados en los que el admin puede editar los items del pedido.
+  // Entregado también: puede haberse olvidado cargar un item y hay que corregirlo.
+  var ORDER_EDITABLE_STATUSES = ["pendiente", "enviado", "preparando", "listo", "entregado"];
   function orderItemsEditable(order) {
     return state.isAdmin && ORDER_EDITABLE_STATUSES.indexOf(order.status) !== -1;
   }
