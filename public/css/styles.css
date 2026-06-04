@@ -1938,8 +1938,22 @@ button { font: inherit; cursor: pointer; }
 #oie-picker-table { min-width: 0; }
 #oie-picker-table thead th { white-space: normal; }
 #oie-picker-table tbody td { word-break: break-word; }
-#oie-picker-table tbody tr:nth-child(even) { background: #e4eaf4; }
-#oie-picker-table tbody tr:hover { background: #d2def6; }
+
+/* ── Filas de todos los pickers: bordes y alternado uniforme ── */
+.ventas-page .picker-table tbody td,
+#pur-picker-table tbody td,
+#oie-picker-table tbody td {
+  border-bottom: 1px solid #d1d5db;
+}
+.ventas-page .picker-table tbody tr:nth-child(odd),
+#pur-picker-table tbody tr:nth-child(odd),
+#oie-picker-table tbody tr:nth-child(odd) { background: #fff; }
+.ventas-page .picker-table tbody tr:nth-child(even),
+#pur-picker-table tbody tr:nth-child(even),
+#oie-picker-table tbody tr:nth-child(even) { background: #dde5f5; }
+.ventas-page .picker-table tbody tr:hover,
+#pur-picker-table tbody tr:hover,
+#oie-picker-table tbody tr:hover { background: #c8d6f0; }
 
 .cell-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #6b7280; white-space: nowrap; }
 .cell-cat { font-size: 12px; white-space: nowrap; }
@@ -3429,11 +3443,7 @@ html.in-modal .ventas-wrap {
 .ventas-page .picker-table thead tr { background: #f1f5f9; text-align: left; }
 .ventas-page .picker-table th,
 .ventas-page .picker-table td { padding: 6px 8px; }
-/* Filas alternadas en los selectores de productos (mejor legibilidad) */
-.ventas-page .picker-table tbody tr:nth-child(even),
-#pur-picker-table tbody tr:nth-child(even) { background: #e4eaf4; }
-.ventas-page .picker-table tbody tr:hover,
-#pur-picker-table tbody tr:hover { background: #d2def6; }
+/* (estilos de filas alternadas unificados en el bloque #oie-picker-table más arriba) */
 /* Fila de producto sin stock (stock <= 0): recuadro rojo bien marcado. */
 .ventas-page .picker-table tbody tr.vpicker-nostock { background: #fdecec; }
 .ventas-page .picker-table tbody tr.vpicker-nostock:hover { background: #fbdcdc; }

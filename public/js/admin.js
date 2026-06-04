@@ -3900,6 +3900,11 @@
 
   if (els.oiePickerSearch) {
     els.oiePickerSearch.addEventListener("input", debounce(function() { renderOiePicker(els.oiePickerSearch.value); }, 160));
+    var oieClearSearch = function() {
+      if (els.oiePickerSearch.value) { els.oiePickerSearch.value = ""; renderOiePicker(""); }
+    };
+    els.oiePickerSearch.addEventListener("focus", oieClearSearch);
+    els.oiePickerSearch.addEventListener("click", oieClearSearch);
   }
   if (els.oiePickerCancel) els.oiePickerCancel.addEventListener("click", closeOiePicker);
   if (els.oiePickerModal) {

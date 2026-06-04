@@ -1082,12 +1082,11 @@
     });
     // Al volver a clickear/enfocar el buscador (típicamente para buscar otro
     // producto), se limpia solo y vuelve a mostrar el listado completo.
-    vEls.pickerSearch.addEventListener("focus", () => {
-      if (vEls.pickerSearch.value) {
-        vEls.pickerSearch.value = "";
-        vRenderPicker("");
-      }
-    });
+    const vClearSearch = () => {
+      if (vEls.pickerSearch.value) { vEls.pickerSearch.value = ""; vRenderPicker(""); }
+    };
+    vEls.pickerSearch.addEventListener("focus", vClearSearch);
+    vEls.pickerSearch.addEventListener("click", vClearSearch);
   }
 
   // Toggle "ver productos sin stock" (admin): re-renderiza respetando la búsqueda.
