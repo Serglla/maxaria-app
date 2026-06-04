@@ -347,6 +347,11 @@ try { db.exec("ALTER TABLE budgets ADD COLUMN price_basis TEXT"); } catch (_) {}
 
 // Migracion: stock minimo por producto (0 = sin alerta)
 try { db.exec("ALTER TABLE products ADD COLUMN stock_min INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+// Unidades por bulto: cuantas unidades de venta componen un bulto de compra.
+// 1 = no aplica (se compra unitario). Usado en pedidos de cotizacion.
+try { db.exec("ALTER TABLE products ADD COLUMN units_per_bulto INTEGER NOT NULL DEFAULT 1"); } catch (_) {}
+// Precio cotizado en pedidos de cotizacion (lo que responde el proveedor)
+try { db.exec("ALTER TABLE purchase_request_items ADD COLUMN unit_price INTEGER"); } catch (_) {}
 
 // Migracion: Gastos generales del negocio (transporte, alquiler, servicios,
 // impuestos, etc). Distinto de purchase_orders (que son compras de mercaderia
@@ -4028,20 +4033,21 @@ app.post("/api/admin/purchase-requests", requireAdmin, (req, res) => {
     "INSERT INTO purchase_requests (supplier_id, notes, status, created_by) VALUES (?, ?, 'borrador', ?)"
   );
   const insItem = db.prepare(
-    "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity)" +
-    " VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity, unit_price)" +
+    " VALUES (?, ?, ?, ?, ?, ?)"
   );
   let newId;
   db.transaction(() => {
     const info = ins.run(supplier_id, notes, req.session.userId || null);
     newId = info.lastInsertRowid;
     for (const it of items) {
-      const pid  = Number(it.product_id) || null;
-      const code = String(it.product_code || "").trim();
-      const name = String(it.product_name || "").trim();
-      const qty  = Math.max(1, Number(it.quantity) || 1);
+      const pid   = Number(it.product_id) || null;
+      const code  = String(it.product_code || "").trim();
+      const name  = String(it.product_name || "").trim();
+      const qty   = Math.max(1, Number(it.quantity) || 1);
+      const price = Number(it.unit_price) || null;
       if (!name && !pid) continue;
-      insItem.run(newId, pid, code, name, qty);
+      insItem.run(newId, pid, code, name, qty, price);
     }
   })();
 

@@ -285,6 +285,8 @@
     pcotPickerCount: document.getElementById("pcot-picker-count"),
     pcotPickerConfirm: document.getElementById("pcot-picker-confirm"),
     pcotPickerCancel: document.getElementById("pcot-picker-cancel"),
+    pcotPickerNew: document.getElementById("pcot-picker-new"),
+    pcotPickerCat: document.getElementById("pcot-picker-cat"),
     pcotAddSupBtn: document.getElementById("pcot-add-sup-btn"),
     // Compras
     purSupFilter: document.getElementById("pur-sup-filter"),
@@ -609,7 +611,7 @@
       applyFilters();
     } catch (e) {
       console.error(e);
-      els.prodTbody.innerHTML = '<tr><td colspan="13" class="muted">Error cargando productos</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="14" class="muted">Error cargando productos</td></tr>';
     }
     // En paralelo, chequear dbinfo (no bloqueamos el render principal por esto).
     // Solo si el usuario puede ver Configuración (sino el endpoint da 403).
@@ -947,7 +949,7 @@
     }
     els.userCount.textContent = list.length + (list.length === 1 ? " usuario" : " usuarios");
     if (!list.length) {
-      els.userTbody.innerHTML = '<tr><td colspan="13" class="muted">Sin resultados</td></tr>';
+      els.userTbody.innerHTML = '<tr><td colspan="14" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.userTbody.innerHTML = list.map(userRowHtml).join("");
@@ -2676,7 +2678,7 @@
         m.hidden = true;
         if (m.id === "supplier-create-modal") { state.supplierCreatedFromPurchase = false; state.supplierCreatedFromCotizacion = false; }
         if (m.id === "purchase-create-modal") resetPurchaseModal();
-        if (m.id === "new-product-modal") { m.style.zIndex = ""; npForPurchase = false; }
+        if (m.id === "new-product-modal") { m.style.zIndex = ""; npForPurchase = false; npForCotizacion = false; }
       }
     });
   });
@@ -2688,6 +2690,7 @@
     resetPurchaseModal();
     if (newProdModal) newProdModal.style.zIndex = "";
     npForPurchase = false;
+    npForCotizacion = false;
   });
 
   // ---------- Config ----------
@@ -2996,7 +2999,7 @@
     const list = state.productsFiltered;
     els.prodCount.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     if (!list.length) {
-      els.prodTbody.innerHTML = '<tr><td colspan="13" class="muted">Sin resultados</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="14" class="muted">Sin resultados</td></tr>';
       els.pageInfo.textContent = "Página 0 / 0";
       els.pagePrev.disabled = true;
       els.pageNext.disabled = true;
@@ -3039,6 +3042,7 @@
       '<td class="num">' + fmtNum(p.price_vip) + '</td>' +
       '<td class="num">' + fmtNum(p.price_publico) + '</td>' +
       '<td><span class="cell-active-badge' + (p.active ? " active" : "") + '">' + (p.active ? "Sí" : "No") + '</span></td>' +
+      '<td class="num muted" title="Unidades por bulto de compra">' + (p.units_per_bulto > 1 ? p.units_per_bulto : "—") + '</td>' +
       '<td><button class="btn btn-small" type="button" data-act="adj-stock" data-id="' + p.id + '" title="Ajustar stock">±</button></td>' +
     '</tr>';
   }
@@ -5013,6 +5017,7 @@
   // 1400); al guardar, el handler de npSaveBtn detecta npForPurchase y deja el
   // producto cargado en el cache + preseleccionado en el picker.
   let npForPurchase = false;
+  let npForCotizacion = false;
   function purNewProduct() {
     npOpenModal();
     npForPurchase = true;
@@ -5219,26 +5224,66 @@
   function renderCotizacionItems() {
     if (!els.pcotItemsTbody) return;
     if (!state.cotizacionItems.length) {
-      els.pcotItemsTbody.innerHTML = '<tr><td colspan="4" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr>';
+      els.pcotItemsTbody.innerHTML = '<tr><td colspan="6" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr>';
       return;
     }
-    els.pcotItemsTbody.innerHTML = state.cotizacionItems.map((it, idx) =>
-      '<tr>' +
-      '<td class="cell-code">' + escapeHtml(it.product_code || "—") + '</td>' +
-      '<td>' + escapeHtml(it.product_name) + '</td>' +
-      '<td style="text-align:right;width:80px">' +
-        '<input type="number" min="1" value="' + it.quantity + '" style="width:60px;text-align:right" ' +
-        'data-cot-idx="' + idx + '" class="admin-input pcot-qty-input">' +
-      '</td>' +
-      '<td><button type="button" class="btn pcot-remove-item" data-cot-idx="' + idx + '" ' +
-        'style="padding:2px 6px;font-size:12px">✕</button></td>' +
-      '</tr>'
-    ).join("");
-    // qty change
+    els.pcotItemsTbody.innerHTML = state.cotizacionItems.map((it, idx) => {
+      const upb = it.units_per_bulto > 1 ? it.units_per_bulto : 0;
+      const bultos = upb ? Math.ceil(it.quantity / upb) : null;
+      const bultoCell = upb
+        ? '<td style="text-align:center">' +
+            '<input type="number" min="1" value="' + bultos + '" style="width:52px;text-align:center" ' +
+            'data-cot-idx="' + idx + '" class="admin-input pcot-bulto-input" title="' + upb + ' und/bulto">' +
+            '<div style="font-size:10px;color:#9ca3af;margin-top:1px">' + upb + ' und/bulto</div>' +
+          '</td>'
+        : '<td style="text-align:center;color:#d1d5db">—</td>';
+      return '<tr>' +
+        '<td class="cell-code">' + escapeHtml(it.product_code || "—") + '</td>' +
+        '<td>' + escapeHtml(it.product_name) + '</td>' +
+        '<td style="text-align:right">' +
+          '<input type="number" min="0" step="1" value="' + (it.unit_price || "") + '" placeholder="0" ' +
+          'style="width:80px;text-align:right" data-cot-idx="' + idx + '" class="admin-input pcot-price-input">' +
+        '</td>' +
+        '<td style="text-align:right">' +
+          '<input type="number" min="1" value="' + it.quantity + '" style="width:60px;text-align:right" ' +
+          'data-cot-idx="' + idx + '" class="admin-input pcot-qty-input">' +
+        '</td>' +
+        bultoCell +
+        '<td><button type="button" class="btn pcot-remove-item" data-cot-idx="' + idx + '" ' +
+          'style="padding:2px 6px;font-size:12px">✕</button></td>' +
+        '</tr>';
+    }).join("");
+
+    // precio change
+    els.pcotItemsTbody.querySelectorAll(".pcot-price-input").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        const i = Number(inp.dataset.cotIdx);
+        state.cotizacionItems[i].unit_price = Number(inp.value) || null;
+      });
+    });
+    // qty change → actualiza bultos display
     els.pcotItemsTbody.querySelectorAll(".pcot-qty-input").forEach((inp) => {
       inp.addEventListener("change", () => {
         const i = Number(inp.dataset.cotIdx);
         state.cotizacionItems[i].quantity = Math.max(1, Number(inp.value) || 1);
+        // sincronizar campo bultos si existe
+        const bultoInp = els.pcotItemsTbody.querySelector('.pcot-bulto-input[data-cot-idx="' + i + '"]');
+        if (bultoInp) {
+          const upb = state.cotizacionItems[i].units_per_bulto || 1;
+          bultoInp.value = Math.ceil(state.cotizacionItems[i].quantity / upb);
+        }
+      });
+    });
+    // bultos change → actualiza qty
+    els.pcotItemsTbody.querySelectorAll(".pcot-bulto-input").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        const i = Number(inp.dataset.cotIdx);
+        const upb = state.cotizacionItems[i].units_per_bulto || 1;
+        const bultos = Math.max(1, Number(inp.value) || 1);
+        inp.value = bultos;
+        state.cotizacionItems[i].quantity = bultos * upb;
+        const qtyInp = els.pcotItemsTbody.querySelector('.pcot-qty-input[data-cot-idx="' + i + '"]');
+        if (qtyInp) qtyInp.value = state.cotizacionItems[i].quantity;
       });
     });
     // remove
@@ -5254,10 +5299,11 @@
   // Picker de productos para cotizaciones
   function renderCotPickerRows(filter) {
     if (!els.pcotPickerTbody) return;
-    const q = (filter || "").toLowerCase().trim();
-    const prods = q
-      ? state.allProducts.filter((p) => p.name.toLowerCase().includes(q) || (p.code || "").toLowerCase().includes(q))
-      : state.allProducts;
+    const q   = (filter || "").toLowerCase().trim();
+    const cat = els.pcotPickerCat ? els.pcotPickerCat.value : "";
+    let prods = state.allProducts || [];
+    if (q)   prods = prods.filter((p) => p.name.toLowerCase().includes(q) || (p.code || "").toLowerCase().includes(q));
+    if (cat) prods = prods.filter((p) => String(p.category_id) === cat);
     if (!prods.length) {
       els.pcotPickerTbody.innerHTML = '<tr><td colspan="4" class="muted">Sin resultados.</td></tr>';
       return;
@@ -5352,7 +5398,7 @@
     }
 
     // Abrir picker
-    if (els.pcotAddBtn) els.pcotAddBtn.addEventListener("click", () => {
+    if (els.pcotAddBtn) els.pcotAddBtn.addEventListener("click", async () => {
       state.cotPickerSelected = new Map();
       // Pre-marcar los que ya están en la lista
       state.cotizacionItems.forEach((it) => {
@@ -5362,15 +5408,47 @@
         }
       });
       if (els.pcotPickerSearch) els.pcotPickerSearch.value = "";
+      if (els.pcotPickerCat) els.pcotPickerCat.value = "";
+      // Poblar categorías
+      if (!state.allCategories.length) {
+        try { state.allCategories = await api("/api/categories"); } catch (_) {}
+      }
+      if (els.pcotPickerCat) {
+        const prev = els.pcotPickerCat.value;
+        els.pcotPickerCat.innerHTML = '<option value="">Todas las categorías</option>';
+        state.allCategories.forEach((c) => {
+          const o = document.createElement("option"); o.value = String(c.id); o.textContent = c.name;
+          els.pcotPickerCat.appendChild(o);
+        });
+        if (prev && els.pcotPickerCat.querySelector('[value="' + prev + '"]')) els.pcotPickerCat.value = prev;
+      }
       renderCotPickerRows("");
       updateCotPickerCount();
       if (els.pcotPickerModal) els.pcotPickerModal.hidden = false;
+      setTimeout(() => { if (els.pcotPickerSearch) els.pcotPickerSearch.focus(); }, 60);
     });
+
+    // Filtro de categoría en picker
+    if (els.pcotPickerCat) {
+      els.pcotPickerCat.addEventListener("change", () => {
+        renderCotPickerRows(els.pcotPickerSearch ? els.pcotPickerSearch.value : "");
+        updateCotPickerCount();
+      });
+    }
+
+    // Botón crear producto desde picker
+    if (els.pcotPickerNew) {
+      els.pcotPickerNew.addEventListener("click", () => {
+        npForCotizacion = true;
+        npOpenModal();
+        if (newProdModal) newProdModal.style.zIndex = "1500";
+      });
+    }
 
     // Buscar en picker
     if (els.pcotPickerSearch) {
       els.pcotPickerSearch.addEventListener("input", () => {
-        renderCotPickerRows(els.pcotPickerSearch.value);
+        renderCotPickerRows(els.pcotPickerSearch ? els.pcotPickerSearch.value : "");
         updateCotPickerCount();
       });
     }
@@ -5406,6 +5484,8 @@
           state.cotizacionItems.push({
             product_id: product.id, product_code: product.code || "",
             product_name: product.name, quantity: qty,
+            units_per_bulto: product.units_per_bulto || 1,
+            unit_price: null,
           });
         }
       });
@@ -5429,6 +5509,7 @@
       const items = state.cotizacionItems.map((it) => ({
         product_id: it.product_id, product_code: it.product_code,
         product_name: it.product_name, quantity: it.quantity,
+        unit_price: it.unit_price || null,
       }));
       els.pcotSaveBtn.disabled = true;
       els.pcotSaveBtn.textContent = "Guardando…";
@@ -6951,9 +7032,10 @@
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
     set("ep-code",      p.code      || "");
     set("ep-name",      p.name      || "");
-    set("ep-stock",     p.stock     || 0);
-    set("ep-stock-min", p.stock_min || 0);
-    set("ep-cost",      p.cost      || 0);
+    set("ep-stock",          p.stock          || 0);
+    set("ep-stock-min",      p.stock_min      || 0);
+    set("ep-units-per-bulto", p.units_per_bulto > 1 ? p.units_per_bulto : 1);
+    set("ep-cost",           p.cost           || 0);
     // Precios: mostrar formateados
     const prices = {
       "ep-vip":        p.price_vip        || 0,
@@ -7019,9 +7101,10 @@
         code,
         name,
         category_id:      epCatSelect && epCatSelect.value ? Number(epCatSelect.value) : null,
-        stock:            Number(get("ep-stock"))        || 0,
-        stock_min:        Number(get("ep-stock-min"))    || 0,
-        cost:             Number(get("ep-cost"))         || 0,
+        stock:            Number(get("ep-stock"))              || 0,
+        stock_min:        Number(get("ep-stock-min"))          || 0,
+        units_per_bulto:  Math.max(1, Number(get("ep-units-per-bulto")) || 1),
+        cost:             Number(get("ep-cost"))               || 0,
         price_minorista:  parsePrice(get("ep-minorista")),
         price_revendedor: parsePrice(get("ep-revendedor")),
         price_mayorista:  parsePrice(get("ep-mayorista")),
@@ -7238,11 +7321,23 @@
             updatePurPickerCount();
           }
           showToast("Producto creado (código " + result.product.code + ") y seleccionado para la compra.");
+        } else if (npForCotizacion && result.product) {
+          state.allProducts = state.allProducts || [];
+          state.allProducts.push(result.product);
+          state.cotPickerSelected = state.cotPickerSelected || new Map();
+          state.cotPickerSelected.set(result.product.id, { qty: 1, product: result.product });
+          if (els.pcotPickerSearch) els.pcotPickerSearch.value = String(result.product.code || "");
+          if (els.pcotPickerModal && !els.pcotPickerModal.hidden) {
+            renderCotPickerRows(els.pcotPickerSearch ? els.pcotPickerSearch.value : "");
+            updateCotPickerCount();
+          }
+          showToast("Producto creado (código " + result.product.code + ") y seleccionado para la cotización.");
         } else {
           showToast("Producto creado: " + name);
         }
         if (newProdModal) { newProdModal.hidden = true; newProdModal.style.zIndex = ""; }
         npForPurchase = false;
+        npForCotizacion = false;
       } catch (e) {
         alert(e.message || "Error al crear producto");
       } finally {

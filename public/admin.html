@@ -314,10 +314,11 @@
               <th class="sortable num" data-sort="price_vip">VIP<span class="sort-arrow"></span></th>
               <th class="sortable num" data-sort="price_publico">Público<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="active">Activo<span class="sort-arrow"></span></th>
+              <th class="num" title="Unidades por bulto de compra">Und/bulto</th>
               <th></th>
             </tr>
           </thead>
-          <tbody id="prod-tbody"><tr><td colspan="13" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="prod-tbody"><tr><td colspan="14" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
 
@@ -1995,7 +1996,12 @@
   <div class="admin-modal" id="pcot-picker-modal" hidden style="z-index:1300">
     <div class="admin-modal-box" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
       <h3>Agregar productos a cotizar</h3>
-      <input type="search" id="pcot-picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="margin-bottom:10px" />
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <input type="search" id="pcot-picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="flex:1;margin:0" />
+        <select id="pcot-picker-cat" class="admin-select" style="min-width:160px">
+          <option value="">Todas las categorías</option>
+        </select>
+      </div>
       <div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;min-height:200px">
         <table class="admin-table" id="pcot-picker-table">
           <thead>
@@ -2012,6 +2018,7 @@
         </table>
       </div>
       <div class="admin-modal-foot" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <button type="button" class="btn" id="pcot-picker-new">➕ Crear producto nuevo</button>
         <span id="pcot-picker-count" class="muted small">0 seleccionados</span>
         <span style="flex:1"></span>
         <button type="button" class="btn" id="pcot-picker-cancel">Cancelar</button>
@@ -2055,10 +2062,12 @@
           <table class="admin-table" style="min-width:0">
             <thead><tr>
               <th>Código</th><th>Producto</th>
-              <th style="text-align:right;width:80px">Cant.</th>
+              <th style="text-align:right;width:100px">Precio unit.</th>
+              <th style="text-align:right;width:70px">Cant.</th>
+              <th style="text-align:center;width:90px" title="Bultos (según und/bulto del producto)">Bultos</th>
               <th style="width:32px"></th>
             </tr></thead>
-            <tbody id="pcot-items-tbody"><tr><td colspan="4" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr></tbody>
+            <tbody id="pcot-items-tbody"><tr><td colspan="6" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -2322,7 +2331,7 @@
           <span>Nombre <span class="req">*</span></span>
           <input type="text" id="ep-name" class="admin-input" placeholder="Nombre del producto" />
         </label>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
           <label class="np-label">
             <span>Stock actual</span>
             <input type="number" id="ep-stock" class="admin-input" min="0" step="1" />
@@ -2330,6 +2339,10 @@
           <label class="np-label">
             <span>Stock mínimo <span style="font-weight:400;color:#9ca3af">(alerta)</span></span>
             <input type="number" id="ep-stock-min" class="admin-input" min="0" step="1" value="0" />
+          </label>
+          <label class="np-label">
+            <span>Und/bulto <span style="font-weight:400;color:#9ca3af" title="Unidades de venta que componen un bulto de compra">(?)</span></span>
+            <input type="number" id="ep-units-per-bulto" class="admin-input" min="1" step="1" value="1" />
           </label>
         </div>
         <label class="np-label">
@@ -2537,6 +2550,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260604c"></script>
+  <script src="/js/admin.js?v=20260604e"></script>
 </body>
 </html>
