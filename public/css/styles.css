@@ -2059,21 +2059,29 @@ button { font: inherit; cursor: pointer; }
 #oie-picker-table thead th { white-space: normal; }
 #oie-picker-table tbody td { word-break: break-word; }
 
+#pcot-picker-table { min-width: 0; }
+#pcot-picker-table thead th { white-space: normal; }
+#pcot-picker-table tbody td { word-break: break-word; }
+
 /* ── Filas de todos los pickers: bordes y alternado uniforme ── */
 .ventas-page .picker-table tbody td,
 #pur-picker-table tbody td,
-#oie-picker-table tbody td {
+#oie-picker-table tbody td,
+#pcot-picker-table tbody td {
   border-bottom: 1px solid #d1d5db;
 }
 .ventas-page .picker-table tbody tr:nth-child(odd),
 #pur-picker-table tbody tr:nth-child(odd),
-#oie-picker-table tbody tr:nth-child(odd) { background: #fff; }
+#oie-picker-table tbody tr:nth-child(odd),
+#pcot-picker-table tbody tr:nth-child(odd) { background: #fff; }
 .ventas-page .picker-table tbody tr:nth-child(even),
 #pur-picker-table tbody tr:nth-child(even),
-#oie-picker-table tbody tr:nth-child(even) { background: #dde5f5; }
+#oie-picker-table tbody tr:nth-child(even),
+#pcot-picker-table tbody tr:nth-child(even) { background: #dde5f5; }
 .ventas-page .picker-table tbody tr:hover,
 #pur-picker-table tbody tr:hover,
-#oie-picker-table tbody tr:hover { background: #c8d6f0; }
+#oie-picker-table tbody tr:hover,
+#pcot-picker-table tbody tr:hover { background: #c8d6f0; }
 
 .cell-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #6b7280; white-space: nowrap; }
 .cell-cat { font-size: 12px; white-space: nowrap; }
