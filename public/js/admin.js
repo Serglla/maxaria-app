@@ -278,6 +278,11 @@
     pcotSaveBtn: document.getElementById("pcot-save-btn"),
     pcotCancelBtn: document.getElementById("pcot-cancel-btn"),
     pcotConvertBtn: document.getElementById("pcot-convert-btn"),
+    pcotExportBtn: document.getElementById("pcot-export-btn"),
+    pcotExportModal: document.getElementById("pcot-export-modal"),
+    pcotExportUnitsBtn: document.getElementById("pcot-export-units-btn"),
+    pcotExportBultosBtn: document.getElementById("pcot-export-bultos-btn"),
+    pcotExportCancelBtn: document.getElementById("pcot-export-cancel-btn"),
     pcotItemsTfoot: document.getElementById("pcot-items-tfoot"),
     pcotCreateMsg: document.getElementById("pcot-create-msg"),
     pcotPickerModal: document.getElementById("pcot-picker-modal"),
@@ -5258,15 +5263,17 @@
       const diffLabel = (diffUnit >= 0 ? "+" : "") + fmtPrice(diffTotal) +
         (diffPct !== null ? ' <span style="font-size:10px">(' + (diffUnit >= 0 ? "+" : "") + diffPct + '%)</span>' : "");
       const bultoCell =
-        '<td style="text-align:center;white-space:nowrap">' +
-          '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">' +
-            '<div style="display:flex;align-items:center;gap:3px">' +
+        '<td style="text-align:center;white-space:nowrap;min-width:100px">' +
+          '<div style="display:flex;flex-direction:column;align-items:center;gap:3px">' +
+            '<div style="display:flex;align-items:center;gap:4px">' +
               '<input type="number" min="1" step="1" value="' + upb + '" ' +
-              'style="width:44px;text-align:center;font-size:12px" ' +
+              'style="width:58px;text-align:center;font-size:13px;padding:3px 4px" ' +
               'data-cot-idx="' + idx + '" class="admin-input pcot-upb-input" title="Unidades por bulto">' +
-              '<span style="font-size:10px;color:#9ca3af">und</span>' +
+              '<span style="font-size:11px;color:#9ca3af;font-weight:500">und</span>' +
             '</div>' +
-            (upb > 1 ? '<div style="font-size:11px;color:#f59e0b;font-weight:600">= ' + bultos + ' bulto' + (bultos !== 1 ? 's' : '') + '</div>' : '<div style="font-size:10px;color:#d1d5db">—</div>') +
+            (upb > 1
+              ? '<div style="font-size:12px;color:#f59e0b;font-weight:700">= ' + bultos + ' bulto' + (bultos !== 1 ? 's' : '') + '</div>'
+              : '<div style="font-size:11px;color:#d1d5db">sin bulto</div>') +
           '</div>' +
         '</td>';
       return '<tr>' +
@@ -5412,14 +5419,18 @@
 
   async function openEditCotizacion(id) {
     try {
-      const data = await api("/api/admin/purchase-requests/" + id);
+      const [data] = await Promise.all([
+        api("/api/admin/purchase-requests/" + id),
+        ensureAllProducts(),
+        (!state.suppliersLoaded ? api("/api/admin/suppliers").then((s) => { state.suppliers = s; state.suppliersLoaded = true; }).catch(() => {}) : Promise.resolve()),
+      ]);
       state.editingCotizacionId = id;
       state.cotizacionItems = (data.items || []).map((it) => {
         const prod = (state.allProducts || []).find((p) => p.id === it.product_id);
         return {
           product_id: it.product_id, product_code: it.product_code,
           product_name: it.product_name, quantity: it.quantity,
-          unit_price: it.unit_price || null,
+          unit_price: it.unit_price || (prod ? prod.cost : null) || null,
           current_cost: prod ? (prod.cost || 0) : 0,
           units_per_bulto: prod ? (prod.units_per_bulto || 1) : 1,
         };
@@ -5430,12 +5441,8 @@
       if (els.pcotFormNotes)    els.pcotFormNotes.value  = data.notes  || "";
       if (els.pcotCreateMsg)    { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
       if (els.pcotConvertBtn)   els.pcotConvertBtn.hidden = false;
-      if (!state.suppliersLoaded) {
-        try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
-      }
       populatePcotFormSupplier();
       if (els.pcotFormSupplier) els.pcotFormSupplier.value = String(data.supplier_id || "");
-      await ensureAllProducts();
       renderCotizacionItems();
       if (els.pcotCreateModal) els.pcotCreateModal.hidden = false;
     } catch (err) { showToast("Error: " + err.message, "err"); }
@@ -5607,8 +5614,9 @@
     if (els.pcotSaveBtn) els.pcotSaveBtn.addEventListener("click", async () => {
       if (!state.cotizacionItems.length) {
         if (els.pcotCreateMsg) { els.pcotCreateMsg.textContent = "Agregá al menos 1 producto."; els.pcotCreateMsg.className = "config-msg err"; }
-        return;
+        return; // eslint-disable-line no-useless-return
       }
+      if (els.pcotCreateMsg) { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
       const supplier_id = Number(els.pcotFormSupplier ? els.pcotFormSupplier.value : 0) || null;
       const status      = els.pcotFormStatus  ? els.pcotFormStatus.value  : "borrador";
       const notes       = els.pcotFormNotes   ? els.pcotFormNotes.value.trim() : "";
@@ -5685,6 +5693,55 @@
         showToast("Cotización convertida — revisá y guardá la compra");
       });
     }
+
+    // Exportar cotización
+    function doExportCotizacion(porBultos) {
+      if (els.pcotExportModal) els.pcotExportModal.hidden = true;
+      const items = state.cotizacionItems;
+      if (!items.length) { showToast("Sin productos para exportar", "err"); return; }
+      const supName = els.pcotFormSupplier
+        ? (els.pcotFormSupplier.options[els.pcotFormSupplier.selectedIndex] || {}).text || ""
+        : "";
+      const lines = [];
+      const fecha = new Date().toLocaleDateString("es-AR");
+      lines.push("PEDIDO DE COTIZACIÓN — " + fecha);
+      if (supName && supName !== "Sin proveedor") lines.push("Proveedor: " + supName);
+      const notas = els.pcotFormNotes ? els.pcotFormNotes.value.trim() : "";
+      if (notas) lines.push("Notas: " + notas);
+      lines.push("");
+      lines.push((porBultos ? "CANT. (BULTOS)" : "CANT. (UNIDADES)") + "\tPRODUCTO");
+      lines.push("─".repeat(50));
+      items.forEach((it) => {
+        let qty;
+        if (porBultos && it.units_per_bulto > 1) {
+          qty = Math.ceil(it.quantity / it.units_per_bulto) + " bultos (" + it.units_per_bulto + " und/bulto)";
+        } else {
+          qty = it.quantity + " und";
+        }
+        const code = it.product_code ? "[" + it.product_code + "] " : "";
+        lines.push(qty + "\t" + code + it.product_name);
+      });
+      lines.push("");
+      lines.push("Total: " + items.length + " producto" + (items.length !== 1 ? "s" : ""));
+      const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = "cotizacion-" + new Date().toISOString().slice(0, 10) + ".txt";
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+      showToast("✅ Lista exportada");
+    }
+
+    if (els.pcotExportBtn) els.pcotExportBtn.addEventListener("click", () => {
+      if (!state.cotizacionItems.length) { showToast("Sin productos para exportar", "err"); return; }
+      if (els.pcotExportModal) els.pcotExportModal.hidden = false;
+    });
+    if (els.pcotExportUnitsBtn)  els.pcotExportUnitsBtn.addEventListener("click",  () => doExportCotizacion(false));
+    if (els.pcotExportBultosBtn) els.pcotExportBultosBtn.addEventListener("click", () => doExportCotizacion(true));
+    if (els.pcotExportCancelBtn) els.pcotExportCancelBtn.addEventListener("click", () => {
+      if (els.pcotExportModal) els.pcotExportModal.hidden = true;
+    });
 
     // Filtros
     if (els.pcotSupFilter)    els.pcotSupFilter.addEventListener("change",    renderCotizaciones);
