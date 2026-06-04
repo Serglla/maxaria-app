@@ -373,7 +373,6 @@
     catalogCatsNone: document.getElementById("catalog-cats-none"),
     catalogWithImages: document.getElementById("catalog-with-images"),
     catalogIncludeChanges: document.getElementById("catalog-include-changes"),
-    catalogWaSelect: document.getElementById("catalog-wa-select"),
     catalogMsg: document.getElementById("catalog-msg"),
     catalogGenerateBtn: document.getElementById("catalog-generate-btn"),
 
@@ -5666,27 +5665,6 @@
       els.catalogCatsWrap.appendChild(lbl);
     });
 
-    // Poblar select de WhatsApp destino (usuarios + vendedores con WA)
-    els.catalogWaSelect.innerHTML = '<option value="">Solo descargar (sin abrir WhatsApp)</option>';
-    const allUsers = state.usersLoaded ? state.users : await api("/api/admin/users").catch(() => []);
-    if (!state.usersLoaded) { state.users = allUsers; state.usersLoaded = true; }
-    const vends = state.vendedoresLoaded ? state.vendedores : await api("/api/admin/vendedores").catch(() => []);
-    if (!state.vendedoresLoaded) { state.vendedores = vends; state.vendedoresLoaded = true; }
-
-    const waUsers = allUsers.filter((u) => u.active && u.whatsapp_number);
-    const waVends = vends.filter((v) => v.active && v.whatsapp_number);
-
-    if (waUsers.length) {
-      const grpU = document.createElement("optgroup");
-      grpU.label = "Clientes con WhatsApp";
-      waUsers.forEach((u) => {
-        const o = document.createElement("option");
-        o.value = u.id;
-        o.textContent = (u.full_name || u.username) + " (" + u.whatsapp_number + ")";
-        grpU.appendChild(o);
-      });
-      els.catalogWaSelect.appendChild(grpU);
-    }
     if (waVends.length) {
       const grpV = document.createElement("optgroup");
       grpV.label = "Vendedores con WhatsApp";
@@ -5811,7 +5789,6 @@
       const allChecked = checkedCats.length === state.allCategories.length;
       const categoryIds = allChecked ? [] : checkedCats;
 
-      const targetUserId = Number(els.catalogWaSelect.value) || 0;
       const includePriceChanges = els.catalogIncludeChanges ? els.catalogIncludeChanges.checked : false;
       const withImages = els.catalogWithImages ? els.catalogWithImages.checked : true;
 
@@ -5819,7 +5796,7 @@
         const response = await fetch("/api/admin/catalog/pdf", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ priceConfig, categoryIds, targetUserId, includePriceChanges, withImages }),
+          body: JSON.stringify({ priceConfig, categoryIds, includePriceChanges, withImages }),
         });
 
         if (response.status === 401) { location.href = "/login"; return; }
@@ -5838,19 +5815,8 @@
         a.click();
         setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
 
-        // Abrir WhatsApp si hay destino
-        const wa = response.headers.get("X-Whatsapp");
-        const nameB64 = response.headers.get("X-Whatsapp-Name");
-        const name = nameB64 ? decodeURIComponent(atob(nameB64).split("").map((c) =>
-          "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)).join("")) : "";
-        if (wa) {
-          const msg = "Hola" + (name ? " " + name : "") +
-            ", te mando el catálogo de precios. Lo encontrás adjunto 📄";
-          window.open("https://wa.me/" + wa + "?text=" + encodeURIComponent(msg), "_blank");
-        }
-
         els.catalogModal.hidden = true;
-        showToast("✅ PDF generado y descargado" + (wa ? " · WhatsApp abierto" : ""));
+        showToast("✅ PDF exportado y descargado");
       } catch (err) {
         els.catalogMsg.textContent = "Error: " + err.message;
         els.catalogMsg.className = "config-msg err";
