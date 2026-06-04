@@ -1726,37 +1726,55 @@ button { font: inherit; cursor: pointer; }
 /* ===== Actividad: sub-tabs y KPIs ===== */
 .act-subnav {
   display: flex;
-  gap: 4px;
+  gap: 5px;
   flex-wrap: wrap;
-  border-bottom: 1px solid #e5e7eb;
-  margin-bottom: 14px;
-  padding-bottom: 0;
+  align-items: flex-end;
+  margin-bottom: 0;
+  border: none;
+  position: relative;
+  z-index: 2;
 }
 .act-subtab {
-  background: transparent;
-  border: 1px solid transparent;
-  border-bottom: 2px solid transparent;
-  padding: 8px 14px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #64748b;
+  background: #2d5a8a;           /* azul menos saturado para inactivos */
+  border: 3px solid #1e3a5f;
+  border-bottom: none;
+  padding: 10px 18px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: rgba(255,255,255,.8);
   cursor: pointer;
-  border-radius: 6px 6px 0 0;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  border-radius: 8px 8px 0 0;
+  position: relative;
+  z-index: 1;
+  transition: background .13s, color .13s;
+  white-space: nowrap;
 }
 .act-subtab:hover:not(.active) {
-  background: #f1f5f9;
-  color: #1e293b;
+  background: #3a6fa3;
+  color: #fff;
 }
+/* Tab activo: extiende 3px hacia abajo para tapar el borde superior del panel
+   y crear la ilusión de continuidad azul entre el botón y el recuadro. */
 .act-subtab.active {
-  color: #1e3a5f;
-  background: #fff;
-  border-color: #e5e7eb;
-  border-bottom-color: #f59e0b;
-  font-weight: 600;
+  background: #1e3a5f;
+  color: #fff;
+  font-weight: 700;
+  z-index: 3;
+  margin-bottom: -3px;
+  padding-bottom: 13px;   /* compensa el margen negativo */
 }
 .act-subtab:focus { outline: none; }
-.act-subtab:focus-visible { outline: 2px solid #1e3a5f; outline-offset: 1px; }
+.act-subtab:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+
+/* El panel de contenido tiene el borde azul que "da toda la vuelta" */
+.act-subpanel {
+  border: 3px solid #1e3a5f;
+  border-radius: 0 10px 10px 10px;
+  padding: 18px 16px 16px;
+  background: #fff;
+  position: relative;
+  z-index: 1;
+}
 
 .act-kpi-grid {
   display: grid;
