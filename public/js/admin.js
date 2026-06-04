@@ -5313,7 +5313,7 @@
     els.pcotPickerTbody.innerHTML = prods.map((p) => {
       const sel   = state.cotPickerSelected.has(p.id);
       const qty   = sel ? state.cotPickerSelected.get(p.id).qty : "";
-      const price = Math.max(0, Number(p.price_minorista) || 0);
+      const price = Math.max(0, Number(p.cost) || 0);
       return '<tr data-pid="' + p.id + '">' +
         '<td><input type="checkbox" class="pcot-pick-cb" data-id="' + p.id + '"' + (sel ? " checked" : "") + ' /></td>' +
         '<td><div>' + escapeHtml(p.name || "") + '</div><code class="muted">' + escapeHtml(p.code || "") + '</code></td>' +
