@@ -3740,6 +3740,42 @@
           editItems.splice(Number(rm.dataset.idx), 1);
           render();
         });
+        tbody.addEventListener("contextmenu", function(e) {
+          var tr = e.target.closest("tr[data-idx]");
+          if (!tr) return;
+          e.preventDefault();
+          var idx = Number(tr.dataset.idx);
+          if (!editItems[idx]) return;
+          var it = editItems[idx];
+          var menu = ensureOieCtxMenu();
+          menu.innerHTML = "";
+          var head = document.createElement("div");
+          head.style.cssText = "padding:6px 10px;color:#6b7280;border-bottom:1px solid #eee;" +
+            "margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px;font-size:12px";
+          head.textContent = (it.product_name || "") + " · " + (it.product_code || "");
+          menu.appendChild(head);
+          var b = document.createElement("button");
+          b.type = "button";
+          b.style.cssText = "display:block;width:100%;text-align:left;background:none;border:none;" +
+            "padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#111827";
+          b.textContent = "🔄 Cambiar producto";
+          b.addEventListener("mouseenter", function() { b.style.background = "#f3f4f6"; });
+          b.addEventListener("mouseleave", function() { b.style.background = "none"; });
+          b.addEventListener("click", function(ev) {
+            ev.stopPropagation();
+            hideOieCtxMenu();
+            var col = ORDER_LEVEL_PRICE_COL[order.client_level] || "price_minorista";
+            openOrderItemPicker(editItems, col, render, idx);
+          });
+          menu.appendChild(b);
+          menu.style.display = "block";
+          var mw = menu.offsetWidth, mh = menu.offsetHeight;
+          var x = e.clientX, y = e.clientY;
+          if (x + mw > window.innerWidth)  x = Math.max(8, window.innerWidth  - mw - 8);
+          if (y + mh > window.innerHeight) y = Math.max(8, window.innerHeight - mh - 8);
+          menu.style.left = x + "px";
+          menu.style.top  = y + "px";
+        });
       }
       var addBtn = box.querySelector(".oie-add-btn");
       if (addBtn) addBtn.addEventListener("click", function() {
@@ -3790,11 +3826,26 @@
   // armador de presupuestos: buscar, tildar, cantidad, "Agregar seleccionados").
   // Comparte la mecánica del picker de Compras. Al confirmar, agrega los
   // productos elegidos a los items del pedido en edición. ----
-  var oieAddCtx = null;                 // { editItems, priceCol, rerender }
+  var oieAddCtx = null;                 // { editItems, priceCol, rerender, replaceIdx? }
   var oiePickerSelected = new Map();    // pid -> cantidad
 
-  async function openOrderItemPicker(editItems, priceCol, rerender) {
-    oieAddCtx = { editItems: editItems, priceCol: priceCol, rerender: rerender };
+  // Menú contextual flotante para las filas de items en edición de pedido.
+  var oieCtxMenu = null;
+  function hideOieCtxMenu() { if (oieCtxMenu) oieCtxMenu.style.display = "none"; }
+  function ensureOieCtxMenu() {
+    if (oieCtxMenu) return oieCtxMenu;
+    oieCtxMenu = document.createElement("div");
+    oieCtxMenu.style.cssText = "position:fixed;z-index:9000;background:#fff;border:1px solid #e5e7eb;" +
+      "border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:4px;min-width:200px;display:none";
+    document.body.appendChild(oieCtxMenu);
+    document.addEventListener("click", hideOieCtxMenu);
+    document.addEventListener("keydown", function(e) { if (e.key === "Escape") hideOieCtxMenu(); });
+    return oieCtxMenu;
+  }
+
+  // replaceIdx: si se pasa, el picker reemplaza ese item en vez de agregar.
+  async function openOrderItemPicker(editItems, priceCol, rerender, replaceIdx) {
+    oieAddCtx = { editItems: editItems, priceCol: priceCol, rerender: rerender, replaceIdx: replaceIdx };
     oiePickerSelected.clear();
     await ensureAllProducts();
     if (els.oiePickerSearch) els.oiePickerSearch.value = "";
@@ -3836,11 +3887,15 @@
   }
 
   function updateOiePickerCount() {
+    var n = oiePickerSelected.size;
     if (els.oiePickerCount) {
-      var n = oiePickerSelected.size;
       els.oiePickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados");
     }
-    if (els.oiePickerConfirm) els.oiePickerConfirm.disabled = oiePickerSelected.size === 0;
+    if (els.oiePickerConfirm) {
+      els.oiePickerConfirm.disabled = n === 0;
+      els.oiePickerConfirm.textContent = (oieAddCtx && oieAddCtx.replaceIdx !== undefined)
+        ? "Reemplazar producto" : "Agregar seleccionados";
+    }
   }
 
   if (els.oiePickerSearch) {
@@ -3904,23 +3959,41 @@
       var editItems = oieAddCtx.editItems;
       var col = oieAddCtx.priceCol;
       var rerender = oieAddCtx.rerender;
-      oiePickerSelected.forEach(function(qty, pid) {
-        var prod = (state.allProducts || []).find(function(p) { return p.id === pid; });
-        if (!prod) return;
-        var addQty = Math.max(1, Math.floor(Number(qty) || 1));
-        var existing = editItems.find(function(it) { return it.product_id === pid; });
-        if (existing) {
-          existing.quantity += addQty;
-        } else {
-          editItems.push({
+      var replaceIdx = oieAddCtx.replaceIdx;
+      if (replaceIdx !== undefined && oiePickerSelected.size > 0) {
+        // Modo reemplazo: sustituir el item en replaceIdx con el primer producto
+        // elegido, conservando la cantidad original del item que se reemplaza.
+        var entry = oiePickerSelected.entries().next().value;
+        var prod = (state.allProducts || []).find(function(p) { return p.id === entry[0]; });
+        if (prod && editItems[replaceIdx]) {
+          var origQty = editItems[replaceIdx].quantity;
+          editItems[replaceIdx] = {
             product_id: prod.id,
             product_code: prod.code || "",
             product_name: prod.name || "",
-            quantity: addQty,
+            quantity: origQty,
             unit_price: Math.max(0, Number(prod[col]) || 0),
-          });
+          };
         }
-      });
+      } else {
+        oiePickerSelected.forEach(function(qty, pid) {
+          var prod = (state.allProducts || []).find(function(p) { return p.id === pid; });
+          if (!prod) return;
+          var addQty = Math.max(1, Math.floor(Number(qty) || 1));
+          var existing = editItems.find(function(it) { return it.product_id === pid; });
+          if (existing) {
+            existing.quantity += addQty;
+          } else {
+            editItems.push({
+              product_id: prod.id,
+              product_code: prod.code || "",
+              product_name: prod.name || "",
+              quantity: addQty,
+              unit_price: Math.max(0, Number(prod[col]) || 0),
+            });
+          }
+        });
+      }
       closeOiePicker();
       if (typeof rerender === "function") rerender();
     });

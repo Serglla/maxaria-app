@@ -126,6 +126,7 @@
     // El usuario puede tildar el checkbox (qty=1 por default) o tipear una
     // cantidad directamente en la columna "Cant." (eso marca el checkbox).
     pickerSelected: new Map(),
+    pickerReplaceIdx: null,   // si != null, el picker reemplaza ese item en vez de agregar
   };
 
   const V_STATUS_LABELS = { borrador:"Borrador", enviado:"Enviado", aceptado:"Aceptado", facturado:"Facturado", cancelado:"Cancelado" };
@@ -982,11 +983,15 @@
     if (vEls.pickerCount) vEls.pickerCount.textContent = n + (n===1?" seleccionado":" seleccionados");
     if (vEls.pickerConfirm) {
       vEls.pickerConfirm.disabled = n === 0;
-      vEls.pickerConfirm.textContent = n > 0 ? "Agregar seleccionados (" + n + ")" : "Agregar seleccionados";
+      if (vState.pickerReplaceIdx !== null) {
+        vEls.pickerConfirm.textContent = "Reemplazar producto";
+      } else {
+        vEls.pickerConfirm.textContent = n > 0 ? "Agregar seleccionados (" + n + ")" : "Agregar seleccionados";
+      }
     }
   }
 
-  function vClosePicker() { if (vEls.picker) vEls.picker.hidden = true; }
+  function vClosePicker() { if (vEls.picker) vEls.picker.hidden = true; vState.pickerReplaceIdx = null; }
 
   if (vEls.picker) {
     vEls.picker.addEventListener("change", (e) => {
@@ -1095,25 +1100,115 @@
 
   if (vEls.pickerConfirm) {
     vEls.pickerConfirm.addEventListener("click", () => {
-      // pickerSelected es Map<pid, qty>. Usamos la qty que el usuario tipeó
-      // en la columna "Cant." (default 1 si solo marcó el checkbox).
-      vState.pickerSelected.forEach((qty, pid) => {
-        const p = vState.allProducts.find((x) => x.id === pid);
-        if (!p) return;
-        const addQty = Math.max(1, Math.round(Number(qty) || 1));
-        const ex = vState.items.find((it) => it.product_id === pid);
-        if (ex) {
-          ex.quantity += addQty;
-          ex.subtotal = Math.round(ex.quantity * ex.unit_price * (1 - ex.discount_percent/100));
-        } else {
-          vState.items.push({ product_id:p.id, product_code:p.code||"", product_name:p.name||"", quantity:addQty, unit_price:p.price||0, discount_percent:0, subtotal:Math.round(addQty * (p.price||0)) });
+      const replaceIdx = vState.pickerReplaceIdx;
+      if (replaceIdx !== null && vState.pickerSelected.size > 0) {
+        // Modo reemplazo: sustituir el item en replaceIdx con el primer producto
+        // elegido, conservando la cantidad original.
+        const entry = vState.pickerSelected.entries().next().value;
+        const p = vState.allProducts.find((x) => x.id === entry[0]);
+        if (p && vState.items[replaceIdx]) {
+          const origQty = vState.items[replaceIdx].quantity;
+          vState.items[replaceIdx] = {
+            product_id: p.id, product_code: p.code||"", product_name: p.name||"",
+            quantity: origQty, unit_price: p.price||0, discount_percent: 0,
+            subtotal: Math.round(origQty * (p.price||0)),
+          };
         }
-      });
+      } else {
+        // pickerSelected es Map<pid, qty>. Usamos la qty que el usuario tipeó
+        // en la columna "Cant." (default 1 si solo marcó el checkbox).
+        vState.pickerSelected.forEach((qty, pid) => {
+          const p = vState.allProducts.find((x) => x.id === pid);
+          if (!p) return;
+          const addQty = Math.max(1, Math.round(Number(qty) || 1));
+          const ex = vState.items.find((it) => it.product_id === pid);
+          if (ex) {
+            ex.quantity += addQty;
+            ex.subtotal = Math.round(ex.quantity * ex.unit_price * (1 - ex.discount_percent/100));
+          } else {
+            vState.items.push({ product_id:p.id, product_code:p.code||"", product_name:p.name||"", quantity:addQty, unit_price:p.price||0, discount_percent:0, subtotal:Math.round(addQty * (p.price||0)) });
+          }
+        });
+      }
       vState.pickerSelected.clear();
+      vState.pickerReplaceIdx = null;
       vClosePicker();
       if (vEls.pickerSearch)   vEls.pickerSearch.value = "";
       if (vEls.pickerCheckAll) vEls.pickerCheckAll.checked = false;
       vRenderItems();
+    });
+  }
+
+  // Menú contextual flotante para la tabla de items del presupuesto.
+  let vCtxMenu = null;
+  function hideVCtxMenu() { if (vCtxMenu) vCtxMenu.style.display = "none"; }
+  function ensureVCtxMenu() {
+    if (vCtxMenu) return vCtxMenu;
+    vCtxMenu = document.createElement("div");
+    vCtxMenu.style.cssText = "position:fixed;z-index:9000;background:#fff;border:1px solid #e5e7eb;" +
+      "border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:4px;min-width:200px;display:none";
+    document.body.appendChild(vCtxMenu);
+    document.addEventListener("click", hideVCtxMenu);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideVCtxMenu(); });
+    return vCtxMenu;
+  }
+
+  async function vOpenPickerForReplace(idx) {
+    if (!vEls.picker) return;
+    if (!vState.productsLoaded || vState.pricedFor !== vState.pricing) {
+      if (vEls.pickerTbody) vEls.pickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Cargando…</td></tr>';
+      await vLoadProducts();
+    }
+    vState.pickerSelected.clear();
+    vState.pickerReplaceIdx = idx;
+    if (vEls.pickerSearch)   vEls.pickerSearch.value = "";
+    if (vEls.pickerCheckAll) vEls.pickerCheckAll.checked = false;
+    const isAdmin = me.level === 99;
+    if (vEls.pickerNoStockWrap) vEls.pickerNoStockWrap.hidden = !isAdmin;
+    vState.pickerShowNoStock = false;
+    if (vEls.pickerShowNoStock) vEls.pickerShowNoStock.checked = false;
+    vRenderPicker("");
+    vPickerCount();
+    vEls.picker.hidden = false;
+  }
+
+  if (vEls.itemsTbody) {
+    vEls.itemsTbody.addEventListener("contextmenu", (e) => {
+      const tr = e.target.closest("tr[data-idx]");
+      if (!tr) return;
+      // No habilitar si los items están en modo solo lectura (facturado/cancelado).
+      if (vState.editingStatus === "facturado" || vState.editingStatus === "cancelado") return;
+      e.preventDefault();
+      const idx = Number(tr.dataset.idx);
+      if (!vState.items[idx]) return;
+      const it = vState.items[idx];
+      const menu = ensureVCtxMenu();
+      menu.innerHTML = "";
+      const head = document.createElement("div");
+      head.style.cssText = "padding:6px 10px;color:#6b7280;border-bottom:1px solid #eee;" +
+        "margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px;font-size:12px";
+      head.textContent = (it.product_name || "") + " · " + (it.product_code || "");
+      menu.appendChild(head);
+      const b = document.createElement("button");
+      b.type = "button";
+      b.style.cssText = "display:block;width:100%;text-align:left;background:none;border:none;" +
+        "padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#111827";
+      b.textContent = "🔄 Cambiar producto";
+      b.addEventListener("mouseenter", () => { b.style.background = "#f3f4f6"; });
+      b.addEventListener("mouseleave", () => { b.style.background = "none"; });
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        hideVCtxMenu();
+        vOpenPickerForReplace(idx);
+      });
+      menu.appendChild(b);
+      menu.style.display = "block";
+      const mw = menu.offsetWidth, mh = menu.offsetHeight;
+      let x = e.clientX, y = e.clientY;
+      if (x + mw > window.innerWidth)  x = Math.max(8, window.innerWidth  - mw - 8);
+      if (y + mh > window.innerHeight) y = Math.max(8, window.innerHeight - mh - 8);
+      menu.style.left = x + "px";
+      menu.style.top  = y + "px";
     });
   }
 
@@ -1125,6 +1220,7 @@
         await vLoadProducts();
       }
       vState.pickerSelected.clear();
+      vState.pickerReplaceIdx = null;
       if (vEls.pickerSearch)   vEls.pickerSearch.value = "";
       if (vEls.pickerCheckAll) vEls.pickerCheckAll.checked = false;
       // El toggle "ver sin stock" es solo para admin (los demás no reciben
