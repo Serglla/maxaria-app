@@ -454,7 +454,7 @@ button { font: inherit; cursor: pointer; }
   position: relative;
   background: #fff;
   border: 0;
-  border-bottom: 1px solid #eef2f7;
+  border-bottom: 1px solid #bcd2ee;
   border-radius: 0;
   overflow: visible;
   display: flex;
@@ -464,8 +464,8 @@ button { font: inherit; cursor: pointer; }
   padding: 8px 14px;
   transition: background .12s ease;
 }
-.grid .card:nth-of-type(even) { background: #f4f7fb; }
-.card:hover { background: #e9eff8; }
+.grid .card:nth-of-type(even) { background: #d4e3f5; }
+.card:hover { background: #bcd2ee; }
 .card-img {
   flex: none;
   width: 50px;
