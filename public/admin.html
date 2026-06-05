@@ -2359,14 +2359,14 @@
           <div id="pbm-price-pct-row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <input type="number" id="pbm-price-pct" class="admin-input" step="0.5" placeholder="% (ej: 12 o -5)" style="width:120px">
             <span class="muted" style="font-size:12px">a:</span>
-            <label class="pbm-chk"><input type="checkbox" data-field="cost"> Costo</label>
+            <label class="pbm-chk"><input type="checkbox" data-field="cost" checked> Costo</label>
             <label class="pbm-chk"><input type="checkbox" data-field="price_minorista" checked> Minorista</label>
             <label class="pbm-chk"><input type="checkbox" data-field="price_revendedor" checked> Revendedor</label>
             <label class="pbm-chk"><input type="checkbox" data-field="price_mayorista" checked> Mayorista</label>
             <label class="pbm-chk"><input type="checkbox" data-field="price_vip" checked> VIP</label>
             <label class="pbm-chk"><input type="checkbox" data-field="price_publico" checked> Público</label>
           </div>
-          <div id="pbm-price-set-row" hidden style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
+          <div id="pbm-price-set-row" style="display:none;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
             <select id="pbm-price-field" class="admin-select" style="width:auto">
               <option value="cost">Costo</option>
               <option value="price_minorista">Minorista</option>
@@ -2669,6 +2669,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260604y"></script>
+  <script src="/js/admin.js?v=20260605a"></script>
 </body>
 </html>

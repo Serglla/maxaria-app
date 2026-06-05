@@ -3180,8 +3180,8 @@
       const set = (document.querySelector('input[name="pbm-price-mode"]:checked') || {}).value === "set";
       const setRow = document.getElementById("pbm-price-set-row");
       const pctRow = document.getElementById("pbm-price-pct-row");
-      if (setRow) setRow.hidden = !set;
-      if (pctRow) pctRow.hidden = set;
+      if (setRow) setRow.style.display = set ? "flex" : "none";
+      if (pctRow) pctRow.style.display = set ? "none" : "flex";
     });
   });
   // La opción "mantener margen" solo aplica cuando se fija el COSTO.
