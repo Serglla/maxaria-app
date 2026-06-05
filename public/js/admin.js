@@ -6367,21 +6367,12 @@
       els.catalogCatsWrap.appendChild(lbl);
     });
 
-    if (waVends.length) {
-      const grpV = document.createElement("optgroup");
-      grpV.label = "Vendedores con WhatsApp";
-      waVends.forEach((v) => {
-        const o = document.createElement("option");
-        o.value = v.id;
-        o.textContent = (v.full_name || v.username) + " (" + v.whatsapp_number + ")";
-        grpV.appendChild(o);
-      });
-      els.catalogWaSelect.appendChild(grpV);
-    }
-
     // Poblar select de cliente (clientes activos level 1-4). Si se elige uno,
     // el catálogo usa su lista de precios efectiva automáticamente.
     if (els.catalogClientSelect) {
+      const allUsers = state.usersLoaded && state.users.length
+        ? state.users
+        : await api("/api/admin/users").catch(() => []);
       els.catalogClientSelect.innerHTML =
         '<option value="">— Sin cliente (elegir lista manualmente) —</option>';
       allUsers
