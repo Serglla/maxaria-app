@@ -894,6 +894,31 @@ Sergio: "¿la sección Ventas para qué sería hoy?" → decidió que **Ventas =
 **Indicador de presupuestos aceptados sin facturar (también esta tanda, sesión previa del mismo día)**
 - En `/ventas`: banner-resumen "Tenés N presupuestos aceptados sin facturar…" + botón "Ver pendientes" (filtra a `aceptado`); filas `aceptado` resaltadas (fondo ámbar + acento naranja + nota "⚠ falta facturar") y botón "Abrir" → "Facturar →". Recordatorio del flujo: un presupuesto **Aceptado NO es un pedido**; recién al **Facturar** (`POST /api/budgets/:id/invoice`, requiere estado `aceptado`) se crea la fila en `orders` (status `pendiente`) y entra al circuito. Esto respondió la duda de Sergio de "dónde fue el pedido aceptado de Discandi" (estaba como presupuesto aceptado sin facturar).
 
+### Cotizaciones + UI minor (4 junio 2026)
+
+Cache busting final: `admin.js?v=20260604q`, `styles.css?v=20260604j`.
+
+**Cotizaciones — sección nueva en sidebar (arriba de Compras)**
+
+- Tab `#tab-cotizaciones` con filtros proveedor + estado, tabla con filas expandibles.
+- Schema: `purchase_requests` (id, supplier_id, notes, status borrador|enviado, created_by, created_at) + `purchase_request_items` (id, request_id CASCADE, product_id, product_code, product_name, quantity, unit_price). Migración idempotente.
+- `products.units_per_bulto INTEGER NOT NULL DEFAULT 1` — cuántas unidades de venta componen un bulto de compra. Editable en modal "Editar producto" (campo "Und/bulto", fila junto a stock/stock mínimo).
+- Endpoints: GET/POST/PUT/DELETE/PATCH `/api/admin/purchase-requests[/:id]`. **El POST/PUT necesita `headers: { "Content-Type": "application/json" }` — la función `api()` no lo agrega automáticamente**.
+- Modal de creación/edición (`max-width: 940px`): proveedor (select + botón ＋ para crear nuevo con z-index 1400), estado, notas, tabla de items: Costo act. · Precio cotiz. (editable, default = costo del producto) · Cant. · Subtotal · Diferencia (+/- vs costo, % en rojo/verde) · Und/bulto (input editable → guarda en el producto via PATCH + muestra "= N bultos"). Tfoot con totales.
+- `openEditCotizacion(id)`: carga `ensureAllProducts()` en paralelo con el GET antes de mapear items — así `current_cost` se llena al abrir sin necesidad de tocar und/bulto.
+- **Picker** (`#pcot-picker-modal`, z-index 1300): mismo estilo que oie-picker (nombre+código, Cant., Costo act., Stock). Filtro por categoría. Tipear cantidad tilda automáticamente. Botón ➕ Crear producto nuevo (flag `npForCotizacion`). **CSS crítico**: `#pcot-picker-table { min-width: 0 }` — sin esto la tabla se desborda (`.admin-table` tiene `min-width: 1200px` global).
+- Footer del modal: **📋 Exportar** → mini-modal pregunta unidades o bultos → descarga `.txt` sin precios. **📥 → Compra** (visible al editar) → pre-rellena el modal de Nueva Compra con productos/cantidades/precios y cierra cotización. **Guardar cotización** → POST (nueva) o PUT (edición).
+- Botón ✏️ en cada fila de la lista para editar. Botón 🗑 para eliminar.
+
+**Minor: Exportar catálogo PDF**
+- Se quitó la sección "Enviar por WhatsApp" del modal de catálogo PDF. El botón ahora dice "📄 Exportar PDF" y solo descarga.
+
+**Minor: Zebra en tabla de productos**
+- `#prod-tbody .prod-row:nth-child(even) { background: #f9f5ef }` en styles.css.
+
+**Minor: columna Und/bulto en tabla de productos**
+- `products.units_per_bulto` visible como columna (muestra "—" si = 1). Colspan corregido a 14.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.

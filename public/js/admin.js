@@ -5704,26 +5704,38 @@
         : "";
       const lines = [];
       const fecha = new Date().toLocaleDateString("es-AR");
-      lines.push("PEDIDO DE COTIZACIÓN — " + fecha);
+      const sep = "-".repeat(32);
+      lines.push("PEDIDO DE COTIZACION");
+      lines.push(fecha);
       if (supName && supName !== "Sin proveedor") lines.push("Proveedor: " + supName);
       const notas = els.pcotFormNotes ? els.pcotFormNotes.value.trim() : "";
       if (notas) lines.push("Notas: " + notas);
       lines.push("");
-      lines.push((porBultos ? "CANT. (BULTOS)" : "CANT. (UNIDADES)") + "\tPRODUCTO");
-      lines.push("─".repeat(50));
-      items.forEach((it) => {
+      lines.push(items.length + " producto" + (items.length !== 1 ? "s" : "") +
+        (porBultos ? " (cantidad por bulto)" : " (cantidad por unidad)"));
+      lines.push(sep);
+      items.forEach((it, i) => {
+        const code = it.product_code ? "[" + it.product_code + "] " : "";
+        lines.push((i + 1) + ") " + code + it.product_name);
         let qty;
         if (porBultos && it.units_per_bulto > 1) {
-          qty = Math.ceil(it.quantity / it.units_per_bulto) + " bultos (" + it.units_per_bulto + " und/bulto)";
+          const bultos = Math.ceil(it.quantity / it.units_per_bulto);
+          qty = bultos + (bultos === 1 ? " bulto" : " bultos") +
+            " (" + it.units_per_bulto + " und/bulto) = " + (bultos * it.units_per_bulto) + " und";
         } else {
           qty = it.quantity + " und";
         }
-        const code = it.product_code ? "[" + it.product_code + "] " : "";
-        lines.push(qty + "\t" + code + it.product_name);
+        lines.push("   Cantidad: " + qty);
+        lines.push("");
       });
-      lines.push("");
+      lines.push(sep);
       lines.push("Total: " + items.length + " producto" + (items.length !== 1 ? "s" : ""));
-      const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+      // BOM + CRLF: los visores de texto (Android/Notepad) decodifican mal el UTF-8
+      // sin BOM y rompen los acentos. El BOM fuerza UTF-8 en todos lados.
+      const text = "﻿" + lines.join("\r\n");
+      // octet-stream (no text/plain): fuerza la DESCARGA directa al celular en vez
+      // del chooser "abrir con / compartir" que Android muestra para texto plano.
+      const blob = new Blob([text], { type: "application/octet-stream" });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement("a");
       a.href     = url;
