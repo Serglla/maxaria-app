@@ -648,6 +648,11 @@ function priceChangeCols(level) {
 // Columnas de precio que se historizan en price_changes (publico cae a minorista).
 const TRACKED_PRICE_COLS = ["price_minorista", "price_revendedor", "price_mayorista", "price_vip"];
 
+// Campos monetarios del producto: admiten 2 decimales (centavos). El stock y
+// stock_min quedan SIEMPRE enteros. round2 redondea a centavos.
+const PRICE_FIELDS = ["cost", "price_minorista", "price_revendedor", "price_mayorista", "price_vip", "price_publico"];
+function round2(v) { const n = Number(v); return isFinite(n) ? Math.round(n * 100) / 100 : 0; }
+
 // Registra un cambio MANUAL de precio (edición desde el admin) en el historial
 // de "Ver cambios". A diferencia de la importación de Excel —que crea un update
 // por archivo— los cambios manuales se agrupan en UN solo update por día
@@ -834,7 +839,7 @@ function computeEffectivePrice(basePrice, config) {
   const m = Number(config.markup_percent) || 0;
   const denom = 1 - m / 100;
   if (denom <= 0) return p; // proteccion: margen >= 100% no es valido
-  return Math.round(p / denom);
+  return round2(p / denom);
 }
 
 // SQL expression que devuelve el precio efectivo para una columna de producto
@@ -849,7 +854,7 @@ function priceSqlExpr(config, productAlias) {
     return {
       expr:
         "CASE WHEN (1 - ? / 100.0) > 0" +
-        " THEN CAST(ROUND(" + a + "." + config.column + " / (1 - ? / 100.0)) AS INTEGER)" +
+        " THEN ROUND(" + a + "." + config.column + " / (1 - ? / 100.0), 2)" +
         " ELSE " + a + "." + config.column + " END",
       params: [Number(config.markup_percent) || 0, Number(config.markup_percent) || 0],
     };
@@ -1346,8 +1351,8 @@ app.post("/api/vendedor/dispatch", requireLogin, (req, res) => {
   const lines = [];
   let total = 0;
   for (const g of grouped.values()) {
-    const unit = g.quantity > 0 ? Math.round(g.subtotal_base / g.quantity) : 0;
-    const subtotal = unit * g.quantity;
+    const unit = g.quantity > 0 ? round2(g.subtotal_base / g.quantity) : 0;
+    const subtotal = round2(unit * g.quantity);
     total += subtotal;
     lines.push({
       product_id: g.product_id,
@@ -1366,7 +1371,7 @@ app.post("/api/vendedor/dispatch", requireLogin, (req, res) => {
     const r = db.prepare(
       "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id, is_unified, created_at)" +
       " VALUES (?, 'pendiente', ?, ?, ?, 1, datetime('now'))"
-    ).run(req.session.userId, total, notesStr, req.session.userId);
+    ).run(req.session.userId, round2(total), notesStr, req.session.userId);
     unifiedId = r.lastInsertRowid;
     const insertItem = db.prepare(
       "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit)" +
@@ -1389,7 +1394,7 @@ app.post("/api/vendedor/dispatch", requireLogin, (req, res) => {
   let whatsappMessage = null;
   if (globalWa) {
     const fmt = function (n) {
-      return "$" + Number(n || 0).toLocaleString("es-AR", { maximumFractionDigits: 0 });
+      return "$" + Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
     const meName = me.full_name || me.username || "vendedor";
     const headerLines = [
@@ -1584,10 +1589,10 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
   // para no devolver negativos. Reportamos eso al cliente como markup=0.
   const applyMarkup = (v) => {
     if (v == null) return null;
-    if (markup === 0) return Math.round(Number(v) || 0);
+    if (markup === 0) return round2(Number(v) || 0);
     const denom = 1 - markup / 100;
-    if (denom <= 0) return Math.round(Number(v) || 0);
-    return Math.round((Number(v) || 0) / denom);
+    if (denom <= 0) return round2(Number(v) || 0);
+    return round2((Number(v) || 0) / denom);
   };
 
   if (!updates.length) {
@@ -1879,10 +1884,10 @@ app.post("/api/orders", requireLogin, (req, res) => {
     const p = getProd.get(id);
     if (!p || p.stock <= 0) continue;
     const unitPrice = computeEffectivePrice(p.base_price, cfg);
-    const subtotal = unitPrice * qty;
+    const subtotal = round2(unitPrice * qty);
     // Si el cliente tenia lista personalizada, base_price es el "costo" del vendedor.
     // Si no, el costo es el mismo precio que el de venta -> guardamos NULL.
-    const costUnit = cfg.kind === "list" ? Math.round(Number(p.base_price) || 0) : null;
+    const costUnit = cfg.kind === "list" ? round2(Number(p.base_price) || 0) : null;
     total += subtotal;
     lines.push({
       product_id: p.id, product_code: p.code, product_name: p.name,
@@ -1907,6 +1912,7 @@ app.post("/api/orders", requireLogin, (req, res) => {
     " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
+  total = round2(total);
   let orderId;
   db.transaction(() => {
     const r = insertOrder.run(orderUserId, total, (notes || "").slice(0, 500) || null, assignedVendedorId);
@@ -2244,7 +2250,7 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
     if (client && client.assigned_vendedor_id) assignedVendedorId = client.assigned_vendedor_id;
   }
   const userId = clientId || req.session.userId;
-  const total = items.reduce((s, it) => s + Math.round((it.unit_price || 0) * (it.quantity || 1)), 0);
+  const total = round2(items.reduce((s, it) => s + round2((it.unit_price || 0) * (it.quantity || 1)), 0));
   const result = db.transaction(() => {
     const orderId = db.prepare(
       "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id) VALUES (?,?,?,?,?)"
@@ -2255,8 +2261,8 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
     );
     items.forEach((it) => {
       const qty = Math.max(1, Math.round(Number(it.quantity) || 1));
-      const price = Math.round(Number(it.unit_price) || 0);
-      ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, qty * price);
+      const price = round2(Number(it.unit_price) || 0);
+      ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, round2(qty * price));
     });
     return orderId;
   })();
@@ -2324,17 +2330,17 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
   for (const it of rawItems) {
     const productId = Number(it.product_id);
     const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
-    const unitPrice = Math.round(Math.max(0, Number(it.unit_price) || 0));
+    const unitPrice = round2(Math.max(0, Number(it.unit_price) || 0));
     if (!productId) continue;
     const prod = db.prepare("SELECT id, code, name FROM products WHERE id = ?").get(productId);
     if (!prod) continue;
     const productName = String(it.product_name || prod.name || "").trim().slice(0, 200);
     const productCode = String(it.product_code || prod.code || "").trim().slice(0, 50);
-    const subtotal = unitPrice * qty;
+    const subtotal = round2(unitPrice * qty);
     let costUnit = null;
     if (getCostPrice) {
       const cp = getCostPrice.get(productId);
-      costUnit = cp ? Math.round(Number(cp.base_price) || 0) : null;
+      costUnit = cp ? round2(Number(cp.base_price) || 0) : null;
     }
     total += subtotal;
     lines.push({ product_id: productId, product_code: productCode, product_name: productName,
@@ -2372,6 +2378,7 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     for (const l of lines) {
       ins.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
     }
+    total = round2(total);
     db.prepare("UPDATE orders SET total = ? WHERE id = ?").run(total, id);
 
     // Descontar el stock de los items nuevos si el pedido lo tenía descontado.
@@ -2427,7 +2434,9 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
   if (!code || !String(code).trim()) return res.status(400).json({ error: "Código requerido" });
   const existing = db.prepare("SELECT id FROM products WHERE code=?").get(String(code).trim());
   if (existing) return res.status(409).json({ error: "Ya existe un producto con ese código" });
-  const num = (v) => { const n = Math.round(Number(v)); return isFinite(n) ? Math.max(0, n) : 0; };
+  // Precios (costo + 5 niveles) admiten 2 decimales; stock / stock_min enteros.
+  const numInt = (v) => { const n = Math.round(Number(v)); return isFinite(n) ? Math.max(0, n) : 0; };
+  const numPrice = (v) => Math.max(0, round2(v));
   try {
     const r = db.prepare(
       "INSERT INTO products (code, name, category_id, cost, price_minorista, price_revendedor," +
@@ -2437,9 +2446,9 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
       String(code).trim(),
       String(name).trim(),
       category_id ? Number(category_id) : null,
-      num(cost), num(price_minorista), num(price_revendedor),
-      num(price_mayorista), num(price_vip), num(price_publico),
-      num(stock), num(stock_min)
+      numPrice(cost), numPrice(price_minorista), numPrice(price_revendedor),
+      numPrice(price_mayorista), numPrice(price_vip), numPrice(price_publico),
+      numInt(stock), numInt(stock_min)
     );
     // Devolver el producto creado (con category_name para el state del frontend)
     const created = db.prepare(
@@ -2510,7 +2519,10 @@ function coerceProductField(k, v) {
   if (k === "pack_unit") return ["unidad", "caja", "bulto"].includes(String(v)) ? String(v) : "bulto";
   if (k === "units_per_bulto") return Math.max(1, Math.round(Number(v)) || 1);
   if (k === "category_id") return (v == null || v === "" || Number(v) === 0) ? null : Math.round(Number(v));
-  let n = Number(v); if (!isFinite(n)) n = 0; return Math.round(n);
+  let n = Number(v); if (!isFinite(n)) n = 0;
+  // Precios (costo + 5 niveles): 2 decimales. Stock / stock_min: enteros.
+  if (PRICE_FIELDS.includes(k)) return Math.max(0, round2(n));
+  return Math.round(n);
 }
 // Arma { cols, vals } desde un body con campos editables (no valida unicidad de código).
 function buildProductUpdate(body) {
@@ -4750,8 +4762,8 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
     doc.font("Helvetica").fontSize(9).fillColor(GREY).text(String(it.product_code || ""), colX.cod, cy + 5, { width: COL.cod });
     doc.fillColor(BLACK).font("Helvetica-Bold").text(String(it.product_name || ""), colX.prod, cy + 5, { width: COL.prod - 4, ellipsis: true });
     doc.font("Helvetica-Bold").fillColor(BLACK).text(String(it.quantity), colX.cant, cy + 5, { width: COL.cant, align: "center" });
-    doc.font("Helvetica").fillColor(GREY).text("$" + Number(it.unit_price || 0).toLocaleString("es-AR"), colX.price, cy + 5, { width: COL.price, align: "right" });
-    doc.font("Helvetica-Bold").fillColor(BLACK).text("$" + Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)).toLocaleString("es-AR"), colX.sub, cy + 5, { width: COL.sub, align: "right" });
+    doc.font("Helvetica").fillColor(GREY).text("$" + Number(it.unit_price || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.price, cy + 5, { width: COL.price, align: "right" });
+    doc.font("Helvetica-Bold").fillColor(BLACK).text("$" + Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.sub, cy + 5, { width: COL.sub, align: "right" });
     // separadores verticales azules
     [colX.prod, colX.cant, colX.price, colX.sub].forEach((x) => {
       doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
@@ -4767,7 +4779,7 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
   doc.font("Helvetica").fontSize(9).fillColor(GREY)
     .text(items.length + " ítems · " + totalUnidades + " unidades", MX, cy);
   doc.font("Helvetica-Bold").fontSize(16).fillColor(BLU)
-    .text("TOTAL: $" + total.toLocaleString("es-AR"), MX, cy - 2, { align: "right" });
+    .text("TOTAL: $" + total.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), MX, cy - 2, { align: "right" });
   cy += 20;
 
   if (extraLine) {
@@ -5024,7 +5036,7 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
     let price = Number(r.base_price) || 0;
     if (markup !== null) {
       const d = 1 - markup / 100;
-      if (d > 0) price = Math.round(price / d);
+      if (d > 0) price = round2(price / d);
     }
     if (!catMap.has(r.cat_id)) {
       catMap.set(r.cat_id, byCategory.length);
@@ -5074,7 +5086,7 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   const colX = (c) => MX + c * (CW + CGAP);
   function flushCol() { if (col === 1) { col = 0; cy += CH + CGAPV; } }
   function chkPage(h) { if (cy + h > PH - MB) { doc.addPage(); cy = MY; col = 0; } }
-  function fmtP(n) { return "$" + Math.round(n || 0).toLocaleString("es-AR"); }
+  function fmtP(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   const hoy = new Date().toLocaleDateString("es-AR",
     { day: "2-digit", month: "long", year: "numeric" });
@@ -5446,12 +5458,13 @@ app.post("/api/budgets", requireVendedorOrAdmin, requireSectionForAdmin("ventas"
     const qty = Number(it.quantity) || 1;
     const price = Number(it.unit_price) || 0;
     const disc = Number(it.discount_percent) || 0;
-    const sub = Math.round(qty * price * (1 - disc / 100));
+    const sub = round2(qty * price * (1 - disc / 100));
     subtotal += sub;
     return { ...it, quantity: qty, unit_price: price, discount_percent: disc, subtotal: sub };
   });
-  const afterDiscount = Math.round(subtotal * (1 - discountPct / 100));
-  const total = Math.round(afterDiscount * (1 + surchargePct / 100));
+  subtotal = round2(subtotal);
+  const afterDiscount = round2(subtotal * (1 - discountPct / 100));
+  const total = round2(afterDiscount * (1 + surchargePct / 100));
   const number = nextBudgetNumber();
 
   const VALID_BUDGET_STATUSES = ["borrador", "enviado", "aceptado", "cancelado"];
@@ -5513,12 +5526,13 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
     const qty = Number(it.quantity) || 1;
     const price = Number(it.unit_price) || 0;
     const disc = Number(it.discount_percent) || 0;
-    const sub = Math.round(qty * price * (1 - disc / 100));
+    const sub = round2(qty * price * (1 - disc / 100));
     subtotal += sub;
     return { ...it, quantity: qty, unit_price: price, discount_percent: disc, subtotal: sub };
   });
-  const afterDiscount = Math.round(subtotal * (1 - discountPct / 100));
-  const total = Math.round(afterDiscount * (1 + surchargePct / 100));
+  subtotal = round2(subtotal);
+  const afterDiscount = round2(subtotal * (1 - discountPct / 100));
+  const total = round2(afterDiscount * (1 + surchargePct / 100));
 
   const updateBudget = db.transaction(() => {
     db.prepare(

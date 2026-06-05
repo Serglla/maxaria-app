@@ -38,6 +38,14 @@ function toInt(v) {
   return Math.round(n);
 }
 
+// Precios (costo + niveles): admiten 2 decimales (centavos). El stock usa toInt.
+function toPrice(v) {
+  if (v === null || v === undefined || v === "") return 0;
+  const n = Number(v);
+  if (!isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
 function trimStr(v) {
   if (v === null || v === undefined) return "";
   return String(v).trim();
@@ -128,12 +136,12 @@ function parseWorkbook(wb) {
       code, name,
       stock: toInt(r[idxOf.stock]),
       category: trimStr(r[idxOf.category]) || "Sin categoria",
-      cost: toInt(r[idxOf.cost]),
-      price_publico: toInt(r[idxOf.price_publico]),
-      price_vip: toInt(r[idxOf.price_vip]),
-      price_mayorista: toInt(r[idxOf.price_mayorista]),
-      price_minorista: toInt(r[idxOf.price_minorista]),
-      price_revendedor: toInt(r[idxOf.price_revendedor]),
+      cost: toPrice(r[idxOf.cost]),
+      price_publico: toPrice(r[idxOf.price_publico]),
+      price_vip: toPrice(r[idxOf.price_vip]),
+      price_mayorista: toPrice(r[idxOf.price_mayorista]),
+      price_minorista: toPrice(r[idxOf.price_minorista]),
+      price_revendedor: toPrice(r[idxOf.price_revendedor]),
     });
   }
   return out;

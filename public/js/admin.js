@@ -495,7 +495,7 @@
   };
 
   // ---------- helpers ----------
-  function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR"); }
+  function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
   function escapeHtml(s) {
     return String(s == null ? "" : s)
@@ -1353,7 +1353,7 @@
   }
 
   // -------- Actividad (ganancias por vendedor) --------
-  function fmtMoney(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR"); }
+  function fmtMoney(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   async function loadActividad() {
     if (!els.actTbody) return;
@@ -3073,10 +3073,14 @@
   }
 
   function fmtNum(n) { return (n || 0).toLocaleString("es-AR"); }
+  // Redondeo a centavos para precios (cliente). El server vuelve a redondear.
+  function round2(v) { const n = Number(v); return isFinite(n) ? Math.round(n * 100) / 100 : 0; }
+  // Precios: SIEMPRE 2 decimales (centavos). El stock usa fmtNum (entero).
+  function fmtPriceNum(n) { return (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   // Celda de dinero (solo lectura)
   function moneyCell(p, field, cls) {
-    return '<td class="num ' + (cls || "") + '">' + fmtNum(p[field]) + '</td>';
+    return '<td class="num ' + (cls || "") + '">' + fmtPriceNum(p[field]) + '</td>';
   }
 
   function rowHtml(p) {
@@ -3241,7 +3245,7 @@
         '<span class="pbm-pp-name" title="' + escapeHtml(p.name || "") + '">' + escapeHtml(p.name || "") + '</span>' +
         '<span class="pbm-pp-old num">' + fmtPrice(p.cost || 0) + '</span>' +
         '<input class="admin-input pbm-pp-pct" type="number" step="0.5" placeholder="%" data-old="' + (Number(p.cost) || 0) + '">' +
-        '<input class="admin-input pbm-pp-cost" type="number" min="0" placeholder="—">' +
+        '<input class="admin-input pbm-pp-cost" type="number" min="0" step="0.01" placeholder="—">' +
         '</div>';
     }).join("");
   }
@@ -3253,7 +3257,7 @@
   function pbmPpFromPct(row) {
     const old = Number(row.querySelector(".pbm-pp-pct").dataset.old) || 0;
     const pct = row.querySelector(".pbm-pp-pct").value.trim();
-    if (pct !== "") row.querySelector(".pbm-pp-cost").value = Math.max(0, Math.round(old * (1 + Number(pct) / 100)));
+    if (pct !== "") row.querySelector(".pbm-pp-cost").value = Math.max(0, round2(old * (1 + Number(pct) / 100)));
     pbmPpMark(row);
   }
   function pbmPpFromCost(row) {
@@ -3331,7 +3335,7 @@
           const v = row.querySelector(".pbm-pp-cost").value.trim();
           const old = Number(row.querySelector(".pbm-pp-pct").dataset.old) || 0;
           if (v === "") return;
-          const nc = Math.max(0, Math.round(Number(v)));
+          const nc = Math.max(0, round2(Number(v)));
           if (nc !== old) ppCosts[id] = nc;
         });
         if (!Object.keys(ppCosts).length) return fail("Ingresá al menos un costo nuevo distinto del actual.");
@@ -3344,7 +3348,7 @@
           if (!priceTargets.length) return fail("Elegí a qué columnas aplicar el %.");
         } else {
           priceSetField = document.getElementById("pbm-price-field").value;
-          priceSetVal = Math.max(0, Math.round(Number(document.getElementById("pbm-price-value").value) || 0));
+          priceSetVal = Math.max(0, round2(Number(document.getElementById("pbm-price-value").value) || 0));
           priceSetMargin = priceSetField === "cost" && document.getElementById("pbm-price-margin").checked;
         }
       }
@@ -3369,18 +3373,18 @@
             if (ppMargin && (p.cost || 0) > 0 && nc > 0) {
               const ratio = nc / p.cost;
               ["price_minorista", "price_revendedor", "price_mayorista", "price_vip", "price_publico"]
-                .forEach((f) => { patch[f] = Math.max(0, Math.round((p[f] || 0) * ratio)); });
+                .forEach((f) => { patch[f] = Math.max(0, round2((p[f] || 0) * ratio)); });
             }
           }
         } else if (priceMode === "pct") {
-          priceTargets.forEach((f) => { patch[f] = Math.max(0, Math.round((p[f] || 0) * factor)); });
+          priceTargets.forEach((f) => { patch[f] = Math.max(0, round2((p[f] || 0) * factor)); });
         } else {
           patch[priceSetField] = priceSetVal;
           // Fijar costo + mantener margen: escalar los 5 precios por costoNuevo/costoViejo.
           if (priceSetMargin && (p.cost || 0) > 0 && priceSetVal > 0) {
             const ratio = priceSetVal / p.cost;
             ["price_minorista", "price_revendedor", "price_mayorista", "price_vip", "price_publico"]
-              .forEach((f) => { patch[f] = Math.max(0, Math.round((p[f] || 0) * ratio)); });
+              .forEach((f) => { patch[f] = Math.max(0, round2((p[f] || 0) * ratio)); });
           }
         }
       }
@@ -4100,7 +4104,7 @@
           "<td><code>" + escapeHtml(it.product_code) + "</code></td>" +
           "<td>" + escapeHtml(it.product_name) + "</td>" +
           '<td><input type="number" class="cell-input cell-num oie-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:64px"></td>' +
-          '<td class="num"><input type="number" class="cell-input cell-num oie-price" min="0" step="1" value="' + it.unit_price + '" data-idx="' + idx + '" style="width:90px"></td>' +
+          '<td class="num"><input type="number" class="cell-input cell-num oie-price" min="0" step="0.01" value="' + it.unit_price + '" data-idx="' + idx + '" style="width:90px"></td>' +
           '<td class="num oie-sub">' + fmtPrice(it.unit_price * it.quantity) + "</td>" +
           '<td><button type="button" class="btn btn-small oie-rm" data-idx="' + idx + '">✕</button></td>' +
         "</tr>";
@@ -4136,7 +4140,7 @@
           if (e.target.classList.contains("oie-qty")) {
             editItems[idx].quantity = Math.max(1, Math.floor(Number(e.target.value) || 1));
           } else if (e.target.classList.contains("oie-price")) {
-            editItems[idx].unit_price = Math.max(0, Math.round(Number(e.target.value) || 0));
+            editItems[idx].unit_price = Math.max(0, round2(Number(e.target.value) || 0));
           }
           var tr = e.target.closest("tr");
           var sub = tr ? tr.querySelector(".oie-sub") : null;
@@ -5103,7 +5107,7 @@
       '<td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
       '<td>' + escapeHtml(it.product_name || "") + '</td>' +
       '<td class="num"><input type="number" class="cell-input cell-num pur-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:70px" /></td>' +
-      '<td class="num"><input type="number" class="cell-input cell-num pur-cost" min="0" step="1" value="' + it.unit_cost + '" data-idx="' + idx + '" style="width:90px" /></td>' +
+      '<td class="num"><input type="number" class="cell-input cell-num pur-cost" min="0" step="0.01" value="' + it.unit_cost + '" data-idx="' + idx + '" style="width:90px" /></td>' +
       '<td class="num pur-subtotal">' + fmtPrice(it.subtotal) + '</td>' +
       '<td><button type="button" class="btn btn-small pur-remove" data-idx="' + idx + '">✕</button></td>' +
     '</tr>'
@@ -7041,7 +7045,7 @@
           '<input type="number" value="' + escapeHtml(Math.round(it.quantity)) + '" min="1" step="1"' +
           ' data-field="quantity" style="width:60px;text-align:right" /></td>' +
         '<td style="padding:5px 8px;text-align:right">' +
-          '<input type="number" value="' + escapeHtml(it.unit_price) + '" min="0" step="1"' +
+          '<input type="number" value="' + escapeHtml(it.unit_price) + '" min="0" step="0.01"' +
           ' data-field="unit_price" style="width:90px;text-align:right" /></td>' +
         '<td style="padding:5px 8px;text-align:right">' +
           '<input type="number" value="' + escapeHtml(it.discount_percent) + '" min="0" max="100" step="0.5"' +
@@ -7578,10 +7582,25 @@
     return "$ " + n.toLocaleString("es-AR");
   }
   // Parsea "$1.000,00" o "1000" → entero
+  // Parsea un precio que puede venir en DOS formatos:
+  //  - argentino formateado: "$3.649,50" (punto = miles, coma = decimal)
+  //  - número crudo de un input type=number: "3649.5" (punto = decimal)
+  // Soporta 2 decimales (centavos).
   function parsePrice(s) {
     if (!s && s !== 0) return 0;
-    const clean = String(s).replace(/\$\s*/g, "").replace(/\./g, "").replace(",", ".").trim();
-    return Math.round(parseFloat(clean)) || 0;
+    let str = String(s).replace(/\$\s*/g, "").trim();
+    if (str === "") return 0;
+    if (str.indexOf(",") >= 0) {
+      // Formato argentino: la coma es el decimal, los puntos son miles.
+      str = str.replace(/\./g, "").replace(",", ".");
+    } else {
+      // Sin coma: punto ambiguo. Varios puntos => miles. Un punto seguido de
+      // exactamente 3 dígitos => miles ("3.649"); 1-2 dígitos => decimal ("3649.5").
+      const dots = (str.match(/\./g) || []).length;
+      if (dots > 1) str = str.replace(/\./g, "");
+      else if (dots === 1 && (str.split(".")[1] || "").length === 3) str = str.replace(/\./g, "");
+    }
+    return round2(parseFloat(str)) || 0;
   }
   // Attacha focus/blur a un input de precio para formatear/deformatear
   function attachPriceFmt(el) {
@@ -7590,6 +7609,7 @@
       const raw = parsePrice(el.value);
       el.value = raw || "";
       el.type = "number";
+      el.step = "0.01"; // permitir centavos al editar
     });
     el.addEventListener("blur", () => {
       const raw = parsePrice(el.value);
@@ -7617,7 +7637,7 @@
   ];
 
   function epGetCost() { return Math.round(Number(epCostInp ? epCostInp.value : 0)) || 0; }
-  function epPctToPrice(cost, pct)   { return cost > 0 ? Math.round(cost * (1 + pct / 100)) : 0; }
+  function epPctToPrice(cost, pct)   { return cost > 0 ? round2(cost * (1 + pct / 100)) : 0; }
   function epPriceToPct(cost, price) { return cost > 0 ? Math.round((price / cost - 1) * 100) : 0; }
 
   // Cuando cambia el costo, recalcula todos los precios manteniendo sus %
@@ -7795,7 +7815,7 @@
   function npGetCost() { return Math.round(Number(npCostInp ? npCostInp.value : 0)) || 0; }
 
   // costo + % → precio
-  function npPctToPrice(cost, pct) { return cost > 0 ? Math.round(cost * (1 + pct / 100)) : 0; }
+  function npPctToPrice(cost, pct) { return cost > 0 ? round2(cost * (1 + pct / 100)) : 0; }
   // costo + precio → %
   function npPriceToPct(cost, price) { return cost > 0 ? Math.round((price / cost - 1) * 100) : 0; }
 

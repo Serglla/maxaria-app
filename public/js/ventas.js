@@ -132,7 +132,10 @@
   const V_STATUS_LABELS = { borrador:"Borrador", enviado:"Enviado", aceptado:"Aceptado", facturado:"Facturado", cancelado:"Cancelado" };
   const V_STATUS_BADGE  = { borrador:"budget-badge--borrador", enviado:"budget-badge--enviado", aceptado:"budget-badge--aceptado", facturado:"budget-badge--facturado", cancelado:"budget-badge--cancelado" };
 
-  function vFmt(n) { return "$" + (Number(n)||0).toLocaleString("es-AR"); }
+  function vFmt(n) { return "$" + (Number(n)||0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  // Precios con 2 decimales (centavos). round2 redondea importes.
+  function vRound2(v) { const n = Number(v); return isFinite(n) ? Math.round(n*100)/100 : 0; }
+  function vFmtN(n) { return (Number(n)||0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function vEsc(s) { return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
   function vFmtDate(s) {
     if (!s) return "";
@@ -239,7 +242,7 @@
       const p = byId.get(it.product_id);
       if (p && p.price != null) {
         it.unit_price = Number(p.price) || 0;
-        it.subtotal = Math.round((Number(it.quantity) || 1) * it.unit_price * (1 - (Number(it.discount_percent) || 0) / 100));
+        it.subtotal = vRound2((Number(it.quantity) || 1) * it.unit_price * (1 - (Number(it.discount_percent) || 0) / 100));
       }
     });
     vRenderItems();
@@ -345,13 +348,14 @@
   function vRecalc() {
     let subtotal = 0;
     vState.items.forEach((it) => {
-      it.subtotal = Math.round((Number(it.quantity)||1) * (Number(it.unit_price)||0) * (1 - (Number(it.discount_percent)||0)/100));
+      it.subtotal = vRound2((Number(it.quantity)||1) * (Number(it.unit_price)||0) * (1 - (Number(it.discount_percent)||0)/100));
       subtotal += it.subtotal;
     });
+    subtotal = vRound2(subtotal);
     const discPct = Number(vEls.discount ? vEls.discount.value : 0)||0;
     const surPct  = Number(vEls.surcharge ? vEls.surcharge.value : 0)||0;
-    const afterDisc = Math.round(subtotal * (1 - discPct/100));
-    const total = Math.round(afterDisc * (1 + surPct/100));
+    const afterDisc = vRound2(subtotal * (1 - discPct/100));
+    const total = vRound2(afterDisc * (1 + surPct/100));
     if (vEls.subtotalDisp)  vEls.subtotalDisp.textContent  = vFmt(subtotal);
     if (vEls.discountDisp)  vEls.discountDisp.textContent  = discPct  > 0 ? "— " + vFmt(subtotal - afterDisc) : "— $0";
     if (vEls.surchargeDisp) vEls.surchargeDisp.textContent = surPct   > 0 ? "+ " + vFmt(total - afterDisc)    : "+ $0";
@@ -374,7 +378,7 @@
         '<td class="vit-code" title="' + vEsc(it.product_code) + '">' + vEsc(it.product_code) + '</td>' +
         '<td class="vit-name" title="' + vEsc(it.product_name) + '">' + vEsc(it.product_name) + '</td>' +
         '<td class="vit-qty" style="text-align:right"><input type="number" value="' + Math.round(it.quantity) + '" min="1" step="1" inputmode="numeric" data-field="quantity" style="width:60px;text-align:right" /></td>' +
-        '<td class="vit-price" style="text-align:right"><input type="number" value="' + vEsc(it.unit_price) + '" min="0" step="1" inputmode="numeric" data-field="unit_price" style="width:90px;text-align:right" /></td>' +
+        '<td class="vit-price" style="text-align:right"><input type="number" value="' + vEsc(it.unit_price) + '" min="0" step="0.01" inputmode="decimal" data-field="unit_price" style="width:90px;text-align:right" /></td>' +
         '<td class="vit-disc" style="text-align:right"><input type="number" value="' + vEsc(it.discount_percent) + '" min="0" max="100" step="0.5" inputmode="decimal" data-field="discount_percent" style="width:58px;text-align:right" /></td>' +
         '<td class="vit-sub" style="text-align:right;font-weight:500">' + vEsc(vFmt(it.subtotal||0)) + '</td>' +
         '<td class="vit-del" style="text-align:center"><button type="button" data-del-idx="' + idx + '" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px" title="Eliminar">✕</button></td>' +
@@ -409,7 +413,7 @@
         vState.items[idx][field] = Number(raw) || 0;
       }
       const it = vState.items[idx];
-      it.subtotal = Math.round((Number(it.quantity)||1)*(Number(it.unit_price)||0)*(1-(Number(it.discount_percent)||0)/100));
+      it.subtotal = vRound2((Number(it.quantity)||1)*(Number(it.unit_price)||0)*(1-(Number(it.discount_percent)||0)/100));
       // Actualizar el subtotal en la celda .vit-sub (puede no ser el 5to td
       // si el CSS responsive reordena con order, pero la búsqueda por clase
       // sigue funcionando).
@@ -435,7 +439,7 @@
         if (e.target.value === "") e.target.value = "0";
       }
       const it = vState.items[idx];
-      it.subtotal = Math.round((Number(it.quantity)||1)*(Number(it.unit_price)||0)*(1-(Number(it.discount_percent)||0)/100));
+      it.subtotal = vRound2((Number(it.quantity)||1)*(Number(it.unit_price)||0)*(1-(Number(it.discount_percent)||0)/100));
       const subCell = tr.querySelector(".vit-sub");
       if (subCell) subCell.textContent = vFmt(it.subtotal);
       vRecalc();
@@ -826,8 +830,9 @@
 
     let subtotal = 0;
     vState.items.forEach((it) => { subtotal += Number(it.subtotal) || 0; });
-    const afterDisc = Math.round(subtotal * (1 - discPct / 100));
-    const total = Math.round(afterDisc * (1 + surPct / 100));
+    subtotal = vRound2(subtotal);
+    const afterDisc = vRound2(subtotal * (1 - discPct / 100));
+    const total = vRound2(afterDisc * (1 + surPct / 100));
     const totalUnidades = vState.items.reduce((s, it) => s + (Math.round(Number(it.quantity)) || 0), 0);
 
     const rows = vState.items.map((it) => {
@@ -836,9 +841,9 @@
         "<td class='col-cod'>" + vEsc(it.product_code || "") + "</td>" +
         "<td class='col-prod'>" + vEsc(it.product_name || "") + "</td>" +
         "<td class='col-cant'>" + Math.round(it.quantity) + "</td>" +
-        "<td class='col-price'>$" + Number(it.unit_price || 0).toLocaleString("es-AR") + "</td>" +
+        "<td class='col-price'>$" + vFmtN(it.unit_price) + "</td>" +
         (disc ? "<td class='col-disc'>" + disc + "%</td>" : "<td class='col-disc' style='color:#9ca3af'>—</td>") +
-        "<td class='col-sub'>$" + Number(it.subtotal || 0).toLocaleString("es-AR") + "</td>" +
+        "<td class='col-sub'>$" + vFmtN(it.subtotal) + "</td>" +
         "</tr>";
     }).join("");
 
@@ -906,11 +911,11 @@
       "</table>" +
       "<div class='summary-row'>" +
         "<span class='summary-meta'>" + vState.items.length + " artículos &nbsp;·&nbsp; " + totalUnidades + " unidades</span>" +
-        "<span class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</span>" +
+        "<span class='grand-total'>TOTAL: $" + vFmtN(total) + "</span>" +
       "</div>" +
       (discPct || surPct ? "<div class='adjustments'>" +
-        (discPct ? "Descuento " + discPct + "%: — $" + (subtotal - afterDisc).toLocaleString("es-AR") + "&nbsp;&nbsp;" : "") +
-        (surPct  ? "Recargo "  + surPct  + "%: + $" + (total - afterDisc).toLocaleString("es-AR") : "") +
+        (discPct ? "Descuento " + discPct + "%: — $" + vFmtN(vRound2(subtotal - afterDisc)) + "&nbsp;&nbsp;" : "") +
+        (surPct  ? "Recargo "  + surPct  + "%: + $" + vFmtN(vRound2(total - afterDisc)) : "") +
       "</div>" : "") +
       (notes ? "<p class='notes'>" + vEsc(notes) + "</p>" : "") +
       "</body></html>";
@@ -1110,7 +1115,7 @@
           vState.items[replaceIdx] = {
             product_id: p.id, product_code: p.code||"", product_name: p.name||"",
             quantity: origQty, unit_price: p.price||0, discount_percent: 0,
-            subtotal: Math.round(origQty * (p.price||0)),
+            subtotal: vRound2(origQty * (p.price||0)),
           };
         }
       } else {
@@ -1123,9 +1128,9 @@
           const ex = vState.items.find((it) => it.product_id === pid);
           if (ex) {
             ex.quantity += addQty;
-            ex.subtotal = Math.round(ex.quantity * ex.unit_price * (1 - ex.discount_percent/100));
+            ex.subtotal = vRound2(ex.quantity * ex.unit_price * (1 - ex.discount_percent/100));
           } else {
-            vState.items.push({ product_id:p.id, product_code:p.code||"", product_name:p.name||"", quantity:addQty, unit_price:p.price||0, discount_percent:0, subtotal:Math.round(addQty * (p.price||0)) });
+            vState.items.push({ product_id:p.id, product_code:p.code||"", product_name:p.name||"", quantity:addQty, unit_price:p.price||0, discount_percent:0, subtotal:vRound2(addQty * (p.price||0)) });
           }
         });
       }

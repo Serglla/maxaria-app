@@ -91,7 +91,7 @@
     clients: [], // lista de usuarios (level 1-4) cargada para vendedores
   };
 
-  function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR"); }
+  function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
   function escapeHtml(s) {
     return String(s == null ? "" : s)
@@ -1846,7 +1846,7 @@
   function renderEarnings(data) {
     const s = data.summary || {};
     const orders = data.orders || [];
-    const fmt = (n) => "$" + (Number(n) || 0).toLocaleString("es-AR");
+    const fmt = (n) => "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     let html = '<section class="earn-summary">' +
       '<div class="earn-card"><div class="earn-label">Pedidos</div><div class="earn-value">' + (s.total_orders || 0) + '</div></div>' +
       '<div class="earn-card"><div class="earn-label">Entregados</div><div class="earn-value">' + (s.total_delivered || 0) + '</div></div>' +
