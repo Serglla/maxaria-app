@@ -2030,14 +2030,14 @@ button { font: inherit; cursor: pointer; }
 .admin-table thead th.sortable.num .sort-arrow { margin-left: 2px; }
 
 /* ── Cuerpo: filas alternadas + bordes visibles ── */
-.admin-table tbody tr { border-bottom: 1px solid #1e3a5f; }
+.admin-table tbody tr { border-bottom: 2px solid #1e3a5f; }
 .admin-table tbody tr:nth-child(even) { background: #f4f7fc; }
 .admin-table tbody tr:nth-child(odd)  { background: #fff; }
 .admin-table tbody tr:hover { background: #e8eef8 !important; }
 .admin-table tbody td {
   padding: 6px 10px;
   vertical-align: middle;
-  border-right: 1px solid #c9d4e8;
+  border-right: 1px solid #1e3a5f;
 }
 .admin-table tbody td:last-child { border-right: none; }
 
@@ -3977,6 +3977,18 @@ html.in-modal .ventas-wrap {
 #prod-tbody .prod-row.row-oos { background: #fff3e0 !important; }
 #prod-tbody .prod-row.row-oos:nth-child(even) { background: #ffe2bd !important; }
 #prod-tbody .prod-row.row-oos:hover { background: #ffd9a8 !important; }
+/* Selección múltiple: columna de check + fila seleccionada */
+.col-check { width: 36px; text-align: center; }
+.prod-check { width: 16px; height: 16px; cursor: pointer; vertical-align: middle; }
+#prod-tbody .prod-row.prod-selected { box-shadow: inset 4px 0 0 0 #1e3a5f; }
+#prod-tbody .prod-row.prod-selected td.col-check { background: #d4e3f5; }
+/* Modal de cambios en lote (selección múltiple) */
+.pbm-section { border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 11px; margin-bottom: 10px; }
+.pbm-head { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 14px; }
+.pbm-body { margin-top: 8px; padding-left: 22px; }
+.pbm-body[hidden] { display: none; }
+.pbm-section.pbm-off .pbm-body { opacity: .4; pointer-events: none; }
+.pbm-chk { font-size: 12px; display: inline-flex; align-items: center; gap: 3px; }
 .cell-active-badge { font-size: 11px; font-weight: 600; color: #9ca3af; }
 .cell-active-badge.active { color: #15803d; }
 .text-danger { color: #dc2626 !important; font-weight: 600; }

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260604n" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260604p" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -294,21 +294,15 @@
           <input type="file" id="excel-file" accept=".xlsx,.xls" hidden />
         </label>
         <button class="btn" id="catalog-btn" type="button" title="Generar catálogo en PDF con lista de precios a elección">📄 Catálogo PDF</button>
-        <button class="btn" id="prod-bulk-edit-btn" type="button" title="Editar costos y precios directamente en la tabla">✏️ Editar precios</button>
+        <button class="btn" id="prod-select-btn" type="button" title="Seleccionar varios productos para editarlos en lote">☑️ Selección múltiple</button>
         <button class="btn btn-primary" id="new-product-btn" type="button">+ Nuevo producto</button>
         <button class="btn" id="stock-adj-history-btn" type="button" title="Ver historial de ajustes de stock">📋 Ajustes</button>
-        <span class="bulk-bar" id="prod-bulk-bar" hidden>
-          <span class="muted" style="font-size:12px">Subir</span>
-          <input type="number" id="prod-bulk-pct" class="admin-input" step="0.5" placeholder="%" title="Porcentaje a aplicar" />
-          <span class="muted" style="font-size:12px">%</span>
-          <select id="prod-bulk-target" class="admin-select" style="width:auto" title="A qué columnas aplicar el porcentaje">
-            <option value="prices">Solo precios</option>
-            <option value="all">Costo + precios</option>
-          </select>
-          <button class="btn btn-small" id="prod-bulk-apply-pct" type="button">Aplicar a visibles</button>
+        <span class="bulk-bar" id="prod-sel-bar" hidden>
+          <strong id="prod-sel-count" style="font-size:13px">0 seleccionados</strong>
+          <button class="btn btn-small" id="prod-sel-clear" type="button" title="Limpiar selección">Limpiar</button>
+          <button class="btn btn-primary btn-small" id="prod-sel-edit" type="button" disabled>✎ Editar seleccionados</button>
+          <button class="btn btn-small" id="prod-sel-cancel" type="button">Cancelar</button>
         </span>
-        <button class="btn btn-primary" id="prod-bulk-save-btn" type="button" hidden>💾 Guardar cambios</button>
-        <button class="btn" id="prod-bulk-cancel-btn" type="button" hidden>Cancelar</button>
       </div>
 
       <div class="admin-table-wrap">
@@ -2347,6 +2341,83 @@
     </div>
   </div>
 
+  <!-- Modal: cambios en lote sobre productos seleccionados -->
+  <div id="prod-bulk-modal" class="admin-modal" hidden>
+    <div class="admin-modal-box" style="max-width:560px">
+      <h3 style="margin-top:0">Editar <span id="pbm-count">0</span> productos seleccionados</h3>
+      <p class="muted" style="margin:0 0 12px;font-size:12px">Tildá solo las secciones que quieras aplicar. El resto queda sin tocar.</p>
+
+      <!-- Precios -->
+      <div class="pbm-section">
+        <label class="pbm-head"><input type="checkbox" id="pbm-en-price"> <strong>Precios</strong></label>
+        <div class="pbm-body" id="pbm-price-body">
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+            <label><input type="radio" name="pbm-price-mode" value="pct" checked> Ajustar %</label>
+            <label><input type="radio" name="pbm-price-mode" value="set"> Fijar valor</label>
+          </div>
+          <div id="pbm-price-pct-row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <input type="number" id="pbm-price-pct" class="admin-input" step="0.5" placeholder="% (ej: 12 o -5)" style="width:120px">
+            <span class="muted" style="font-size:12px">a:</span>
+            <label class="pbm-chk"><input type="checkbox" data-field="cost"> Costo</label>
+            <label class="pbm-chk"><input type="checkbox" data-field="price_minorista" checked> Minorista</label>
+            <label class="pbm-chk"><input type="checkbox" data-field="price_revendedor" checked> Revendedor</label>
+            <label class="pbm-chk"><input type="checkbox" data-field="price_mayorista" checked> Mayorista</label>
+            <label class="pbm-chk"><input type="checkbox" data-field="price_vip" checked> VIP</label>
+            <label class="pbm-chk"><input type="checkbox" data-field="price_publico" checked> Público</label>
+          </div>
+          <div id="pbm-price-set-row" hidden style="display:flex;gap:6px;align-items:center;margin-top:4px">
+            <select id="pbm-price-field" class="admin-select" style="width:auto">
+              <option value="cost">Costo</option>
+              <option value="price_minorista">Minorista</option>
+              <option value="price_revendedor">Revendedor</option>
+              <option value="price_mayorista">Mayorista</option>
+              <option value="price_vip">VIP</option>
+              <option value="price_publico">Público</option>
+            </select>
+            <span class="muted" style="font-size:12px">=</span>
+            <input type="number" id="pbm-price-value" class="admin-input" min="0" placeholder="valor" style="width:120px">
+          </div>
+        </div>
+      </div>
+
+      <!-- Categoría -->
+      <div class="pbm-section">
+        <label class="pbm-head"><input type="checkbox" id="pbm-en-cat"> <strong>Categoría</strong></label>
+        <div class="pbm-body">
+          <select id="pbm-cat" class="admin-select" style="width:100%"></select>
+        </div>
+      </div>
+
+      <!-- Stock -->
+      <div class="pbm-section">
+        <label class="pbm-head"><input type="checkbox" id="pbm-en-stock"> <strong>Stock</strong></label>
+        <div class="pbm-body" style="display:flex;gap:6px;align-items:center">
+          <select id="pbm-stock-op" class="admin-select" style="width:auto">
+            <option value="set">Fijar</option>
+            <option value="add">Sumar</option>
+            <option value="sub">Restar</option>
+          </select>
+          <input type="number" id="pbm-stock-value" class="admin-input" placeholder="cantidad" style="width:120px">
+        </div>
+      </div>
+
+      <!-- Estado -->
+      <div class="pbm-section">
+        <label class="pbm-head"><input type="checkbox" id="pbm-en-active"> <strong>Estado</strong></label>
+        <div class="pbm-body" style="display:flex;gap:12px;align-items:center">
+          <label><input type="radio" name="pbm-active" value="1" checked> Activar</label>
+          <label><input type="radio" name="pbm-active" value="0"> Desactivar</label>
+        </div>
+      </div>
+
+      <p id="pbm-msg" class="config-msg" style="min-height:16px"></p>
+      <div class="admin-modal-foot">
+        <button type="button" class="btn" id="pbm-cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="pbm-apply">Aplicar cambios</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal editar producto -->
   <div id="edit-product-modal" class="admin-modal" hidden>
     <div class="admin-modal-box" style="max-width:520px">
@@ -2596,6 +2667,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260604w"></script>
+  <script src="/js/admin.js?v=20260604x"></script>
 </body>
 </html>

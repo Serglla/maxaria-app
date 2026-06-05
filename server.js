@@ -2406,6 +2406,32 @@ app.post("/api/admin/products/:id/duplicate", requireAdmin, (req, res) => {
   res.json({ ok: true, product: created, source_id: id });
 });
 
+// Campos editables de un producto + su coerción. Compartido por el PATCH
+// individual y por el bulk-update (selección múltiple).
+const PRODUCT_EDITABLE = [
+  "code", "name", "category_id", "cost", "price_minorista", "price_revendedor",
+  "price_mayorista", "price_vip", "price_publico", "stock", "stock_min", "active",
+  "image_url", "units_per_bulto", "pack_unit",
+];
+function coerceProductField(k, v) {
+  if (k === "name") return String(v || "").trim().slice(0, 200);
+  if (k === "code") return String(v || "").trim().slice(0, 50);
+  if (k === "image_url") return String(v || "").trim().slice(0, 500) || null;
+  if (k === "active") return v ? 1 : 0;
+  if (k === "pack_unit") return ["unidad", "caja", "bulto"].includes(String(v)) ? String(v) : "bulto";
+  if (k === "units_per_bulto") return Math.max(1, Math.round(Number(v)) || 1);
+  if (k === "category_id") return (v == null || v === "" || Number(v) === 0) ? null : Math.round(Number(v));
+  let n = Number(v); if (!isFinite(n)) n = 0; return Math.round(n);
+}
+// Arma { cols, vals } desde un body con campos editables (no valida unicidad de código).
+function buildProductUpdate(body) {
+  const cols = [], vals = [];
+  for (const k of PRODUCT_EDITABLE) {
+    if (k in body) { cols.push(k); vals.push(coerceProductField(k, body[k])); }
+  }
+  return { cols, vals };
+}
+
 // Editar campos puntuales de un producto
 app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
@@ -2421,29 +2447,16 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
     if (dup) return res.status(409).json({ error: "Ya existe un producto con el código " + code });
   }
 
-  const allowed = [
-    "code", "name", "cost", "price_minorista", "price_revendedor",
-    "price_mayorista", "price_vip", "price_publico", "stock", "stock_min", "active", "image_url",
-    "units_per_bulto", "pack_unit",
-  ];
-  const sets = [];
-  const vals = [];
-  for (const k of allowed) {
-    if (k in body) {
-      sets.push(k + " = ?");
-      // Numericos: parsear; texto: trim. active: 0/1.
-      let v = body[k];
-      if (k === "name") v = String(v || "").trim().slice(0, 200);
-      else if (k === "code") v = String(v || "").trim().slice(0, 50);
-      else if (k === "image_url") v = String(v || "").trim().slice(0, 500) || null;
-      else if (k === "active") v = v ? 1 : 0;
-      else if (k === "pack_unit") v = ["unidad", "caja", "bulto"].includes(String(v)) ? String(v) : "bulto";
-      else if (k === "units_per_bulto") v = Math.max(1, Math.round(Number(v)) || 1);
-      else { v = Number(v); if (!isFinite(v)) v = 0; v = Math.round(v); }
-      vals.push(v);
+  // Validar categoría si viene (FK), salvo que sea null (sin categoría).
+  if ("category_id" in body) {
+    const cid = coerceProductField("category_id", body.category_id);
+    if (cid != null && !db.prepare("SELECT id FROM categories WHERE id = ?").get(cid)) {
+      return res.status(400).json({ error: "Categoría inexistente" });
     }
   }
-  if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
+  const { cols, vals } = buildProductUpdate(body);
+  if (!cols.length) return res.status(400).json({ error: "Nada para actualizar" });
+  const sets = cols.map((c) => c + " = ?");
   sets.push("updated_at = datetime('now')");
   vals.push(id);
   try {
@@ -2454,6 +2467,48 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
     throw e;
   }
   res.json({ ok: true, id: id });
+});
+
+// Edición en lote (selección múltiple): aplica cambios a varios productos en UNA
+// transacción. Body: { patches: [{ id, ...campos }] }. Cada patch trae solo los
+// campos a tocar (el front ya computó %/sumar-restar por producto).
+app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
+  const patches = Array.isArray((req.body || {}).patches) ? req.body.patches : [];
+  if (!patches.length) return res.status(400).json({ error: "Sin cambios para aplicar" });
+  if (patches.length > 5000) return res.status(400).json({ error: "Demasiados productos" });
+
+  // Validar categorías referenciadas (distintas, una sola consulta por valor).
+  const catIds = new Set();
+  for (const p of patches) {
+    if (p && "category_id" in p) {
+      const cid = coerceProductField("category_id", p.category_id);
+      if (cid != null) catIds.add(cid);
+    }
+  }
+  for (const cid of catIds) {
+    if (!db.prepare("SELECT id FROM categories WHERE id = ?").get(cid)) {
+      return res.status(400).json({ error: "Categoría inexistente (" + cid + ")" });
+    }
+  }
+
+  let updated = 0, failed = 0;
+  const run = db.transaction(() => {
+    for (const p of patches) {
+      const id = Number(p && p.id);
+      if (!id) { failed++; continue; }
+      const { cols, vals } = buildProductUpdate(p);
+      if (!cols.length) { failed++; continue; }
+      const sets = cols.map((c) => c + " = ?");
+      sets.push("updated_at = datetime('now')");
+      vals.push(id);
+      try {
+        const r = db.prepare("UPDATE products SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+        if (r.changes) updated++; else failed++;
+      } catch (_) { failed++; }
+    }
+  });
+  run();
+  res.json({ ok: true, updated, failed });
 });
 
 // Subir imagen de un producto. Guarda en public/images/products/product-{id}.{ext}

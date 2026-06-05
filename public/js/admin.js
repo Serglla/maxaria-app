@@ -50,13 +50,18 @@
     excelFile: document.getElementById("excel-file"),
     prodTable: document.getElementById("prod-table"),
     prodHeaders: document.querySelectorAll('#prod-table thead th.sortable'),
-    bulkEditBtn:   document.getElementById("prod-bulk-edit-btn"),
-    bulkSaveBtn:   document.getElementById("prod-bulk-save-btn"),
-    bulkCancelBtn: document.getElementById("prod-bulk-cancel-btn"),
-    bulkBar:       document.getElementById("prod-bulk-bar"),
-    bulkPct:       document.getElementById("prod-bulk-pct"),
-    bulkTarget:    document.getElementById("prod-bulk-target"),
-    bulkApplyPct:  document.getElementById("prod-bulk-apply-pct"),
+    selectBtn:  document.getElementById("prod-select-btn"),
+    selBar:     document.getElementById("prod-sel-bar"),
+    selCount:   document.getElementById("prod-sel-count"),
+    selClear:   document.getElementById("prod-sel-clear"),
+    selEdit:    document.getElementById("prod-sel-edit"),
+    selCancel:  document.getElementById("prod-sel-cancel"),
+    pbmModal:   document.getElementById("prod-bulk-modal"),
+    pbmCount:   document.getElementById("pbm-count"),
+    pbmMsg:     document.getElementById("pbm-msg"),
+    pbmApply:   document.getElementById("pbm-apply"),
+    pbmCancel:  document.getElementById("pbm-cancel"),
+    pbmCat:     document.getElementById("pbm-cat"),
 
     // Pedidos
     ordersSearch: document.getElementById("orders-search"),
@@ -425,8 +430,8 @@
     products: [],         // lista completa (todos los productos, sin filtrar)
     productsFiltered: [], // lista despues de aplicar busqueda + filtros
     page: 0,
-    bulkEdit: false,      // modo edición masiva de costos/precios en la grilla
-    priceEdits: {},       // id -> { campo: valorNuevo } cambios pendientes sin guardar
+    selectMode: false,    // modo selección múltiple (checks por fila)
+    selectedIds: new Set(), // ids de productos tildados (sobrevive paginación/filtro)
     orders: [],
     ordersLoaded: false,
     settingsLoaded: false,
@@ -3018,7 +3023,7 @@
     const list = state.productsFiltered;
     els.prodCount.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     if (!list.length) {
-      els.prodTbody.innerHTML = '<tr><td colspan="14" class="muted">Sin resultados</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="' + (state.selectMode ? 15 : 14) + '" class="muted">Sin resultados</td></tr>';
       els.pageInfo.textContent = "Página 0 / 0";
       els.pagePrev.disabled = true;
       els.pageNext.disabled = true;
@@ -3034,23 +3039,14 @@
                                " · " + (start + 1) + "-" + (start + slice.length);
     els.pagePrev.disabled = state.page === 0;
     els.pageNext.disabled = state.page >= totalPages - 1;
+    if (state.selectMode) syncSelectHeader();
   }
 
   function fmtNum(n) { return (n || 0).toLocaleString("es-AR"); }
 
-  // Columnas de dinero editables en el modo masivo
-  const MONEY_FIELDS = ["cost", "price_minorista", "price_revendedor", "price_mayorista", "price_vip", "price_publico"];
-  // Celda de dinero: texto normal, o input en modo edición masiva (con resalte si tiene cambio pendiente)
+  // Celda de dinero (solo lectura)
   function moneyCell(p, field, cls) {
-    if (!state.bulkEdit) {
-      return '<td class="num ' + (cls || "") + '">' + fmtNum(p[field]) + '</td>';
-    }
-    const e = state.priceEdits[p.id];
-    const edited = !!(e && field in e);
-    const val = edited ? e[field] : (p[field] || 0);
-    return '<td class="num' + (edited ? " bulk-edited" : "") + '">' +
-      '<input type="number" min="0" step="1" class="bulk-price-input' + (edited ? " changed" : "") + '" ' +
-      'data-id="' + p.id + '" data-field="' + field + '" value="' + val + '"></td>';
+    return '<td class="num ' + (cls || "") + '">' + fmtNum(p[field]) + '</td>';
   }
 
   function rowHtml(p) {
@@ -3063,7 +3059,12 @@
     const stockLow = p.active && stockMin > 0 && p.stock > 0 && p.stock <= stockMin;
     const stockCls = p.stock <= 0 ? " text-danger" : (stockLow ? " text-warn" : "");
     const stockTitle = stockLow ? (' title="Stock bajo (mínimo: ' + stockMin + ')"') : "";
-    return '<tr data-id="' + p.id + '" class="prod-row ' + rowCls + '" title="Doble click para editar">' +
+    const selected = state.selectMode && state.selectedIds.has(p.id);
+    const checkCell = state.selectMode
+      ? '<td class="col-check"><input type="checkbox" class="prod-check" data-id="' + p.id + '"' + (selected ? " checked" : "") + '></td>'
+      : "";
+    return '<tr data-id="' + p.id + '" class="prod-row ' + rowCls + (selected ? " prod-selected" : "") + '" title="Doble click para editar">' +
+      checkCell +
       '<td class="col-img"><button class="prod-img-btn" type="button" data-act="edit-img" data-id="' + p.id + '" data-name="' + escapeHtml(p.name) + '" title="Cambiar imagen">' + imgThumb + '</button></td>' +
       '<td class="cell-code">' + escapeHtml(p.code || "") + '</td>' +
       '<td>' + escapeHtml(p.name) + '</td>' +
@@ -3083,7 +3084,7 @@
 
   // Doble click en fila → abrir modal de edición
   els.prodTbody.addEventListener("dblclick", (e) => {
-    if (state.bulkEdit) return; // en modo edición masiva no se abre el modal
+    if (state.selectMode) return; // en modo selección no se abre el modal
     const btn = e.target.closest("button");
     if (btn) return; // no abrir si hicieron doble click en un botón
     const tr = e.target.closest("tr[data-id]");
@@ -3092,133 +3093,167 @@
     if (p) openEditProdModal(p);
   });
 
-  // ---------- Edición masiva de costos/precios ----------
-  function bulkPendingCount() {
-    return Object.keys(state.priceEdits).filter((id) => Object.keys(state.priceEdits[id]).length).length;
+  // ---------- Selección múltiple + cambios en lote ----------
+  function updateSelCount() {
+    const n = state.selectedIds.size;
+    if (els.selCount) els.selCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados");
+    if (els.selEdit) els.selEdit.disabled = n === 0;
   }
-  function updateBulkSaveLabel() {
-    if (!els.bulkSaveBtn) return;
-    const n = bulkPendingCount();
-    els.bulkSaveBtn.textContent = n ? "💾 Guardar cambios (" + n + ")" : "💾 Guardar cambios";
-    els.bulkSaveBtn.disabled = n === 0;
-  }
-  function setBulkMode(on) {
-    state.bulkEdit = on;
-    if (!on) state.priceEdits = {};
-    if (els.bulkEditBtn)   els.bulkEditBtn.hidden = on;
-    if (els.bulkBar)       els.bulkBar.hidden = !on;
-    if (els.bulkSaveBtn)   els.bulkSaveBtn.hidden = !on;
-    if (els.bulkCancelBtn) els.bulkCancelBtn.hidden = !on;
-    updateBulkSaveLabel();
-    renderProducts();
-  }
-  // Input change en celdas de dinero: guardar/borrar pendiente sin re-render (preserva foco)
-  els.prodTbody.addEventListener("input", (e) => {
-    const inp = e.target.closest(".bulk-price-input");
-    if (!inp) return;
-    const id = Number(inp.dataset.id);
-    const field = inp.dataset.field;
-    const p = state.products.find((x) => x.id === id);
-    if (!p) return;
-    const orig = p[field] || 0;
-    const val = Math.max(0, Math.round(Number(inp.value) || 0));
-    if (!state.priceEdits[id]) state.priceEdits[id] = {};
-    if (val === orig) delete state.priceEdits[id][field];
-    else state.priceEdits[id][field] = val;
-    if (!Object.keys(state.priceEdits[id]).length) delete state.priceEdits[id];
-    const edited = !!(state.priceEdits[id] && field in state.priceEdits[id]);
-    inp.classList.toggle("changed", edited);
-    const td = inp.closest("td");
-    if (td) td.classList.toggle("bulk-edited", edited);
-    updateBulkSaveLabel();
-  });
-  // Al cambiar el COSTO (al perder foco), recalcular los precios de venta de esa
-  // fila manteniendo el margen (misma proporción), igual que applyPurchaseCostUpdate.
-  els.prodTbody.addEventListener("change", (e) => {
-    const inp = e.target.closest(".bulk-price-input");
-    if (!inp || inp.dataset.field !== "cost") return;
-    const id = Number(inp.dataset.id);
-    const p = state.products.find((x) => x.id === id);
-    if (!p) return;
-    const oldCost = Number(p.cost) || 0;
-    const newCost = Math.max(0, Math.round(Number(inp.value) || 0));
-    if (oldCost <= 0 || newCost <= 0 || newCost === oldCost) return; // sin baseline no se mantiene margen
-    const ratio = newCost / oldCost;
-    const row = inp.closest("tr");
-    let touched = 0;
-    ["price_minorista", "price_revendedor", "price_mayorista", "price_vip", "price_publico"].forEach((field) => {
-      const orig = p[field] || 0;
-      const nv = Math.max(0, Math.round(orig * ratio));
-      if (!state.priceEdits[id]) state.priceEdits[id] = {};
-      if (nv === orig) delete state.priceEdits[id][field];
-      else state.priceEdits[id][field] = nv;
-      const cell = row ? row.querySelector('input[data-field="' + field + '"]') : null;
-      if (cell) {
-        cell.value = String(nv);
-        const edited = nv !== orig;
-        cell.classList.toggle("changed", edited);
-        const td = cell.closest("td");
-        if (td) td.classList.toggle("bulk-edited", edited);
-      }
-      if (nv !== orig) touched++;
-    });
-    if (state.priceEdits[id] && !Object.keys(state.priceEdits[id]).length) delete state.priceEdits[id];
-    updateBulkSaveLabel();
-    if (touched) showToast("Precios recalculados manteniendo el margen", "ok");
-  });
-  if (els.bulkEditBtn)   els.bulkEditBtn.addEventListener("click", () => setBulkMode(true));
-  if (els.bulkCancelBtn) els.bulkCancelBtn.addEventListener("click", () => {
-    if (bulkPendingCount() && !confirm("Hay cambios sin guardar. ¿Descartarlos?")) return;
-    setBulkMode(false);
-  });
-  if (els.bulkApplyPct) els.bulkApplyPct.addEventListener("click", () => {
-    const pct = Number(els.bulkPct.value);
-    if (!pct) { showToast("Ingresá un porcentaje (ej: 12 o -5)", "err"); return; }
-    const factor = 1 + pct / 100;
-    const fields = els.bulkTarget && els.bulkTarget.value === "all"
-      ? MONEY_FIELDS : MONEY_FIELDS.filter((f) => f !== "cost");
-    const list = state.productsFiltered; // solo los visibles/filtrados
-    list.forEach((p) => {
-      fields.forEach((field) => {
-        const cur = (state.priceEdits[p.id] && field in state.priceEdits[p.id])
-          ? state.priceEdits[p.id][field] : (p[field] || 0);
-        const nv = Math.max(0, Math.round(cur * factor));
-        const orig = p[field] || 0;
-        if (nv === orig) { if (state.priceEdits[p.id]) delete state.priceEdits[p.id][field]; }
-        else { if (!state.priceEdits[p.id]) state.priceEdits[p.id] = {}; state.priceEdits[p.id][field] = nv; }
+  // Inserta/quita la columna de checkbox en el header y refleja el master-check
+  function syncSelectHeader() {
+    const headRow = els.prodTable ? els.prodTable.querySelector("thead tr") : null;
+    if (!headRow) return;
+    let th = headRow.querySelector("th.col-check");
+    if (state.selectMode && !th) {
+      th = document.createElement("th");
+      th.className = "col-check";
+      th.innerHTML = '<input type="checkbox" id="prod-check-all" title="Seleccionar / deseleccionar todos los filtrados">';
+      headRow.insertBefore(th, headRow.firstChild);
+      th.querySelector("#prod-check-all").addEventListener("change", (e) => {
+        const on = e.target.checked;
+        state.productsFiltered.forEach((p) => { if (on) state.selectedIds.add(p.id); else state.selectedIds.delete(p.id); });
+        updateSelCount(); renderProducts();
       });
-      if (state.priceEdits[p.id] && !Object.keys(state.priceEdits[p.id]).length) delete state.priceEdits[p.id];
-    });
-    updateBulkSaveLabel();
-    renderProducts();
-    showToast((pct > 0 ? "+" : "") + pct + "% aplicado a " + list.length + " producto(s) visibles — revisá y guardá", "ok");
-  });
-  if (els.bulkSaveBtn) els.bulkSaveBtn.addEventListener("click", async () => {
-    const ids = Object.keys(state.priceEdits).filter((id) => Object.keys(state.priceEdits[id]).length);
-    if (!ids.length) { setBulkMode(false); return; }
-    els.bulkSaveBtn.disabled = true;
-    els.bulkSaveBtn.textContent = "Guardando…";
-    let ok = 0, fail = 0;
-    // En tandas de 10 para no abrir demasiadas conexiones a la vez
-    for (let i = 0; i < ids.length; i += 10) {
-      const chunk = ids.slice(i, i + 10);
-      const results = await Promise.allSettled(chunk.map((id) =>
-        api("/api/admin/products/" + id, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(state.priceEdits[id]),
-        })
-      ));
-      results.forEach((r, j) => {
-        if (r.status === "fulfilled") {
-          ok++;
-          const p = state.products.find((x) => x.id === Number(chunk[j]));
-          if (p) Object.assign(p, state.priceEdits[chunk[j]]); // refleja en la vista (misma ref que filtered)
-        } else { fail++; }
-      });
+    } else if (!state.selectMode && th) {
+      th.remove();
     }
-    setBulkMode(false);
-    showToast("✅ " + ok + " producto(s) actualizado(s)" + (fail ? " · " + fail + " con error" : ""), fail ? "err" : "ok");
+    const all = headRow.querySelector("#prod-check-all");
+    if (all) {
+      const total = state.productsFiltered.length;
+      const sel = state.productsFiltered.filter((p) => state.selectedIds.has(p.id)).length;
+      all.checked = total > 0 && sel === total;
+      all.indeterminate = sel > 0 && sel < total;
+    }
+  }
+  function setSelectMode(on) {
+    state.selectMode = on;
+    if (!on) state.selectedIds.clear();
+    if (els.selectBtn) els.selectBtn.hidden = on;
+    if (els.selBar) els.selBar.hidden = !on;
+    syncSelectHeader();
+    updateSelCount();
+    renderProducts();
+  }
+  if (els.selectBtn) els.selectBtn.addEventListener("click", () => setSelectMode(true));
+  if (els.selCancel) els.selCancel.addEventListener("click", () => setSelectMode(false));
+  if (els.selClear) els.selClear.addEventListener("click", () => {
+    state.selectedIds.clear(); updateSelCount(); renderProducts();
+  });
+  // Toggle de un checkbox de fila
+  els.prodTbody.addEventListener("change", (e) => {
+    const chk = e.target.closest(".prod-check");
+    if (!chk) return;
+    const id = Number(chk.dataset.id);
+    if (chk.checked) state.selectedIds.add(id); else state.selectedIds.delete(id);
+    const tr = chk.closest("tr");
+    if (tr) tr.classList.toggle("prod-selected", chk.checked);
+    updateSelCount();
+    syncSelectHeader();
+  });
+
+  // --- Modal de cambios en lote ---
+  // Cada sección tiene un checkbox de activación que apaga/prende su cuerpo.
+  ["pbm-en-price", "pbm-en-cat", "pbm-en-stock", "pbm-en-active"].forEach((cbId) => {
+    const cb = document.getElementById(cbId);
+    if (!cb) return;
+    const sync = () => { const sec = cb.closest(".pbm-section"); if (sec) sec.classList.toggle("pbm-off", !cb.checked); };
+    cb.addEventListener("change", sync); sync();
+  });
+  // % vs fijar valor en precios
+  document.querySelectorAll('input[name="pbm-price-mode"]').forEach((r) => {
+    r.addEventListener("change", () => {
+      const set = (document.querySelector('input[name="pbm-price-mode"]:checked') || {}).value === "set";
+      const setRow = document.getElementById("pbm-price-set-row");
+      const pctRow = document.getElementById("pbm-price-pct-row");
+      if (setRow) setRow.hidden = !set;
+      if (pctRow) pctRow.hidden = set;
+    });
+  });
+  async function openBulkModal() {
+    if (!state.selectedIds.size) return;
+    if (!state.allCategories || !state.allCategories.length) {
+      try { state.allCategories = await api("/api/categories"); } catch (_) {}
+    }
+    if (els.pbmCat) {
+      els.pbmCat.innerHTML = (state.allCategories || [])
+        .map((c) => '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>').join("");
+    }
+    els.pbmCount.textContent = state.selectedIds.size;
+    els.pbmMsg.textContent = ""; els.pbmMsg.className = "config-msg";
+    els.pbmModal.hidden = false;
+  }
+  if (els.selEdit) els.selEdit.addEventListener("click", openBulkModal);
+  if (els.pbmCancel) els.pbmCancel.addEventListener("click", () => { els.pbmModal.hidden = true; });
+  if (els.pbmApply) els.pbmApply.addEventListener("click", async () => {
+    const ids = [...state.selectedIds];
+    if (!ids.length) return;
+    const enPrice  = document.getElementById("pbm-en-price").checked;
+    const enCat    = document.getElementById("pbm-en-cat").checked;
+    const enStock  = document.getElementById("pbm-en-stock").checked;
+    const enActive = document.getElementById("pbm-en-active").checked;
+    const fail = (m) => { els.pbmMsg.textContent = m; els.pbmMsg.className = "config-msg err"; };
+    if (!enPrice && !enCat && !enStock && !enActive) return fail("Tildá al menos una sección.");
+
+    let priceMode, pricePct, priceTargets = [], priceSetField, priceSetVal;
+    if (enPrice) {
+      priceMode = (document.querySelector('input[name="pbm-price-mode"]:checked') || {}).value;
+      if (priceMode === "pct") {
+        pricePct = Number(document.getElementById("pbm-price-pct").value);
+        if (!pricePct) return fail("Ingresá un % distinto de 0.");
+        priceTargets = [...document.querySelectorAll('#pbm-price-pct-row input[type=checkbox]:checked')].map((c) => c.dataset.field);
+        if (!priceTargets.length) return fail("Elegí a qué columnas aplicar el %.");
+      } else {
+        priceSetField = document.getElementById("pbm-price-field").value;
+        priceSetVal = Math.max(0, Math.round(Number(document.getElementById("pbm-price-value").value) || 0));
+      }
+    }
+    const catId = enCat ? (Number(els.pbmCat.value) || null) : null;
+    const stockOp = enStock ? document.getElementById("pbm-stock-op").value : null;
+    const stockVal = enStock ? Math.round(Number(document.getElementById("pbm-stock-value").value) || 0) : 0;
+    const activeVal = enActive ? Number((document.querySelector('input[name="pbm-active"]:checked') || {}).value) : null;
+
+    if (ids.length > 20 && !confirm("Vas a modificar " + ids.length + " productos. ¿Confirmás?")) return;
+
+    const factor = (enPrice && priceMode === "pct") ? 1 + pricePct / 100 : 1;
+    const patches = ids.map((id) => {
+      const p = state.products.find((x) => x.id === id) || {};
+      const patch = { id };
+      if (enPrice) {
+        if (priceMode === "pct") priceTargets.forEach((f) => { patch[f] = Math.max(0, Math.round((p[f] || 0) * factor)); });
+        else patch[priceSetField] = priceSetVal;
+      }
+      if (enCat) patch.category_id = catId;
+      if (enStock) {
+        const cur = Number(p.stock) || 0;
+        patch.stock = stockOp === "set" ? Math.max(0, stockVal) : stockOp === "add" ? cur + stockVal : Math.max(0, cur - stockVal);
+      }
+      if (enActive) patch.active = activeVal;
+      return patch;
+    });
+
+    els.pbmApply.disabled = true; els.pbmApply.textContent = "Aplicando…";
+    try {
+      const res = await api("/api/admin/products/bulk-update", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patches }),
+      });
+      const catName = enCat ? ((state.allCategories || []).find((c) => c.id === catId) || {}).name : null;
+      patches.forEach((pt) => {
+        const p = state.products.find((x) => x.id === pt.id);
+        if (!p) return;
+        const cp = Object.assign({}, pt); delete cp.id;
+        Object.assign(p, cp);
+        if (enCat) p.category_name = catName || "—";
+      });
+      els.pbmModal.hidden = true;
+      setSelectMode(false);
+      applyFilters();
+      showToast("✅ " + (res.updated != null ? res.updated : patches.length) + " producto(s) actualizado(s)" + (res.failed ? " · " + res.failed + " con error" : ""), res.failed ? "err" : "ok");
+    } catch (err) {
+      fail("Error: " + err.message);
+    } finally {
+      els.pbmApply.disabled = false; els.pbmApply.textContent = "Aplicar cambios";
+    }
   });
 
   els.prodSearch.addEventListener("input", debounce(applyFilters, 200));
