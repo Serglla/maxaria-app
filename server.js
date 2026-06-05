@@ -347,9 +347,13 @@ try { db.exec("ALTER TABLE budgets ADD COLUMN price_basis TEXT"); } catch (_) {}
 
 // Migracion: stock minimo por producto (0 = sin alerta)
 try { db.exec("ALTER TABLE products ADD COLUMN stock_min INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
-// Unidades por bulto: cuantas unidades de venta componen un bulto de compra.
-// 1 = no aplica (se compra unitario). Usado en pedidos de cotizacion.
+// Unidades por empaque de compra: cuantas unidades de venta componen el empaque
+// en que el proveedor cotiza/pide el producto. 1 = se compra unitario.
+// (Historicamente "por bulto"; el empaque real lo define pack_unit.)
 try { db.exec("ALTER TABLE products ADD COLUMN units_per_bulto INTEGER NOT NULL DEFAULT 1"); } catch (_) {}
+// Empaque en que el proveedor cotiza/pide el producto: 'unidad' | 'caja' | 'bulto'.
+// units_per_bulto = unidades por ese empaque (ej. Migral: pack_unit='caja', 10 u/caja).
+try { db.exec("ALTER TABLE products ADD COLUMN pack_unit TEXT NOT NULL DEFAULT 'bulto'"); } catch (_) {}
 // Precio cotizado en pedidos de cotizacion (lo que responde el proveedor)
 try { db.exec("ALTER TABLE purchase_request_items ADD COLUMN unit_price INTEGER"); } catch (_) {}
 
@@ -2319,7 +2323,8 @@ app.get("/api/admin/products", requireAdmin, (req, res) => {
   const sql =
     "SELECT p.id, p.code, p.category_id, c.name AS category_name, p.name," +
     "       p.cost, p.price_minorista, p.price_revendedor, p.price_mayorista," +
-    "       p.price_vip, p.price_publico, p.stock, p.stock_min, p.active, p.image_url" +
+    "       p.price_vip, p.price_publico, p.stock, p.stock_min, p.active, p.image_url," +
+    "       p.units_per_bulto, p.pack_unit" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  ORDER BY c.sort_order, c.name, p.name";
   res.json(db.prepare(sql).all());
@@ -2419,6 +2424,7 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   const allowed = [
     "code", "name", "cost", "price_minorista", "price_revendedor",
     "price_mayorista", "price_vip", "price_publico", "stock", "stock_min", "active", "image_url",
+    "units_per_bulto", "pack_unit",
   ];
   const sets = [];
   const vals = [];
@@ -2431,6 +2437,8 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
       else if (k === "code") v = String(v || "").trim().slice(0, 50);
       else if (k === "image_url") v = String(v || "").trim().slice(0, 500) || null;
       else if (k === "active") v = v ? 1 : 0;
+      else if (k === "pack_unit") v = ["unidad", "caja", "bulto"].includes(String(v)) ? String(v) : "bulto";
+      else if (k === "units_per_bulto") v = Math.max(1, Math.round(Number(v)) || 1);
       else { v = Number(v); if (!isFinite(v)) v = 0; v = Math.round(v); }
       vals.push(v);
     }
@@ -4609,7 +4617,7 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
   // ── Header ──
   doc.font("Helvetica-Bold").fontSize(17).fillColor(BLU).text(appName, MX, 36);
   doc.font("Helvetica").fontSize(9).fillColor(GREY)
-    .text(porBultos ? "Cantidades por bulto" : "Cantidades por unidad", MX, 58);
+    .text(porBultos ? "Cantidades por empaque (caja/bulto)" : "Cantidades por unidad", MX, 58);
   doc.font("Helvetica").fontSize(9).fillColor(GREY).text("PEDIDO DE COTIZACIÓN", MX, 36, { align: "right" });
   doc.font("Helvetica-Bold").fontSize(14).fillColor(BLU).text(date, MX, 48, { align: "right" });
 
@@ -4663,9 +4671,13 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
     let qty;
     const upb = Number(it.units_per_bulto) || 1;
     const q = Number(it.quantity) || 0;
-    if (porBultos && upb > 1) {
+    const pack = it.pack_unit || "bulto";
+    if (porBultos && pack !== "unidad" && upb > 1) {
       const b = Math.ceil(q / upb);
-      qty = b + (b === 1 ? " bulto" : " bultos") + " (" + upb + " u/b) = " + (b * upb) + " und";
+      const sing = pack === "caja" ? "caja" : "bulto";
+      const plur = pack === "caja" ? "cajas" : "bultos";
+      const abbr = pack === "caja" ? "u/c" : "u/b";
+      qty = b + " " + (b === 1 ? sing : plur) + " (" + upb + " " + abbr + ") = " + (b * upb) + " und";
     } else {
       qty = q + " und";
     }

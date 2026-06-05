@@ -3052,7 +3052,7 @@
       '<td class="num">' + fmtNum(p.price_vip) + '</td>' +
       '<td class="num">' + fmtNum(p.price_publico) + '</td>' +
       '<td><span class="cell-active-badge' + (p.active ? " active" : "") + '">' + (p.active ? "Sí" : "No") + '</span></td>' +
-      '<td class="num muted" title="Unidades por bulto de compra">' + (p.units_per_bulto > 1 ? p.units_per_bulto : "—") + '</td>' +
+      '<td class="num muted" title="Unidades por empaque de compra (caja/bulto)">' + (p.units_per_bulto > 1 && p.pack_unit !== "unidad" ? p.units_per_bulto + " u/" + (p.pack_unit === "caja" ? "caja" : "bulto") : "—") + '</td>' +
       '<td><button class="btn btn-small" type="button" data-act="adj-stock" data-id="' + p.id + '" title="Ajustar stock">±</button></td>' +
     '</tr>';
   }
@@ -5256,7 +5256,10 @@
     let totalSubtotal = 0, totalDiff = 0;
     els.pcotItemsTbody.innerHTML = state.cotizacionItems.map((it, idx) => {
       const upb      = it.units_per_bulto || 1;
-      const bultos   = upb > 1 ? Math.ceil(it.quantity / upb) : "";
+      const pack     = it.pack_unit || "bulto";
+      const packSing = pack === "caja" ? "caja" : "bulto";
+      const packPlur = pack === "caja" ? "cajas" : "bultos";
+      const packs    = (pack !== "unidad" && upb > 1) ? Math.ceil(it.quantity / upb) : "";
       const costoAct = it.current_cost || 0;
       const precio   = it.unit_price || 0;
       const subtotal = precio * it.quantity;
@@ -5268,18 +5271,28 @@
       const diffColor = diffUnit > 0 ? "#ef4444" : diffUnit < 0 ? "#16a34a" : "#9ca3af";
       const diffLabel = (diffUnit >= 0 ? "+" : "") + fmtPrice(diffTotal) +
         (diffPct !== null ? ' <span style="font-size:10px">(' + (diffUnit >= 0 ? "+" : "") + diffPct + '%)</span>' : "");
-      const bultoCell =
-        '<td style="text-align:center;white-space:nowrap;min-width:100px">' +
-          '<div style="display:flex;flex-direction:column;align-items:center;gap:3px">' +
-            '<div style="display:flex;align-items:center;gap:4px">' +
+      const packSelect =
+        '<select data-cot-idx="' + idx + '" class="admin-input pcot-pack-input" ' +
+        'style="font-size:11px;padding:2px 4px;width:86px" title="Cómo lo cotiza el proveedor">' +
+          '<option value="unidad"' + (pack === "unidad" ? " selected" : "") + '>por unidad</option>' +
+          '<option value="caja"'   + (pack === "caja"   ? " selected" : "") + '>por caja</option>' +
+          '<option value="bulto"'  + (pack === "bulto"  ? " selected" : "") + '>por bulto</option>' +
+        '</select>';
+      const packBody = pack === "unidad"
+        ? '<div style="font-size:11px;color:#d1d5db">por unidad</div>'
+        : '<div style="display:flex;align-items:center;gap:4px">' +
               '<input type="number" min="1" step="1" value="' + upb + '" ' +
-              'style="width:58px;text-align:center;font-size:13px;padding:3px 4px" ' +
-              'data-cot-idx="' + idx + '" class="admin-input pcot-upb-input" title="Unidades por bulto">' +
-              '<span style="font-size:11px;color:#9ca3af;font-weight:500">und</span>' +
+              'style="width:52px;text-align:center;font-size:13px;padding:3px 4px" ' +
+              'data-cot-idx="' + idx + '" class="admin-input pcot-upb-input" title="Unidades por ' + packSing + '">' +
+              '<span style="font-size:11px;color:#9ca3af;font-weight:500">u/' + packSing + '</span>' +
             '</div>' +
             (upb > 1
-              ? '<div style="font-size:12px;color:#f59e0b;font-weight:700">= ' + bultos + ' bulto' + (bultos !== 1 ? 's' : '') + '</div>'
-              : '<div style="font-size:11px;color:#d1d5db">sin bulto</div>') +
+              ? '<div style="font-size:12px;color:#f59e0b;font-weight:700">= ' + packs + ' ' + (packs === 1 ? packSing : packPlur) + '</div>'
+              : '<div style="font-size:11px;color:#d1d5db">—</div>');
+      const bultoCell =
+        '<td style="text-align:center;white-space:nowrap;min-width:110px">' +
+          '<div style="display:flex;flex-direction:column;align-items:center;gap:3px">' +
+            packSelect + packBody +
           '</div>' +
         '</td>';
       return '<tr>' +
@@ -5349,6 +5362,27 @@
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ units_per_bulto: upb }),
+          }).catch(() => {});
+        }
+        renderCotizacionItems();
+      });
+    });
+    // empaque (unidad/caja/bulto) change → guarda en item + producto + re-render
+    els.pcotItemsTbody.querySelectorAll(".pcot-pack-input").forEach((sel) => {
+      sel.addEventListener("change", () => {
+        const i = Number(sel.dataset.cotIdx);
+        const pack = ["unidad", "caja", "bulto"].includes(sel.value) ? sel.value : "bulto";
+        state.cotizacionItems[i].pack_unit = pack;
+        const pid = state.cotizacionItems[i].product_id;
+        if (pid) {
+          const ap = (state.allProducts || []).find((p) => p.id === pid);
+          if (ap) ap.pack_unit = pack;
+          const sp = (state.products || []).find((p) => p.id === pid);
+          if (sp) sp.pack_unit = pack;
+          api("/api/admin/products/" + pid, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pack_unit: pack }),
           }).catch(() => {});
         }
         renderCotizacionItems();
@@ -5439,6 +5473,7 @@
           unit_price: it.unit_price || (prod ? prod.cost : null) || null,
           current_cost: prod ? (prod.cost || 0) : 0,
           units_per_bulto: prod ? (prod.units_per_bulto || 1) : 1,
+          pack_unit: prod ? (prod.pack_unit || "bulto") : "bulto",
         };
       });
       state.cotPickerSelected = new Map();
@@ -5603,6 +5638,7 @@
             product_id: product.id, product_code: product.code || "",
             product_name: product.name, quantity: qty,
             units_per_bulto: product.units_per_bulto || 1,
+            pack_unit: product.pack_unit || "bulto",
             unit_price: existingPrice != null ? existingPrice : (product.cost || null),
             current_cost: product.cost || 0,
           });
@@ -5715,6 +5751,7 @@
         product_name: it.product_name || "",
         quantity: it.quantity,
         units_per_bulto: it.units_per_bulto || 1,
+        pack_unit: it.pack_unit || "bulto",
       }));
       showToast("Generando PDF…");
       try {
@@ -7256,6 +7293,7 @@
     set("ep-stock",          p.stock          || 0);
     set("ep-stock-min",      p.stock_min      || 0);
     set("ep-units-per-bulto", p.units_per_bulto > 1 ? p.units_per_bulto : 1);
+    set("ep-pack-unit",      p.pack_unit || "bulto");
     set("ep-cost",           p.cost           || 0);
     // Precios: mostrar formateados
     const prices = {
@@ -7325,6 +7363,7 @@
         stock:            Number(get("ep-stock"))              || 0,
         stock_min:        Number(get("ep-stock-min"))          || 0,
         units_per_bulto:  Math.max(1, Number(get("ep-units-per-bulto")) || 1),
+        pack_unit:        get("ep-pack-unit") || "bulto",
         cost:             Number(get("ep-cost"))               || 0,
         price_minorista:  parsePrice(get("ep-minorista")),
         price_revendedor: parsePrice(get("ep-revendedor")),
