@@ -718,6 +718,35 @@ button { font: inherit; cursor: pointer; }
 }
 .order-tag.tag-unified    { background: #ede9fe; color: #5b21b6; border-color: #a78bfa; }
 .order-tag.tag-grouped    { background: #fef08a; color: #854d0e; border-color: #eab308; }
+/* Estado de pago del pedido entregado (vista cliente) */
+.order-pay { margin-top: 4px; }
+.pay-chip {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1.5px solid transparent;
+}
+.pay-chip.pay-ok  { background: #a7f3d0; color: #065f46; border-color: #10b981; }
+.pay-chip.pay-due { background: #fed7aa; color: #9a3412; border-color: #f97316; }
+.order-pay-detail {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #fafbfc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+.order-pay-detail .pay-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  padding: 2px 0;
+  color: #374151;
+}
+.order-pay-detail .pay-row.pay-ok  strong { color: #047857; }
+.order-pay-detail .pay-row.pay-due strong { color: #c2410c; }
 .order-tag.tag-pendiente  { background: #fde68a; color: #854d0e; border-color: #f59e0b; }
 .order-tag.tag-enviado    { background: #bfdbfe; color: #1e3a8a; border-color: #3b82f6; }
 .order-tag.tag-preparando { background: #c7d2fe; color: #312e81; border-color: #6366f1; }

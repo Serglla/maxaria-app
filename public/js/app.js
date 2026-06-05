@@ -1369,13 +1369,48 @@
     '</article>';
   }
 
-  // Etiqueta legible del estado del pedido (para el cliente).
+  // Etiqueta legible del estado del pedido. STATUS_LABELS es la vista interna
+  // (admin) con los 6 estados distintos del circuito.
   const STATUS_LABELS = {
     pendiente: "Pendiente", enviado: "Enviado", preparando: "En preparación",
     listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado",
   };
   function statusLabel(s) {
     return STATUS_LABELS[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
+  }
+  // Etiqueta simplificada que ve el cliente: 4 etapas claras del recorrido.
+  // "pendiente" y "enviado" se muestran ambos como "Recibido".
+  const CLIENT_STATUS_LABELS = {
+    pendiente: "Recibido", enviado: "Recibido", preparando: "Armando",
+    listo: "Para entregar", entregado: "Entregado", cancelado: "Cancelado",
+  };
+  function clientStatusLabel(s) {
+    return CLIENT_STATUS_LABELS[s] || statusLabel(s);
+  }
+  // Chip de estado de pago para pedidos entregados (vista cliente/vendedor).
+  // Usa balance_due (total − cobrado/pagado) que viene del backend.
+  function paymentChipHtml(o) {
+    if (o.status !== "entregado") return "";
+    const due = Number(o.balance_due);
+    if (!isFinite(due)) return "";
+    if (due <= 0) {
+      return '<span class="pay-chip pay-ok">✓ Pagado</span>';
+    }
+    return '<span class="pay-chip pay-due">Falta pagar ' + fmtPrice(due) + '</span>';
+  }
+  // Desglose de pago para el detalle de un pedido entregado (vista cliente/vendedor).
+  function paymentDetailHtml(o) {
+    if (o.status !== "entregado") return "";
+    const due = Number(o.balance_due);
+    const paid = Number(o.amount_paid) || 0;
+    if (!isFinite(due)) return "";
+    let rows =
+      '<div class="pay-row"><span>Total del pedido</span><span>' + fmtPrice(o.total) + '</span></div>' +
+      '<div class="pay-row"><span>Pagado</span><span>' + fmtPrice(paid) + '</span></div>';
+    rows += due <= 0
+      ? '<div class="pay-row pay-ok"><span>Estado</span><strong>✓ Pagado</strong></div>'
+      : '<div class="pay-row pay-due"><span>Falta pagar</span><strong>' + fmtPrice(due) + '</strong></div>';
+    return '<div class="order-pay-detail">' + rows + '</div>';
   }
 
   // Banner superior con avisos del estado de los pedidos del cliente. Se llena
@@ -1420,12 +1455,16 @@
         '</label>'
       : (isTerc ? '<span class="dispatch-cb-placeholder"></span>' : "");
 
+    // El admin ve los estados internos; el cliente/vendedor ve las etapas simples.
+    const label = isAdmin ? statusLabel(o.status) : clientStatusLabel(o.status);
+    const payChip = isAdmin ? "" : paymentChipHtml(o);
     return '<article class="order-card' + (isTerc ? ' with-dispatch' : '') + '" data-id="' + o.id + '">' +
       '<header class="order-head" title="Click para ver el detalle">' +
         dispatchCb +
         '<div>' +
-          '<h4>Pedido #' + o.id + ' <span class="order-status ' + escapeHtml(o.status) + '">' + escapeHtml(statusLabel(o.status)) + '</span>' + tagsHtml + '</h4>' +
+          '<h4>Pedido #' + o.id + ' <span class="order-status ' + escapeHtml(o.status) + '">' + escapeHtml(label) + '</span>' + tagsHtml + '</h4>' +
           '<div class="meta">' + date + who + '</div>' +
+          (payChip ? '<div class="order-pay">' + payChip + '</div>' : '') +
         '</div>' +
         '<div class="order-total">' + fmtPrice(o.total) + '</div>' +
       '</header>' +
@@ -1486,6 +1525,7 @@
           '<tbody>' + rows + '</tbody>' +
         '</table>' +
         (o.notes ? '<div class="order-notes">Nota: ' + escapeHtml(o.notes) + '</div>' : "") +
+        (!isAdmin ? paymentDetailHtml(o) : "") +
         '<div class="order-det-foot">' + statusSelect + reenviarBtn + '</div>';
 
       det.dataset.loaded = "1";

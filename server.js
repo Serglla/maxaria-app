@@ -1911,11 +1911,17 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
     return res.json(rows);
   }
 
-  // Usuario normal: solo sus propios pedidos
+  // Usuario normal: solo sus propios pedidos. Incluye el saldo por pedido
+  // (calculado desde la cuenta corriente) para mostrar "Pagado" / "Falta pagar"
+  // en los pedidos entregados.
   const rows = db.prepare(
     "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
     "       NULL AS username, NULL AS full_name," +
-    "       NULL AS assigned_vendedor_id, NULL AS delivery_id" +
+    "       NULL AS assigned_vendedor_id, NULL AS delivery_id," +
+    "       (SELECT COALESCE(SUM(CASE WHEN am.type='debit' THEN am.amount ELSE -am.amount END),0)" +
+    "          FROM account_movements am WHERE am.order_id = o.id) AS balance_due," +
+    "       (SELECT COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END),0)" +
+    "          FROM account_movements am WHERE am.order_id = o.id) AS amount_paid" +
     "  FROM orders o WHERE o.user_id = ?" +
     "  ORDER BY o.created_at DESC LIMIT 200"
   ).all(req.session.userId);
@@ -1991,7 +1997,18 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
     "SELECT id, product_id, product_code, product_name, quantity, unit_price, subtotal" +
     "  FROM order_items WHERE order_id = ? ORDER BY id"
   ).all(id);
-  res.json(Object.assign({}, order, { items: items }));
+  // Saldo del pedido desde la cuenta corriente: balance_due = débitos − créditos,
+  // amount_paid = créditos (cobro de la entrega + pagos asociados al pedido).
+  const pay = db.prepare(
+    "SELECT COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE -amount END),0) AS balance_due," +
+    "       COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END),0) AS amount_paid" +
+    "  FROM account_movements WHERE order_id = ?"
+  ).get(id);
+  res.json(Object.assign({}, order, {
+    items: items,
+    balance_due: pay.balance_due,
+    amount_paid: pay.amount_paid,
+  }));
 });
 
 // ----- Cambio de estado (admin o vendedor asignado) -----
@@ -2129,8 +2146,8 @@ app.get("/api/my-notifications", requireLogin, (req, res) => {
     db.transaction(() => { for (const r of rows) upd.run(r.id); })();
   }
   const MSG = {
-    preparando: "se está preparando",
-    listo: "está listo para entregar",
+    preparando: "se está armando",
+    listo: "está para entregar",
     entregado: "fue entregado",
   };
   res.json(rows.map((r) => ({
