@@ -3132,6 +3132,40 @@
     if (td) td.classList.toggle("bulk-edited", edited);
     updateBulkSaveLabel();
   });
+  // Al cambiar el COSTO (al perder foco), recalcular los precios de venta de esa
+  // fila manteniendo el margen (misma proporción), igual que applyPurchaseCostUpdate.
+  els.prodTbody.addEventListener("change", (e) => {
+    const inp = e.target.closest(".bulk-price-input");
+    if (!inp || inp.dataset.field !== "cost") return;
+    const id = Number(inp.dataset.id);
+    const p = state.products.find((x) => x.id === id);
+    if (!p) return;
+    const oldCost = Number(p.cost) || 0;
+    const newCost = Math.max(0, Math.round(Number(inp.value) || 0));
+    if (oldCost <= 0 || newCost <= 0 || newCost === oldCost) return; // sin baseline no se mantiene margen
+    const ratio = newCost / oldCost;
+    const row = inp.closest("tr");
+    let touched = 0;
+    ["price_minorista", "price_revendedor", "price_mayorista", "price_vip", "price_publico"].forEach((field) => {
+      const orig = p[field] || 0;
+      const nv = Math.max(0, Math.round(orig * ratio));
+      if (!state.priceEdits[id]) state.priceEdits[id] = {};
+      if (nv === orig) delete state.priceEdits[id][field];
+      else state.priceEdits[id][field] = nv;
+      const cell = row ? row.querySelector('input[data-field="' + field + '"]') : null;
+      if (cell) {
+        cell.value = String(nv);
+        const edited = nv !== orig;
+        cell.classList.toggle("changed", edited);
+        const td = cell.closest("td");
+        if (td) td.classList.toggle("bulk-edited", edited);
+      }
+      if (nv !== orig) touched++;
+    });
+    if (state.priceEdits[id] && !Object.keys(state.priceEdits[id]).length) delete state.priceEdits[id];
+    updateBulkSaveLabel();
+    if (touched) showToast("Precios recalculados manteniendo el margen", "ok");
+  });
   if (els.bulkEditBtn)   els.bulkEditBtn.addEventListener("click", () => setBulkMode(true));
   if (els.bulkCancelBtn) els.bulkCancelBtn.addEventListener("click", () => {
     if (bulkPendingCount() && !confirm("Hay cambios sin guardar. ¿Descartarlos?")) return;
