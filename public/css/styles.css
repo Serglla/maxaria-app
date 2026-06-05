@@ -464,11 +464,12 @@ button { font: inherit; cursor: pointer; }
   padding: 8px 14px;
   transition: background .12s ease;
 }
-.grid .card:nth-of-type(even) { background: #d4e3f5; }
-/* Hover/active: azul claramente más marcado que el celeste de la zebra,
-   para que se note tanto sobre la fila blanca como sobre la celeste. */
-.card:hover { background: #9fc1ee; }
-.card:active { background: #7fb0e8; }
+/* Zebra: azul bien marcado para que la alternancia con la fila blanca se note. */
+.grid .card:nth-of-type(even) { background: #b3d2f6; }
+/* Hover/active: azul mucho más fuerte que la zebra, para que se note tanto
+   sobre la fila blanca como sobre la celeste. */
+.card:hover { background: #7ba8e8; }
+.card:active { background: #5d93de; }
 .card-img {
   flex: none;
   width: 50px;
@@ -601,14 +602,14 @@ button { font: inherit; cursor: pointer; }
 
 /* Card resaltado cuando tiene items en el carrito */
 /* Producto con cantidad en el carrito: fila resaltada en verde (gana sobre la zebra) */
-.grid .card.in-cart { background: #e6f6ec; }
-.grid .card.in-cart:hover { background: #d8f0e1; }
+.grid .card.in-cart { background: #b7e6c6; }
+.grid .card.in-cart:hover { background: #9bdcb0; }
 .card.in-cart::before {
   content: "";
   position: absolute;
   left: 0; top: 0; bottom: 0;
-  width: 4px;
-  background: #16a34a;
+  width: 5px;
+  background: #15803d;
 }
 
 /* ====== Drawer carrito ====== */
