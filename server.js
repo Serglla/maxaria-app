@@ -645,6 +645,78 @@ function priceChangeCols(level) {
   }
 }
 
+// Columnas de precio que se historizan en price_changes (publico cae a minorista).
+const TRACKED_PRICE_COLS = ["price_minorista", "price_revendedor", "price_mayorista", "price_vip"];
+
+// Registra un cambio MANUAL de precio (edición desde el admin) en el historial
+// de "Ver cambios". A diferencia de la importación de Excel —que crea un update
+// por archivo— los cambios manuales se agrupan en UN solo update por día
+// (source='manual'): si en el mismo día se vuelve a tocar el precio de un mismo
+// producto, se actualiza el precio "nuevo" conservando el "anterior" del inicio
+// del día. before/after deben traer las 4 columnas TRACKED_PRICE_COLS.
+const recordManualPriceChange = db.transaction((productId, before, after) => {
+  if (!before || !after) return;
+  const changed = TRACKED_PRICE_COLS.some((c) => Number(before[c]) !== Number(after[c]));
+  if (!changed) return;
+
+  // Bucket diario: el update manual de HOY (hora local) o uno nuevo.
+  const bucket = db.prepare(
+    "SELECT id FROM price_updates" +
+    " WHERE source = 'manual'" +
+    "   AND date(created_at, 'localtime') = date('now', 'localtime')" +
+    " ORDER BY id DESC LIMIT 1"
+  ).get();
+  let updateId;
+  if (bucket) {
+    updateId = bucket.id;
+  } else {
+    updateId = db.prepare(
+      "INSERT INTO price_updates (source, rows_total, products_changed, products_new, products_reingreso)" +
+      " VALUES ('manual', 0, 0, 0, 0)"
+    ).run().lastInsertRowid;
+  }
+
+  const prod = db.prepare("SELECT code, name FROM products WHERE id = ?").get(productId) || {};
+  const existing = db.prepare(
+    "SELECT id FROM price_changes WHERE update_id = ? AND product_id = ?"
+  ).get(updateId, productId);
+
+  if (existing) {
+    // Ya hubo un cambio hoy para este producto: conservamos old_* (línea base
+    // del día) y solo actualizamos new_* al precio más reciente.
+    db.prepare(
+      "UPDATE price_changes SET name = ?," +
+      "  new_minorista = ?, new_revendedor = ?, new_mayorista = ?, new_vip = ?" +
+      " WHERE id = ?"
+    ).run(
+      prod.name || null,
+      after.price_minorista, after.price_revendedor, after.price_mayorista, after.price_vip,
+      existing.id
+    );
+  } else {
+    db.prepare(
+      "INSERT INTO price_changes" +
+      " (update_id, product_id, code, name, is_new, is_reingreso," +
+      "  old_minorista, new_minorista, old_revendedor, new_revendedor," +
+      "  old_mayorista, new_mayorista, old_vip, new_vip)" +
+      " VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(
+      updateId, productId, prod.code || null, prod.name || null,
+      before.price_minorista, after.price_minorista,
+      before.price_revendedor, after.price_revendedor,
+      before.price_mayorista, after.price_mayorista,
+      before.price_vip, after.price_vip
+    );
+  }
+
+  // Mantener el contador de la cabecera (productos con cambio en el día).
+  db.prepare(
+    "UPDATE price_updates SET products_changed =" +
+    " (SELECT COUNT(*) FROM price_changes WHERE update_id = ? AND COALESCE(is_new,0) = 0)" +
+    " WHERE id = ?"
+  ).run(updateId, updateId);
+});
+
 class SqliteStore extends session.Store {
   constructor(database) {
     super();
@@ -2473,6 +2545,14 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   }
   const { cols, vals } = buildProductUpdate(body);
   if (!cols.length) return res.status(400).json({ error: "Nada para actualizar" });
+
+  // Si el patch toca algún precio, snapshot ANTES para historizar el cambio.
+  const touchesPrice = cols.some((c) => TRACKED_PRICE_COLS.includes(c));
+  const priceCols = TRACKED_PRICE_COLS.join(", ");
+  const before = touchesPrice
+    ? db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id)
+    : null;
+
   const sets = cols.map((c) => c + " = ?");
   sets.push("updated_at = datetime('now')");
   vals.push(id);
@@ -2483,6 +2563,12 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
     if (e.message && e.message.includes("UNIQUE")) return res.status(409).json({ error: "Código duplicado" });
     throw e;
   }
+
+  if (touchesPrice && before) {
+    const after = db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id);
+    try { recordManualPriceChange(id, before, after); } catch (_) {}
+  }
+
   res.json({ ok: true, id: id });
 });
 
@@ -2508,6 +2594,7 @@ app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
     }
   }
 
+  const priceCols = TRACKED_PRICE_COLS.join(", ");
   let updated = 0, failed = 0;
   const run = db.transaction(() => {
     for (const p of patches) {
@@ -2515,12 +2602,22 @@ app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
       if (!id) { failed++; continue; }
       const { cols, vals } = buildProductUpdate(p);
       if (!cols.length) { failed++; continue; }
+      const touchesPrice = cols.some((c) => TRACKED_PRICE_COLS.includes(c));
+      const before = touchesPrice
+        ? db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id)
+        : null;
       const sets = cols.map((c) => c + " = ?");
       sets.push("updated_at = datetime('now')");
       vals.push(id);
       try {
         const r = db.prepare("UPDATE products SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
-        if (r.changes) updated++; else failed++;
+        if (r.changes) {
+          updated++;
+          if (touchesPrice && before) {
+            const after = db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id);
+            recordManualPriceChange(id, before, after);
+          }
+        } else failed++;
       } catch (_) { failed++; }
     }
   });
@@ -3907,6 +4004,11 @@ function applyPurchaseCostUpdate(productId, newCostRaw, policy) {
   if (oldCost > 0 && newCost > 0) {
     // Mantener margen: cada precio de venta se mueve en la misma proporción.
     const ratio = newCost / oldCost;
+    // Snapshot ANTES (prod ya trae los 4 niveles) para historizar el ajuste.
+    const before = {
+      price_minorista: prod.price_minorista, price_revendedor: prod.price_revendedor,
+      price_mayorista: prod.price_mayorista, price_vip: prod.price_vip,
+    };
     db.prepare(
       "UPDATE products SET cost = ?," +
       "  price_minorista  = CAST(ROUND(price_minorista  * ?) AS INTEGER)," +
@@ -3916,6 +4018,10 @@ function applyPurchaseCostUpdate(productId, newCostRaw, policy) {
       "  price_publico    = CAST(ROUND(price_publico    * ?) AS INTEGER)" +
       "  WHERE id = ?"
     ).run(newCost, ratio, ratio, ratio, ratio, ratio, productId);
+    const after = db.prepare(
+      "SELECT price_minorista, price_revendedor, price_mayorista, price_vip FROM products WHERE id = ?"
+    ).get(productId);
+    try { recordManualPriceChange(productId, before, after); } catch (_) {}
   } else {
     // Sin costo previo no se puede mantener margen: solo seteamos el costo.
     db.prepare("UPDATE products SET cost = ? WHERE id = ?").run(newCost, productId);
