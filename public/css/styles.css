@@ -465,7 +465,10 @@ button { font: inherit; cursor: pointer; }
   transition: background .12s ease;
 }
 .grid .card:nth-of-type(even) { background: #d4e3f5; }
-.card:hover { background: #bcd2ee; }
+/* Hover/active: azul claramente más marcado que el celeste de la zebra,
+   para que se note tanto sobre la fila blanca como sobre la celeste. */
+.card:hover { background: #9fc1ee; }
+.card:active { background: #7fb0e8; }
 .card-img {
   flex: none;
   width: 50px;
