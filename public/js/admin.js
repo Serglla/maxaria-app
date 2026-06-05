@@ -53,6 +53,7 @@
     selectBtn:  document.getElementById("prod-select-btn"),
     selBar:     document.getElementById("prod-sel-bar"),
     selCount:   document.getElementById("prod-sel-count"),
+    selOnly:    document.getElementById("prod-sel-only"),
     selClear:   document.getElementById("prod-sel-clear"),
     selEdit:    document.getElementById("prod-sel-edit"),
     selCancel:  document.getElementById("prod-sel-cancel"),
@@ -432,6 +433,7 @@
     page: 0,
     selectMode: false,    // modo selección múltiple (checks por fila)
     selectedIds: new Set(), // ids de productos tildados (sobrevive paginación/filtro)
+    showOnlySelected: false, // ver solo los seleccionados en la tabla
     orders: [],
     ordersLoaded: false,
     settingsLoaded: false,
@@ -3020,7 +3022,9 @@
   });
 
   function renderProducts() {
-    const list = state.productsFiltered;
+    const list = (state.selectMode && state.showOnlySelected)
+      ? state.productsFiltered.filter((p) => state.selectedIds.has(p.id))
+      : state.productsFiltered;
     els.prodCount.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     if (!list.length) {
       els.prodTbody.innerHTML = '<tr><td colspan="' + (state.selectMode ? 15 : 14) + '" class="muted">Sin resultados</td></tr>';
@@ -3096,7 +3100,13 @@
   // ---------- Selección múltiple + cambios en lote ----------
   function updateSelCount() {
     const n = state.selectedIds.size;
-    if (els.selCount) els.selCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados");
+    let txt = n + (n === 1 ? " seleccionado" : " seleccionados");
+    if (n) {
+      const cats = new Set();
+      state.products.forEach((p) => { if (state.selectedIds.has(p.id)) cats.add(p.category_id); });
+      txt += " · " + cats.size + (cats.size === 1 ? " categoría" : " categorías");
+    }
+    if (els.selCount) els.selCount.textContent = txt;
     if (els.selEdit) els.selEdit.disabled = n === 0;
   }
   // Inserta/quita la columna de checkbox en el header y refleja el master-check
@@ -3127,7 +3137,7 @@
   }
   function setSelectMode(on) {
     state.selectMode = on;
-    if (!on) state.selectedIds.clear();
+    if (!on) { state.selectedIds.clear(); state.showOnlySelected = false; if (els.selOnly) els.selOnly.checked = false; }
     if (els.selectBtn) els.selectBtn.hidden = on;
     if (els.selBar) els.selBar.hidden = !on;
     syncSelectHeader();
@@ -3138,6 +3148,11 @@
   if (els.selCancel) els.selCancel.addEventListener("click", () => setSelectMode(false));
   if (els.selClear) els.selClear.addEventListener("click", () => {
     state.selectedIds.clear(); updateSelCount(); renderProducts();
+  });
+  if (els.selOnly) els.selOnly.addEventListener("change", () => {
+    state.showOnlySelected = els.selOnly.checked;
+    state.page = 0;
+    renderProducts();
   });
   // Toggle de un checkbox de fila
   els.prodTbody.addEventListener("change", (e) => {
@@ -3169,6 +3184,14 @@
       if (pctRow) pctRow.hidden = set;
     });
   });
+  // La opción "mantener margen" solo aplica cuando se fija el COSTO.
+  const pbmPriceField = document.getElementById("pbm-price-field");
+  const pbmMarginLbl = document.getElementById("pbm-margin-lbl");
+  function syncPbmMargin() {
+    if (pbmMarginLbl) pbmMarginLbl.style.display = (pbmPriceField && pbmPriceField.value === "cost") ? "" : "none";
+  }
+  if (pbmPriceField) pbmPriceField.addEventListener("change", syncPbmMargin);
+  syncPbmMargin();
   async function openBulkModal() {
     if (!state.selectedIds.size) return;
     if (!state.allCategories || !state.allCategories.length) {
@@ -3194,7 +3217,7 @@
     const fail = (m) => { els.pbmMsg.textContent = m; els.pbmMsg.className = "config-msg err"; };
     if (!enPrice && !enCat && !enStock && !enActive) return fail("Tildá al menos una sección.");
 
-    let priceMode, pricePct, priceTargets = [], priceSetField, priceSetVal;
+    let priceMode, pricePct, priceTargets = [], priceSetField, priceSetVal, priceSetMargin = false;
     if (enPrice) {
       priceMode = (document.querySelector('input[name="pbm-price-mode"]:checked') || {}).value;
       if (priceMode === "pct") {
@@ -3205,6 +3228,7 @@
       } else {
         priceSetField = document.getElementById("pbm-price-field").value;
         priceSetVal = Math.max(0, Math.round(Number(document.getElementById("pbm-price-value").value) || 0));
+        priceSetMargin = priceSetField === "cost" && document.getElementById("pbm-price-margin").checked;
       }
     }
     const catId = enCat ? (Number(els.pbmCat.value) || null) : null;
@@ -3219,8 +3243,17 @@
       const p = state.products.find((x) => x.id === id) || {};
       const patch = { id };
       if (enPrice) {
-        if (priceMode === "pct") priceTargets.forEach((f) => { patch[f] = Math.max(0, Math.round((p[f] || 0) * factor)); });
-        else patch[priceSetField] = priceSetVal;
+        if (priceMode === "pct") {
+          priceTargets.forEach((f) => { patch[f] = Math.max(0, Math.round((p[f] || 0) * factor)); });
+        } else {
+          patch[priceSetField] = priceSetVal;
+          // Fijar costo + mantener margen: escalar los 5 precios por costoNuevo/costoViejo.
+          if (priceSetMargin && (p.cost || 0) > 0 && priceSetVal > 0) {
+            const ratio = priceSetVal / p.cost;
+            ["price_minorista", "price_revendedor", "price_mayorista", "price_vip", "price_publico"]
+              .forEach((f) => { patch[f] = Math.max(0, Math.round((p[f] || 0) * ratio)); });
+          }
+        }
       }
       if (enCat) patch.category_id = catId;
       if (enStock) {

@@ -299,6 +299,7 @@
         <button class="btn" id="stock-adj-history-btn" type="button" title="Ver historial de ajustes de stock">📋 Ajustes</button>
         <span class="bulk-bar" id="prod-sel-bar" hidden>
           <strong id="prod-sel-count" style="font-size:13px">0 seleccionados</strong>
+          <label class="pbm-chk" style="font-size:12px" title="Mostrar en la tabla solo los productos seleccionados"><input type="checkbox" id="prod-sel-only"> Ver solo seleccionados</label>
           <button class="btn btn-small" id="prod-sel-clear" type="button" title="Limpiar selección">Limpiar</button>
           <button class="btn btn-primary btn-small" id="prod-sel-edit" type="button" disabled>✎ Editar seleccionados</button>
           <button class="btn btn-small" id="prod-sel-cancel" type="button">Cancelar</button>
@@ -2365,7 +2366,7 @@
             <label class="pbm-chk"><input type="checkbox" data-field="price_vip" checked> VIP</label>
             <label class="pbm-chk"><input type="checkbox" data-field="price_publico" checked> Público</label>
           </div>
-          <div id="pbm-price-set-row" hidden style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <div id="pbm-price-set-row" hidden style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
             <select id="pbm-price-field" class="admin-select" style="width:auto">
               <option value="cost">Costo</option>
               <option value="price_minorista">Minorista</option>
@@ -2376,6 +2377,7 @@
             </select>
             <span class="muted" style="font-size:12px">=</span>
             <input type="number" id="pbm-price-value" class="admin-input" min="0" placeholder="valor" style="width:120px">
+            <label id="pbm-margin-lbl" class="pbm-chk" style="font-size:12px;margin-left:4px"><input type="checkbox" id="pbm-price-margin" checked> recalcular precios (mantener margen)</label>
           </div>
         </div>
       </div>
@@ -2667,6 +2669,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260604x"></script>
+  <script src="/js/admin.js?v=20260604y"></script>
 </body>
 </html>
