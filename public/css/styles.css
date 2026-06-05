@@ -2300,6 +2300,13 @@ button { font: inherit; cursor: pointer; }
   border: 1px solid #fed7aa;
 }
 .btn-reset:hover { background: #ffedd5; }
+/* Compartir acceso del cliente por WhatsApp (verde WA) */
+.btn-share {
+  color: #166534;
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+}
+.btn-share:hover { background: #bbf7d0; }
 
 .small-cell { font-size: 12px; white-space: nowrap; }
 .cell-level { max-width: 140px; }

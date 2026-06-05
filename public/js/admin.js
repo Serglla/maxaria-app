@@ -1098,6 +1098,30 @@
       return;
     }
 
+    // Compartir acceso con el cliente (mensaje de WhatsApp con link + credenciales)
+    const shareBtn = e.target.closest('[data-act="share"]');
+    if (shareBtn) {
+      const u = state.users.find((x) => x.id === Number(shareBtn.dataset.id));
+      if (!u) return;
+      const appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
+      const origin = location.origin;
+      const hasPass = u.plain_password && u.plain_password !== "—";
+      let msg = "¡Hola" + (u.full_name ? " " + u.full_name : "") + "! 👋\n\n";
+      msg += "Te damos acceso al catálogo de " + appName + ".\n";
+      msg += "Ingresá desde: " + origin + "\n\n";
+      msg += "👤 Usuario: " + u.username + "\n";
+      if (hasPass) msg += "🔑 Contraseña: " + u.plain_password + "\n";
+      msg += "\nDesde ahí podés ver los productos y armar tu pedido. ¡Cualquier duda, escribinos!";
+      // Copia de respaldo al portapapeles (por si quiere mandarlo por otro medio)
+      if (navigator.clipboard) { try { navigator.clipboard.writeText(msg); } catch (_) {} }
+      const waNum = (u.whatsapp_number || "").replace(/\D/g, "");
+      window.open("https://wa.me/" + waNum + "?text=" + encodeURIComponent(msg), "_blank", "noopener");
+      showToast(hasPass
+        ? (waNum ? "Abriendo WhatsApp con el acceso · mensaje copiado" : "Sin WhatsApp del cliente: elegí el contacto · mensaje copiado")
+        : "⚠️ Sin contraseña guardada: usá 'Reset pass' y volvé a compartir", hasPass ? "ok" : "err");
+      return;
+    }
+
     // Categorias: abrir modal de permisos
     const catsBtn = e.target.closest('[data-act="cats"]');
     if (!catsBtn) return;
