@@ -3972,6 +3972,11 @@ html.in-modal .ventas-wrap {
 #prod-tbody .prod-row:nth-child(even) { background: #d4e3f5; }
 .prod-row:hover { background: #bcd2ee !important; }
 .prod-row:active { background: #dbeafe !important; }
+/* Sin stock: naranja, pero también con zebra (par/impar = dos tonos) para que
+   la alternancia se note aun cuando hay muchas filas sin stock seguidas. */
+#prod-tbody .prod-row.row-oos { background: #fff3e0 !important; }
+#prod-tbody .prod-row.row-oos:nth-child(even) { background: #ffe2bd !important; }
+#prod-tbody .prod-row.row-oos:hover { background: #ffd9a8 !important; }
 .cell-active-badge { font-size: 11px; font-weight: 600; color: #9ca3af; }
 .cell-active-badge.active { color: #15803d; }
 .text-danger { color: #dc2626 !important; font-weight: 600; }
