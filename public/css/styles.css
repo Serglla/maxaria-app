@@ -468,8 +468,8 @@ button { font: inherit; cursor: pointer; }
 .grid .card:nth-of-type(even) { background: #b3d2f6; }
 /* Hover/active: azul mucho más fuerte que la zebra, para que se note tanto
    sobre la fila blanca como sobre la celeste. */
-.card:hover { background: #7ba8e8; }
-.card:active { background: #5d93de; }
+.grid .card:hover { background: #7ba8e8; }
+.grid .card:active { background: #5d93de; }
 .card-img {
   flex: none;
   width: 50px;
