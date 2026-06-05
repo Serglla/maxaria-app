@@ -41,7 +41,8 @@
     prodSearch: document.getElementById("prod-search"),
     filterCategory: document.getElementById("filter-category"),
     filterStock: document.getElementById("filter-stock"),
-    filterInactive: document.getElementById("filter-inactive"),
+    filterState: document.getElementById("filter-state"),
+    filterClear: document.getElementById("filter-clear"),
     prodCount: document.getElementById("prod-count"),
     prodTbody: document.getElementById("prod-tbody"),
     pagePrev: document.getElementById("page-prev"),
@@ -525,7 +526,7 @@
         search: els.prodSearch.value,
         category: els.filterCategory.value,
         stock: els.filterStock.value,
-        inactive: els.filterInactive.checked,
+        estado: els.filterState.value,
         sortField: state.sortField,
         sortDir: state.sortDir,
       };
@@ -542,7 +543,11 @@
     if (p.stock && els.filterStock.querySelector('[value="' + p.stock + '"]')) {
       els.filterStock.value = p.stock;
     }
-    if (typeof p.inactive === "boolean") els.filterInactive.checked = p.inactive;
+    if (p.estado && els.filterState.querySelector('[value="' + p.estado + '"]')) {
+      els.filterState.value = p.estado;
+    } else if (typeof p.inactive === "boolean" && p.inactive) {
+      els.filterState.value = "inactive"; // compat con prefs viejas
+    }
     if (p.sortField && SORT_TYPES[p.sortField]) {
       state.sortField = p.sortField;
       state.sortDir = p.sortDir === "desc" ? "desc" : "asc";
@@ -2994,7 +2999,7 @@
   function applyFilters() {
     const q = els.prodSearch.value.trim().toLowerCase();
     const stockMode = els.filterStock.value; // "all" | "in" | "out"
-    const onlyInactive = els.filterInactive.checked;
+    const stateMode = els.filterState.value; // "all" | "active" | "inactive"
     const categoryFilter = els.filterCategory.value; // "all" | "<id>"
 
     let list = state.products;
@@ -3008,7 +3013,14 @@
     if (categoryFilter !== "all") list = list.filter((p) => String(p.category_id) === categoryFilter);
     if (stockMode === "in") list = list.filter((p) => (p.stock || 0) > 0);
     else if (stockMode === "out") list = list.filter((p) => (p.stock || 0) <= 0);
-    if (onlyInactive) list = list.filter((p) => !p.active);
+    if (stateMode === "active") list = list.filter((p) => !!p.active);
+    else if (stateMode === "inactive") list = list.filter((p) => !p.active);
+
+    // Mostrar "Limpiar filtros" solo si hay algún filtro activo
+    if (els.filterClear) {
+      const anyActive = !!q || categoryFilter !== "all" || stockMode !== "all" || stateMode !== "all";
+      els.filterClear.hidden = !anyActive;
+    }
 
     if (state.sortField && SORT_TYPES[state.sortField]) {
       // copiamos para no mutar el array original que vino del server
@@ -3425,7 +3437,14 @@
   els.prodSearch.addEventListener("input", debounce(applyFilters, 200));
   els.filterCategory.addEventListener("change", applyFilters);
   els.filterStock.addEventListener("change", applyFilters);
-  els.filterInactive.addEventListener("change", applyFilters);
+  els.filterState.addEventListener("change", applyFilters);
+  if (els.filterClear) els.filterClear.addEventListener("click", () => {
+    els.prodSearch.value = "";
+    els.filterCategory.value = "all";
+    els.filterStock.value = "all";
+    els.filterState.value = "all";
+    applyFilters();
+  });
   els.pagePrev.addEventListener("click", () => { if (state.page > 0) { state.page--; renderProducts(); window.scrollTo({ top: 0 }); } });
   els.pageNext.addEventListener("click", () => {
     const total = Math.ceil(state.productsFiltered.length / PAGE_SIZE);

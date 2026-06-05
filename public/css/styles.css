@@ -1739,6 +1739,68 @@ button { font: inherit; cursor: pointer; }
 }
 .admin-select:focus { outline: 2px solid #2563eb33; border-color: #2563eb; }
 .admin-spacer { flex: 1; }
+
+/* ── Toolbar de Productos reorganizada en 3 zonas ── */
+.admin-toolbar2 {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+/* Zona 1: encabezado */
+.tb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tb-title { display: inline-flex; align-items: center; gap: 10px; }
+.tb-title-text { font-size: 17px; font-weight: 700; color: #1f2937; }
+.tb-count {
+  font-size: 12px;
+  color: #6b7280;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+.tb-head-actions { display: inline-flex; gap: 8px; }
+/* Zona 2: filtros */
+.tb-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-top: 1px solid #eceef1;
+  border-bottom: 1px solid #eceef1;
+}
+.tb-clear {
+  border: none;
+  background: none;
+  color: #2563eb;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.tb-clear:hover { background: #eff4ff; }
+/* Zona 3: herramientas */
+.tb-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn-tool {
+  font-size: 12.5px;
+  padding: 6px 11px;
+  background: #fff;
+  color: #4b5563;
+}
+.btn-tool:hover { background: #f6f7f9; }
+@media (max-width: 640px) {
+  .tb-filters .admin-search { flex: 1 1 100%; max-width: none; }
+  .tb-tools { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tb-tools .btn-tool { white-space: nowrap; }
+}
 .admin-upload {
   position: relative;
   cursor: pointer;
