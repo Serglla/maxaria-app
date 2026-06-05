@@ -3192,6 +3192,79 @@
   }
   if (pbmPriceField) pbmPriceField.addEventListener("change", syncPbmMargin);
   syncPbmMargin();
+
+  // --- Modo "por producto": cada producto con su propio costo / % ---
+  const pbmUniform = document.getElementById("pbm-uniform");
+  const pbmPerProduct = document.getElementById("pbm-perproduct");
+  const pbmPpList = document.getElementById("pbm-pp-list");
+  function pbmScope() {
+    return (document.querySelector('input[name="pbm-price-scope"]:checked') || {}).value || "uniform";
+  }
+  function syncPbmScope() {
+    const per = pbmScope() === "perproduct";
+    if (pbmUniform) pbmUniform.style.display = per ? "none" : "";
+    if (pbmPerProduct) pbmPerProduct.style.display = per ? "" : "none";
+  }
+  document.querySelectorAll('input[name="pbm-price-scope"]').forEach((r) => r.addEventListener("change", syncPbmScope));
+
+  function renderPbmPpList() {
+    if (!pbmPpList) return;
+    pbmPpList.innerHTML = [...state.selectedIds].map((id) => {
+      const p = state.products.find((x) => x.id === id) || { id: id, name: "#" + id, cost: 0 };
+      return '<div class="pbm-pp-row" data-id="' + id + '">' +
+        '<span class="pbm-pp-name" title="' + escapeHtml(p.name || "") + '">' + escapeHtml(p.name || "") + '</span>' +
+        '<span class="pbm-pp-old num">' + fmtPrice(p.cost || 0) + '</span>' +
+        '<input class="admin-input pbm-pp-pct" type="number" step="0.5" placeholder="%" data-old="' + (Number(p.cost) || 0) + '">' +
+        '<input class="admin-input pbm-pp-cost" type="number" min="0" placeholder="—">' +
+        '</div>';
+    }).join("");
+  }
+  function pbmPpMark(row) {
+    const old = Number(row.querySelector(".pbm-pp-pct").dataset.old) || 0;
+    const v = row.querySelector(".pbm-pp-cost").value.trim();
+    row.classList.toggle("pbm-pp-changed", v !== "" && Number(v) >= 0 && Number(v) !== old);
+  }
+  function pbmPpFromPct(row) {
+    const old = Number(row.querySelector(".pbm-pp-pct").dataset.old) || 0;
+    const pct = row.querySelector(".pbm-pp-pct").value.trim();
+    if (pct !== "") row.querySelector(".pbm-pp-cost").value = Math.max(0, Math.round(old * (1 + Number(pct) / 100)));
+    pbmPpMark(row);
+  }
+  function pbmPpFromCost(row) {
+    const old = Number(row.querySelector(".pbm-pp-pct").dataset.old) || 0;
+    const val = row.querySelector(".pbm-pp-cost").value.trim();
+    const pctEl = row.querySelector(".pbm-pp-pct");
+    if (val === "") pctEl.value = "";
+    else if (old > 0) pctEl.value = Math.round(((Number(val) / old) - 1) * 1000) / 10;
+    pbmPpMark(row);
+  }
+  if (pbmPpList) {
+    pbmPpList.addEventListener("input", (e) => {
+      const row = e.target.closest(".pbm-pp-row");
+      if (!row) return;
+      if (e.target.classList.contains("pbm-pp-pct")) pbmPpFromPct(row);
+      else if (e.target.classList.contains("pbm-pp-cost")) pbmPpFromCost(row);
+    });
+  }
+  const pbmPpAllBtn = document.getElementById("pbm-pp-allbtn");
+  if (pbmPpAllBtn) pbmPpAllBtn.addEventListener("click", () => {
+    const pct = document.getElementById("pbm-pp-allpct").value.trim();
+    if (pct === "") return;
+    pbmPpList.querySelectorAll(".pbm-pp-row").forEach((row) => {
+      row.querySelector(".pbm-pp-pct").value = pct;
+      pbmPpFromPct(row);
+    });
+  });
+  const pbmPpClearBtn = document.getElementById("pbm-pp-clearbtn");
+  if (pbmPpClearBtn) pbmPpClearBtn.addEventListener("click", () => {
+    const allEl = document.getElementById("pbm-pp-allpct"); if (allEl) allEl.value = "";
+    pbmPpList.querySelectorAll(".pbm-pp-row").forEach((row) => {
+      row.querySelector(".pbm-pp-pct").value = "";
+      row.querySelector(".pbm-pp-cost").value = "";
+      pbmPpMark(row);
+    });
+  });
+
   async function openBulkModal() {
     if (!state.selectedIds.size) return;
     if (!state.allCategories || !state.allCategories.length) {
@@ -3203,6 +3276,9 @@
     }
     els.pbmCount.textContent = state.selectedIds.size;
     els.pbmMsg.textContent = ""; els.pbmMsg.className = "config-msg";
+    const allEl = document.getElementById("pbm-pp-allpct"); if (allEl) allEl.value = "";
+    renderPbmPpList();
+    syncPbmScope();
     els.pbmModal.hidden = false;
   }
   if (els.selEdit) els.selEdit.addEventListener("click", openBulkModal);
@@ -3217,18 +3293,34 @@
     const fail = (m) => { els.pbmMsg.textContent = m; els.pbmMsg.className = "config-msg err"; };
     if (!enPrice && !enCat && !enStock && !enActive) return fail("Tildá al menos una sección.");
 
+    const scope = pbmScope();
     let priceMode, pricePct, priceTargets = [], priceSetField, priceSetVal, priceSetMargin = false;
+    let ppCosts = null, ppMargin = false;
     if (enPrice) {
-      priceMode = (document.querySelector('input[name="pbm-price-mode"]:checked') || {}).value;
-      if (priceMode === "pct") {
-        pricePct = Number(document.getElementById("pbm-price-pct").value);
-        if (!pricePct) return fail("Ingresá un % distinto de 0.");
-        priceTargets = [...document.querySelectorAll('#pbm-price-pct-row input[type=checkbox]:checked')].map((c) => c.dataset.field);
-        if (!priceTargets.length) return fail("Elegí a qué columnas aplicar el %.");
+      if (scope === "perproduct") {
+        ppMargin = document.getElementById("pbm-pp-margin").checked;
+        ppCosts = {};
+        pbmPpList.querySelectorAll(".pbm-pp-row").forEach((row) => {
+          const id = Number(row.dataset.id);
+          const v = row.querySelector(".pbm-pp-cost").value.trim();
+          const old = Number(row.querySelector(".pbm-pp-pct").dataset.old) || 0;
+          if (v === "") return;
+          const nc = Math.max(0, Math.round(Number(v)));
+          if (nc !== old) ppCosts[id] = nc;
+        });
+        if (!Object.keys(ppCosts).length) return fail("Ingresá al menos un costo nuevo distinto del actual.");
       } else {
-        priceSetField = document.getElementById("pbm-price-field").value;
-        priceSetVal = Math.max(0, Math.round(Number(document.getElementById("pbm-price-value").value) || 0));
-        priceSetMargin = priceSetField === "cost" && document.getElementById("pbm-price-margin").checked;
+        priceMode = (document.querySelector('input[name="pbm-price-mode"]:checked') || {}).value;
+        if (priceMode === "pct") {
+          pricePct = Number(document.getElementById("pbm-price-pct").value);
+          if (!pricePct) return fail("Ingresá un % distinto de 0.");
+          priceTargets = [...document.querySelectorAll('#pbm-price-pct-row input[type=checkbox]:checked')].map((c) => c.dataset.field);
+          if (!priceTargets.length) return fail("Elegí a qué columnas aplicar el %.");
+        } else {
+          priceSetField = document.getElementById("pbm-price-field").value;
+          priceSetVal = Math.max(0, Math.round(Number(document.getElementById("pbm-price-value").value) || 0));
+          priceSetMargin = priceSetField === "cost" && document.getElementById("pbm-price-margin").checked;
+        }
       }
     }
     const catId = enCat ? (Number(els.pbmCat.value) || null) : null;
@@ -3238,12 +3330,23 @@
 
     if (ids.length > 20 && !confirm("Vas a modificar " + ids.length + " productos. ¿Confirmás?")) return;
 
-    const factor = (enPrice && priceMode === "pct") ? 1 + pricePct / 100 : 1;
+    const factor = (enPrice && scope === "uniform" && priceMode === "pct") ? 1 + pricePct / 100 : 1;
     const patches = ids.map((id) => {
       const p = state.products.find((x) => x.id === id) || {};
       const patch = { id };
       if (enPrice) {
-        if (priceMode === "pct") {
+        if (scope === "perproduct") {
+          const nc = ppCosts[id];
+          if (nc != null) {
+            patch.cost = nc;
+            // Subir precios de venta manteniendo el margen: escalar por costoNuevo/costoViejo.
+            if (ppMargin && (p.cost || 0) > 0 && nc > 0) {
+              const ratio = nc / p.cost;
+              ["price_minorista", "price_revendedor", "price_mayorista", "price_vip", "price_publico"]
+                .forEach((f) => { patch[f] = Math.max(0, Math.round((p[f] || 0) * ratio)); });
+            }
+          }
+        } else if (priceMode === "pct") {
           priceTargets.forEach((f) => { patch[f] = Math.max(0, Math.round((p[f] || 0) * factor)); });
         } else {
           patch[priceSetField] = priceSetVal;

@@ -4022,6 +4022,36 @@ html.in-modal .ventas-wrap {
 .pbm-body[hidden] { display: none; }
 .pbm-section.pbm-off .pbm-body { opacity: .4; pointer-events: none; }
 .pbm-chk { font-size: 12px; display: inline-flex; align-items: center; gap: 3px; }
+/* Editor de costos por producto dentro del modal de lote */
+.pbm-pp-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.pbm-pp-head,
+.pbm-pp-row {
+  display: grid;
+  grid-template-columns: 1fr 78px 70px 92px;
+  gap: 8px;
+  align-items: center;
+}
+.pbm-pp-head {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  padding: 0 2px 4px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.pbm-pp-head .num, .pbm-pp-row .num { text-align: right; }
+.pbm-pp-list { max-height: 280px; overflow-y: auto; }
+.pbm-pp-row { padding: 3px 2px; border-bottom: 1px solid #f3f4f6; }
+.pbm-pp-row .pbm-pp-name {
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pbm-pp-row .pbm-pp-old { font-size: 12px; color: #6b7280; }
+.pbm-pp-row input { width: 100%; text-align: right; padding: 3px 6px; font-size: 12.5px; }
+.pbm-pp-row.pbm-pp-changed { background: #ecfdf5; }
 .cell-active-badge { font-size: 11px; font-weight: 600; color: #9ca3af; }
 .cell-active-badge.active { color: #15803d; }
 .text-danger { color: #dc2626 !important; font-weight: 600; }

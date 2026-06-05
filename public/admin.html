@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260604p" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260605e" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -2352,32 +2352,57 @@
       <div class="pbm-section">
         <label class="pbm-head"><input type="checkbox" id="pbm-en-price"> <strong>Precios</strong></label>
         <div class="pbm-body" id="pbm-price-body">
-          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-            <label><input type="radio" name="pbm-price-mode" value="pct" checked> Ajustar %</label>
-            <label><input type="radio" name="pbm-price-mode" value="set"> Fijar valor</label>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <label><input type="radio" name="pbm-price-scope" value="uniform" checked> Uniforme (a todos)</label>
+            <label><input type="radio" name="pbm-price-scope" value="perproduct"> Por producto (costo)</label>
           </div>
-          <div id="pbm-price-pct-row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <input type="number" id="pbm-price-pct" class="admin-input" step="0.5" placeholder="% (ej: 12 o -5)" style="width:120px">
-            <span class="muted" style="font-size:12px">a:</span>
-            <label class="pbm-chk"><input type="checkbox" data-field="cost" checked> Costo</label>
-            <label class="pbm-chk"><input type="checkbox" data-field="price_minorista" checked> Minorista</label>
-            <label class="pbm-chk"><input type="checkbox" data-field="price_revendedor" checked> Revendedor</label>
-            <label class="pbm-chk"><input type="checkbox" data-field="price_mayorista" checked> Mayorista</label>
-            <label class="pbm-chk"><input type="checkbox" data-field="price_vip" checked> VIP</label>
-            <label class="pbm-chk"><input type="checkbox" data-field="price_publico" checked> Público</label>
+
+          <!-- Modo uniforme: un mismo % o valor para todos -->
+          <div id="pbm-uniform">
+            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+              <label><input type="radio" name="pbm-price-mode" value="pct" checked> Ajustar %</label>
+              <label><input type="radio" name="pbm-price-mode" value="set"> Fijar valor</label>
+            </div>
+            <div id="pbm-price-pct-row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <input type="number" id="pbm-price-pct" class="admin-input" step="0.5" placeholder="% (ej: 12 o -5)" style="width:120px">
+              <span class="muted" style="font-size:12px">a:</span>
+              <label class="pbm-chk"><input type="checkbox" data-field="cost" checked> Costo</label>
+              <label class="pbm-chk"><input type="checkbox" data-field="price_minorista" checked> Minorista</label>
+              <label class="pbm-chk"><input type="checkbox" data-field="price_revendedor" checked> Revendedor</label>
+              <label class="pbm-chk"><input type="checkbox" data-field="price_mayorista" checked> Mayorista</label>
+              <label class="pbm-chk"><input type="checkbox" data-field="price_vip" checked> VIP</label>
+              <label class="pbm-chk"><input type="checkbox" data-field="price_publico" checked> Público</label>
+            </div>
+            <div id="pbm-price-set-row" style="display:none;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
+              <select id="pbm-price-field" class="admin-select" style="width:auto">
+                <option value="cost">Costo</option>
+                <option value="price_minorista">Minorista</option>
+                <option value="price_revendedor">Revendedor</option>
+                <option value="price_mayorista">Mayorista</option>
+                <option value="price_vip">VIP</option>
+                <option value="price_publico">Público</option>
+              </select>
+              <span class="muted" style="font-size:12px">=</span>
+              <input type="number" id="pbm-price-value" class="admin-input" min="0" placeholder="valor" style="width:120px">
+              <label id="pbm-margin-lbl" class="pbm-chk" style="font-size:12px;margin-left:4px"><input type="checkbox" id="pbm-price-margin" checked> recalcular precios (mantener margen)</label>
+            </div>
           </div>
-          <div id="pbm-price-set-row" style="display:none;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
-            <select id="pbm-price-field" class="admin-select" style="width:auto">
-              <option value="cost">Costo</option>
-              <option value="price_minorista">Minorista</option>
-              <option value="price_revendedor">Revendedor</option>
-              <option value="price_mayorista">Mayorista</option>
-              <option value="price_vip">VIP</option>
-              <option value="price_publico">Público</option>
-            </select>
-            <span class="muted" style="font-size:12px">=</span>
-            <input type="number" id="pbm-price-value" class="admin-input" min="0" placeholder="valor" style="width:120px">
-            <label id="pbm-margin-lbl" class="pbm-chk" style="font-size:12px;margin-left:4px"><input type="checkbox" id="pbm-price-margin" checked> recalcular precios (mantener margen)</label>
+
+          <!-- Modo por producto: cada uno con su nuevo costo y/o su % propio -->
+          <div id="pbm-perproduct" style="display:none">
+            <div class="pbm-pp-tools">
+              <span class="muted" style="font-size:12px">Aplicar % a todos:</span>
+              <input type="number" id="pbm-pp-allpct" class="admin-input" step="0.5" placeholder="ej: 10" style="width:90px">
+              <button type="button" class="btn btn-small" id="pbm-pp-allbtn">Aplicar</button>
+              <button type="button" class="btn btn-small" id="pbm-pp-clearbtn">Limpiar</button>
+            </div>
+            <div class="pbm-pp-head">
+              <span>Producto</span><span class="num">Costo act.</span><span class="num">% aum.</span><span class="num">Nuevo costo</span>
+            </div>
+            <div id="pbm-pp-list" class="pbm-pp-list"></div>
+            <label class="pbm-chk" style="font-size:12px;margin-top:8px;display:inline-flex">
+              <input type="checkbox" id="pbm-pp-margin" checked> subir precios de venta manteniendo el margen
+            </label>
           </div>
         </div>
       </div>
@@ -2669,6 +2694,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260605a"></script>
+  <script src="/js/admin.js?v=20260605b"></script>
 </body>
 </html>
