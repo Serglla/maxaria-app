@@ -2091,7 +2091,7 @@
   <!-- Modal: exportar cotización -->
   <div class="admin-modal" id="pcot-export-modal" hidden style="z-index:1400">
     <div class="admin-modal-box" style="max-width:380px">
-      <h3>Exportar cotización</h3>
+      <h3>Exportar cotización (PDF)</h3>
       <p style="margin:0 0 16px;color:#374151">¿Cómo querés expresar las cantidades?</p>
       <div style="display:flex;flex-direction:column;gap:10px">
         <button type="button" class="btn btn-primary" id="pcot-export-units-btn" style="font-size:14px;padding:10px">📦 Por unidades</button>
@@ -2162,6 +2162,7 @@
         <p id="catalog-msg" class="config-msg" style="min-height:18px"></p>
         <div class="admin-modal-foot">
           <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="button" class="btn" id="catalog-share-btn">📤 Compartir</button>
           <button type="submit" class="btn btn-primary" id="catalog-generate-btn">📄 Exportar PDF</button>
         </div>
       </form>
@@ -2574,6 +2575,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260604r"></script>
+  <script src="/js/admin.js?v=20260604s"></script>
 </body>
 </html>

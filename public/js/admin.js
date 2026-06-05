@@ -408,6 +408,7 @@
     catalogIncludeChanges: document.getElementById("catalog-include-changes"),
     catalogMsg: document.getElementById("catalog-msg"),
     catalogGenerateBtn: document.getElementById("catalog-generate-btn"),
+    catalogShareBtn: document.getElementById("catalog-share-btn"),
 
     toast: document.getElementById("toast"),
   };
@@ -3683,20 +3684,25 @@
       var resp = await fetch(url);
       if (!resp.ok) throw new Error("Error " + resp.status);
       var blob = await resp.blob();
-      var file = new File([blob], fileName, { type: "application/pdf" });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: fileName });
-      } else {
-        // Fallback: descargar el archivo
-        var a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
-      }
+      await sharePdfBlob(blob, fileName);
     } catch (e) {
       if (e.name !== "AbortError") showToast("No se pudo compartir: " + e.message, "error");
+    }
+  }
+
+  // Comparte un blob PDF ya descargado vía Web Share API; si el navegador no
+  // soporta compartir archivos, lo descarga directamente.
+  async function sharePdfBlob(blob, fileName) {
+    var file = new File([blob], fileName, { type: "application/pdf" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: fileName });
+    } else {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
     }
   }
 
@@ -5694,55 +5700,41 @@
       });
     }
 
-    // Exportar cotización
-    function doExportCotizacion(porBultos) {
+    // Exportar cotización: genera el PDF en el server y lo comparte (o descarga).
+    async function doExportCotizacion(porBultos) {
       if (els.pcotExportModal) els.pcotExportModal.hidden = true;
       const items = state.cotizacionItems;
       if (!items.length) { showToast("Sin productos para exportar", "err"); return; }
-      const supName = els.pcotFormSupplier
+      const supRaw = els.pcotFormSupplier
         ? (els.pcotFormSupplier.options[els.pcotFormSupplier.selectedIndex] || {}).text || ""
         : "";
-      const lines = [];
-      const fecha = new Date().toLocaleDateString("es-AR");
-      const sep = "-".repeat(32);
-      lines.push("PEDIDO DE COTIZACION");
-      lines.push(fecha);
-      if (supName && supName !== "Sin proveedor") lines.push("Proveedor: " + supName);
+      const supName = (supRaw && supRaw !== "Sin proveedor") ? supRaw : "";
       const notas = els.pcotFormNotes ? els.pcotFormNotes.value.trim() : "";
-      if (notas) lines.push("Notas: " + notas);
-      lines.push("");
-      lines.push(items.length + " producto" + (items.length !== 1 ? "s" : "") +
-        (porBultos ? " (cantidad por bulto)" : " (cantidad por unidad)"));
-      lines.push(sep);
-      items.forEach((it, i) => {
-        const code = it.product_code ? "[" + it.product_code + "] " : "";
-        lines.push((i + 1) + ") " + code + it.product_name);
-        let qty;
-        if (porBultos && it.units_per_bulto > 1) {
-          const bultos = Math.ceil(it.quantity / it.units_per_bulto);
-          qty = bultos + (bultos === 1 ? " bulto" : " bultos") +
-            " (" + it.units_per_bulto + " und/bulto) = " + (bultos * it.units_per_bulto) + " und";
-        } else {
-          qty = it.quantity + " und";
+      const payloadItems = items.map((it) => ({
+        product_code: it.product_code || "",
+        product_name: it.product_name || "",
+        quantity: it.quantity,
+        units_per_bulto: it.units_per_bulto || 1,
+      }));
+      showToast("Generando PDF…");
+      try {
+        const resp = await fetch("/api/admin/cotizacion/pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ supplier_name: supName, notes: notas, porBultos, items: payloadItems }),
+        });
+        if (resp.status === 401) { location.href = "/login"; return; }
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error || "Error " + resp.status);
         }
-        lines.push("   Cantidad: " + qty);
-        lines.push("");
-      });
-      lines.push(sep);
-      lines.push("Total: " + items.length + " producto" + (items.length !== 1 ? "s" : ""));
-      // BOM + CRLF: los visores de texto (Android/Notepad) decodifican mal el UTF-8
-      // sin BOM y rompen los acentos. El BOM fuerza UTF-8 en todos lados.
-      const text = "﻿" + lines.join("\r\n");
-      // octet-stream (no text/plain): fuerza la DESCARGA directa al celular en vez
-      // del chooser "abrir con / compartir" que Android muestra para texto plano.
-      const blob = new Blob([text], { type: "application/octet-stream" });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href     = url;
-      a.download = "cotizacion-" + new Date().toISOString().slice(0, 10) + ".txt";
-      document.body.appendChild(a); a.click();
-      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
-      showToast("✅ Lista exportada");
+        const blob = await resp.blob();
+        const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+        const fileName = "Cotizacion " + (supName || "") + " " + dateSlug + ".pdf";
+        await sharePdfBlob(blob, fileName.replace(/\s+/g, " ").trim());
+      } catch (err) {
+        if (err.name !== "AbortError") showToast("No se pudo exportar: " + err.message, "err");
+      }
     }
 
     if (els.pcotExportBtn) els.pcotExportBtn.addEventListener("click", () => {
@@ -6453,14 +6445,10 @@
   }
 
   if (els.catalogForm) {
-    els.catalogForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      els.catalogMsg.textContent = "";
-      els.catalogMsg.className = "config-msg";
-      els.catalogGenerateBtn.disabled = true;
-      els.catalogGenerateBtn.textContent = "Generando…";
-
-      // Armar priceConfig: si hay cliente elegido, el server resuelve su lista
+    // Arma el body desde el form y pide el PDF al server. Devuelve el blob
+    // (lanza en error). No toca la UI — la usan tanto descargar como compartir.
+    async function fetchCatalogPdfBlob() {
+      // priceConfig: si hay cliente elegido, el server resuelve su lista
       // efectiva; si no, se usa la lista/nivel elegido manualmente.
       const clientId = els.catalogClientSelect ? Number(els.catalogClientSelect.value) || 0 : 0;
       let priceConfig;
@@ -6474,50 +6462,69 @@
           priceConfig = { type: "level", level: priceVal.split(":")[1] || "minorista" };
         }
       }
-
       // Categorías seleccionadas (vacío = todas)
       const checkedCats = Array.from(
         els.catalogCatsWrap.querySelectorAll("input[type=checkbox]:checked")
       ).map((cb) => Number(cb.dataset.catId));
       const allChecked = checkedCats.length === state.allCategories.length;
       const categoryIds = allChecked ? [] : checkedCats;
-
       const includePriceChanges = els.catalogIncludeChanges ? els.catalogIncludeChanges.checked : false;
       const withImages = els.catalogWithImages ? els.catalogWithImages.checked : true;
+      const response = await fetch("/api/admin/catalog/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priceConfig, categoryIds, includePriceChanges, withImages }),
+      });
+      if (response.status === 401) { location.href = "/login"; throw new Error("Sesión expirada"); }
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || "Error " + response.status);
+      }
+      return await response.blob();
+    }
 
+    const catalogFileName = () => "catalogo-" + new Date().toISOString().slice(0, 10) + ".pdf";
+
+    // Corre la generación con feedback en el botón y pasa el blob a onBlob.
+    async function runCatalogPdf(btn, busyLabel, idleLabel, onBlob) {
+      els.catalogMsg.textContent = "";
+      els.catalogMsg.className = "config-msg";
+      btn.disabled = true;
+      btn.textContent = busyLabel;
       try {
-        const response = await fetch("/api/admin/catalog/pdf", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ priceConfig, categoryIds, includePriceChanges, withImages }),
-        });
-
-        if (response.status === 401) { location.href = "/login"; return; }
-        if (!response.ok) {
-          const err = await response.json().catch(() => ({}));
-          throw new Error(err.error || "Error " + response.status);
+        const blob = await fetchCatalogPdfBlob();
+        await onBlob(blob);
+        els.catalogModal.hidden = true;
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          els.catalogMsg.textContent = "Error: " + err.message;
+          els.catalogMsg.className = "config-msg err";
         }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = idleLabel;
+      }
+    }
 
-        // Descargar el PDF
-        const blob = await response.blob();
+    els.catalogForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      runCatalogPdf(els.catalogGenerateBtn, "Generando…", "📄 Exportar PDF", (blob) => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "catalogo-" + new Date().toISOString().slice(0, 10) + ".pdf";
+        a.download = catalogFileName();
         document.body.appendChild(a);
         a.click();
         setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
-
-        els.catalogModal.hidden = true;
         showToast("✅ PDF exportado y descargado");
-      } catch (err) {
-        els.catalogMsg.textContent = "Error: " + err.message;
-        els.catalogMsg.className = "config-msg err";
-      } finally {
-        els.catalogGenerateBtn.disabled = false;
-        els.catalogGenerateBtn.textContent = "📄 Generar PDF";
-      }
+      });
     });
+
+    if (els.catalogShareBtn) {
+      els.catalogShareBtn.addEventListener("click", () => {
+        runCatalogPdf(els.catalogShareBtn, "…", "📤 Compartir", (blob) => sharePdfBlob(blob, catalogFileName()));
+      });
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────

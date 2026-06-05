@@ -4131,6 +4131,23 @@ app.delete("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// PDF de la cotización (pedido a proveedor, sin precios). Se arma desde el
+// estado del editor (no requiere haber guardado la cotización).
+app.post("/api/admin/cotizacion/pdf", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const items = Array.isArray(b.items) ? b.items.filter((it) => it && (it.product_name || it.product_code)) : [];
+  if (!items.length) return res.status(400).json({ error: "Sin productos para exportar" });
+  const appName = (db.prepare("SELECT value FROM settings WHERE key='app_name'").get() || {}).value || "Maxaria";
+  const supplierName = String(b.supplier_name || "").trim();
+  const notes = String(b.notes || "").trim().slice(0, 1000);
+  const porBultos = !!b.porBultos;
+  const date = new Date().toLocaleDateString("es-AR");
+  const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+  const safeSup = (supplierName || "Cotizacion").replace(/[^\w\s\-áéíóúüñÁÉÍÓÚÜÑ]/g, "").trim();
+  res.setHeader("Content-Disposition", 'attachment; filename="Cotizacion ' + safeSup + " " + dateSlug + '.pdf"');
+  buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items, notes });
+});
+
 // ===== Pagos =====
 
 app.get("/api/admin/payments", requireAdmin, (req, res) => {
@@ -4573,6 +4590,105 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
   }
   if (notes) {
     doc.font("Helvetica-Oblique").fontSize(9).fillColor(GREY).text(notes, MX, cy);
+  }
+
+  doc.end();
+}
+
+// ── Helper: genera PDF de un pedido de cotización (sin precios) ───────────
+// Mismo lenguaje visual que buildRemitoPdf pero pensado como pedido a un
+// proveedor: columnas N° · CÓD · PRODUCTO · CANTIDAD (en unidades o bultos).
+function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items, notes }) {
+  const doc = new PDFDocument({ size: "A4", margin: 36, autoFirstPage: true });
+  res.setHeader("Content-Type", "application/pdf");
+  doc.pipe(res);
+
+  const BLU = "#1e3a5f", GREY = "#6b7280", BLACK = "#111111";
+  const MX = 36, MW = 595 - 72;
+
+  // ── Header ──
+  doc.font("Helvetica-Bold").fontSize(17).fillColor(BLU).text(appName, MX, 36);
+  doc.font("Helvetica").fontSize(9).fillColor(GREY)
+    .text(porBultos ? "Cantidades por bulto" : "Cantidades por unidad", MX, 58);
+  doc.font("Helvetica").fontSize(9).fillColor(GREY).text("PEDIDO DE COTIZACIÓN", MX, 36, { align: "right" });
+  doc.font("Helvetica-Bold").fontSize(14).fillColor(BLU).text(date, MX, 48, { align: "right" });
+
+  // ── Línea azul superior ──
+  let cy = 72;
+  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(2).strokeColor(BLU).stroke();
+
+  // ── Meta row (Fecha / Proveedor) ──
+  cy += 6;
+  const metaCells = [
+    { label: "Fecha", value: date },
+    { label: "Proveedor", value: supplierName || "—" },
+  ];
+  const cellW = MW / metaCells.length;
+  metaCells.forEach((cell, i) => {
+    const cx = MX + i * cellW;
+    doc.font("Helvetica").fontSize(7.5).fillColor(GREY).text(cell.label.toUpperCase(), cx, cy);
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(BLACK).text(cell.value, cx, cy + 9, { width: cellW - 4, ellipsis: true });
+    if (i < metaCells.length - 1) {
+      doc.moveTo(cx + cellW - 2, cy).lineTo(cx + cellW - 2, cy + 22).lineWidth(0.5).strokeColor("#d1d5db").stroke();
+    }
+  });
+
+  // ── Línea bajo meta ──
+  cy += 26;
+  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(1).strokeColor("#d1d5db").stroke();
+  cy += 6;
+
+  // ── Encabezado tabla ──
+  const COL = { num: 26, cod: 52, cant: 160 };
+  COL.prod = MW - COL.num - COL.cod - COL.cant;
+  const colX = {
+    num: MX,
+    cod: MX + COL.num,
+    prod: MX + COL.num + COL.cod,
+    cant: MX + COL.num + COL.cod + COL.prod,
+  };
+  doc.rect(MX, cy, MW, 20).fill(BLU);
+  doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff");
+  doc.text("N°", colX.num, cy + 6, { width: COL.num - 4 });
+  doc.text("CÓD.", colX.cod, cy + 6);
+  doc.text("PRODUCTO", colX.prod, cy + 6);
+  doc.text("CANTIDAD", colX.cant, cy + 6, { width: COL.cant, align: "right" });
+  cy += 20;
+
+  // ── Filas ──
+  const ROW_H = 20;
+  items.forEach((it, idx) => {
+    if (cy + ROW_H > 800) { doc.addPage(); cy = 36; }
+    if (idx % 2 === 1) doc.rect(MX, cy, MW, ROW_H).fill("#f8fafc");
+    let qty;
+    const upb = Number(it.units_per_bulto) || 1;
+    const q = Number(it.quantity) || 0;
+    if (porBultos && upb > 1) {
+      const b = Math.ceil(q / upb);
+      qty = b + (b === 1 ? " bulto" : " bultos") + " (" + upb + " u/b) = " + (b * upb) + " und";
+    } else {
+      qty = q + " und";
+    }
+    doc.font("Helvetica").fontSize(9).fillColor(GREY).text(String(idx + 1), colX.num, cy + 6, { width: COL.num - 4 });
+    doc.fillColor(GREY).text(String(it.product_code || ""), colX.cod, cy + 6, { width: COL.cod });
+    doc.fillColor(BLACK).font("Helvetica-Bold").text(String(it.product_name || ""), colX.prod, cy + 6, { width: COL.prod - 6, ellipsis: true });
+    doc.font("Helvetica-Bold").fillColor(BLACK).text(qty, colX.cant, cy + 6, { width: COL.cant, align: "right" });
+    [colX.cod, colX.prod, colX.cant].forEach((x) => {
+      doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
+    });
+    cy += ROW_H;
+  });
+
+  // ── Línea azul cierre ──
+  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(2).strokeColor(BLU).stroke();
+  cy += 8;
+
+  // ── Pie ──
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(BLU)
+    .text("Total: " + items.length + " producto" + (items.length !== 1 ? "s" : ""), MX, cy);
+  cy += 18;
+  if (notes) {
+    doc.font("Helvetica-Oblique").fontSize(9).fillColor(GREY).text(notes, MX, cy, { width: MW });
   }
 
   doc.end();
