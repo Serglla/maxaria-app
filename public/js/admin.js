@@ -1034,7 +1034,9 @@
         '<input type="checkbox" data-field="active"' + (u.active ? " checked" : "") + (isMe ? " disabled" : "") + ' /><span></span></label></td>' +
       '<td class="muted small-cell">' + lastLogin + '</td>' +
       '<td><button class="btn btn-small btn-cats" data-act="cats" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button" title="Gestionar categorías visibles">Categorías</button></td>' +
-      '<td><button class="btn btn-small btn-reset" data-act="reset" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button">Reset pass</button></td>' +
+      '<td><button class="btn btn-small btn-reset" data-act="reset" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button">Reset pass</button>' +
+        (isClient ? ' <button class="btn btn-small btn-share" data-act="share" data-id="' + u.id + '" type="button" title="Compartir acceso por WhatsApp">Compartir</button>' : '') +
+      '</td>' +
     '</tr>';
   }
 
