@@ -50,6 +50,13 @@
     excelFile: document.getElementById("excel-file"),
     prodTable: document.getElementById("prod-table"),
     prodHeaders: document.querySelectorAll('#prod-table thead th.sortable'),
+    bulkEditBtn:   document.getElementById("prod-bulk-edit-btn"),
+    bulkSaveBtn:   document.getElementById("prod-bulk-save-btn"),
+    bulkCancelBtn: document.getElementById("prod-bulk-cancel-btn"),
+    bulkBar:       document.getElementById("prod-bulk-bar"),
+    bulkPct:       document.getElementById("prod-bulk-pct"),
+    bulkTarget:    document.getElementById("prod-bulk-target"),
+    bulkApplyPct:  document.getElementById("prod-bulk-apply-pct"),
 
     // Pedidos
     ordersSearch: document.getElementById("orders-search"),
@@ -418,6 +425,8 @@
     products: [],         // lista completa (todos los productos, sin filtrar)
     productsFiltered: [], // lista despues de aplicar busqueda + filtros
     page: 0,
+    bulkEdit: false,      // modo edición masiva de costos/precios en la grilla
+    priceEdits: {},       // id -> { campo: valorNuevo } cambios pendientes sin guardar
     orders: [],
     ordersLoaded: false,
     settingsLoaded: false,
@@ -3029,6 +3038,21 @@
 
   function fmtNum(n) { return (n || 0).toLocaleString("es-AR"); }
 
+  // Columnas de dinero editables en el modo masivo
+  const MONEY_FIELDS = ["cost", "price_minorista", "price_revendedor", "price_mayorista", "price_vip", "price_publico"];
+  // Celda de dinero: texto normal, o input en modo edición masiva (con resalte si tiene cambio pendiente)
+  function moneyCell(p, field, cls) {
+    if (!state.bulkEdit) {
+      return '<td class="num ' + (cls || "") + '">' + fmtNum(p[field]) + '</td>';
+    }
+    const e = state.priceEdits[p.id];
+    const edited = !!(e && field in e);
+    const val = edited ? e[field] : (p[field] || 0);
+    return '<td class="num' + (edited ? " bulk-edited" : "") + '">' +
+      '<input type="number" min="0" step="1" class="bulk-price-input' + (edited ? " changed" : "") + '" ' +
+      'data-id="' + p.id + '" data-field="' + field + '" value="' + val + '"></td>';
+  }
+
   function rowHtml(p) {
     const imgSrc = p.image_url ? escapeHtml(p.image_url) : "";
     const imgThumb = imgSrc
@@ -3045,12 +3069,12 @@
       '<td>' + escapeHtml(p.name) + '</td>' +
       '<td class="muted">' + escapeHtml(p.category_name || "—") + '</td>' +
       '<td class="num' + stockCls + '"' + stockTitle + '>' + fmtNum(p.stock) + (stockLow ? " ⚠" : "") + '</td>' +
-      '<td class="num muted">' + fmtNum(p.cost) + '</td>' +
-      '<td class="num">' + fmtNum(p.price_minorista) + '</td>' +
-      '<td class="num">' + fmtNum(p.price_revendedor) + '</td>' +
-      '<td class="num">' + fmtNum(p.price_mayorista) + '</td>' +
-      '<td class="num">' + fmtNum(p.price_vip) + '</td>' +
-      '<td class="num">' + fmtNum(p.price_publico) + '</td>' +
+      moneyCell(p, "cost", "muted") +
+      moneyCell(p, "price_minorista") +
+      moneyCell(p, "price_revendedor") +
+      moneyCell(p, "price_mayorista") +
+      moneyCell(p, "price_vip") +
+      moneyCell(p, "price_publico") +
       '<td><span class="cell-active-badge' + (p.active ? " active" : "") + '">' + (p.active ? "Sí" : "No") + '</span></td>' +
       '<td class="num muted" title="Unidades por empaque de compra (caja/bulto)">' + (p.units_per_bulto > 1 && p.pack_unit !== "unidad" ? p.units_per_bulto + " u/" + (p.pack_unit === "caja" ? "caja" : "bulto") : "—") + '</td>' +
       '<td><button class="btn btn-small" type="button" data-act="adj-stock" data-id="' + p.id + '" title="Ajustar stock">±</button></td>' +
@@ -3059,12 +3083,108 @@
 
   // Doble click en fila → abrir modal de edición
   els.prodTbody.addEventListener("dblclick", (e) => {
+    if (state.bulkEdit) return; // en modo edición masiva no se abre el modal
     const btn = e.target.closest("button");
     if (btn) return; // no abrir si hicieron doble click en un botón
     const tr = e.target.closest("tr[data-id]");
     if (!tr) return;
     const p = state.products.find((x) => x.id === Number(tr.dataset.id));
     if (p) openEditProdModal(p);
+  });
+
+  // ---------- Edición masiva de costos/precios ----------
+  function bulkPendingCount() {
+    return Object.keys(state.priceEdits).filter((id) => Object.keys(state.priceEdits[id]).length).length;
+  }
+  function updateBulkSaveLabel() {
+    if (!els.bulkSaveBtn) return;
+    const n = bulkPendingCount();
+    els.bulkSaveBtn.textContent = n ? "💾 Guardar cambios (" + n + ")" : "💾 Guardar cambios";
+    els.bulkSaveBtn.disabled = n === 0;
+  }
+  function setBulkMode(on) {
+    state.bulkEdit = on;
+    if (!on) state.priceEdits = {};
+    if (els.bulkEditBtn)   els.bulkEditBtn.hidden = on;
+    if (els.bulkBar)       els.bulkBar.hidden = !on;
+    if (els.bulkSaveBtn)   els.bulkSaveBtn.hidden = !on;
+    if (els.bulkCancelBtn) els.bulkCancelBtn.hidden = !on;
+    updateBulkSaveLabel();
+    renderProducts();
+  }
+  // Input change en celdas de dinero: guardar/borrar pendiente sin re-render (preserva foco)
+  els.prodTbody.addEventListener("input", (e) => {
+    const inp = e.target.closest(".bulk-price-input");
+    if (!inp) return;
+    const id = Number(inp.dataset.id);
+    const field = inp.dataset.field;
+    const p = state.products.find((x) => x.id === id);
+    if (!p) return;
+    const orig = p[field] || 0;
+    const val = Math.max(0, Math.round(Number(inp.value) || 0));
+    if (!state.priceEdits[id]) state.priceEdits[id] = {};
+    if (val === orig) delete state.priceEdits[id][field];
+    else state.priceEdits[id][field] = val;
+    if (!Object.keys(state.priceEdits[id]).length) delete state.priceEdits[id];
+    const edited = !!(state.priceEdits[id] && field in state.priceEdits[id]);
+    inp.classList.toggle("changed", edited);
+    const td = inp.closest("td");
+    if (td) td.classList.toggle("bulk-edited", edited);
+    updateBulkSaveLabel();
+  });
+  if (els.bulkEditBtn)   els.bulkEditBtn.addEventListener("click", () => setBulkMode(true));
+  if (els.bulkCancelBtn) els.bulkCancelBtn.addEventListener("click", () => {
+    if (bulkPendingCount() && !confirm("Hay cambios sin guardar. ¿Descartarlos?")) return;
+    setBulkMode(false);
+  });
+  if (els.bulkApplyPct) els.bulkApplyPct.addEventListener("click", () => {
+    const pct = Number(els.bulkPct.value);
+    if (!pct) { showToast("Ingresá un porcentaje (ej: 12 o -5)", "err"); return; }
+    const factor = 1 + pct / 100;
+    const fields = els.bulkTarget && els.bulkTarget.value === "all"
+      ? MONEY_FIELDS : MONEY_FIELDS.filter((f) => f !== "cost");
+    const list = state.productsFiltered; // solo los visibles/filtrados
+    list.forEach((p) => {
+      fields.forEach((field) => {
+        const cur = (state.priceEdits[p.id] && field in state.priceEdits[p.id])
+          ? state.priceEdits[p.id][field] : (p[field] || 0);
+        const nv = Math.max(0, Math.round(cur * factor));
+        const orig = p[field] || 0;
+        if (nv === orig) { if (state.priceEdits[p.id]) delete state.priceEdits[p.id][field]; }
+        else { if (!state.priceEdits[p.id]) state.priceEdits[p.id] = {}; state.priceEdits[p.id][field] = nv; }
+      });
+      if (state.priceEdits[p.id] && !Object.keys(state.priceEdits[p.id]).length) delete state.priceEdits[p.id];
+    });
+    updateBulkSaveLabel();
+    renderProducts();
+    showToast((pct > 0 ? "+" : "") + pct + "% aplicado a " + list.length + " producto(s) visibles — revisá y guardá", "ok");
+  });
+  if (els.bulkSaveBtn) els.bulkSaveBtn.addEventListener("click", async () => {
+    const ids = Object.keys(state.priceEdits).filter((id) => Object.keys(state.priceEdits[id]).length);
+    if (!ids.length) { setBulkMode(false); return; }
+    els.bulkSaveBtn.disabled = true;
+    els.bulkSaveBtn.textContent = "Guardando…";
+    let ok = 0, fail = 0;
+    // En tandas de 10 para no abrir demasiadas conexiones a la vez
+    for (let i = 0; i < ids.length; i += 10) {
+      const chunk = ids.slice(i, i + 10);
+      const results = await Promise.allSettled(chunk.map((id) =>
+        api("/api/admin/products/" + id, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(state.priceEdits[id]),
+        })
+      ));
+      results.forEach((r, j) => {
+        if (r.status === "fulfilled") {
+          ok++;
+          const p = state.products.find((x) => x.id === Number(chunk[j]));
+          if (p) Object.assign(p, state.priceEdits[chunk[j]]); // refleja en la vista (misma ref que filtered)
+        } else { fail++; }
+      });
+    }
+    setBulkMode(false);
+    showToast("✅ " + ok + " producto(s) actualizado(s)" + (fail ? " · " + fail + " con error" : ""), fail ? "err" : "ok");
   });
 
   els.prodSearch.addEventListener("input", debounce(applyFilters, 200));
@@ -5260,8 +5380,12 @@
       const packSing = pack === "caja" ? "caja" : "bulto";
       const packPlur = pack === "caja" ? "cajas" : "bultos";
       const packs    = (pack !== "unidad" && upb > 1) ? Math.ceil(it.quantity / upb) : "";
+      // El proveedor cotiza por empaque: el input de precio va por caja/bulto,
+      // pero internamente guardamos unit_price (por unidad) para subtotal/diferencia.
+      const priceMult = (pack !== "unidad" && upb > 1) ? upb : 1;
       const costoAct = it.current_cost || 0;
       const precio   = it.unit_price || 0;
+      const packPriceVal = precio ? Math.round(precio * priceMult) : "";
       const subtotal = precio * it.quantity;
       const diffUnit = precio - costoAct;
       const diffTotal = diffUnit * it.quantity;
@@ -5300,8 +5424,15 @@
         '<td>' + escapeHtml(it.product_name) + '</td>' +
         '<td style="text-align:right;color:#6b7280">' + (costoAct ? fmtPrice(costoAct) : '—') + '</td>' +
         '<td style="text-align:right">' +
-          '<input type="number" min="0" step="1" value="' + (it.unit_price || "") + '" placeholder="0" ' +
-          'style="width:80px;text-align:right" data-cot-idx="' + idx + '" class="admin-input pcot-price-input">' +
+          '<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:1px">' +
+            '<input type="number" min="0" step="1" value="' + packPriceVal + '" placeholder="0" ' +
+            'title="Precio por ' + (priceMult > 1 ? packSing : "unidad") + ' que te cotiza el proveedor" ' +
+            'data-cot-idx="' + idx + '" data-price-mult="' + priceMult + '" ' +
+            'style="width:84px;text-align:right" class="admin-input pcot-price-input">' +
+            (priceMult > 1
+              ? '<div style="font-size:10px;color:#9ca3af;line-height:1.1">$/' + packSing + (precio ? ' · ' + fmtPrice(precio) + '/u' : '') + '</div>'
+              : '') +
+          '</div>' +
         '</td>' +
         '<td style="text-align:right">' +
           '<input type="number" min="1" value="' + it.quantity + '" style="width:55px;text-align:right" ' +
@@ -5333,7 +5464,11 @@
     els.pcotItemsTbody.querySelectorAll(".pcot-price-input").forEach((inp) => {
       inp.addEventListener("change", () => {
         const i = Number(inp.dataset.cotIdx);
-        state.cotizacionItems[i].unit_price = Number(inp.value) || null;
+        const mult = Number(inp.dataset.priceMult) || 1;
+        const packPrice = Number(inp.value) || 0;
+        // Convertir el precio del empaque a precio por unidad (canónico).
+        state.cotizacionItems[i].unit_price = packPrice ? Math.round(packPrice / mult) : null;
+        renderCotizacionItems();
       });
     });
     // qty change → re-render para actualizar el badge de bultos

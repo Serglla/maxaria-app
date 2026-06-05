@@ -2030,16 +2030,45 @@ button { font: inherit; cursor: pointer; }
 .admin-table thead th.sortable.num .sort-arrow { margin-left: 2px; }
 
 /* ── Cuerpo: filas alternadas + bordes visibles ── */
-.admin-table tbody tr { border-bottom: 1px solid #e2e8f0; }
+.admin-table tbody tr { border-bottom: 1px solid #1e3a5f; }
 .admin-table tbody tr:nth-child(even) { background: #f4f7fc; }
 .admin-table tbody tr:nth-child(odd)  { background: #fff; }
 .admin-table tbody tr:hover { background: #e8eef8 !important; }
 .admin-table tbody td {
   padding: 6px 10px;
   vertical-align: middle;
-  border-right: 1px solid #e9eef5;
+  border-right: 1px solid #c9d4e8;
 }
 .admin-table tbody td:last-child { border-right: none; }
+
+/* ── Edición masiva de costos/precios en la grilla ── */
+.bulk-price-input {
+  width: 80px;
+  text-align: right;
+  padding: 3px 5px;
+  border: 1px solid #c9d4e8;
+  border-radius: 4px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  background: #fff;
+}
+.bulk-price-input:focus {
+  outline: none;
+  border-color: #1e3a5f;
+  box-shadow: 0 0 0 2px rgba(30, 58, 95, .15);
+}
+.bulk-price-input.changed { border-color: #d97706; background: #fffbeb; font-weight: 700; }
+.admin-table tbody td.bulk-edited { background: #fff7e6 !important; }
+.bulk-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #eef3fb;
+  border: 1px solid #c9d4e8;
+  border-radius: 6px;
+}
+.bulk-bar input[type="number"] { width: 64px; text-align: right; }
 .admin-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Filas especiales: prevalecen sobre el alternado */

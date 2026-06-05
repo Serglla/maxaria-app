@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260604j" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260604k" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -294,8 +294,21 @@
           <input type="file" id="excel-file" accept=".xlsx,.xls" hidden />
         </label>
         <button class="btn" id="catalog-btn" type="button" title="Generar catálogo en PDF con lista de precios a elección">📄 Catálogo PDF</button>
+        <button class="btn" id="prod-bulk-edit-btn" type="button" title="Editar costos y precios directamente en la tabla">✏️ Editar precios</button>
         <button class="btn btn-primary" id="new-product-btn" type="button">+ Nuevo producto</button>
         <button class="btn" id="stock-adj-history-btn" type="button" title="Ver historial de ajustes de stock">📋 Ajustes</button>
+        <span class="bulk-bar" id="prod-bulk-bar" hidden>
+          <span class="muted" style="font-size:12px">Subir</span>
+          <input type="number" id="prod-bulk-pct" class="admin-input" step="0.5" placeholder="%" title="Porcentaje a aplicar" />
+          <span class="muted" style="font-size:12px">%</span>
+          <select id="prod-bulk-target" class="admin-select" style="width:auto" title="A qué columnas aplicar el porcentaje">
+            <option value="prices">Solo precios</option>
+            <option value="all">Costo + precios</option>
+          </select>
+          <button class="btn btn-small" id="prod-bulk-apply-pct" type="button">Aplicar a visibles</button>
+        </span>
+        <button class="btn btn-primary" id="prod-bulk-save-btn" type="button" hidden>💾 Guardar cambios</button>
+        <button class="btn" id="prod-bulk-cancel-btn" type="button" hidden>Cancelar</button>
       </div>
 
       <div class="admin-table-wrap">
@@ -2065,7 +2078,7 @@
             <thead><tr>
               <th>Código</th><th>Producto</th>
               <th style="text-align:right;width:90px">Costo act.</th>
-              <th style="text-align:right;width:100px">Precio cotiz.</th>
+              <th style="text-align:right;width:100px" title="Precio que te cotiza el proveedor, en el empaque de cada producto (por caja/bulto/unidad)">Precio cotiz.</th>
               <th style="text-align:right;width:65px">Cant.</th>
               <th style="text-align:right;width:95px">Subtotal</th>
               <th style="text-align:right;width:85px">Diferencia</th>
@@ -2583,6 +2596,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260604t"></script>
+  <script src="/js/admin.js?v=20260604u"></script>
 </body>
 </html>
