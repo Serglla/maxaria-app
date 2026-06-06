@@ -372,6 +372,10 @@
     accCount: document.getElementById("acc-count"),
     accTbody: document.getElementById("acc-tbody"),
     accReloadBtn: document.getElementById("acc-reload-btn"),
+    accKpis: document.getElementById("acc-kpis"),
+    accOnlyDebtors: document.getElementById("acc-only-debtors"),
+    accExportBtn: document.getElementById("acc-export-btn"),
+    accTable: document.getElementById("acc-table"),
 
     // Gastos
     expFrom: document.getElementById("exp-from"),
@@ -472,6 +476,9 @@
     paymentsLoaded: false,
     accounts: [],
     accountsLoaded: false,
+    accSortKey: "balance",
+    accSortDir: "asc",
+    accOnlyDebtors: false,
     // Items pendientes del formulario de nueva/editar compra
     purchaseItems: [],
     editingPurchaseId: null,
@@ -6674,51 +6681,160 @@
 
   async function loadAccounts() {
     try {
-      if (els.accTbody) els.accTbody.innerHTML = '<tr><td colspan="5" class="muted">Cargando…</td></tr>';
+      if (els.accTbody) els.accTbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando…</td></tr>';
       state.accounts = await api("/api/admin/accounts");
       state.accountsLoaded = true;
       renderAccounts();
     } catch (e) {
-      if (els.accTbody) els.accTbody.innerHTML = '<tr><td colspan="5" class="muted">Error cargando cuentas</td></tr>';
+      if (els.accTbody) els.accTbody.innerHTML = '<tr><td colspan="7" class="muted">Error cargando cuentas</td></tr>';
     }
   }
 
-  function renderAccounts() {
-    if (!els.accTbody) return;
+  function accAgingBucket(days) {
+    if (days == null) return { label: "—", cls: "" };
+    if (days <= 7) return { label: days + " d", cls: "acc-age-ok" };
+    if (days <= 30) return { label: days + " d", cls: "acc-age-warn" };
+    return { label: days + " d", cls: "acc-age-bad" };
+  }
+
+  function renderAccountsKpis() {
+    if (!els.accKpis) return;
+    const all = state.accounts;
+    let totalDebt = 0, totalFavor = 0, debtors = 0, oldestDays = 0;
+    all.forEach((a) => {
+      const b = Number(a.balance) || 0;
+      if (b < 0) { totalDebt += -b; debtors++; if (a.days_overdue != null && a.days_overdue > oldestDays) oldestDays = a.days_overdue; }
+      else if (b > 0) { totalFavor += b; }
+    });
+    const avgDebt = debtors ? Math.round(totalDebt / debtors) : 0;
+    const card = (cls, label, value, sub) =>
+      '<div class="dash-kpi ' + cls + '"><div class="dash-kpi-label">' + label + '</div>' +
+      '<div class="dash-kpi-value">' + value + '</div>' +
+      (sub ? '<div class="dash-kpi-sub">' + sub + '</div>' : '') + '</div>';
+    els.accKpis.innerHTML =
+      card("dash-kpi-danger", "Total adeudado", fmtPrice(totalDebt), debtors + (debtors === 1 ? " deudor" : " deudores")) +
+      card("dash-kpi-good", "Total a favor", fmtPrice(totalFavor), "saldos a favor de clientes") +
+      card("dash-kpi-warn", "Deuda promedio", fmtPrice(avgDebt), "por cliente deudor") +
+      card("dash-kpi-accent", "Deuda más antigua", (oldestDays ? oldestDays + " días" : "—"), "sin saldar");
+  }
+
+  function accSortedFiltered() {
     const q = (els.accSearch ? els.accSearch.value : "").trim().toLowerCase();
-    let list = state.accounts;
+    let list = state.accounts.slice();
     if (q) {
       list = list.filter((a) =>
         (a.username || "").toLowerCase().includes(q) ||
         (a.full_name || "").toLowerCase().includes(q)
       );
     }
+    if (state.accOnlyDebtors) list = list.filter((a) => (Number(a.balance) || 0) < 0);
+    const key = state.accSortKey, dir = state.accSortDir === "desc" ? -1 : 1;
+    list.sort((a, b) => {
+      let av, bv;
+      if (key === "name") { av = (a.full_name || a.username || "").toLowerCase(); bv = (b.full_name || b.username || "").toLowerCase(); return av < bv ? -dir : av > bv ? dir : 0; }
+      if (key === "debit") { av = a.total_debit; bv = b.total_debit; }
+      else if (key === "credit") { av = a.total_credit; bv = b.total_credit; }
+      else if (key === "aging") { av = a.days_overdue == null ? -1 : a.days_overdue; bv = b.days_overdue == null ? -1 : b.days_overdue; }
+      else { av = a.balance; bv = b.balance; } // balance: asc = más deuda primero (más negativo)
+      return (av - bv) * dir;
+    });
+    return list;
+  }
+
+  function updateAccSortHeaders() {
+    if (!els.accTable) return;
+    els.accTable.querySelectorAll("th.acc-sort").forEach((th) => {
+      th.classList.remove("sort-asc", "sort-desc");
+      if (th.dataset.sort === state.accSortKey) th.classList.add(state.accSortDir === "desc" ? "sort-desc" : "sort-asc");
+    });
+  }
+
+  function renderAccounts() {
+    if (!els.accTbody) return;
+    renderAccountsKpis();
+    updateAccSortHeaders();
+    const list = accSortedFiltered();
     if (els.accCount) els.accCount.textContent = list.length + (list.length === 1 ? " cliente" : " clientes");
     if (!list.length) {
-      els.accTbody.innerHTML = '<tr><td colspan="5" class="muted">Sin clientes.</td></tr>';
+      els.accTbody.innerHTML = '<tr><td colspan="7" class="muted">Sin clientes.</td></tr>';
       return;
     }
     els.accTbody.innerHTML = list.map(accountRowHtml).join("");
-    // Wiring de click para expandir historial
     els.accTbody.querySelectorAll("tr.acc-row").forEach((tr) => {
-      tr.addEventListener("click", () => toggleAccountDetail(tr));
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest(".acc-pay-btn")) return; // no expandir si tocó el botón de pago
+        toggleAccountDetail(tr);
+      });
+    });
+    els.accTbody.querySelectorAll(".acc-pay-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openPaymentForAccount(Number(btn.dataset.id));
+      });
     });
   }
 
   function accountRowHtml(a) {
     const balance = Number(a.balance) || 0;
+    const debt = balance < 0;
     const balanceClass = balance >= 0 ? "acc-balance-pos" : "acc-balance-neg";
     const balanceLabel = balance >= 0 ? "A favor: " + fmtPrice(balance) : "Debe: " + fmtPrice(Math.abs(balance));
-    return '<tr class="acc-row" data-id="' + a.id + '" style="cursor:pointer">' +
+    const aging = debt ? accAgingBucket(a.days_overdue) : { label: "—", cls: "" };
+    const agingTitle = debt && a.oldest_unpaid_at ? ' title="Deuda más vieja sin saldar: ' + escapeHtml(formatDate(a.oldest_unpaid_at)) + '"' : "";
+    return '<tr class="acc-row' + (debt ? ' acc-row-debt' : '') + '" data-id="' + a.id + '" style="cursor:pointer">' +
       '<td>' + escapeHtml(a.full_name || a.username || "") + ' <span class="muted small">@' + escapeHtml(a.username || "") + '</span></td>' +
       '<td class="muted">' + escapeHtml(LEVEL_NAMES[a.level] || String(a.level)) + '</td>' +
       '<td class="num muted">' + fmtPrice(a.total_debit) + '</td>' +
       '<td class="num muted">' + fmtPrice(a.total_credit) + '</td>' +
       '<td class="num"><span class="acc-balance-badge ' + balanceClass + '">' + balanceLabel + '</span></td>' +
+      '<td class="num"' + agingTitle + '><span class="acc-age ' + aging.cls + '">' + aging.label + '</span></td>' +
+      '<td class="acc-actions">' + (debt
+        ? '<button type="button" class="btn-mini acc-pay-btn" data-id="' + a.id + '">💵 Cobrar</button>'
+        : '<button type="button" class="btn-mini acc-pay-btn" data-id="' + a.id + '">Registrar pago</button>') + '</td>' +
     '</tr>' +
     '<tr class="acc-detail-row" data-for="' + a.id + '" hidden>' +
-      '<td colspan="5" class="acc-detail-cell"><span class="muted">Cargando historial…</span></td>' +
+      '<td colspan="7" class="acc-detail-cell"><span class="muted">Cargando historial…</span></td>' +
     '</tr>';
+  }
+
+  function openPaymentForAccount(userId) {
+    const a = state.accounts.find((x) => x.id === userId);
+    if (els.paymentCreateForm) els.paymentCreateForm.reset();
+    if (els.paymentCreateMsg) els.paymentCreateMsg.textContent = "";
+    populatePayFormClients().then(() => {
+      if (els.payFormClient) els.payFormClient.value = String(userId);
+      // Pre-cargar el monto adeudado si lo hay
+      const amtInput = els.paymentCreateForm ? els.paymentCreateForm.querySelector('[name="amount"]') : null;
+      if (amtInput && a && Number(a.balance) < 0) amtInput.value = Math.abs(Number(a.balance));
+    });
+    fillCajaSelect(document.getElementById("pay-form-caja"), null);
+    if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
+  }
+
+  function exportAccountsCsv() {
+    const list = accSortedFiltered();
+    const rows = [["Cliente", "Usuario", "Nivel", "Debitos", "Creditos", "Saldo", "Estado", "Dias antiguedad", "Ultimo movimiento"]];
+    list.forEach((a) => {
+      const b = Number(a.balance) || 0;
+      rows.push([
+        a.full_name || "", "@" + (a.username || ""), LEVEL_NAMES[a.level] || String(a.level),
+        a.total_debit, a.total_credit, b,
+        b < 0 ? "Debe" : (b > 0 ? "A favor" : "Saldado"),
+        b < 0 && a.days_overdue != null ? a.days_overdue : "",
+        a.last_movement_at ? formatDate(a.last_movement_at) : "",
+      ]);
+    });
+    const csv = "﻿" + rows.map((r) => r.map((c) => {
+      const s = String(c == null ? "" : c);
+      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join(";")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "cuentas_corrientes_" + new Date().toISOString().slice(0, 10) + ".csv";
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   async function toggleAccountDetail(tr) {
@@ -6772,6 +6888,28 @@
     els.accReloadBtn.addEventListener("click", () => {
       state.accountsLoaded = false;
       loadAccounts();
+    });
+  }
+  if (els.accOnlyDebtors) {
+    els.accOnlyDebtors.addEventListener("change", () => {
+      state.accOnlyDebtors = els.accOnlyDebtors.checked;
+      renderAccounts();
+    });
+  }
+  if (els.accExportBtn) els.accExportBtn.addEventListener("click", exportAccountsCsv);
+  if (els.accTable) {
+    els.accTable.querySelectorAll("th.acc-sort").forEach((th) => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.sort;
+        if (state.accSortKey === key) {
+          state.accSortDir = state.accSortDir === "asc" ? "desc" : "asc";
+        } else {
+          state.accSortKey = key;
+          // Default util: nombre asc, montos/antigüedad desc (mayor primero), saldo asc (más deuda primero)
+          state.accSortDir = (key === "name" || key === "balance") ? "asc" : "desc";
+        }
+        renderAccounts();
+      });
     });
   }
 

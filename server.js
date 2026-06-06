@@ -4489,17 +4489,60 @@ app.delete("/api/admin/payments/:id", requireAdmin, (req, res) => {
 // ===== Cuentas corrientes =====
 
 app.get("/api/admin/accounts", requireAdmin, (req, res) => {
-  const rows = db.prepare(
-    "SELECT u.id, u.username, u.full_name, u.level," +
-    "       COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END),0) AS total_credit," +
-    "       COALESCE(SUM(CASE WHEN am.type='debit'  THEN am.amount ELSE 0 END),0) AS total_debit," +
-    "       COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE -am.amount END),0) AS balance" +
-    "  FROM users u" +
-    "  LEFT JOIN account_movements am ON am.user_id = u.id" +
-    "  WHERE u.level IN (1,2,3,4) AND u.active = 1" +
-    "  GROUP BY u.id" +
-    "  ORDER BY u.full_name, u.username"
+  const users = db.prepare(
+    "SELECT id, username, full_name, level FROM users" +
+    "  WHERE level IN (1,2,3,4) AND active = 1"
   ).all();
+  const movs = db.prepare(
+    "SELECT user_id, type, amount, created_at FROM account_movements ORDER BY created_at ASC"
+  ).all();
+  // Parsear created_at (UTC "YYYY-MM-DD HH:MM:SS") y calcular dias transcurridos
+  function daysSince(str) {
+    if (!str) return null;
+    var t = Date.parse(String(str).replace(" ", "T") + "Z");
+    if (isNaN(t)) return null;
+    return Math.floor((Date.now() - t) / 86400000);
+  }
+  var byUser = {};
+  for (var i = 0; i < movs.length; i++) {
+    var m = movs[i];
+    (byUser[m.user_id] = byUser[m.user_id] || []).push(m);
+  }
+  var rows = users.map(function (u) {
+    var list = byUser[u.id] || [];
+    var totalDebit = 0, totalCredit = 0, lastAt = null, creditPool = 0;
+    var openDebits = []; // {amount, at} en orden cronologico
+    for (var j = 0; j < list.length; j++) {
+      var mv = list[j];
+      if (mv.type === "debit") { totalDebit += mv.amount; openDebits.push({ amount: mv.amount, at: mv.created_at }); }
+      else { totalCredit += mv.amount; creditPool += mv.amount; }
+      lastAt = mv.created_at;
+    }
+    // FIFO: aplicar creditos a los debitos mas viejos para hallar la deuda mas antigua sin saldar
+    var pool = creditPool;
+    for (var k = 0; k < openDebits.length && pool > 0; k++) {
+      var pay = Math.min(pool, openDebits[k].amount);
+      openDebits[k].amount -= pay; pool -= pay;
+    }
+    var balance = totalCredit - totalDebit; // negativo = debe
+    var oldestUnpaidAt = null;
+    for (var d = 0; d < openDebits.length; d++) {
+      if (openDebits[d].amount > 0.0001) { oldestUnpaidAt = openDebits[d].at; break; }
+    }
+    var daysOverdue = (balance < -0.0001 && oldestUnpaidAt) ? daysSince(oldestUnpaidAt) : null;
+    return {
+      id: u.id, username: u.username, full_name: u.full_name, level: u.level,
+      total_credit: totalCredit, total_debit: totalDebit, balance: balance,
+      last_movement_at: lastAt, days_since_movement: daysSince(lastAt),
+      oldest_unpaid_at: oldestUnpaidAt, days_overdue: daysOverdue,
+      movements_count: list.length,
+    };
+  });
+  rows.sort(function (a, b) {
+    var an = (a.full_name || a.username || "").toLowerCase();
+    var bn = (b.full_name || b.username || "").toLowerCase();
+    return an < bn ? -1 : an > bn ? 1 : 0;
+  });
   res.json(rows);
 });
 

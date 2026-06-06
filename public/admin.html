@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260606d" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260606e" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -1470,24 +1470,29 @@
 
     <!-- ===== TAB CUENTAS ===== -->
     <section class="tab-panel" id="tab-cuentas" hidden>
+      <div class="dash-kpi-row" id="acc-kpis" style="margin-bottom:14px"></div>
       <div class="admin-toolbar">
         <input type="search" id="acc-search" class="admin-search" placeholder="Buscar cliente..." autocomplete="off" />
+        <label class="acc-toggle"><input type="checkbox" id="acc-only-debtors" /> Solo deudores</label>
         <span class="admin-spacer"></span>
         <span id="acc-count" class="muted">…</span>
-        <button class="btn" id="acc-reload-btn" type="button">Actualizar</button>
+        <button class="btn btn-tool" id="acc-export-btn" type="button">⬇ CSV</button>
+        <button class="btn" id="acc-reload-btn" type="button">↻ Actualizar</button>
       </div>
       <div class="admin-table-wrap">
-        <table class="admin-table" id="acc-table">
+        <table class="admin-table acc-table" id="acc-table">
           <thead>
             <tr>
-              <th>Cliente</th>
+              <th class="acc-sort" data-sort="name">Cliente</th>
               <th>Nivel</th>
-              <th class="num">Total débitos</th>
-              <th class="num">Total créditos</th>
-              <th class="num">Saldo</th>
+              <th class="num acc-sort" data-sort="debit">Débitos</th>
+              <th class="num acc-sort" data-sort="credit">Créditos</th>
+              <th class="num acc-sort" data-sort="balance">Saldo</th>
+              <th class="num acc-sort" data-sort="aging" title="Días desde la deuda más antigua sin saldar">Antigüedad</th>
+              <th class="acc-actions-th">Acciones</th>
             </tr>
           </thead>
-          <tbody id="acc-tbody"><tr><td colspan="5" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="acc-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -2737,6 +2742,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260606c"></script>
+  <script src="/js/admin.js?v=20260606e"></script>
 </body>
 </html>
