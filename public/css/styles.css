@@ -879,26 +879,32 @@ button { font: inherit; cursor: pointer; }
 .order-detail thead tr { background: #1e3a5f; }
 .order-detail thead th {
   text-align: left;
-  padding: 7px 10px;
+  padding: 8px 10px;
   color: #fff;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 800;
   letter-spacing: .04em;
   text-transform: uppercase;
-  border-right: 1px solid rgba(255,255,255,.2);
+  border-right: 2px solid rgba(255,255,255,.35);
 }
 .order-detail thead th:last-child { border-right: none; }
-.order-detail tbody tr { border-bottom: 1px solid #e2e8f0; }
+.order-detail tbody tr { border-bottom: 2px solid #1e3a5f; }
 .order-detail tbody tr:nth-child(odd)  { background: #fff; }
 .order-detail tbody tr:nth-child(even) { background: #dde5f5; }
 .order-detail tbody tr:hover { background: #c7d7f0; }
 .order-detail tbody td {
-  padding: 6px 10px;
+  padding: 8px 10px;
   vertical-align: middle;
-  border-right: 1px solid #e2e8f0;
+  border-right: 2px solid #1e3a5f;
+  font-size: 14.5px;
+  font-weight: 700;
 }
 .order-detail tbody td:last-child { border-right: none; }
 .order-detail td.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* Anchos: código / cant / p.unit / subtotal ajustados al contenido; el
+   producto (2ª columna) se queda con todo el espacio restante. */
+.order-detail th, .order-detail td { white-space: nowrap; }
+.order-detail th:nth-child(2), .order-detail td:nth-child(2) { width: 100%; white-space: normal; }
 .order-notes {
   margin-top: 10px;
   font-style: italic;
@@ -3458,17 +3464,20 @@ html.in-modal .ventas-wrap {
 .ventas-table th { padding: 8px 10px; font-weight: 600; color: #334155; }
 .ventas-items-table th {
   padding: 8px 10px;
-  font-weight: 700;
+  font-weight: 800;
   color: #fff;
-  border-right: 1px solid rgba(255,255,255,.2);
+  border-right: 2px solid rgba(255,255,255,.35);
 }
 .ventas-items-table th:last-child { border-right: none; }
 .ventas-table td { padding: 9px 10px; border-bottom: 1px solid #f1f5f9; }
-.ventas-items-table td { padding: 5px 8px; border-right: 1px solid #cdd9ec; }
+.ventas-items-table td { padding: 7px 8px; border-right: 2px solid #1e3a5f; font-size: 14.5px; font-weight: 700; }
 .ventas-items-table td:last-child { border-right: none; }
-.ventas-items-table tbody tr { border-bottom: 1px solid #cdd9ec; }
+.ventas-items-table tbody tr { border-bottom: 2px solid #1e3a5f; }
 .ventas-items-table tbody tr:nth-child(odd)  { background: #fff; }
 .ventas-items-table tbody tr:nth-child(even) { background: #dde5f5; }
+/* Columnas numéricas ajustadas; Artículo (2ª col) se queda el resto. */
+.ventas-items-table th, .ventas-items-table td { white-space: nowrap; }
+.ventas-items-table th:nth-child(2), .ventas-items-table td:nth-child(2) { white-space: normal; }
 .ventas-row { cursor: pointer; }
 .ventas-row:hover td { background: #f8fafc; }
 
@@ -3652,7 +3661,7 @@ html.in-modal .ventas-wrap {
   border-radius: 6px;
   background: #fff;
 }
-.ventas-items-table input { padding: 5px 7px; font-size: 13px; }
+.ventas-items-table input { padding: 5px 7px; font-size: 14px; font-weight: 700; }
 .ventas-items-table input:focus,
 .ventas-pct-input:focus,
 .ventas-notes:focus {
@@ -3664,7 +3673,7 @@ html.in-modal .ventas-wrap {
 /* Encabezado de la tabla de items, en línea con los títulos de sección */
 .ventas-items-table th {
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: 13px;
   letter-spacing: .04em;
   color: #fff;
 }
