@@ -482,11 +482,29 @@ db.exec(
   const defaults = [
     { name: "Caja efectivo", type: "efectivo", sort_order: 0 },
     { name: "Banco",         type: "banco",    sort_order: 1 },
-    { name: "Mercado Pago",  type: "digital",  sort_order: 2 },
+    { name: "Billeteras",    type: "digital",  sort_order: 2 },
   ];
   const ins = db.prepare("INSERT INTO cash_accounts (name, type, sort_order) VALUES (?,?,?)");
   db.transaction(() => defaults.forEach((r) => ins.run(r.name, r.type, r.sort_order)))();
 })();
+
+// ── Migraciones idempotentes: caja por persona (cajero) ──
+// Cada caja de efectivo puede tener un responsable (cajero = vendedor level 5 o admin).
+try { db.exec("ALTER TABLE cash_accounts ADD COLUMN responsable_user_id INTEGER REFERENCES users(id)"); } catch (_) {}
+// Cada cobro (pago de cuenta corriente o entrega) imputa a una caja.
+try { db.exec("ALTER TABLE payments ADD COLUMN caja_id INTEGER REFERENCES cash_accounts(id)"); } catch (_) {}
+// En entregas el cobro puede partirse: efectivo a una caja (caja_id) y
+// transferencia a otra (caja_transfer_id, ej. billeteras del cajero).
+try { db.exec("ALTER TABLE deliveries ADD COLUMN caja_id INTEGER REFERENCES cash_accounts(id)"); } catch (_) {}
+try { db.exec("ALTER TABLE deliveries ADD COLUMN caja_transfer_id INTEGER REFERENCES cash_accounts(id)"); } catch (_) {}
+// Renombrar la cuenta "Mercado Pago" -> "Billeteras" en instancias ya existentes
+// (solo si no hay ya una "Billeteras", para no chocar con el UNIQUE de name).
+try {
+  const hasBill = db.prepare("SELECT id FROM cash_accounts WHERE name = 'Billeteras'").get();
+  if (!hasBill) {
+    db.prepare("UPDATE cash_accounts SET name = 'Billeteras' WHERE name = 'Mercado Pago'").run();
+  }
+} catch (_) {}
 
 // Helper: genera el proximo numero de presupuesto en formato 0001-00000001.
 function nextBudgetNumber() {
@@ -1959,7 +1977,7 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "       u.username, u.full_name," +
       "       o.assigned_vendedor_id," +
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
-      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id" +
       "  FROM orders o" +
       "  JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
@@ -1979,7 +1997,7 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "       u.username, u.full_name," +
       "       o.assigned_vendedor_id, NULL AS vendedor_username, NULL AS vendedor_full_name," +
       "       o.is_unified, o.unified_parent_id," +
-      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id" +
       "  FROM orders o" +
       "  JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN deliveries d ON d.order_id = o.id" +
@@ -2028,7 +2046,7 @@ app.get("/api/admin/ventas", requireAdmin, (req, res) => {
     "       u.username, u.full_name," +
     "       o.assigned_vendedor_id," +
     "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
-    "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
+    "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id" +
     "  FROM orders o" +
     "  JOIN users u ON u.id = o.user_id" +
     "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
@@ -2049,7 +2067,7 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
     order = db.prepare(
       "SELECT o.*, u.username, u.full_name, u.level AS client_level," +
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
-      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id" +
       "  FROM orders o JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
       "  LEFT JOIN deliveries d ON d.order_id = o.id" +
@@ -2060,7 +2078,7 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
     order = db.prepare(
       "SELECT o.*, u.username, u.full_name," +
       "       NULL AS vendedor_username, NULL AS vendedor_full_name," +
-      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at" +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id" +
       "  FROM orders o JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN deliveries d ON d.order_id = o.id" +
       "  WHERE o.id = ? AND (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"
@@ -3818,12 +3836,31 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
       ).get(id, req.session.userId, req.session.userId);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado o no asignado a vos" });
 
-  const { delivered_to, efectivo_amount, transferencia_amount, notes } = req.body || {};
+  const { delivered_to, efectivo_amount, transferencia_amount, notes, caja_id, caja_transfer_id } = req.body || {};
   const deliveredTo = String(delivered_to || "").trim().slice(0, 200);
   if (!deliveredTo) return res.status(400).json({ error: "Falta indicar quien recibio el pedido" });
 
   const efectivo = Math.max(0, Number(efectivo_amount) || 0);
   const transferencia = Math.max(0, Number(transferencia_amount) || 0);
+
+  // Cajas donde cae el cobro (elegidas a mano). El efectivo va a una caja
+  // (caja_id) y la transferencia a otra (caja_transfer_id, ej. billeteras).
+  const findCaja = (cid) => {
+    if (!cid) return null;
+    const c = db.prepare("SELECT id, name FROM cash_accounts WHERE id = ? AND active = 1").get(Number(cid));
+    if (!c) { const e = new Error("Caja invalida o inactiva"); e.code = "BADCAJA"; throw e; }
+    return c;
+  };
+  let cajaEfectivo = null, cajaTransfer = null;
+  try {
+    cajaEfectivo = findCaja(caja_id);
+    cajaTransfer = findCaja(caja_transfer_id);
+  } catch (e) {
+    if (e.code === "BADCAJA") return res.status(400).json({ error: e.message });
+    throw e;
+  }
+  const cajaId = cajaEfectivo ? cajaEfectivo.id : null;
+  const cajaTransferId = cajaTransfer ? cajaTransfer.id : null;
 
   const vendedorId = isAdmin
     ? (order.assigned_vendedor_id || req.session.userId)
@@ -3845,14 +3882,14 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     if (existing) {
       db.prepare(
         "UPDATE deliveries SET delivered_to = ?, efectivo_amount = ?, transferencia_amount = ?, notes = ?," +
-        "  delivered_at = datetime('now') WHERE order_id = ?"
-      ).run(deliveredTo, efectivo, transferencia, notesStr, id);
+        "  caja_id = ?, caja_transfer_id = ?, delivered_at = datetime('now') WHERE order_id = ?"
+      ).run(deliveredTo, efectivo, transferencia, notesStr, cajaId, cajaTransferId, id);
       deliveryId = existing.id;
     } else {
       const r = db.prepare(
-        "INSERT INTO deliveries (order_id, vendedor_id, delivered_to, efectivo_amount, transferencia_amount, notes)" +
-        " VALUES (?, ?, ?, ?, ?, ?)"
-      ).run(id, vendedorId, deliveredTo, efectivo, transferencia, notesStr);
+        "INSERT INTO deliveries (order_id, vendedor_id, delivered_to, efectivo_amount, transferencia_amount, notes, caja_id, caja_transfer_id)" +
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(id, vendedorId, deliveredTo, efectivo, transferencia, notesStr, cajaId, cajaTransferId);
       deliveryId = r.lastInsertRowid;
     }
     // Marcar el pedido como entregado automaticamente
@@ -3905,6 +3942,23 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
         ).run(order.user_id, cobrado, "Cobro entrega #" + id + " (" + parts.join(" + ") + ")", id);
       }
     }
+
+    // Ingresos en las cajas elegidas (saldo corriente). El efectivo cae en
+    // cajaEfectivo y la transferencia en cajaTransfer (pueden ser distintas).
+    // Revertir los previos de esta entrega y recrear (cubre edición de entrega).
+    db.prepare(
+      "DELETE FROM cash_movements WHERE source = 'entrega' AND related_id = ?"
+    ).run(deliveryId);
+    const insCashMov = db.prepare(
+      "INSERT INTO cash_movements (account_id, type, amount, description, source, related_id, registered_by)" +
+      " VALUES (?, 'ingreso', ?, ?, 'entrega', ?, ?)"
+    );
+    if (cajaEfectivo && efectivo > 0) {
+      insCashMov.run(cajaEfectivo.id, efectivo, "Cobro entrega #" + id + " (efectivo)", deliveryId, req.session.userId);
+    }
+    if (cajaTransfer && transferencia > 0) {
+      insCashMov.run(cajaTransfer.id, transferencia, "Cobro entrega #" + id + " (transferencia)", deliveryId, req.session.userId);
+    }
   })();
 
   res.json({ ok: true, delivery_id: deliveryId, order_id: id });
@@ -3914,7 +3968,8 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
 app.get("/api/admin/deliveries", requireAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT d.id, d.order_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount," +
-    "       d.notes, d.delivered_at," +
+    "       d.notes, d.delivered_at, d.caja_id, ca.name AS caja_name," +
+    "       d.caja_transfer_id, ct.name AS caja_transfer_name," +
     "       v.id AS vendedor_id, v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
     "       o.total AS order_total, o.status AS order_status," +
     "       u.username AS client_username, u.full_name AS client_full_name" +
@@ -3922,6 +3977,8 @@ app.get("/api/admin/deliveries", requireAdmin, (req, res) => {
     "  JOIN users v ON v.id = d.vendedor_id" +
     "  JOIN orders o ON o.id = d.order_id" +
     "  JOIN users u ON u.id = o.user_id" +
+    "  LEFT JOIN cash_accounts ca ON ca.id = d.caja_id" +
+    "  LEFT JOIN cash_accounts ct ON ct.id = d.caja_transfer_id" +
     "  ORDER BY d.delivered_at DESC LIMIT 500"
   ).all();
   res.json(rows);
@@ -4351,11 +4408,13 @@ app.post("/api/admin/cotizacion/pdf", requireAdmin, (req, res) => {
 app.get("/api/admin/payments", requireAdmin, (req, res) => {
   const userId = req.query.user_id ? Number(req.query.user_id) : null;
   let sql =
-    "SELECT p.id, p.user_id, p.amount, p.method, p.reference, p.notes, p.created_at," +
+    "SELECT p.id, p.user_id, p.amount, p.method, p.reference, p.notes, p.created_at, p.caja_id," +
     "       u.username AS client_username, u.full_name AS client_full_name," +
+    "       ca.name AS caja_name," +
     "       rb.username AS registered_by_username, rb.full_name AS registered_by_full_name" +
     "  FROM payments p" +
     "  JOIN users u ON u.id = p.user_id" +
+    "  LEFT JOIN cash_accounts ca ON ca.id = p.caja_id" +
     "  LEFT JOIN users rb ON rb.id = p.registered_by";
   const params = [];
   if (userId) { sql += "  WHERE p.user_id = ?"; params.push(userId); }
@@ -4370,6 +4429,7 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
   const method    = String(b.method || "efectivo").trim().slice(0, 50);
   const reference = String(b.reference || "").trim().slice(0, 200) || null;
   const notes     = String(b.notes || "").trim().slice(0, 500) || null;
+  const cajaId    = b.caja_id ? Number(b.caja_id) : null;
 
   if (!user_id || !amount || amount <= 0)
     return res.status(400).json({ error: "Faltan datos: user_id y amount son requeridos" });
@@ -4377,18 +4437,32 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
   const client = db.prepare("SELECT id, full_name, username FROM users WHERE id = ? AND active = 1").get(user_id);
   if (!client) return res.status(404).json({ error: "Cliente no encontrado" });
 
+  // Validar caja (si se imputa a una): debe existir y estar activa.
+  let caja = null;
+  if (cajaId) {
+    caja = db.prepare("SELECT id, name FROM cash_accounts WHERE id = ? AND active = 1").get(cajaId);
+    if (!caja) return res.status(400).json({ error: "Caja invalida o inactiva" });
+  }
+
   let paymentId;
   db.transaction(() => {
     const r = db.prepare(
-      "INSERT INTO payments (user_id, amount, method, reference, notes, registered_by, created_at)" +
-      " VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
-    ).run(user_id, amount, method, reference, notes, req.session.userId);
+      "INSERT INTO payments (user_id, amount, method, reference, notes, caja_id, registered_by, created_at)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+    ).run(user_id, amount, method, reference, notes, cajaId, req.session.userId);
     paymentId = r.lastInsertRowid;
     const desc = "Pago " + method + (reference ? " · " + reference : "");
     db.prepare(
       "INSERT INTO account_movements (user_id, type, amount, description, payment_id, created_at)" +
       " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
     ).run(user_id, amount, desc, paymentId);
+    // Ingreso en la caja elegida (saldo corriente).
+    if (caja) {
+      db.prepare(
+        "INSERT INTO cash_movements (account_id, type, amount, description, source, related_id, registered_by)" +
+        " VALUES (?, 'ingreso', ?, ?, 'cobro', ?, ?)"
+      ).run(caja.id, amount, "Cobro " + (client.full_name || client.username) + (reference ? " · " + reference : ""), paymentId, req.session.userId);
+    }
   })();
 
   const payment = db.prepare(
@@ -4405,6 +4479,8 @@ app.delete("/api/admin/payments/:id", requireAdmin, (req, res) => {
   if (!payment) return res.status(404).json({ error: "Pago no encontrado" });
   db.transaction(() => {
     db.prepare("DELETE FROM account_movements WHERE payment_id = ?").run(id);
+    // Revertir el ingreso de caja generado por este cobro (si lo hubo).
+    db.prepare("DELETE FROM cash_movements WHERE source = 'cobro' AND related_id = ?").run(id);
     db.prepare("DELETE FROM payments WHERE id = ?").run(id);
   })();
   res.json({ ok: true });
@@ -5845,23 +5921,40 @@ function cajaSaldo(accountId) {
 app.get("/api/admin/caja", requireAdmin, (req, res) => {
   const accounts = db.prepare(
     "SELECT ca.*, " +
+    " resp.full_name AS responsable_full_name, resp.username AS responsable_username, " +
     " COALESCE((SELECT SUM(CASE WHEN cm.type='ingreso' THEN cm.amount ELSE -cm.amount END)" +
     "           FROM cash_movements cm WHERE cm.account_id = ca.id), 0) AS saldo" +
-    " FROM cash_accounts ca ORDER BY ca.sort_order, ca.id"
+    " FROM cash_accounts ca" +
+    " LEFT JOIN users resp ON resp.id = ca.responsable_user_id" +
+    " ORDER BY ca.sort_order, ca.id"
   ).all();
   res.json(accounts);
 });
 
+// GET /api/cajas — lista liviana de cajas activas para el selector de cobro
+// (accesible para vendedor o admin, ya que los vendedores registran entregas).
+app.get("/api/cajas", requireVendedorOrAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT ca.id, ca.name, ca.type, ca.responsable_user_id," +
+    "       resp.full_name AS responsable_full_name" +
+    " FROM cash_accounts ca" +
+    " LEFT JOIN users resp ON resp.id = ca.responsable_user_id" +
+    " WHERE ca.active = 1 ORDER BY ca.sort_order, ca.id"
+  ).all();
+  res.json(rows);
+});
+
 // POST /api/admin/caja/accounts — crear cuenta
 app.post("/api/admin/caja/accounts", requireAdmin, (req, res) => {
-  const { name, type, sort_order } = req.body;
+  const { name, type, sort_order, responsable_user_id } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: "Nombre requerido" });
   const validTypes = ["efectivo","banco","digital"];
   const t = validTypes.includes(type) ? type : "efectivo";
+  const respId = responsable_user_id ? Number(responsable_user_id) : null;
   try {
     const r = db.prepare(
-      "INSERT INTO cash_accounts (name, type, sort_order) VALUES (?,?,?)"
-    ).run(name.trim(), t, Number(sort_order) || 0);
+      "INSERT INTO cash_accounts (name, type, sort_order, responsable_user_id) VALUES (?,?,?,?)"
+    ).run(name.trim(), t, Number(sort_order) || 0, respId);
     res.json({ ok: true, id: r.lastInsertRowid });
   } catch (e) {
     if (e.message && e.message.includes("UNIQUE")) return res.status(409).json({ error: "Ya existe una cuenta con ese nombre" });
@@ -5871,7 +5964,7 @@ app.post("/api/admin/caja/accounts", requireAdmin, (req, res) => {
 
 // PATCH /api/admin/caja/accounts/:id — editar cuenta
 app.patch("/api/admin/caja/accounts/:id", requireAdmin, (req, res) => {
-  const { name, type, active, sort_order } = req.body;
+  const { name, type, active, sort_order, responsable_user_id } = req.body;
   const acc = db.prepare("SELECT * FROM cash_accounts WHERE id=?").get(req.params.id);
   if (!acc) return res.status(404).json({ error: "No encontrada" });
   const validTypes = ["efectivo","banco","digital"];
@@ -5880,6 +5973,9 @@ app.patch("/api/admin/caja/accounts/:id", requireAdmin, (req, res) => {
   if (type !== undefined)       updates.type       = validTypes.includes(type) ? type : acc.type;
   if (active !== undefined)     updates.active     = active ? 1 : 0;
   if (sort_order !== undefined) updates.sort_order = Number(sort_order) || 0;
+  if (responsable_user_id !== undefined) {
+    updates.responsable_user_id = responsable_user_id ? Number(responsable_user_id) : null;
+  }
   if (!Object.keys(updates).length) return res.json({ ok: true });
   const sets = Object.keys(updates).map((k) => k + "=?").join(",");
   try {

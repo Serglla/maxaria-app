@@ -2315,6 +2315,12 @@
     }
     els.entTbody.innerHTML = list.map((d) => {
       const totalCobrado = (d.efectivo_amount || 0) + (d.transferencia_amount || 0);
+      const notesTxt = d.notes ? escapeHtml(d.notes) : "";
+      const cajaParts = [];
+      if (d.caja_name) cajaParts.push("💵 " + escapeHtml(d.caja_name));
+      if (d.caja_transfer_name) cajaParts.push("📲 " + escapeHtml(d.caja_transfer_name));
+      const cajaTxt = cajaParts.length ? ' ' + cajaParts.join(" · ") : "";
+      const lastCell = (notesTxt + cajaTxt).trim() || "—";
       return '<tr>' +
         '<td class="cell-code"><a href="#" class="order-link" data-order-id="' + d.order_id + '">#' + d.order_id + '</a></td>' +
         '<td>' + escapeHtml(d.vendedor_full_name || d.vendedor_username || "") + '</td>' +
@@ -2325,7 +2331,7 @@
         '<td class="num"><strong>' + fmtPrice(totalCobrado) + '</strong></td>' +
         '<td class="num muted">' + fmtPrice(d.order_total || 0) + '</td>' +
         '<td class="muted small-cell">' + formatDate(d.delivered_at) + '</td>' +
-        '<td class="muted small">' + escapeHtml(d.notes || "—") + '</td>' +
+        '<td class="muted small">' + lastCell + '</td>' +
       '</tr>';
     }).join("");
   }
@@ -2334,12 +2340,36 @@
   if (els.entVendFilter) els.entVendFilter.addEventListener("change", renderEntregas);
 
   // -------- Modal de entrega --------
+  // Cache + helper para poblar selects de caja (cobro de entrega o pago).
+  state.cajasList = state.cajasList || null;
+  async function ensureCajas() {
+    if (state.cajasList) return state.cajasList;
+    try { state.cajasList = await api("/api/cajas"); } catch (_) { state.cajasList = []; }
+    return state.cajasList;
+  }
+  function cajaTypeLabel(t) {
+    return t === "banco" ? "🏦" : (t === "digital" ? "📱" : "💵");
+  }
+  async function fillCajaSelect(selectEl, selectedId) {
+    if (!selectEl) return;
+    const cajas = await ensureCajas();
+    const opts = ['<option value="">— Sin imputar a caja —</option>'];
+    for (const c of cajas) {
+      const resp = c.responsable_full_name ? " · " + c.responsable_full_name : "";
+      opts.push('<option value="' + c.id + '">' + cajaTypeLabel(c.type) + " " + escapeHtml(c.name) + escapeHtml(resp) + '</option>');
+    }
+    selectEl.innerHTML = opts.join("");
+    selectEl.value = selectedId ? String(selectedId) : "";
+  }
+
   function openDeliveryModal(orderId, orderLabel, existingDelivery) {
     state.deliveryTargetOrderId = orderId;
     if (els.deliveryModalOrder) els.deliveryModalOrder.textContent = orderLabel;
     if (els.deliveryFormMsg) els.deliveryFormMsg.textContent = "";
     if (els.deliveryForm) {
       els.deliveryForm.reset();
+      fillCajaSelect(document.getElementById("delivery-caja-efectivo"), existingDelivery && existingDelivery.caja_id);
+      fillCajaSelect(document.getElementById("delivery-caja-transfer"), existingDelivery && existingDelivery.caja_transfer_id);
       if (existingDelivery) {
         const f = els.deliveryForm;
         f.querySelector('[name="delivered_to"]').value = existingDelivery.delivered_to || "";
@@ -2380,6 +2410,8 @@
         delivered_to: fd.get("delivered_to"),
         efectivo_amount: Number(fd.get("efectivo_amount")) || 0,
         transferencia_amount: Number(fd.get("transferencia_amount")) || 0,
+        caja_id: fd.get("caja_id") || null,
+        caja_transfer_id: fd.get("caja_transfer_id") || null,
         notes: fd.get("notes"),
       };
       const btn = document.getElementById("delivery-submit-btn");
@@ -4495,6 +4527,8 @@
               delivered_to: orderObj.delivered_to || "",
               efectivo_amount: orderObj.efectivo_amount || 0,
               transferencia_amount: orderObj.transferencia_amount || 0,
+              caja_id: orderObj.caja_id || null,
+              caja_transfer_id: orderObj.caja_transfer_id || null,
               notes: "",
             };
           }
@@ -6240,7 +6274,7 @@
       '<td class="cell-code">#' + p.id + '</td>' +
       '<td>' + clientLabel + '</td>' +
       '<td class="num"><strong>' + fmtPrice(p.amount) + '</strong></td>' +
-      '<td>' + escapeHtml(p.method || "") + '</td>' +
+      '<td>' + escapeHtml(p.method || "") + (p.caja_name ? ' <span class="muted small">→ ' + escapeHtml(p.caja_name) + '</span>' : '') + '</td>' +
       '<td class="muted">' + escapeHtml(p.reference || "—") + '</td>' +
       '<td class="muted">' + regBy + '</td>' +
       '<td class="muted small-cell">' + formatDate(p.created_at) + '</td>' +
@@ -6282,6 +6316,7 @@
       if (els.paymentCreateForm) els.paymentCreateForm.reset();
       if (els.paymentCreateMsg) els.paymentCreateMsg.textContent = "";
       await populatePayFormClients();
+      fillCajaSelect(document.getElementById("pay-form-caja"), null);
       if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
       setTimeout(() => { if (els.payFormClient) els.payFormClient.focus(); }, 50);
     });
@@ -6295,6 +6330,7 @@
         user_id: Number(fd.get("user_id")),
         amount: Number(fd.get("amount")),
         method: fd.get("method"),
+        caja_id: fd.get("caja_id") || null,
         reference: fd.get("reference"),
         notes: fd.get("notes"),
       };
@@ -8387,6 +8423,7 @@
     newAccountForm:  document.getElementById("caja-new-account-form"),
     accName:         document.getElementById("caja-acc-name"),
     accType:         document.getElementById("caja-acc-type"),
+    accResp:         document.getElementById("caja-acc-resp"),
     accSaveBtn:      document.getElementById("caja-acc-save-btn"),
     accCancelBtn:    document.getElementById("caja-acc-cancel-btn"),
     typeBtns:        document.querySelectorAll(".caja-type-btn"),
@@ -8417,11 +8454,13 @@
     cajaEls.accountsWrap.innerHTML = accs.map((a) => {
       const saldo = Number(a.saldo) || 0;
       const cls   = saldo < 0 ? "caja-acc-neg" : "caja-acc-pos";
+      const resp = a.responsable_full_name || a.responsable_username;
+      const respHtml = resp ? ' · 👤 ' + escapeHtml(resp) : '';
       return '<div class="caja-acc-card">' +
         '<span class="caja-acc-icon">' + (ICON[a.type] || "💰") + '</span>' +
         '<div class="caja-acc-info">' +
           '<span class="caja-acc-name">' + escapeHtml(a.name) + '</span>' +
-          '<span class="caja-acc-type muted small">' + a.type + '</span>' +
+          '<span class="caja-acc-type muted small">' + a.type + respHtml + '</span>' +
         '</div>' +
         '<span class="caja-acc-saldo ' + cls + '">' + cajaFmt(saldo) + '</span>' +
       '</div>';
@@ -8567,10 +8606,29 @@
     });
   }
 
+  // Pobla el select de responsable (cajeros = vendedores level 5 + admins level 99).
+  async function cajaPopulateRespSelect(selectedId) {
+    if (!cajaEls.accResp) return;
+    if (!cajaState.cajeros) {
+      try {
+        const all = await api("/api/admin/users");
+        cajaState.cajeros = (all || []).filter((u) => (u.level === 5 || u.level === 99) && u.active);
+      } catch (_) { cajaState.cajeros = []; }
+    }
+    const opts = ['<option value="">— Sin responsable (caja general) —</option>'];
+    for (const u of cajaState.cajeros) {
+      const rol = u.level === 99 ? "admin" : "vendedor";
+      opts.push('<option value="' + u.id + '">' + escapeHtml(u.full_name || u.username) + ' (' + rol + ')</option>');
+    }
+    cajaEls.accResp.innerHTML = opts.join("");
+    cajaEls.accResp.value = selectedId ? String(selectedId) : "";
+  }
+
   // Nueva cuenta
   if (cajaEls.addAccountBtn) {
     cajaEls.addAccountBtn.addEventListener("click", () => {
       if (cajaEls.newAccountForm) cajaEls.newAccountForm.hidden = false;
+      cajaPopulateRespSelect(null);
       if (cajaEls.accName) cajaEls.accName.focus();
     });
   }
@@ -8583,11 +8641,13 @@
     cajaEls.accSaveBtn.addEventListener("click", async () => {
       const name = cajaEls.accName ? cajaEls.accName.value.trim() : "";
       const type = cajaEls.accType ? cajaEls.accType.value : "efectivo";
+      const responsable_user_id = cajaEls.accResp && cajaEls.accResp.value ? Number(cajaEls.accResp.value) : null;
       if (!name) { alert("Ingresá un nombre para la cuenta."); return; }
       try {
-        await api("/api/admin/caja/accounts", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, type }) });
+        await api("/api/admin/caja/accounts", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, type, responsable_user_id }) });
         if (cajaEls.accName) cajaEls.accName.value = "";
         if (cajaEls.newAccountForm) cajaEls.newAccountForm.hidden = true;
+        state.cajasList = null; // invalidar cache de selectores de cobro
         showToast("Cuenta creada");
         await loadCaja();
       } catch (e) { alert(e.message || "Error"); }

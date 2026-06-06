@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260605g" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260606b" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -419,7 +419,12 @@
               <select id="caja-acc-type" class="admin-select">
                 <option value="efectivo">💵 Efectivo</option>
                 <option value="banco">🏦 Banco</option>
-                <option value="digital">📱 Digital (MP, Ualá…)</option>
+                <option value="digital">📱 Digital (billeteras)</option>
+              </select>
+            </label>
+            <label class="caja-form-label">Responsable <span class="muted">(cajero, opcional)</span>
+              <select id="caja-acc-resp" class="admin-select">
+                <option value="">— Sin responsable (caja general) —</option>
               </select>
             </label>
             <div style="display:flex;gap:8px;margin-top:8px">
@@ -1702,8 +1707,18 @@
         <label>Efectivo — monto cobrado ($)
           <input type="number" name="efectivo_amount" min="0" step="1" value="0" placeholder="0" />
         </label>
+        <label>Caja del efectivo <span class="muted">(dónde entra)</span>
+          <select name="caja_id" id="delivery-caja-efectivo">
+            <option value="">— Sin imputar a caja —</option>
+          </select>
+        </label>
         <label>Transferencia — monto cobrado ($)
           <input type="number" name="transferencia_amount" min="0" step="1" value="0" placeholder="0" />
+        </label>
+        <label>Caja de la transferencia <span class="muted">(ej: billeteras)</span>
+          <select name="caja_transfer_id" id="delivery-caja-transfer">
+            <option value="">— Sin imputar a caja —</option>
+          </select>
         </label>
         <div id="delivery-total-preview" class="muted small" style="margin-top:2px"></div>
         <label>Notas <span class="muted">(opcional)</span>
@@ -2007,6 +2022,11 @@
             <option value="transferencia">Transferencia</option>
             <option value="cheque">Cheque</option>
             <option value="otro">Otro</option>
+          </select>
+        </label>
+        <label>Caja <span class="muted">(dónde entra el cobro)</span>
+          <select name="caja_id" id="pay-form-caja">
+            <option value="">— Sin imputar a caja —</option>
           </select>
         </label>
         <label>Referencia / N° operación
@@ -2717,6 +2737,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260605g"></script>
+  <script src="/js/admin.js?v=20260606b"></script>
 </body>
 </html>

@@ -919,6 +919,63 @@ Cache busting final: `admin.js?v=20260604q`, `styles.css?v=20260604j`.
 **Minor: columna Und/bulto en tabla de productos**
 - `products.units_per_bulto` visible como columna (muestra "—" si = 1). Colspan corregido a 14.
 
+### Toolbar de Productos reorganizada en 3 zonas (5 junio 2026)
+
+Cache busting: `admin.js?v=20260605g`, `styles.css?v=20260605g`.
+
+Sergio pidió reordenar la barra superior de la pestaña Productos (estaba todo mezclado en 2 filas: search/categoría/stock/checkbox + contador + Excel/PDF/Selección/Nuevo/Ajustes + la bulk-bar). Se reagrupó en zonas con función clara.
+
+**`public/admin.html`** — el `.admin-toolbar` viejo (un solo flex con todo) pasó a `.admin-toolbar2` (columna con 3 sub-zonas):
+- **Zona 1 `.tb-head`**: título "Productos" + contador `#prod-count` (ahora en pill `.tb-count`) a la izquierda; botón `+ Nuevo producto` solo a la derecha (`.tb-head-actions`).
+- **Zona 2 `.tb-filters`** (con borde fino arriba y abajo): `#prod-search` + Categoría + Stock + **Estado** (select nuevo) + botón **Limpiar filtros** (`#filter-clear`, `hidden` por defecto).
+- **Zona 3 `.tb-tools`**: Selección múltiple, Subir Excel, Catálogo PDF, Ajustes — todos con clase `.btn-tool` (menos peso visual). Los IDs originales se mantuvieron (`prod-select-btn`, `excel-file`, `catalog-btn`, `stock-adj-history-btn`).
+- La `bulk-bar` (`#prod-sel-bar`) quedó igual: ya era contextual (la togglea `setSelectMode` vía `els.selBar.hidden`), solo se movió dentro del nuevo contenedor.
+
+**Cambio funcional: checkbox "Solo inactivos" → select "Estado"**
+- El `<input type="checkbox" id="filter-inactive">` se reemplazó por `<select id="filter-state">` con opciones `all` (Todos, default), `active` (Solo activos), `inactive` (Solo inactivos). Antes solo se podía filtrar "solo inactivos" o ver todo; ahora también "solo activos". Default `all` preserva el comportamiento previo.
+- **`public/js/admin.js`**: en `els`, `filterInactive` → `filterState` (+ `filterClear`). `savePrefs` guarda `estado: els.filterState.value` (antes `inactive`). `applyPrefsToControls` restaura `p.estado`, con fallback de compat: si una pref vieja tenía `inactive:true`, setea el select en `"inactive"`. `applyFilters` usa `stateMode` (`active`→`!!p.active`, `inactive`→`!p.active`). El listener pasó de `filterInactive` a `filterState`.
+- **Limpiar filtros**: `applyFilters` muestra `#filter-clear` solo si hay algún filtro activo (`q || category!=all || stock!=all || estado!=all`). El handler resetea search + los 3 selects a `all` y reaplica.
+
+**`public/css/styles.css`**: bloque nuevo después de `.admin-spacer` con `.admin-toolbar2`, `.tb-head`, `.tb-title`/`.tb-title-text`/`.tb-count`, `.tb-head-actions`, `.tb-filters` (bordes `#eceef1`), `.tb-clear` (link azul con hover), `.tb-tools` + `.btn-tool`, y media query `max-width:640px` (search full-width, tools con scroll horizontal). El `.admin-toolbar` viejo quedó sin uso en Productos pero el bloque CSS no se borró (otras tabs podrían usarlo — chequear antes de eliminar).
+
+Verificado con `node --check public/js/admin.js` (OK, sin discrepancia con el bash mount esta vez). Pendiente: `git add/commit/push` + deploy Railway (quedó en disco local). Sergio dejó abierta la opción de además separar el modo selección múltiple en una franja de color propia.
+
+### Caja por cajero — el cobro impacta en una caja (6 junio 2026)
+
+Cache busting: `admin.js?v=20260606a`, `styles.css?v=20260606a`.
+
+Sergio maneja 3 cajas (él) + 2 cajeros y quería que **cada cobro caiga en una caja**. Decisiones consultadas (AskUserQuestion): cajeros = **vendedores existentes** (level 5); elección de caja **siempre manual** al cobrar; **sin apertura/cierre** (solo saldo corriente); y renombrar **"Mercado Pago" → "Billeteras"** (MP no es el medio más usado). Modelo elegido: caja de **efectivo por persona**, **Banco/Billeteras** globales.
+
+**Schema (migraciones idempotentes al arranque en `server.js`, después del `seedCashAccounts`)**
+- `cash_accounts.responsable_user_id INTEGER REFERENCES users(id)` — de qué cajero es la caja (NULL = caja general). El seed default ahora crea "Billeteras" en vez de "Mercado Pago".
+- `payments.caja_id` y `deliveries.caja_id` (FK soft a `cash_accounts`) — a qué caja se imputó el cobro.
+- Migración de rename: `UPDATE cash_accounts SET name='Billeteras' WHERE name='Mercado Pago'` (solo si no existe ya una "Billeteras", por el UNIQUE de name).
+- **No** se agregaron columnas a `cash_movements`: el vínculo del cobro usa los campos ya existentes `source` (`'cobro'` para pagos / `'entrega'` para entregas) + `related_id` (= payment_id o delivery_id).
+
+**Backend (`server.js`)**
+- `POST /api/admin/payments`: acepta `caja_id`, lo valida (cuenta activa), lo guarda en `payments` y crea un `cash_movements` (type `ingreso`, source `cobro`, related_id = payment_id) en esa caja. `DELETE /api/admin/payments/:id` borra también ese movimiento (`source='cobro' AND related_id=id`). `GET /api/admin/payments` devuelve `caja_id` + `caja_name`.
+- `POST /api/orders/:id/deliver`: acepta `caja_id`, lo guarda en `deliveries` y crea/recrea el `cash_movements` (source `entrega`, related_id = delivery_id) por el total cobrado (efectivo+transferencia). Al editar una entrega, primero borra el movimiento previo de esa entrega y lo recrea con el monto/caja nuevos. `GET /api/admin/deliveries` devuelve `caja_id` + `caja_name`.
+- `GET /api/admin/caja`: ahora incluye `responsable_full_name`/`responsable_username` (LEFT JOIN users). `POST`/`PATCH /api/admin/caja/accounts` aceptan `responsable_user_id`.
+- **Endpoint nuevo `GET /api/cajas`** (`requireVendedorOrAdmin`): lista liviana de cajas activas (id, name, type, responsable) para poblar el selector de cobro — necesario porque `/api/admin/caja` es `requireAdmin` y los vendedores también registran entregas.
+
+**Frontend (`admin.html` + `admin.js`)**
+- Selector **"Caja"** (`name="caja_id"`, opción default "— Sin imputar a caja —") agregado al **modal de Registrar entrega** (`#delivery-caja`) y al **form de Pagos** (`#pay-form-caja`).
+- Helper `fillCajaSelect(selectEl, selectedId)` en `admin.js` con cache `state.cajasList` (se invalida al crear una caja). Muestra ícono por tipo (💵/🏦/📱) + nombre + responsable. Se llama al abrir cada modal; en edición de entrega preselecciona `existingDelivery.caja_id`.
+- Los dos submits mandan `caja_id: fd.get("caja_id") || null` en el body.
+- Pestaña **Caja**: las tarjetas de cuenta muestran el responsable (`👤 Nombre`); el form "+ Nueva cuenta" tiene un select **Responsable** (`#caja-acc-resp`) poblado con cajeros (vendedores level 5 + admins level 99, vía `/api/admin/users` cacheado en `cajaState.cajeros`); el guardado manda `responsable_user_id`. La opción de tipo "digital" se reetiquetó a "Digital (billeteras)".
+- Historial: el cobro muestra la caja sin agregar columnas — en Pagos junto al método (`→ Caja X`), en Entregas en la celda de notas (`💰 Caja X`).
+
+**Verificación**: `node --check server.js` OK. Para `admin.js`, el bash mount volvió a quedar **stale** (reportaba truncación en la última línea `ventasClearDates`); `Read` y `Grep` confirmaron el archivo íntegro en disco (`bootstrap(); })();` en líneas 8662-8663). Se confió en Read/Grep por la regla del proyecto. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
+
+**Pendientes/futuro de caja** (no pedidos ahora): arqueo/cierre de turno si algún día quiere control de faltantes; filtrar el selector de caja del vendedor a la suya por defecto.
+
+**Split por medio en la entrega (6 junio 2026, mismo día — `admin.js?v=20260606b`, `styles.css?v=20260606b`)**
+Sergio: en una entrega cobran una parte en efectivo y otra por transferencia a billeteras manejadas por los cajeros; cada parte tiene que caer en una caja distinta. Solo aplica a **entregas** (el pago de cuenta corriente sigue con una sola `caja_id` porque tiene un único método/monto).
+- **Schema**: `deliveries.caja_transfer_id INTEGER REFERENCES cash_accounts(id)` (migración idempotente, junto a `caja_id`). `caja_id` pasa a ser la caja del **efectivo**; `caja_transfer_id` la de la **transferencia**.
+- **`POST /api/orders/:id/deliver`**: acepta `caja_id` + `caja_transfer_id`. Helper `findCaja(cid)` valida cada una (lanza error `BADCAJA` → 400). Genera **hasta dos** `cash_movements` (source `entrega`, mismo `related_id = deliveryId`): efectivo→cajaEfectivo, transferencia→cajaTransfer, cada uno por su monto. El `DELETE ... WHERE source='entrega' AND related_id=?` previo borra ambos, así la edición de entrega recrea limpio. Descripciones: "Cobro entrega #X (efectivo)" / "(transferencia)".
+- **`GET /api/admin/deliveries`** y los 5 SELECT de **`/api/orders`** (LEFT JOIN deliveries) devuelven `caja_id`/`caja_transfer_id` (+ nombres en el de admin). Necesario para que al **editar** una entrega ya hecha el modal preseleccione las cajas y no se borre el cobro al re-guardar.
+- **Frontend**: el modal de Registrar entrega ahora tiene **dos selectores** (`#delivery-caja-efectivo` y `#delivery-caja-transfer`), cada uno debajo de su campo de monto. `openDeliveryModal` llena ambos (preselecciona desde `existingDelivery.caja_id`/`caja_transfer_id`, que se arman desde `orderObj`). El submit manda las dos. El historial muestra ambas cajas en la celda de notas (`💵 Caja efectivo · 📲 Billeteras`).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.
