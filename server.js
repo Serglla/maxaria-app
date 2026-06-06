@@ -506,6 +506,12 @@ try {
   }
 } catch (_) {}
 
+// Migracion: limite de credito por cliente.
+// 0 = sin limite. Cuando el saldo negativo del cliente (lo que debe) supera
+// este valor, se muestra una alerta en Cuentas corrientes. Editable inline
+// desde la pestaña Cuentas o desde Usuarios.
+try { db.exec("ALTER TABLE users ADD COLUMN credit_limit INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+
 // Helper: genera el proximo numero de presupuesto en formato 0001-00000001.
 function nextBudgetNumber() {
   const row = db.prepare(
@@ -2896,6 +2902,12 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
     sets.push("is_tercerizado = ?");
     vals.push(b.is_tercerizado ? 1 : 0);
   }
+  if ("credit_limit" in b) {
+    // 0 = sin limite. Solo valores enteros >= 0.
+    const cl = Math.round(Math.max(0, Number(b.credit_limit) || 0));
+    sets.push("credit_limit = ?");
+    vals.push(cl);
+  }
 
   if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
   vals.push(id);
@@ -4490,7 +4502,7 @@ app.delete("/api/admin/payments/:id", requireAdmin, (req, res) => {
 
 app.get("/api/admin/accounts", requireAdmin, (req, res) => {
   const users = db.prepare(
-    "SELECT id, username, full_name, level FROM users" +
+    "SELECT id, username, full_name, level, COALESCE(credit_limit,0) AS credit_limit FROM users" +
     "  WHERE level IN (1,2,3,4) AND active = 1"
   ).all();
   const movs = db.prepare(
@@ -4532,6 +4544,7 @@ app.get("/api/admin/accounts", requireAdmin, (req, res) => {
     var daysOverdue = (balance < -0.0001 && oldestUnpaidAt) ? daysSince(oldestUnpaidAt) : null;
     return {
       id: u.id, username: u.username, full_name: u.full_name, level: u.level,
+      credit_limit: u.credit_limit || 0,
       total_credit: totalCredit, total_debit: totalDebit, balance: balance,
       last_movement_at: lastAt, days_since_movement: daysSince(lastAt),
       oldest_unpaid_at: oldestUnpaidAt, days_overdue: daysOverdue,
@@ -4563,6 +4576,248 @@ app.get("/api/admin/accounts/:userId", requireAdmin, (req, res) => {
     "  FROM account_movements WHERE user_id = ?"
   ).get(userId);
   res.json({ user: user, movements: movements, balance: balance.balance });
+});
+
+// ── Estado de cuenta PDF ────────────────────────────────────────────────────
+// Genera un estado de cuenta imprimible/enviable para un cliente.
+// Devuelve un PDF con el historial de movimientos y el saldo.
+app.get("/api/admin/accounts/:userId/pdf", requireAdmin, (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!userId) return res.status(400).json({ error: "ID invalido" });
+  const user = db.prepare(
+    "SELECT id, username, full_name, level, COALESCE(credit_limit,0) AS credit_limit FROM users WHERE id = ?"
+  ).get(userId);
+  if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+
+  // Movimientos en orden ASC (cronologico) para mostrar historial
+  const movements = db.prepare(
+    "SELECT am.id, am.type, am.amount, am.description, am.created_at" +
+    "  FROM account_movements am" +
+    "  WHERE am.user_id = ?" +
+    "  ORDER BY am.created_at ASC"
+  ).all(userId);
+
+  const appName = (db.prepare("SELECT value FROM settings WHERE key='app_name'").get() || {}).value || "Maxaria";
+
+  // Calcular totales
+  var totalDebit = 0, totalCredit = 0;
+  movements.forEach(function(m) {
+    if (m.type === "debit") totalDebit += m.amount;
+    else totalCredit += m.amount;
+  });
+  var balance = totalCredit - totalDebit; // negativo = debe
+
+  function fmtArs(n) {
+    return "$ " + Math.round(n).toLocaleString("es-AR");
+  }
+  function fmtDate(s) {
+    if (!s) return "";
+    return String(s).slice(0, 10).split("-").reverse().join("/");
+  }
+  const LEVEL_NAMES = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", 'attachment; filename="cuenta_' + (user.username || user.id) + '_' + new Date().toISOString().slice(0,10) + '.pdf"');
+
+  const doc = new PDFDocument({ size: "A4", margin: 0, autoFirstPage: true });
+  doc.pipe(res);
+
+  const BLU = "#1e3a5f", AMB = "#d97706", GRN = "#16a34a", RED = "#dc2626";
+  const GREY = "#6b7280", LGR = "#f1f5f9", BLK = "#111111";
+  const MX = 40, MY = 40, PW = 595, PH = 841;
+  const CW = PW - MX * 2; // content width = 515
+
+  // ── Encabezado azul ──
+  doc.rect(0, 0, PW, 90).fill(BLU);
+  doc.font("Helvetica-Bold").fontSize(22).fillColor("#ffffff").text(appName, MX, MY, { width: CW / 2 });
+  doc.font("Helvetica").fontSize(10).fillColor("#93c5fd").text("Estado de Cuenta Corriente", MX, MY + 26);
+  doc.font("Helvetica").fontSize(9).fillColor("#93c5fd").text("Generado: " + fmtDate(new Date().toISOString()), MX, MY + 40);
+
+  // Nombre del cliente (derecha)
+  doc.font("Helvetica-Bold").fontSize(14).fillColor("#ffffff")
+     .text(user.full_name || user.username, MX, MY, { width: CW, align: "right" });
+  doc.font("Helvetica").fontSize(9).fillColor("#93c5fd")
+     .text("@" + user.username + "  ·  " + (LEVEL_NAMES[user.level] || "Cliente"), MX, MY + 18, { width: CW, align: "right" });
+
+  let cy = 100;
+
+  // ── Bloque de saldos ──
+  const BOX_H = 56, BOX_W = (CW - 8) / 3;
+  // Total Débitos (rojo)
+  doc.rect(MX, cy, BOX_W, BOX_H).fill("#fef2f2");
+  doc.font("Helvetica").fontSize(8).fillColor(RED).text("TOTAL DÉBITOS", MX + 10, cy + 10);
+  doc.font("Helvetica-Bold").fontSize(16).fillColor(RED).text(fmtArs(totalDebit), MX + 10, cy + 22, { width: BOX_W - 20 });
+  // Total Créditos (verde)
+  doc.rect(MX + BOX_W + 4, cy, BOX_W, BOX_H).fill("#f0fdf4");
+  doc.font("Helvetica").fontSize(8).fillColor(GRN).text("TOTAL CRÉDITOS", MX + BOX_W + 14, cy + 10);
+  doc.font("Helvetica-Bold").fontSize(16).fillColor(GRN).text(fmtArs(totalCredit), MX + BOX_W + 14, cy + 22, { width: BOX_W - 20 });
+  // Saldo (rojo si debe, azul si está al día)
+  const balClr = balance < 0 ? RED : BLU;
+  doc.rect(MX + (BOX_W + 4) * 2, cy, BOX_W, BOX_H).fill(balance < 0 ? "#fef2f2" : "#eff6ff");
+  doc.font("Helvetica").fontSize(8).fillColor(balClr).text("SALDO ACTUAL", MX + (BOX_W + 4) * 2 + 10, cy + 10);
+  const balLabel = balance < 0 ? "DEBE " + fmtArs(Math.abs(balance)) : "A FAVOR " + fmtArs(balance);
+  doc.font("Helvetica-Bold").fontSize(balance < -99999 ? 12 : 15).fillColor(balClr)
+     .text(balLabel, MX + (BOX_W + 4) * 2 + 10, cy + 22, { width: BOX_W - 20 });
+
+  cy += BOX_H + 14;
+
+  // ── Tabla de movimientos ──
+  if (!movements.length) {
+    doc.font("Helvetica").fontSize(11).fillColor(GREY).text("Sin movimientos registrados.", MX, cy + 20);
+    doc.end();
+    return;
+  }
+
+  const COL = { fecha: 72, tipo: 60, desc: CW - 72 - 60 - 80 - 80, deb: 80, cre: 80 };
+  const CX = {
+    fecha: MX,
+    tipo: MX + COL.fecha,
+    desc: MX + COL.fecha + COL.tipo,
+    deb: MX + COL.fecha + COL.tipo + COL.desc,
+    cre: MX + COL.fecha + COL.tipo + COL.desc + COL.deb,
+  };
+
+  // Header de la tabla
+  function drawTableHeader(yy) {
+    doc.rect(MX, yy, CW, 20).fill(BLU);
+    doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff");
+    doc.text("FECHA",     CX.fecha, yy + 6, { width: COL.fecha });
+    doc.text("TIPO",      CX.tipo,  yy + 6, { width: COL.tipo });
+    doc.text("DESCRIPCIÓN", CX.desc, yy + 6, { width: COL.desc - 4 });
+    doc.text("DÉBITO",    CX.deb,   yy + 6, { width: COL.deb,  align: "right" });
+    doc.text("CRÉDITO",   CX.cre,   yy + 6, { width: COL.cre,  align: "right" });
+    return yy + 20;
+  }
+
+  const ROW_H = 18;
+  cy = drawTableHeader(cy);
+
+  // Filas de movimientos + saldo acumulado
+  var running = 0;
+  movements.forEach(function(m, idx) {
+    if (cy + ROW_H > PH - 60) {
+      doc.addPage();
+      cy = MY;
+      // Header en paginas siguientes mas compacto
+      doc.font("Helvetica").fontSize(8).fillColor(GREY)
+         .text(appName + " — Estado de cuenta de " + (user.full_name || user.username) + " (continuacion)", MX, cy);
+      cy += 14;
+      cy = drawTableHeader(cy);
+    }
+    running += (m.type === "credit" ? m.amount : -m.amount);
+    const isDebit = m.type === "debit";
+    if (idx % 2 === 0) doc.rect(MX, cy, CW, ROW_H).fill(LGR);
+    doc.font("Helvetica").fontSize(8.5).fillColor(GREY).text(fmtDate(m.created_at), CX.fecha, cy + 5, { width: COL.fecha });
+    const tipoLabel = isDebit ? "Débito" : "Crédito";
+    const tipoClr = isDebit ? RED : GRN;
+    doc.font("Helvetica-Bold").fontSize(8).fillColor(tipoClr).text(tipoLabel, CX.tipo, cy + 5, { width: COL.tipo });
+    doc.font("Helvetica").fontSize(8.5).fillColor(BLK)
+       .text(String(m.description || "—"), CX.desc, cy + 5, { width: COL.desc - 4, ellipsis: true });
+    if (isDebit) {
+      doc.font("Helvetica").fontSize(8.5).fillColor(RED)
+         .text(fmtArs(m.amount), CX.deb, cy + 5, { width: COL.deb, align: "right" });
+      doc.text("—", CX.cre, cy + 5, { width: COL.cre, align: "right" });
+    } else {
+      doc.fillColor(GREY).text("—", CX.deb, cy + 5, { width: COL.deb, align: "right" });
+      doc.font("Helvetica").fontSize(8.5).fillColor(GRN)
+         .text(fmtArs(m.amount), CX.cre, cy + 5, { width: COL.cre, align: "right" });
+    }
+    cy += ROW_H;
+  });
+
+  // ── Línea y totales al pie ──
+  cy += 4;
+  doc.moveTo(MX, cy).lineTo(MX + CW, cy).lineWidth(1).strokeColor(BLU).stroke();
+  cy += 6;
+  doc.font("Helvetica-Bold").fontSize(9).fillColor(BLK)
+     .text("TOTALES", MX, cy);
+  doc.font("Helvetica-Bold").fontSize(9).fillColor(RED)
+     .text(fmtArs(totalDebit), CX.deb, cy, { width: COL.deb, align: "right" });
+  doc.font("Helvetica-Bold").fontSize(9).fillColor(GRN)
+     .text(fmtArs(totalCredit), CX.cre, cy, { width: COL.cre, align: "right" });
+  cy += 14;
+
+  // Saldo final prominente
+  const saldoLabel = balance < 0
+    ? "SALDO A PAGAR: " + fmtArs(Math.abs(balance))
+    : balance === 0 ? "SALDO: CUENTA AL DÍA"
+    : "SALDO A FAVOR: " + fmtArs(balance);
+  doc.rect(MX, cy, CW, 28).fill(balance < 0 ? "#fef2f2" : "#f0fdf4");
+  doc.font("Helvetica-Bold").fontSize(13).fillColor(balance < 0 ? RED : GRN)
+     .text(saldoLabel, MX + 10, cy + 8, { width: CW - 20, align: "right" });
+
+  // Pie de página
+  cy += 40;
+  doc.font("Helvetica").fontSize(7.5).fillColor(GREY)
+     .text("Este documento fue generado automáticamente por " + appName + ". Los valores son informativos.", MX, cy, { width: CW, align: "center" });
+
+  doc.end();
+});
+
+// ── Endpoint para tarea programada de deudores ─────────────────────────────
+// Protegido con token (variable de entorno CRON_SECRET). No requiere sesion.
+// Retorna la lista de clientes con deuda activa >= 30 dias (o el umbral
+// que se pase como ?days=N). Uso: curl "URL/api/cron/debt-report?token=SECRET"
+app.get("/api/cron/debt-report", (req, res) => {
+  const CRON_SECRET = process.env.CRON_SECRET || "";
+  const token = String(req.query.token || req.headers["x-cron-token"] || "");
+  if (!CRON_SECRET || token !== CRON_SECRET) {
+    return res.status(401).json({ error: "Token invalido o no configurado" });
+  }
+  const minDays = Math.max(0, Number(req.query.days) || 30);
+
+  // Reutiliza la misma logica que GET /api/admin/accounts
+  const users = db.prepare(
+    "SELECT id, username, full_name, COALESCE(credit_limit,0) AS credit_limit FROM users" +
+    "  WHERE level IN (1,2,3,4) AND active = 1"
+  ).all();
+  const movs = db.prepare(
+    "SELECT user_id, type, amount, created_at FROM account_movements ORDER BY created_at ASC"
+  ).all();
+
+  function daysSince(str) {
+    if (!str) return null;
+    var t = Date.parse(String(str).replace(" ", "T") + "Z");
+    if (isNaN(t)) return null;
+    return Math.floor((Date.now() - t) / 86400000);
+  }
+
+  var byUser = {};
+  movs.forEach(function(m) { (byUser[m.user_id] = byUser[m.user_id] || []).push(m); });
+
+  var deudores = [];
+  users.forEach(function(u) {
+    var list = byUser[u.id] || [];
+    var totalDebit = 0, totalCredit = 0, creditPool = 0, openDebits = [];
+    list.forEach(function(mv) {
+      if (mv.type === "debit") { totalDebit += mv.amount; openDebits.push({ amount: mv.amount, at: mv.created_at }); }
+      else { totalCredit += mv.amount; creditPool += mv.amount; }
+    });
+    var pool = creditPool;
+    for (var k = 0; k < openDebits.length && pool > 0; k++) {
+      var pay = Math.min(pool, openDebits[k].amount);
+      openDebits[k].amount -= pay; pool -= pay;
+    }
+    var balance = totalCredit - totalDebit;
+    if (balance >= -0.0001) return; // no debe nada
+    var oldestAt = null;
+    for (var d = 0; d < openDebits.length; d++) {
+      if (openDebits[d].amount > 0.0001) { oldestAt = openDebits[d].at; break; }
+    }
+    var daysOverdue = oldestAt ? daysSince(oldestAt) : null;
+    if (daysOverdue == null || daysOverdue < minDays) return;
+    deudores.push({
+      id: u.id, username: u.username, full_name: u.full_name,
+      credit_limit: u.credit_limit,
+      balance: Math.round(balance),
+      days_overdue: daysOverdue,
+      oldest_unpaid_at: oldestAt,
+    });
+  });
+
+  deudores.sort(function(a, b) { return b.days_overdue - a.days_overdue; });
+  const appName = (db.prepare("SELECT value FROM settings WHERE key='app_name'").get() || {}).value || "Maxaria";
+  res.json({ ok: true, app: appName, min_days: minDays, count: deudores.length, deudores: deudores });
 });
 
 // ====================================================================
@@ -6107,6 +6362,43 @@ app.delete("/api/admin/caja/movements/:id", requireAdmin, (req, res) => {
 });
 
 // ===== DASHBOARD =====
+// ── Historial de deuda total mes a mes ─────────────────────────────────────
+// Devuelve el saldo neto de cuenta corriente (debitos - creditos) acumulado
+// mes a mes durante los ultimos 12 meses. Para el grafico del Dashboard.
+app.get("/api/admin/dashboard/debt-history", requireAdmin, (req, res) => {
+  // Movimientos agrupados por mes (YYYY-MM), todos los clientes juntos
+  const rows = db.prepare(
+    "SELECT strftime('%Y-%m', created_at) AS month," +
+    "       SUM(CASE WHEN type='debit'  THEN amount ELSE 0 END) AS monthly_debit," +
+    "       SUM(CASE WHEN type='credit' THEN amount ELSE 0 END) AS monthly_credit" +
+    "  FROM account_movements" +
+    "  GROUP BY month" +
+    "  ORDER BY month ASC"
+  ).all();
+
+  // Calcular saldo acumulado corriendo (positivo = a favor de la empresa = clientes deben)
+  var running = 0;
+  var history = rows.map(function(r) {
+    running += (r.monthly_debit - r.monthly_credit);
+    return { month: r.month, deuda: Math.round(running) };
+  });
+
+  // Limitar a los ultimos 12 meses si hay mas
+  if (history.length > 12) history = history.slice(-12);
+
+  // Si no hay datos, devolver los 6 meses anteriores con 0
+  if (!history.length) {
+    var now = new Date();
+    for (var i = 5; i >= 0; i--) {
+      var d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      var label = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+      history.push({ month: label, deuda: 0 });
+    }
+  }
+
+  res.json({ history: history });
+});
+
 app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
   const now = new Date();
   const todayIso  = now.toISOString().slice(0, 10);

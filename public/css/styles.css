@@ -4349,3 +4349,43 @@ html.in-modal .ventas-wrap {
     app-region: no-drag;
   }
 }
+
+/* ── Dashboard: gráfico de deuda ──────────────────────────────────────────── */
+.dash-chart-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px 20px 12px;
+  margin: 0 0 20px;
+}
+#dash-debt-chart { max-height: 200px; width: 100% !important; }
+
+/* ── Cuentas corrientes: límite de crédito ─────────────────────────────────── */
+.acc-balance-over { background: #fef2f2; color: #dc2626; border-color: #dc2626; }
+.acc-row-over-limit { background: #fff7ed !important; }
+.acc-limit-over-icon { font-size: 14px; margin-left: 4px; vertical-align: middle; cursor: help; }
+.acc-limit-cell { white-space: nowrap; }
+.acc-limit-input {
+  width: 90px;
+  padding: 3px 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  font-size: 12px;
+  text-align: right;
+  color: #374151;
+  background: #fafafa;
+}
+.acc-limit-input:focus { border-color: #3b82f6; outline: none; background: #fff; }
+
+/* ── Cuentas: botón PDF en detalle ─────────────────────────────────────────── */
+.acc-detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.acc-pdf-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  text-decoration: none;
+}

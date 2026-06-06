@@ -876,9 +876,89 @@
     }
   }
 
+  // ── Gráfico de deuda total mes a mes ──────────────────────────────────────
+  let debtChartInstance = null;
+
+  async function loadDebtHistory() {
+    const canvas = document.getElementById("dash-debt-chart");
+    const emptyMsg = document.getElementById("dash-debt-chart-empty");
+    if (!canvas) return;
+    try {
+      const data = await api("/api/admin/dashboard/debt-history");
+      const history = (data.history || []);
+      if (!history.length || history.every((h) => h.deuda === 0)) {
+        if (emptyMsg) emptyMsg.hidden = false;
+        canvas.hidden = true;
+        return;
+      }
+      if (emptyMsg) emptyMsg.hidden = true;
+      canvas.hidden = false;
+
+      const labels = history.map((h) => {
+        const [y, m] = h.month.split("-");
+        const nombres = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+        return nombres[Number(m) - 1] + " " + y.slice(2);
+      });
+      const values = history.map((h) => h.deuda);
+
+      // Si Chart.js no está listo todavía (defer), reintentar en 200ms
+      if (typeof Chart === "undefined") {
+        setTimeout(loadDebtHistory, 300);
+        return;
+      }
+
+      if (debtChartInstance) { debtChartInstance.destroy(); debtChartInstance = null; }
+
+      debtChartInstance = new Chart(canvas, {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [{
+            label: "Deuda total clientes",
+            data: values,
+            borderColor: "#dc2626",
+            backgroundColor: "rgba(220,38,38,0.08)",
+            borderWidth: 2,
+            pointRadius: 4,
+            pointBackgroundColor: "#dc2626",
+            fill: true,
+            tension: 0.3,
+          }],
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => "$ " + Number(ctx.raw).toLocaleString("es-AR"),
+              },
+            },
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: (v) => "$ " + Number(v).toLocaleString("es-AR"),
+                font: { size: 10 },
+              },
+              grid: { color: "#f1f5f9" },
+            },
+            x: {
+              ticks: { font: { size: 10 } },
+              grid: { display: false },
+            },
+          },
+        },
+      });
+    } catch (e) {
+      console.error("Debt history chart error:", e);
+    }
+  }
+
   // Botón reload del dashboard
   const dashReloadBtn = document.getElementById("dash-reload");
-  if (dashReloadBtn) dashReloadBtn.addEventListener("click", loadDashboard);
+  if (dashReloadBtn) dashReloadBtn.addEventListener("click", () => { loadDashboard(); loadDebtHistory(); });
 
   // ---------- tabs ----------
   els.tabBtns.forEach((btn) => {
@@ -892,7 +972,7 @@
       // En mobile, cerrar el drawer del sidebar al elegir una sección
       closeAdminSidebar();
       els.panels.forEach((p) => { p.hidden = p.id !== "tab-" + tab; });
-      if (tab === "dashboard") loadDashboard();
+      if (tab === "dashboard") { loadDashboard(); loadDebtHistory(); }
       if (tab === "reportes") loadReportes();
       if (tab === "pedidos" && !state.ordersLoaded) loadOrders();
       if (tab === "config" && !state.settingsLoaded) loadSettings();
@@ -6762,7 +6842,7 @@
     els.accTbody.innerHTML = list.map(accountRowHtml).join("");
     els.accTbody.querySelectorAll("tr.acc-row").forEach((tr) => {
       tr.addEventListener("click", (e) => {
-        if (e.target.closest(".acc-pay-btn")) return; // no expandir si tocó el botón de pago
+        if (e.target.closest(".acc-pay-btn") || e.target.closest(".acc-limit-cell")) return;
         toggleAccountDetail(tr);
       });
     });
@@ -6772,28 +6852,56 @@
         openPaymentForAccount(Number(btn.dataset.id));
       });
     });
+    // Auto-save del limite de credito al perder foco o pulsar Enter/Tab
+    els.accTbody.querySelectorAll(".acc-limit-input").forEach((inp) => {
+      async function saveCreditLimit() {
+        const userId = Number(inp.dataset.userId);
+        const val = Math.max(0, Math.round(Number(inp.value) || 0));
+        inp.value = val;
+        try {
+          await api("/api/admin/users/" + userId, { method: "PATCH", body: JSON.stringify({ credit_limit: val }) });
+          // Actualizar el dato en state.accounts para que el re-render sea correcto
+          const acc = state.accounts.find((x) => x.id === userId);
+          if (acc) acc.credit_limit = val;
+          // Reflejar la alerta de límite en la fila sin re-renderizar toda la tabla
+          const row = inp.closest("tr.acc-row");
+          const acc2 = state.accounts.find((x) => x.id === userId);
+          const over = acc2 && Number(acc2.balance) < 0 && val > 0 && Math.abs(Number(acc2.balance)) > val;
+          if (row) row.classList.toggle("acc-row-over-limit", !!over);
+          showToast("Límite actualizado");
+        } catch (err) { showToast("Error: " + err.message, true); }
+      }
+      inp.addEventListener("change", saveCreditLimit);
+      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); inp.blur(); } });
+    });
   }
 
   function accountRowHtml(a) {
     const balance = Number(a.balance) || 0;
     const debt = balance < 0;
-    const balanceClass = balance >= 0 ? "acc-balance-pos" : "acc-balance-neg";
+    const limit = Number(a.credit_limit) || 0;
+    const overLimit = debt && limit > 0 && Math.abs(balance) > limit;
+    const balanceClass = balance >= 0 ? "acc-balance-pos" : (overLimit ? "acc-balance-over" : "acc-balance-neg");
     const balanceLabel = balance >= 0 ? "A favor: " + fmtPrice(balance) : "Debe: " + fmtPrice(Math.abs(balance));
+    const overIcon = overLimit ? ' <span class="acc-limit-over-icon" title="Deuda supera el límite de crédito ($ ' + limit.toLocaleString("es-AR") + ')">⚠️</span>' : "";
     const aging = debt ? accAgingBucket(a.days_overdue) : { label: "—", cls: "" };
     const agingTitle = debt && a.oldest_unpaid_at ? ' title="Deuda más vieja sin saldar: ' + escapeHtml(formatDate(a.oldest_unpaid_at)) + '"' : "";
-    return '<tr class="acc-row' + (debt ? ' acc-row-debt' : '') + '" data-id="' + a.id + '" style="cursor:pointer">' +
+    return '<tr class="acc-row' + (debt ? ' acc-row-debt' : '') + (overLimit ? ' acc-row-over-limit' : '') + '" data-id="' + a.id + '" style="cursor:pointer">' +
       '<td>' + escapeHtml(a.full_name || a.username || "") + ' <span class="muted small">@' + escapeHtml(a.username || "") + '</span></td>' +
       '<td class="muted">' + escapeHtml(LEVEL_NAMES[a.level] || String(a.level)) + '</td>' +
       '<td class="num muted">' + fmtPrice(a.total_debit) + '</td>' +
       '<td class="num muted">' + fmtPrice(a.total_credit) + '</td>' +
-      '<td class="num"><span class="acc-balance-badge ' + balanceClass + '">' + balanceLabel + '</span></td>' +
+      '<td class="num"><span class="acc-balance-badge ' + balanceClass + '">' + balanceLabel + '</span>' + overIcon + '</td>' +
       '<td class="num"' + agingTitle + '><span class="acc-age ' + aging.cls + '">' + aging.label + '</span></td>' +
+      '<td class="num acc-limit-cell" style="min-width:100px">' +
+        '<input type="number" class="acc-limit-input" data-user-id="' + a.id + '" value="' + limit + '" min="0" step="1000" title="Límite de crédito (0 = sin límite). Tab para guardar." />' +
+      '</td>' +
       '<td class="acc-actions">' + (debt
         ? '<button type="button" class="btn-mini acc-pay-btn" data-id="' + a.id + '">💵 Cobrar</button>'
         : '<button type="button" class="btn-mini acc-pay-btn" data-id="' + a.id + '">Registrar pago</button>') + '</td>' +
     '</tr>' +
     '<tr class="acc-detail-row" data-for="' + a.id + '" hidden>' +
-      '<td colspan="7" class="acc-detail-cell"><span class="muted">Cargando historial…</span></td>' +
+      '<td colspan="8" class="acc-detail-cell"><span class="muted">Cargando historial…</span></td>' +
     '</tr>';
   }
 
@@ -6813,13 +6921,16 @@
 
   function exportAccountsCsv() {
     const list = accSortedFiltered();
-    const rows = [["Cliente", "Usuario", "Nivel", "Debitos", "Creditos", "Saldo", "Estado", "Dias antiguedad", "Ultimo movimiento"]];
+    const rows = [["Cliente", "Usuario", "Nivel", "Debitos", "Creditos", "Saldo", "Estado", "Limite credito", "Sobre limite", "Dias antiguedad", "Ultimo movimiento"]];
     list.forEach((a) => {
       const b = Number(a.balance) || 0;
+      const lim = Number(a.credit_limit) || 0;
       rows.push([
         a.full_name || "", "@" + (a.username || ""), LEVEL_NAMES[a.level] || String(a.level),
         a.total_debit, a.total_credit, b,
         b < 0 ? "Debe" : (b > 0 ? "A favor" : "Saldado"),
+        lim || "",
+        (b < 0 && lim > 0 && Math.abs(b) > lim) ? "SI" : "",
         b < 0 && a.days_overdue != null ? a.days_overdue : "",
         a.last_movement_at ? formatDate(a.last_movement_at) : "",
       ]);
@@ -6861,7 +6972,11 @@
         return { m: m, running: running };
       }).reverse();
 
-      cell.innerHTML = '<table class="acc-mov-table"><thead><tr>' +
+      cell.innerHTML =
+        '<div class="acc-detail-actions">' +
+          '<a class="btn btn-small btn-ghost acc-pdf-btn" href="/api/admin/accounts/' + id + '/pdf" target="_blank" download>📄 Estado de cuenta PDF</a>' +
+        '</div>' +
+        '<table class="acc-mov-table"><thead><tr>' +
         '<th>Fecha</th><th>Tipo</th><th>Descripción</th>' +
         '<th class="num">Monto</th><th class="num">Saldo</th>' +
         '</tr></thead><tbody>' +

@@ -4,11 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260606e" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260606f" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
   <script src="/js/pwa.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
 </head>
 <body class="admin-page">
 
@@ -228,6 +229,13 @@
           <div class="dash-kpi-value" id="dash-stock-ok">—</div>
           <div class="dash-kpi-sub">disponibles</div>
         </div>
+      </div>
+
+      <!-- Gráfico de evolución de deuda -->
+      <div class="dash-section-label">📈 Evolución de la deuda total</div>
+      <div class="dash-chart-card">
+        <canvas id="dash-debt-chart" height="90"></canvas>
+        <p id="dash-debt-chart-empty" class="muted small" hidden style="text-align:center;padding:16px">Sin movimientos de cuenta corriente todavía.</p>
       </div>
 
       <!-- Últimos pedidos + Top deudores -->
@@ -1489,10 +1497,11 @@
               <th class="num acc-sort" data-sort="credit">Créditos</th>
               <th class="num acc-sort" data-sort="balance">Saldo</th>
               <th class="num acc-sort" data-sort="aging" title="Días desde la deuda más antigua sin saldar">Antigüedad</th>
+              <th class="num" title="Límite de crédito (0 = sin límite). Editable.">Límite</th>
               <th class="acc-actions-th">Acciones</th>
             </tr>
           </thead>
-          <tbody id="acc-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="acc-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -2742,6 +2751,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260606e"></script>
+  <script src="/js/admin.js?v=20260606f"></script>
 </body>
 </html>
