@@ -2276,18 +2276,34 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
   const userId = clientId || req.session.userId;
   const total = round2(items.reduce((s, it) => s + round2((it.unit_price || 0) * (it.quantity || 1)), 0));
   const result = db.transaction(() => {
+    // El pedido descuenta stock al CREARSE (stock_discounted=1), no al entregar:
+    // así "En armado" ya refleja la baja de stock. Como el admin puede crear
+    // pedidos de productos sin stock (se reponen y entregan luego), no se clampa
+    // en 0 (misma política que facturar un presupuesto como admin).
     const orderId = db.prepare(
-      "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id) VALUES (?,?,?,?,?)"
+      "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id, stock_discounted) VALUES (?,?,?,?,?,1)"
     ).run(userId, status, total, notes, assignedVendedorId).lastInsertRowid;
     const ins = db.prepare(
       "INSERT INTO order_items (order_id,product_id,product_code,product_name,quantity,unit_price,subtotal) " +
       "VALUES (?,?,?,?,?,?,?)"
     );
+    const updStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     items.forEach((it) => {
       const qty = Math.max(1, Math.round(Number(it.quantity) || 1));
       const price = round2(Number(it.unit_price) || 0);
       ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, round2(qty * price));
+      if (it.product_id) updStock.run(qty, it.product_id);
     });
+    // Si el pedido es a nombre de un cliente real, debitar su cuenta corriente
+    // ahora (misma lógica que facturar un presupuesto). Al pasar a 'entregado'
+    // el PATCH no vuelve a debitar ni a descontar stock porque stock_discounted
+    // ya es 1; al cancelar, devuelve stock y borra este débito.
+    if (clientId) {
+      db.prepare(
+        "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+        " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
+      ).run(clientId, total, "Pedido #" + orderId, orderId);
+    }
     return orderId;
   })();
   const order = db.prepare(
