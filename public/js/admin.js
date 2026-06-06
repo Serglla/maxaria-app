@@ -3149,10 +3149,10 @@
       '<td class="muted">' + escapeHtml(p.category_name || "—") + '</td>' +
       '<td class="num' + stockCls + '"' + stockTitle + '>' + fmtNum(p.stock) + (stockLow ? " ⚠" : "") + '</td>' +
       moneyCell(p, "cost", "muted") +
-      moneyCell(p, "price_minorista") +
+      moneyCell(p, "price_vip") +
       moneyCell(p, "price_revendedor") +
       moneyCell(p, "price_mayorista") +
-      moneyCell(p, "price_vip") +
+      moneyCell(p, "price_minorista") +
       moneyCell(p, "price_publico") +
       '<td><span class="cell-active-badge' + (p.active ? " active" : "") + '">' + (p.active ? "Sí" : "No") + '</span></td>' +
       '<td class="num muted" title="Unidades por empaque de compra (caja/bulto)">' + (p.units_per_bulto > 1 && p.pack_unit !== "unidad" ? p.units_per_bulto + " u/" + (p.pack_unit === "caja" ? "caja" : "bulto") : "—") + '</td>' +
