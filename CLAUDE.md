@@ -976,6 +976,35 @@ Sergio: en una entrega cobran una parte en efectivo y otra por transferencia a b
 - **`GET /api/admin/deliveries`** y los 5 SELECT de **`/api/orders`** (LEFT JOIN deliveries) devuelven `caja_id`/`caja_transfer_id` (+ nombres en el de admin). Necesario para que al **editar** una entrega ya hecha el modal preseleccione las cajas y no se borre el cobro al re-guardar.
 - **Frontend**: el modal de Registrar entrega ahora tiene **dos selectores** (`#delivery-caja-efectivo` y `#delivery-caja-transfer`), cada uno debajo de su campo de monto. `openDeliveryModal` llena ambos (preselecciona desde `existingDelivery.caja_id`/`caja_transfer_id`, que se arman desde `orderObj`). El submit manda las dos. El historial muestra ambas cajas en la celda de notas (`💵 Caja efectivo · 📲 Billeteras`).
 
+### Sección Cuentas corrientes rediseñada (6 junio 2026, sesión tarde — `admin.js?v=20260606e`, `styles.css?v=20260606e`)
+
+Sergio pidió que la pestaña **Cuentas** (cuenta corriente por cliente) sea más completa para su admin: detalle de lo adeudado, columnas ordenables por saldo, y más control + prolijidad visual. Eligió por AskUserQuestion: estilo **tarjetas KPI + tabla**, y sumar los 4 extras (aging, filtro deudores, cobrar desde fila, export CSV).
+
+**Backend (`server.js`) — `GET /api/admin/accounts` reescrito**
+- Antes era un solo query con `GROUP BY` que devolvía `total_debit`/`total_credit`/`balance`. Ahora trae users (level 1-4 activos) + todos los `account_movements` ordenados por fecha y calcula en JS por cliente: totales, `balance` (credit−debit, negativo = debe), `last_movement_at` + `days_since_movement`, `oldest_unpaid_at` + `days_overdue`, y `movements_count`.
+- **Antigüedad FIFO**: se aplican los créditos a los débitos más viejos primero; la antigüedad es la fecha del débito más viejo que quede **sin saldar** (no la del último movimiento). Helper `daysSince(str)` parsea el `created_at` como UTC (`str.replace(" ","T")+"Z"`). Verificado con 3 casos: deuda vieja saldada NO infla la antigüedad; pago parcial conserva la fecha original del débito; saldo a favor → aging null. `/api/admin/accounts/:userId` (detalle de movimientos) quedó igual.
+
+**Frontend HTML (`admin.html`, `#tab-cuentas`)**
+- Fila de KPIs `#acc-kpis` (`.dash-kpi-row`) arriba de la toolbar.
+- Toolbar: buscador + checkbox **Solo deudores** (`#acc-only-debtors`) + botón **⬇ CSV** (`#acc-export-btn`, `.btn-tool`) + **↻ Actualizar**.
+- Tabla `.acc-table` con 7 columnas: Cliente, Nivel, Débitos, Créditos, Saldo, **Antigüedad**, **Acciones**. Los `<th>` ordenables llevan `class="acc-sort" data-sort="name|debit|credit|balance|aging"`. Colspans de loading/empty pasados a 7.
+
+**Frontend JS (`admin.js`)**
+- `els` nuevos: `accKpis`, `accOnlyDebtors`, `accExportBtn`, `accTable`. `state` nuevo: `accSortKey` (default `"balance"`), `accSortDir` (`"asc"`), `accOnlyDebtors`.
+- `renderAccountsKpis()`: 4 tarjetas `.dash-kpi` (danger/good/warn/accent) — Total adeudado (+nº deudores), Total a favor, Deuda promedio por deudor, Deuda más antigua (días).
+- `accSortedFiltered()`: aplica búsqueda + filtro deudores + sort por la columna activa. `updateAccSortHeaders()` pinta la flecha `sort-asc`/`sort-desc`. Click en `th.acc-sort` togglea dir o cambia key (default util por columna: name/balance asc, montos/aging desc).
+- `accountRowHtml(a)`: fila con clase `acc-row-debt` si debe (resalte cálido), badge de saldo redondeado, badge de antigüedad con semáforo `accAgingBucket(days)` (verde ≤7d, amarillo ≤30d, rojo >30d) + tooltip con la fecha del débito más viejo, y botón de acción.
+- `openPaymentForAccount(userId)`: reutiliza el modal `#payment-create-modal` existente, preselecciona el cliente y **precarga el monto adeudado**. El botón de la fila (`.acc-pay-btn`) usa `stopPropagation` para no expandir el detalle.
+- `exportAccountsCsv()`: CSV client-side del listado filtrado/ordenado, separador `;`, UTF-8 con BOM (`"﻿"`), descarga como `cuentas_corrientes_YYYY-MM-DD.csv`.
+
+**CSS (`styles.css`)**
+- Bloque nuevo "Cuentas corrientes: toolbar, orden, aging": `.acc-toggle`, `.acc-table th.acc-sort` (cursor + flechas ⇅/↑/↓), `.acc-row-debt` (fondo `#fffaf2`), `.acc-age` + semáforo, `.acc-actions`, `.btn-mini` (botón chico reutilizable, no existía), y variante naranja del botón en filas deudoras.
+- **Bug viejo reparado**: había un bloque CSS huérfano (sin selector, `background:#f9fafb;padding:...` suelto tras el comentario "historial expandible", resto de un truncamiento). Se le devolvió el selector `.acc-detail-cell`. El badge de saldo `.acc-balance-badge` pasó a `border-radius:999px` + peso 700.
+
+**Verificación**: el bash mount volvió a estar **stale** (veía server.js truncado en línea 6193 y admin.js en 8642, faltando el final). Confirmado con Read que ambos están íntegros (server.js termina en `app.listen` 6272; admin.js en `bootstrap(); })();` 8808). Como el mount stale impide `node --check` directo, se validó cada bloque nuevo (endpoint + funciones JS) **aislado en `/tmp` del sandbox** (no pasa por el mount) → PARSE OK, y se corrió el test FIFO. Regla del proyecto confirmada otra vez: **Read es la fuente de verdad, no bash**.
+
+**Pendiente de versionado**: en disco local, sin `git add/commit/push` ni deploy en Railway.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.
@@ -987,6 +1016,13 @@ Sergio: en una entrega cobran una parte en efectivo y otra por transferencia a b
 7. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
 8. **Decisión sobre `plain_password`**: eliminar el campo de la DB. Para mostrar la pass al admin al crear usuario, devolverla solo en la respuesta JSON de ese POST (sin persistir).
 9. **Enforcement server-side de categorías del cliente en el catálogo PDF** (opcional): en `POST /api/admin/catalog/pdf`, cuando `priceConfig.type==="client"`, intersectar/forzar `categoryIds` con las categorías permitidas del cliente (`user_category_access`), para que el PDF respete sus categorías aunque el front mande "todas". El front ya lo hereda; esto es defensa extra contra JS cacheado.
+
+**Mejoras de Cuentas corrientes ("lo otro" que Sergio dejó para después — propuestas el 6 jun tras el rediseño):**
+
+10. **Límite de crédito por cliente**: campo nuevo en `users` (ej: `credit_limit`), con alerta visual en la fila de Cuentas (y opcionalmente en el carrito/pedido) cuando la deuda supera el límite.
+11. **Estado de cuenta PDF por cliente**: documento descargable/enviable por WhatsApp con el detalle de movimientos y el saldo. Reutiliza la infra del catálogo PDF (pdfkit). Botón en el detalle expandible de la fila.
+12. **Recordatorio automático de cobranza**: scheduled task diario que liste por la mañana los deudores con +30 días (usar el `days_overdue` que ya devuelve `/api/admin/accounts`).
+13. **Gráfico de evolución de la deuda total** mes a mes en el Dashboard (Chart.js).
 
 ### Objetivo de negocio
 Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.
