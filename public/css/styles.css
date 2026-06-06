@@ -889,8 +889,9 @@ button { font: inherit; cursor: pointer; }
 }
 .order-detail thead th:last-child { border-right: none; }
 .order-detail tbody tr { border-bottom: 1px solid #e2e8f0; }
-.order-detail tbody tr:nth-child(even) { background: #f4f7fc; }
-.order-detail tbody tr:hover { background: #e8eef8; }
+.order-detail tbody tr:nth-child(odd)  { background: #fff; }
+.order-detail tbody tr:nth-child(even) { background: #dde5f5; }
+.order-detail tbody tr:hover { background: #c7d7f0; }
 .order-detail tbody td {
   padding: 6px 10px;
   vertical-align: middle;
@@ -1112,7 +1113,9 @@ button { font: inherit; cursor: pointer; }
 .order-items-edit-table thead th.num { text-align: right; }
 .order-items-edit-table td.num { text-align: right; }
 .order-items-edit-table tbody tr { border-bottom: 1px solid #e2e8f0; }
-.order-items-edit-table tbody tr:nth-child(even) { background: #f4f7fc; }
+.order-items-edit-table tbody tr:nth-child(odd)  { background: #fff; }
+.order-items-edit-table tbody tr:nth-child(even) { background: #dde5f5; }
+.order-items-edit-table tbody tr:hover { background: #c7d7f0; }
 .order-items-edit-table tbody td { padding: 6px 10px; border-right: 1px solid #e2e8f0; vertical-align: middle; font-size: 13px; }
 .order-items-edit-table tbody td:last-child { border-right: none; }
 .order-items-edit-table .col-del { width: 36px; text-align: center; }
@@ -2532,7 +2535,9 @@ button { font: inherit; cursor: pointer; }
 }
 .admin-orders-list .order-items-table thead th:last-child { border-right: none; }
 .admin-orders-list .order-items-table tbody tr { border-bottom: 1px solid #e2e8f0; }
-.admin-orders-list .order-items-table tbody tr:nth-child(even) { background: #f4f7fc; }
+.admin-orders-list .order-items-table tbody tr:nth-child(odd)  { background: #fff; }
+.admin-orders-list .order-items-table tbody tr:nth-child(even) { background: #dde5f5; }
+.admin-orders-list .order-items-table tbody tr:hover { background: #c7d7f0; }
 .admin-orders-list .order-items-table tbody td { padding: 6px 10px; vertical-align: middle; border-right: 1px solid #e2e8f0; }
 .admin-orders-list .order-items-table tbody td:last-child { border-right: none; }
 .admin-orders-list .order-items-table .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -3328,7 +3333,7 @@ label.cats-check input[type="checkbox"] {
   outline: 2px solid #2563eb33;
   border-color: #2563eb;
 }
-#budget-items-tbody tr:hover td { background: #fafbfc; }
+#budget-items-tbody tr:hover td { background: #c7d7f0; }
 
 /* Print: ocultar todo menos el contenido del presupuesto */
 @media print {
@@ -3442,15 +3447,28 @@ html.in-modal .ventas-wrap {
   border-collapse: collapse;
   font-size: 13px;
 }
-.ventas-table thead tr,
-.ventas-items-table thead tr {
+.ventas-table thead tr {
   background: #f1f5f9;
   text-align: left;
 }
-.ventas-table th,
-.ventas-items-table th { padding: 8px 10px; font-weight: 600; color: #334155; }
+.ventas-items-table thead tr {
+  background: #1e3a5f;
+  text-align: left;
+}
+.ventas-table th { padding: 8px 10px; font-weight: 600; color: #334155; }
+.ventas-items-table th {
+  padding: 8px 10px;
+  font-weight: 700;
+  color: #fff;
+  border-right: 1px solid rgba(255,255,255,.2);
+}
+.ventas-items-table th:last-child { border-right: none; }
 .ventas-table td { padding: 9px 10px; border-bottom: 1px solid #f1f5f9; }
-.ventas-items-table td { padding: 5px 8px; }
+.ventas-items-table td { padding: 5px 8px; border-right: 1px solid #cdd9ec; }
+.ventas-items-table td:last-child { border-right: none; }
+.ventas-items-table tbody tr { border-bottom: 1px solid #cdd9ec; }
+.ventas-items-table tbody tr:nth-child(odd)  { background: #fff; }
+.ventas-items-table tbody tr:nth-child(even) { background: #dde5f5; }
 .ventas-row { cursor: pointer; }
 .ventas-row:hover td { background: #f8fafc; }
 
@@ -3648,7 +3666,7 @@ html.in-modal .ventas-wrap {
   text-transform: uppercase;
   font-size: 11px;
   letter-spacing: .04em;
-  color: #475569;
+  color: #fff;
 }
 .ventas-action-row {
   display: flex;
@@ -3756,6 +3774,12 @@ html.in-modal .ventas-wrap {
      Los <td> mantienen el mismo orden en el DOM, sólo cambia el layout. */
   .ventas-items-table { font-size: 14px; }
   .ventas-items-table thead { display: none; }
+  /* En mobile la tabla son mini-cards: anular bordes de columna y zebra
+     del layout desktop para que las tarjetas queden limpias en blanco. */
+  .ventas-items-table tbody tr:nth-child(odd),
+  .ventas-items-table tbody tr:nth-child(even) { background: #fff; }
+  .ventas-items-table tbody tr { border-bottom: none; }
+  .ventas-items-table td { border-right: none; }
   .ventas-items-table tbody,
   .ventas-items-table tr,
   .ventas-items-table td { display: block; width: 100%; box-sizing: border-box; }
