@@ -2022,7 +2022,10 @@
   <div class="admin-modal" id="oie-picker-modal" hidden style="z-index:1500">
     <div class="admin-modal-box" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
       <h3>Agregar productos al pedido</h3>
-      <input type="search" id="oie-picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="margin-bottom:10px" />
+      <input type="search" id="oie-picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="margin-bottom:8px" />
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:10px;cursor:pointer;color:#374151;font-size:13px">
+        <input type="checkbox" id="oie-picker-show-nostock" /> Visualizar productos sin stock
+      </label>
       <div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;min-height:200px">
         <table class="admin-table" id="oie-picker-table">
           <thead>

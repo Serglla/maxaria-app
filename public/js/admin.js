@@ -344,6 +344,7 @@
     oiePickerCount: document.getElementById("oie-picker-count"),
     oiePickerConfirm: document.getElementById("oie-picker-confirm"),
     oiePickerCancel: document.getElementById("oie-picker-cancel"),
+    oiePickerShowNoStock: document.getElementById("oie-picker-show-nostock"),
 
     // Modal crear pedido desde admin
     newOrderBtn:    document.getElementById("new-order-btn"),
@@ -4241,10 +4242,20 @@
     function recalc() {
       return editItems.reduce(function(s, it) { return s + it.unit_price * it.quantity; }, 0);
     }
+    // Stock actual por producto (para resaltar items sin stock). state.allProducts
+    // ya está cargado por el await ensureAllProducts() de arriba.
+    function stockFor(pid) {
+      var p = (state.allProducts || []).find(function(x) { return x.id === pid; });
+      return p ? (Number(p.stock) || 0) : null;
+    }
     function rowsHtml() {
       if (!editItems.length) return '<tr><td colspan="6" class="muted" style="padding:10px">Agregá al menos un producto.</td></tr>';
       return editItems.map(function(it, idx) {
-        return '<tr data-idx="' + idx + '">' +
+        var st = stockFor(it.product_id);
+        var noStock = st !== null && st <= 0;
+        var rowStyle = noStock ? ' style="background:#fef2f2"' : "";
+        var titleAttr = noStock ? ' title="Producto sin stock"' : "";
+        return '<tr data-idx="' + idx + '"' + rowStyle + titleAttr + '>' +
           "<td><code>" + escapeHtml(it.product_code) + "</code></td>" +
           "<td>" + escapeHtml(it.product_name) + "</td>" +
           '<td><input type="number" class="cell-input cell-num oie-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:64px"></td>' +
@@ -4386,6 +4397,7 @@
   // productos elegidos a los items del pedido en edición. ----
   var oieAddCtx = null;                 // { editItems, priceCol, rerender, replaceIdx? }
   var oiePickerSelected = new Map();    // pid -> cantidad
+  var oieShowNoStock = false;           // mostrar productos sin stock en el picker
 
   // Menú contextual flotante para las filas de items en edición de pedido.
   var oieCtxMenu = null;
@@ -4408,6 +4420,8 @@
     await ensureAllProducts();
     if (els.oiePickerSearch) els.oiePickerSearch.value = "";
     if (els.oiePickerAll) els.oiePickerAll.checked = false;
+    oieShowNoStock = false;
+    if (els.oiePickerShowNoStock) els.oiePickerShowNoStock.checked = false;
     renderOiePicker("");
     updateOiePickerCount();
     if (els.oiePickerModal) els.oiePickerModal.hidden = false;
@@ -4420,6 +4434,10 @@
     if (!els.oiePickerTbody) return;
     var col = oieAddCtx ? oieAddCtx.priceCol : "price_minorista";
     var list = state.allProducts || [];
+    if (!oieShowNoStock) {
+      // Ocultar sin stock, salvo que ya estén seleccionados (no perder la elección).
+      list = list.filter(function(p) { return (p.stock || 0) > 0 || oiePickerSelected.has(p.id); });
+    }
     if (filter) {
       var q = filter.trim().toLowerCase();
       list = list.filter(function(p) {
@@ -4463,6 +4481,12 @@
     };
     els.oiePickerSearch.addEventListener("focus", oieClearSearch);
     els.oiePickerSearch.addEventListener("click", oieClearSearch);
+  }
+  if (els.oiePickerShowNoStock) {
+    els.oiePickerShowNoStock.addEventListener("change", function() {
+      oieShowNoStock = els.oiePickerShowNoStock.checked;
+      renderOiePicker(els.oiePickerSearch ? els.oiePickerSearch.value : "");
+    });
   }
   if (els.oiePickerCancel) els.oiePickerCancel.addEventListener("click", closeOiePicker);
   if (els.oiePickerModal) {
