@@ -1003,6 +1003,7 @@
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas" && !state.accountsLoaded) loadAccounts();
+      if (tab === "ctacte-prov") loadSupplierAccounts(); // siempre recargar (cambia con compras/pagos)
       if (tab === "caja") loadCaja();
       if (tab === "administradores") loadAdmins();
       if (tab === "ventas") loadVentasOrders(); // siempre recargar (refleja entregas nuevas)
@@ -8918,6 +8919,210 @@
   });
 
   // ─────── Fin PRESUPUESTOS / VENTAS ───────
+
+  // ============ CUENTA CORRIENTE PROVEEDORES ============
+  const supEls = {
+    kpis: document.getElementById("supacc-kpis"),
+    search: document.getElementById("supacc-search"),
+    onlyDebtors: document.getElementById("supacc-only-debtors"),
+    count: document.getElementById("supacc-count"),
+    tbody: document.getElementById("supacc-tbody"),
+    reloadBtn: document.getElementById("supacc-reload-btn"),
+    payBtn: document.getElementById("supacc-pay-btn"),
+    payModal: document.getElementById("sup-payment-modal"),
+    payForm: document.getElementById("sup-payment-form"),
+    payMsg: document.getElementById("sup-payment-msg"),
+    paySupplier: document.getElementById("sup-pay-supplier"),
+  };
+  const supState = { list: [], loaded: false };
+
+  async function loadSupplierAccounts() {
+    if (!supEls.tbody) return;
+    try {
+      supEls.tbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando…</td></tr>';
+      supState.list = await api("/api/admin/supplier-accounts");
+      supState.loaded = true;
+      renderSupplierAccounts();
+    } catch (e) {
+      supEls.tbody.innerHTML = '<tr><td colspan="6" class="muted">Error cargando cuentas</td></tr>';
+    }
+  }
+
+  function renderSupplierAccountsKpis() {
+    if (!supEls.kpis) return;
+    let totalDebt = 0, debtors = 0, oldestDays = 0;
+    supState.list.forEach((a) => {
+      const b = Number(a.balance) || 0;
+      if (b > 0.0001) { totalDebt += b; debtors++; if (a.days_overdue != null && a.days_overdue > oldestDays) oldestDays = a.days_overdue; }
+    });
+    const avg = debtors ? Math.round(totalDebt / debtors) : 0;
+    const card = (cls, label, value, sub) =>
+      '<div class="dash-kpi ' + cls + '"><div class="dash-kpi-label">' + label + '</div>' +
+      '<div class="dash-kpi-value">' + value + '</div>' +
+      (sub ? '<div class="dash-kpi-sub">' + sub + '</div>' : '') + '</div>';
+    supEls.kpis.innerHTML =
+      card("dash-kpi-danger", "Total a pagar", fmtPrice(totalDebt), debtors + (debtors === 1 ? " proveedor" : " proveedores")) +
+      card("dash-kpi-warn", "Deuda promedio", fmtPrice(avg), "por proveedor con deuda") +
+      card("dash-kpi-accent", "Deuda más antigua", (oldestDays ? oldestDays + " días" : "—"), "sin saldar");
+  }
+
+  function supAccFiltered() {
+    const q = (supEls.search ? supEls.search.value : "").trim().toLowerCase();
+    let list = supState.list.slice();
+    if (q) list = list.filter((a) => (a.name || "").toLowerCase().includes(q));
+    if (supEls.onlyDebtors && supEls.onlyDebtors.checked) list = list.filter((a) => (Number(a.balance) || 0) > 0.0001);
+    list.sort((a, b) => (Number(b.balance) || 0) - (Number(a.balance) || 0));
+    return list;
+  }
+
+  function renderSupplierAccounts() {
+    if (!supEls.tbody) return;
+    renderSupplierAccountsKpis();
+    const list = supAccFiltered();
+    if (supEls.count) supEls.count.textContent = list.length + (list.length === 1 ? " proveedor" : " proveedores");
+    if (!list.length) { supEls.tbody.innerHTML = '<tr><td colspan="6" class="muted">Sin proveedores.</td></tr>'; return; }
+    supEls.tbody.innerHTML = list.map(supAccRowHtml).join("");
+    supEls.tbody.querySelectorAll("tr.acc-row").forEach((tr) => {
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest(".acc-pay-btn")) return;
+        toggleSupAccDetail(tr);
+      });
+    });
+    supEls.tbody.querySelectorAll(".acc-pay-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => { e.stopPropagation(); openSupplierPayment(Number(btn.dataset.id)); });
+    });
+  }
+
+  function supAccRowHtml(a) {
+    const debt = Number(a.balance) || 0;
+    const owe = debt > 0.0001;
+    const balClass = owe ? "acc-balance-neg" : "acc-balance-pos";
+    const balLabel = owe ? "Debe: " + fmtPrice(debt) : (debt < -0.0001 ? "A favor: " + fmtPrice(-debt) : "Saldado");
+    const aging = owe ? accAgingBucket(a.days_overdue) : { label: "—", cls: "" };
+    const agingTitle = owe && a.oldest_unpaid_at ? ' title="Compra más vieja sin saldar: ' + escapeHtml(formatDate(a.oldest_unpaid_at)) + '"' : "";
+    return '<tr class="acc-row' + (owe ? ' acc-row-debt' : '') + '" data-id="' + a.id + '" style="cursor:pointer">' +
+      '<td>' + escapeHtml(a.name || "") + '</td>' +
+      '<td class="num muted">' + fmtPrice(a.total_debit) + '</td>' +
+      '<td class="num muted">' + fmtPrice(a.total_credit) + '</td>' +
+      '<td class="num"><span class="acc-balance-badge ' + balClass + '">' + balLabel + '</span></td>' +
+      '<td class="num"' + agingTitle + '><span class="acc-age ' + aging.cls + '">' + aging.label + '</span></td>' +
+      '<td class="acc-actions"><button type="button" class="btn-mini acc-pay-btn" data-id="' + a.id + '">💵 Pagar</button></td>' +
+    '</tr>' +
+    '<tr class="acc-detail-row" data-for="' + a.id + '" hidden>' +
+      '<td colspan="6" class="acc-detail-cell"><span class="muted">Cargando historial…</span></td>' +
+    '</tr>';
+  }
+
+  async function toggleSupAccDetail(tr) {
+    const id = Number(tr.dataset.id);
+    const detailRow = supEls.tbody.querySelector('tr.acc-detail-row[data-for="' + id + '"]');
+    if (!detailRow) return;
+    if (!detailRow.hidden) { detailRow.hidden = true; return; }
+    detailRow.hidden = false;
+    if (detailRow.dataset.loaded) return;
+    const cell = detailRow.querySelector(".acc-detail-cell");
+    try {
+      const data = await api("/api/admin/supplier-accounts/" + id);
+      detailRow.dataset.loaded = "1";
+      const movs = data.movements || [];
+      if (!movs.length) { cell.innerHTML = '<p class="muted">Sin movimientos.</p>'; return; }
+      // running de deuda: de más antiguo a más reciente, luego se invierte
+      let running = 0;
+      const sorted = movs.slice().reverse();
+      const rows = sorted.map((m) => { running += (m.type === "debit" ? m.amount : -m.amount); return { m: m, running: running }; }).reverse();
+      cell.innerHTML =
+        '<table class="acc-mov-table"><thead><tr>' +
+        '<th>Fecha</th><th>Tipo</th><th>Descripción</th><th class="num">Monto</th><th class="num">Deuda</th><th></th>' +
+        '</tr></thead><tbody>' +
+        rows.map(function (o) {
+          const m = o.m, rb = o.running;
+          const isDebit = m.type === "debit";
+          const typeLabel = isDebit ? "Compra" : "Pago";
+          const typeClass = isDebit ? "acc-debit" : "acc-credit";
+          const delBtn = (!isDebit && m.supplier_payment_id)
+            ? '<button type="button" class="btn-mini sup-mov-del" data-pay="' + m.supplier_payment_id + '" title="Eliminar pago">🗑</button>' : '';
+          return '<tr>' +
+            '<td class="muted small-cell">' + formatDate(m.created_at) + '</td>' +
+            '<td><span class="' + typeClass + '">' + typeLabel + '</span></td>' +
+            '<td>' + escapeHtml(m.description || "—") + '</td>' +
+            '<td class="num">' + fmtPrice(m.amount) + '</td>' +
+            '<td class="num">' + fmtPrice(Math.max(0, rb)) + '</td>' +
+            '<td class="num">' + delBtn + '</td>' +
+          '</tr>';
+        }).join("") +
+        '</tbody></table>';
+      cell.querySelectorAll(".sup-mov-del").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (!confirm("¿Eliminar este pago? Se revierte la deuda y el egreso de caja.")) return;
+          try {
+            await api("/api/admin/supplier-payments/" + Number(btn.dataset.pay), { method: "DELETE" });
+            showToast("Pago eliminado");
+            loadSupplierAccounts();
+          } catch (err) { showToast("Error: " + err.message, true); }
+        });
+      });
+    } catch (err) {
+      cell.innerHTML = '<span class="muted err">Error: ' + escapeHtml(err.message) + '</span>';
+    }
+  }
+
+  function populateSupPayForm(preselectId) {
+    if (!supEls.paySupplier) return;
+    const list = (supState.list || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    supEls.paySupplier.innerHTML = '<option value="">Seleccionar proveedor…</option>' +
+      list.map((s) => '<option value="' + s.id + '">' + escapeHtml(s.name || "") + '</option>').join("");
+    if (preselectId) supEls.paySupplier.value = String(preselectId);
+  }
+
+  function openSupplierPayment(supplierId) {
+    if (supEls.payForm) supEls.payForm.reset();
+    if (supEls.payMsg) supEls.payMsg.textContent = "";
+    populateSupPayForm(supplierId);
+    fillCajaSelect(document.getElementById("sup-pay-caja"), null);
+    const a = supState.list.find((x) => x.id === supplierId);
+    const amtInput = supEls.payForm ? supEls.payForm.querySelector('[name="amount"]') : null;
+    if (amtInput && a && Number(a.balance) > 0) amtInput.value = Math.round(Number(a.balance));
+    if (supEls.payModal) supEls.payModal.hidden = false;
+  }
+
+  if (supEls.payBtn) supEls.payBtn.addEventListener("click", () => openSupplierPayment(null));
+  if (supEls.reloadBtn) supEls.reloadBtn.addEventListener("click", loadSupplierAccounts);
+  if (supEls.search) supEls.search.addEventListener("input", debounce(renderSupplierAccounts, 150));
+  if (supEls.onlyDebtors) supEls.onlyDebtors.addEventListener("change", renderSupplierAccounts);
+
+  if (supEls.payForm) {
+    supEls.payForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(supEls.payForm);
+      const body = {
+        supplier_id: Number(fd.get("supplier_id")),
+        amount: Number(fd.get("amount")),
+        method: fd.get("method"),
+        caja_id: fd.get("caja_id") || null,
+        reference: fd.get("reference"),
+        notes: fd.get("notes"),
+      };
+      if (!body.supplier_id || !body.amount) {
+        if (supEls.payMsg) { supEls.payMsg.textContent = "Completá proveedor y monto."; supEls.payMsg.className = "config-msg err"; }
+        return;
+      }
+      if (supEls.payMsg) { supEls.payMsg.textContent = "Guardando…"; supEls.payMsg.className = "config-msg"; }
+      try {
+        const out = await api("/api/admin/supplier-payments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (supEls.payModal) supEls.payModal.hidden = true;
+        showToast("Pago registrado: " + fmtPrice(out.payment.amount));
+        loadSupplierAccounts();
+      } catch (err) {
+        if (supEls.payMsg) { supEls.payMsg.textContent = err.message; supEls.payMsg.className = "config-msg err"; }
+      }
+    });
+  }
+  // ============ Fin CUENTA CORRIENTE PROVEEDORES ============
 
   bootstrap();
 })();

@@ -255,6 +255,36 @@ db.exec(
   ");" +
   "CREATE INDEX IF NOT EXISTS idx_am_user ON account_movements(user_id);"
 );
+
+// Cuenta corriente de PROVEEDORES (espejo de la de clientes, signo invertido):
+// cada compra genera un 'debit' (le debemos al proveedor) y cada pago un 'credit'.
+// Deuda = SUM(debit) - SUM(credit) (positivo = le debemos).
+db.exec(
+  "CREATE TABLE IF NOT EXISTS supplier_payments (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  supplier_id INTEGER NOT NULL REFERENCES suppliers(id)," +
+  "  amount REAL NOT NULL," +
+  "  method TEXT NOT NULL DEFAULT 'efectivo'," +
+  "  reference TEXT," +
+  "  notes TEXT," +
+  "  caja_id INTEGER REFERENCES cash_accounts(id)," +
+  "  registered_by INTEGER REFERENCES users(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_sup_pay_supplier ON supplier_payments(supplier_id);" +
+  "CREATE TABLE IF NOT EXISTS supplier_movements (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  supplier_id INTEGER NOT NULL REFERENCES suppliers(id)," +
+  "  type TEXT NOT NULL CHECK(type IN ('debit','credit'))," +
+  "  amount REAL NOT NULL," +
+  "  description TEXT," +
+  "  purchase_order_id INTEGER REFERENCES purchase_orders(id)," +
+  "  supplier_payment_id INTEGER REFERENCES supplier_payments(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_sm_supplier ON supplier_movements(supplier_id);"
+);
+
 try { db.exec("ALTER TABLE orders ADD COLUMN stock_discounted INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 
 // Migracion: Vendedor tercerizado + snapshot del costo del vendedor por item.
@@ -4186,6 +4216,14 @@ app.post("/api/admin/purchases", requireAdmin, (req, res) => {
         applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy);
       }
     }
+
+    // Cuenta corriente del proveedor: la compra genera la deuda (debit).
+    if (supplier_id && totalCost > 0) {
+      db.prepare(
+        "INSERT INTO supplier_movements (supplier_id, type, amount, description, purchase_order_id, created_at)" +
+        " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
+      ).run(supplier_id, totalCost, "Compra #" + purchaseId + (reference ? " · " + reference : ""), purchaseId);
+    }
   })();
 
   const purchase = db.prepare(
@@ -4278,6 +4316,18 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
         incStock.run(l.quantity, l.product_id);
         applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy);
       }
+    }
+
+    // Recalcular la deuda del proveedor: borrar el debit anterior de esta compra
+    // y reinsertarlo con el nuevo total/proveedor. Los pagos (credits) quedan.
+    db.prepare(
+      "DELETE FROM supplier_movements WHERE purchase_order_id = ? AND type = 'debit'"
+    ).run(id);
+    if (supplier_id && totalCost > 0) {
+      db.prepare(
+        "INSERT INTO supplier_movements (supplier_id, type, amount, description, purchase_order_id, created_at)" +
+        " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
+      ).run(supplier_id, totalCost, "Compra #" + id + (reference ? " · " + reference : ""), id);
     }
   })();
 
@@ -4592,6 +4642,154 @@ app.get("/api/admin/accounts/:userId", requireAdmin, (req, res) => {
     "  FROM account_movements WHERE user_id = ?"
   ).get(userId);
   res.json({ user: user, movements: movements, balance: balance.balance });
+});
+
+// ===== Cuenta corriente de PROVEEDORES =====
+// Deuda = SUM(debit) - SUM(credit). Positivo = le debemos al proveedor.
+
+app.get("/api/admin/supplier-accounts", requireAdmin, (req, res) => {
+  const suppliers = db.prepare(
+    "SELECT id, name, phone FROM suppliers WHERE active = 1 ORDER BY name"
+  ).all();
+  const movs = db.prepare(
+    "SELECT supplier_id, type, amount, created_at FROM supplier_movements ORDER BY created_at ASC"
+  ).all();
+  function daysSince(str) {
+    if (!str) return null;
+    var t = Date.parse(String(str).replace(" ", "T") + "Z");
+    if (isNaN(t)) return null;
+    return Math.floor((Date.now() - t) / 86400000);
+  }
+  var bySup = {};
+  for (var i = 0; i < movs.length; i++) {
+    var m = movs[i];
+    (bySup[m.supplier_id] = bySup[m.supplier_id] || []).push(m);
+  }
+  var rows = suppliers.map(function (s) {
+    var list = bySup[s.id] || [];
+    var totalDebit = 0, totalCredit = 0, lastAt = null, creditPool = 0;
+    var openDebits = [];
+    for (var j = 0; j < list.length; j++) {
+      var mv = list[j];
+      if (mv.type === "debit") { totalDebit += mv.amount; openDebits.push({ amount: mv.amount, at: mv.created_at }); }
+      else { totalCredit += mv.amount; creditPool += mv.amount; }
+      lastAt = mv.created_at;
+    }
+    // FIFO: aplicar pagos a las compras más viejas para hallar la deuda más antigua
+    var pool = creditPool;
+    for (var k = 0; k < openDebits.length && pool > 0; k++) {
+      var pay = Math.min(pool, openDebits[k].amount);
+      openDebits[k].amount -= pay; pool -= pay;
+    }
+    var debt = totalDebit - totalCredit; // positivo = le debemos
+    var oldestUnpaidAt = null;
+    for (var d = 0; d < openDebits.length; d++) {
+      if (openDebits[d].amount > 0.0001) { oldestUnpaidAt = openDebits[d].at; break; }
+    }
+    var daysOverdue = (debt > 0.0001 && oldestUnpaidAt) ? daysSince(oldestUnpaidAt) : null;
+    return {
+      id: s.id, name: s.name, phone: s.phone,
+      total_debit: totalDebit, total_credit: totalCredit, balance: debt,
+      last_movement_at: lastAt, days_since_movement: daysSince(lastAt),
+      oldest_unpaid_at: oldestUnpaidAt, days_overdue: daysOverdue,
+      movements_count: list.length,
+    };
+  });
+  res.json(rows);
+});
+
+app.get("/api/admin/supplier-accounts/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const supplier = db.prepare("SELECT id, name, contact, phone, email FROM suppliers WHERE id = ?").get(id);
+  if (!supplier) return res.status(404).json({ error: "Proveedor no encontrado" });
+  const movements = db.prepare(
+    "SELECT id, type, amount, description, purchase_order_id, supplier_payment_id, created_at" +
+    "  FROM supplier_movements WHERE supplier_id = ? ORDER BY created_at DESC LIMIT 200"
+  ).all(id);
+  const bal = db.prepare(
+    "SELECT COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE -amount END),0) AS debt" +
+    "  FROM supplier_movements WHERE supplier_id = ?"
+  ).get(id);
+  res.json({ supplier: supplier, movements: movements, balance: bal.debt });
+});
+
+app.get("/api/admin/supplier-payments", requireAdmin, (req, res) => {
+  const supplierId = req.query.supplier_id ? Number(req.query.supplier_id) : null;
+  let sql =
+    "SELECT sp.id, sp.supplier_id, sp.amount, sp.method, sp.reference, sp.notes, sp.created_at, sp.caja_id," +
+    "       s.name AS supplier_name, ca.name AS caja_name," +
+    "       rb.username AS registered_by_username, rb.full_name AS registered_by_full_name" +
+    "  FROM supplier_payments sp" +
+    "  JOIN suppliers s ON s.id = sp.supplier_id" +
+    "  LEFT JOIN cash_accounts ca ON ca.id = sp.caja_id" +
+    "  LEFT JOIN users rb ON rb.id = sp.registered_by";
+  const params = [];
+  if (supplierId) { sql += "  WHERE sp.supplier_id = ?"; params.push(supplierId); }
+  sql += "  ORDER BY sp.created_at DESC LIMIT 500";
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post("/api/admin/supplier-payments", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const supplier_id = Number(b.supplier_id);
+  const amount      = Number(b.amount);
+  const method      = String(b.method || "efectivo").trim().slice(0, 50);
+  const reference   = String(b.reference || "").trim().slice(0, 200) || null;
+  const notes       = String(b.notes || "").trim().slice(0, 500) || null;
+  const cajaId      = b.caja_id ? Number(b.caja_id) : null;
+
+  if (!supplier_id || !amount || amount <= 0)
+    return res.status(400).json({ error: "Faltan datos: supplier_id y amount son requeridos" });
+
+  const supplier = db.prepare("SELECT id, name FROM suppliers WHERE id = ?").get(supplier_id);
+  if (!supplier) return res.status(404).json({ error: "Proveedor no encontrado" });
+
+  let caja = null;
+  if (cajaId) {
+    caja = db.prepare("SELECT id, name FROM cash_accounts WHERE id = ? AND active = 1").get(cajaId);
+    if (!caja) return res.status(400).json({ error: "Caja invalida o inactiva" });
+  }
+
+  let paymentId;
+  db.transaction(() => {
+    const r = db.prepare(
+      "INSERT INTO supplier_payments (supplier_id, amount, method, reference, notes, caja_id, registered_by, created_at)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+    ).run(supplier_id, amount, method, reference, notes, cajaId, req.session.userId);
+    paymentId = r.lastInsertRowid;
+    const desc = "Pago " + method + (reference ? " · " + reference : "");
+    db.prepare(
+      "INSERT INTO supplier_movements (supplier_id, type, amount, description, supplier_payment_id, created_at)" +
+      " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
+    ).run(supplier_id, amount, desc, paymentId);
+    // Egreso de la caja elegida (el pago al proveedor sale de la caja).
+    if (caja) {
+      db.prepare(
+        "INSERT INTO cash_movements (account_id, type, amount, description, source, related_id, registered_by)" +
+        " VALUES (?, 'egreso', ?, ?, 'pago_proveedor', ?, ?)"
+      ).run(caja.id, amount, "Pago a " + supplier.name + (reference ? " · " + reference : ""), paymentId, req.session.userId);
+    }
+  })();
+
+  const payment = db.prepare(
+    "SELECT sp.*, s.name AS supplier_name FROM supplier_payments sp" +
+    "  JOIN suppliers s ON s.id = sp.supplier_id WHERE sp.id = ?"
+  ).get(paymentId);
+  res.json({ ok: true, payment: payment });
+});
+
+app.delete("/api/admin/supplier-payments/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const payment = db.prepare("SELECT id FROM supplier_payments WHERE id = ?").get(id);
+  if (!payment) return res.status(404).json({ error: "Pago no encontrado" });
+  db.transaction(() => {
+    db.prepare("DELETE FROM supplier_movements WHERE supplier_payment_id = ?").run(id);
+    db.prepare("DELETE FROM cash_movements WHERE source = 'pago_proveedor' AND related_id = ?").run(id);
+    db.prepare("DELETE FROM supplier_payments WHERE id = ?").run(id);
+  })();
+  res.json({ ok: true });
 });
 
 // ── Estado de cuenta PDF ────────────────────────────────────────────────────
