@@ -3713,6 +3713,8 @@
       renderOrders();
       noCloseModal();
       showToast("Pedido #" + order.id + " creado");
+      // El pedido descontó stock al crearse → refrescar la tabla de Productos.
+      refreshProductsCache();
     } catch (e) {
       showToast("Error: " + e.message, "error");
     } finally {
@@ -3762,6 +3764,7 @@
       populateClientFilter(state.orders);
       renderOrders();
       refreshOrderViews();
+      refreshProductsCache(); // al eliminar se devuelve el stock
       showToast("Pedido #" + id + " eliminado");
     } catch (e) {
       showToast("Error: " + e.message, "error");
@@ -4009,6 +4012,8 @@
           var o = state.orders.find(function(x) { return x.id === orderId; });
           if (o) o.status = newStatus;
           refreshOrderViews();
+          // Cancelar devuelve stock; entregar puede descontarlo → refrescar Productos.
+          if (newStatus === "cancelado" || newStatus === "entregado") refreshProductsCache();
           var card = detailEl.closest(".order-card");
           if (card) {
             var badge = card.querySelector(".order-status");
@@ -4361,6 +4366,7 @@
       if (o) o.total = resp.total;
       // Stock pudo cambiar: invalidar cache de productos del picker de Compras.
       state.allProductsLoaded = false;
+      refreshProductsCache(); // y refrescar la tabla de Productos
       showToast("Pedido #" + order.id + " actualizado");
       // Volver a la vista de detalle (solo lectura) ya con los datos nuevos.
       renderOrderDetail(detailEl, order);
@@ -4664,6 +4670,17 @@
 
   // Re-renderiza las vistas del circuito que dependen de state.orders, para que
   // al avanzar un pedido desaparezca de una vista y aparezca en la otra.
+  // Refresca la tabla de Productos (cacheada en state.products desde el arranque)
+  // tras una acción que cambia stock en otra pestaña, así no hace falta un
+  // refresh manual para ver el stock actualizado.
+  async function refreshProductsCache() {
+    try {
+      state.products = await api("/api/admin/products");
+      populateCategoryFilter(state.products);
+      applyFilters();
+    } catch (_) {}
+  }
+
   function refreshOrderViews() {
     if (state.ordersLoaded) renderOrders();
     renderArmado();
