@@ -1975,9 +1975,12 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
             Cliente *
-            <select id="no-client" class="admin-select" style="margin-top:4px;width:100%">
-              <option value="">Consumidor final</option>
-            </select>
+            <div style="display:flex;gap:6px;margin-top:4px">
+              <select id="no-client" class="admin-select" style="flex:1;min-width:0">
+                <option value="">Consumidor final</option>
+              </select>
+              <button type="button" class="btn" id="no-new-client-btn" title="Crear cliente nuevo" style="padding:6px 10px;white-space:nowrap">＋ Cliente</button>
+            </div>
           </label>
           <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">
             Estado inicial
@@ -2019,6 +2022,44 @@
         <button type="button" class="btn" data-close="new-order-modal">Cancelar</button>
         <button type="button" class="btn btn-primary" id="no-save-btn">Crear pedido</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal: crear cliente rápido desde "Nuevo pedido" -->
+  <div class="admin-modal" id="no-client-create-modal" hidden style="z-index:1400">
+    <div class="admin-modal-box" style="max-width:440px">
+      <h3 style="margin:0 0 14px">Nuevo cliente</h3>
+      <form id="no-client-create-form" class="user-form" style="display:flex;flex-direction:column;gap:12px">
+        <label>Nombre completo *
+          <input type="text" name="full_name" class="admin-input" autocomplete="off" placeholder="Ej: Juan Pérez" required>
+        </label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label>Usuario *
+            <input type="text" name="username" class="admin-input" autocomplete="off" required>
+          </label>
+          <label>Nivel
+            <select name="level" class="admin-select">
+              <option value="1">Minorista</option>
+              <option value="2">Revendedor</option>
+              <option value="3">Mayorista</option>
+              <option value="4">VIP</option>
+            </select>
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label>Contraseña *
+            <input type="text" name="password" class="admin-input" autocomplete="off" minlength="6" required>
+          </label>
+          <label>WhatsApp
+            <input type="tel" name="whatsapp_number" class="admin-input" autocomplete="off" placeholder="ej: 5493442…">
+          </label>
+        </div>
+        <div id="no-client-create-msg" class="config-msg"></div>
+        <div class="admin-modal-foot" style="margin-top:4px">
+          <button type="button" class="btn" data-close="no-client-create-modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Crear y usar</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -2830,6 +2871,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260608a"></script>
+  <script src="/js/admin.js?v=20260608b"></script>
 </body>
 </html>

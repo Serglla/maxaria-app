@@ -350,6 +350,10 @@
     newOrderBtn:    document.getElementById("new-order-btn"),
     newOrderModal:  document.getElementById("new-order-modal"),
     noClient:       document.getElementById("no-client"),
+    noNewClientBtn: document.getElementById("no-new-client-btn"),
+    noClientCreateModal: document.getElementById("no-client-create-modal"),
+    noClientCreateForm:  document.getElementById("no-client-create-form"),
+    noClientCreateMsg:   document.getElementById("no-client-create-msg"),
     noPriceList:    document.getElementById("no-price-list"),
     noStatus:       document.getElementById("no-status"),
     noAddBtn:       document.getElementById("no-add-btn"),
@@ -3856,6 +3860,98 @@
     noPriceCfg = orderCfgFromSel(els.noPriceList.value);
     noRepriceItems();
   });
+
+  // ----- Crear cliente rápido desde el modal de Nuevo pedido -----
+  // Convierte un nombre en un usuario sugerido (minúsculas, sin acentos ni espacios).
+  function slugifyUsername(name) {
+    return String(name || "")
+      .toLowerCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")  // saca acentos
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 32);
+  }
+
+  function noOpenClientCreate() {
+    if (!els.noClientCreateForm) return;
+    els.noClientCreateForm.reset();
+    if (els.noClientCreateMsg) { els.noClientCreateMsg.textContent = ""; els.noClientCreateMsg.className = "config-msg"; }
+    if (els.noClientCreateModal) els.noClientCreateModal.hidden = false;
+    setTimeout(function() {
+      var f = els.noClientCreateForm.querySelector('[name="full_name"]');
+      if (f) f.focus();
+    }, 50);
+  }
+  function noCloseClientCreate() {
+    if (els.noClientCreateModal) els.noClientCreateModal.hidden = true;
+  }
+
+  if (els.noNewClientBtn) els.noNewClientBtn.addEventListener("click", noOpenClientCreate);
+  if (els.noClientCreateModal) {
+    els.noClientCreateModal.addEventListener("click", function(e) {
+      if (e.target.matches("[data-close='no-client-create-modal']")) noCloseClientCreate();
+    });
+  }
+  // Autocompletar usuario a partir del nombre mientras el campo usuario esté vacío
+  // o no haya sido tocado a mano.
+  if (els.noClientCreateForm) {
+    var unameInput = els.noClientCreateForm.querySelector('[name="username"]');
+    var fnameInput = els.noClientCreateForm.querySelector('[name="full_name"]');
+    var unameTouched = false;
+    if (unameInput) unameInput.addEventListener("input", function() { unameTouched = true; });
+    if (fnameInput && unameInput) {
+      fnameInput.addEventListener("input", function() {
+        if (!unameTouched) unameInput.value = slugifyUsername(fnameInput.value);
+      });
+    }
+    // Reset del flag al abrir el modal de creación.
+    if (els.noNewClientBtn) els.noNewClientBtn.addEventListener("click", function() { unameTouched = false; });
+
+    els.noClientCreateForm.addEventListener("submit", async function(e) {
+      e.preventDefault();
+      var fd = new FormData(els.noClientCreateForm);
+      var level = Number(fd.get("level")) || 1;
+      var body = {
+        username: String(fd.get("username") || "").trim(),
+        password: String(fd.get("password") || ""),
+        full_name: String(fd.get("full_name") || "").trim(),
+        level: level,
+        whatsapp_number: String(fd.get("whatsapp_number") || "").trim() || null,
+      };
+      if (!body.full_name) { showClientCreateMsg("Poné el nombre del cliente.", true); return; }
+      if (!body.username)  { showClientCreateMsg("Poné un usuario.", true); return; }
+      if (body.password.length < 6) { showClientCreateMsg("La contraseña debe tener al menos 6 caracteres.", true); return; }
+      showClientCreateMsg("Creando…", false);
+      try {
+        var out = await api("/api/admin/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        // Agregar al cache de usuarios y al selector, y dejarlo seleccionado.
+        if (!state.users) state.users = [];
+        state.users.unshift(out.user);
+        if (els.noClient) {
+          var opt = document.createElement("option");
+          opt.value = out.user.id;
+          opt.textContent = out.user.full_name || out.user.username;
+          els.noClient.appendChild(opt);
+          els.noClient.value = String(out.user.id);
+        }
+        // Sincronizar la lista de precios al cliente nuevo y reprecios.
+        noSyncPriceListToClient();
+        noRepriceItems();
+        noCloseClientCreate();
+        showToast("Cliente " + (out.user.full_name || out.user.username) + " creado");
+      } catch (err) {
+        showClientCreateMsg(err.message, true);
+      }
+    });
+  }
+  function showClientCreateMsg(txt, isErr) {
+    if (!els.noClientCreateMsg) return;
+    els.noClientCreateMsg.textContent = txt;
+    els.noClientCreateMsg.className = "config-msg" + (isErr ? " err" : "");
+  }
   if (els.newOrderModal) {
     els.newOrderModal.addEventListener("click", function(e) {
       if (e.target.matches("[data-close='new-order-modal']")) noCloseModal();

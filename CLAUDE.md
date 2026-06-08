@@ -1028,6 +1028,12 @@ Bug de Sergio: al crear un pedido desde /admin, el sistema no permitía elegir l
 
 **Verificación**: `node --check` OK en server.js y admin.js (esta vez el bash mount NO estaba stale). Pendiente: `git add/commit/push` + deploy Railway (en disco local).
 
+**Crear cliente rápido desde "Nuevo pedido" (8 junio 2026, mismo día — `admin.js?v=20260608b`)**
+Sergio: armando un pedido nuevo no tenía cómo cargar un cliente que no existía — tenía que salir a la pestaña Usuarios, crearlo, y volver. Ahora se crea desde el mismo modal.
+- `admin.html`: junto al `<select id="no-client">` un botón **`＋ Cliente`** (`#no-new-client-btn`) y un mini-modal `#no-client-create-modal` (z-index 1400) con form `#no-client-create-form`: Nombre completo, Usuario, Nivel (1-4), Contraseña (texto visible), WhatsApp.
+- `admin.js`: `slugifyUsername(name)` (minúsculas, sin acentos vía NFD, solo a-z0-9, 32 chars) autocompleta el usuario desde el nombre mientras el campo usuario no se toque a mano (flag `unameTouched`, se resetea al abrir). El submit hace `POST /api/admin/users` (reusa el endpoint existente, solo level 1-4), agrega el `out.user` a `state.users`, lo inserta como opción en `#no-client` y lo deja seleccionado, y llama `noSyncPriceListToClient()` + `noRepriceItems()` para que el pedido tome la lista del cliente nuevo. No se asigna lista personalizada acá (se hace luego en Usuarios; igual el selector de lista del pedido permite elegirla). Validaciones en cliente: nombre, usuario, password ≥ 6.
+- Verificado: el bloque nuevo pasa `node --check` aislado en `/tmp` (el bash mount volvió a estar **stale**: veía admin.js cortado en 9306 cuando Read confirma 9399 líneas, termina en `bootstrap(); })();`). Read = fuente de verdad. Pendiente: `git add/commit/push` + deploy Railway.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.
