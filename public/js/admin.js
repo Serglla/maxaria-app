@@ -4173,11 +4173,11 @@
     return '<article class="order-card" data-id="' + o.id + '">' +
       '<div class="order-head">' +
         '<div>' +
-          '<h4>Pedido #' + o.id + ' · ' +
-            '<span class="order-status ' + (o.status || "") + '">' + escapeHtml(statusLabel) + "</span>" +
+          '<h4 class="order-client">' + clientLabel +
+            ' <span class="order-status ' + (o.status || "") + '">' + escapeHtml(statusLabel) + "</span>" +
             vendBadge + delivBadge +
           "</h4>" +
-          '<span class="meta">' + clientLabel + " · " + dateLabel + "</span>" +
+          '<span class="meta">Pedido #' + o.id + " · " + dateLabel + "</span>" +
         "</div>" +
         '<div class="order-card-right">' +
           '<span class="order-total">' + totalLabel + "</span>" +
