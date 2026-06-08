@@ -832,6 +832,19 @@ app.use(session({
   },
 }));
 
+// Las respuestas del API (datos dinámicos: productos, categorías, pedidos, etc.)
+// nunca se deben cachear en el navegador ni en proxies. Sin esto, algunos
+// dispositivos servían una respuesta vieja del HTTP cache y los productos nuevos
+// no aparecían hasta un hard refresh. El Service Worker igual guarda una copia
+// en su propio cache para el modo offline (cache.put ignora este header).
+app.use((req, res, next) => {
+  if (req.method === "GET" && req.path.startsWith("/api/")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+  }
+  next();
+});
+
 function priceColumnFor(level) {
   switch (Number(level)) {
     case 1: return "price_minorista";

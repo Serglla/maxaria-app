@@ -10,7 +10,7 @@
  * Versionar CACHE_VERSION fuerza la invalidación de caches viejos al hacer deploy.
  */
 
-const CACHE_VERSION = "maxaria-v3";
+const CACHE_VERSION = "maxaria-v4";
 const STATIC_CACHE  = CACHE_VERSION + "-static";
 const PAGES_CACHE   = CACHE_VERSION + "-pages";
 const IMAGES_CACHE  = CACHE_VERSION + "-images";
@@ -116,7 +116,10 @@ self.addEventListener("fetch", (event) => {
 async function networkFirst(req, cacheName) {
   const cache = await caches.open(cacheName);
   try {
-    const fresh = await fetch(req);
+    // cache: "no-store" → ignoramos el HTTP cache del navegador y vamos siempre
+    // a la red. Así datos (productos, etc.) y navegaciones llegan frescos; la
+    // copia para offline se guarda igual en el cache del Service Worker abajo.
+    const fresh = await fetch(req, { cache: "no-store" });
     if (fresh && fresh.ok) cache.put(req, fresh.clone());
     return fresh;
   } catch {

@@ -1034,6 +1034,20 @@ Sergio: armando un pedido nuevo no tenía cómo cargar un cliente que no existí
 - `admin.js`: `slugifyUsername(name)` (minúsculas, sin acentos vía NFD, solo a-z0-9, 32 chars) autocompleta el usuario desde el nombre mientras el campo usuario no se toque a mano (flag `unameTouched`, se resetea al abrir). El submit hace `POST /api/admin/users` (reusa el endpoint existente, solo level 1-4), agrega el `out.user` a `state.users`, lo inserta como opción en `#no-client` y lo deja seleccionado, y llama `noSyncPriceListToClient()` + `noRepriceItems()` para que el pedido tome la lista del cliente nuevo. No se asigna lista personalizada acá (se hace luego en Usuarios; igual el selector de lista del pedido permite elegirla). Validaciones en cliente: nombre, usuario, password ≥ 6.
 - Verificado: el bloque nuevo pasa `node --check` aislado en `/tmp` (el bash mount volvió a estar **stale**: veía admin.js cortado en 9306 cuando Read confirma 9399 líneas, termina en `bootstrap(); })();`). Read = fuente de verdad. Pendiente: `git add/commit/push` + deploy Railway.
 
+### Fix caché: productos nuevos no aparecían sin cerrar la app / hard refresh (8 junio 2026 — `app.js?v=20260608c`, `sw.js` CACHE_VERSION v4)
+
+Sergio: en algunos dispositivos había que hacer hard refresh o cerrar y reabrir la app para ver productos recién agregados. **Causa raíz**: el catálogo (`app.js bootstrap()`) consultaba `/api/products` **una sola vez al abrir** y no volvía a hacerlo mientras la app/PWA quedaba abierta. Como es PWA (hay `sw.js` + manifest), en mobile la app sigue viva en segundo plano y nunca re-consultaba. Factor secundario: el HTTP cache del navegador podía servir respuestas viejas del API en algunos dispositivos.
+
+Solución en tres frentes:
+
+1. **Auto-refresh del catálogo (`public/js/app.js`)** — fix principal. Función nueva `refreshCatalog(force)`: re-consulta `/api/categories` + `productsUrl()` y re-renderiza categorías/productos conservando filtro, búsqueda y cliente seleccionado. Throttle de 10s (flags `_lastCatalogRefresh`/`_refreshingCatalog`), errores silenciosos (offline → deja el catálogo actual). Disparadores: `document` `visibilitychange` (cuando `visibilityState==="visible"`), `window` `focus`, y `window` `pageshow` con `e.persisted` (restaurada desde bfcache, `force=true`). `bootstrap()` setea `_lastCatalogRefresh = Date.now()` al final para que el primer focus no dispare un refetch redundante. Resultado: al volver a la app (cambiar de pestaña/app y volver, o reabrir la PWA) los productos nuevos aparecen solos.
+
+2. **`Cache-Control: no-store` en GET `/api/*` (`server.js`)** — middleware nuevo después del `session(...)`: para `req.method==="GET"` y `req.path` que empieza con `/api/`, setea `Cache-Control: no-store, no-cache, must-revalidate` + `Pragma: no-cache`. Evita que el navegador o proxies sirvan datos viejos. El SW igual guarda copia en su cache (cache.put ignora el header) para offline.
+
+3. **Service Worker (`public/sw.js`)** — `CACHE_VERSION` bumpeado `maxaria-v3` → `maxaria-v4` (el `activate` borra los caches que no empiezan con la versión nueva → limpia datos viejos en dispositivos existentes al próximo deploy). Además `networkFirst` ahora hace `fetch(req, { cache: "no-store" })` para ignorar el HTTP cache del navegador y traer siempre datos/navegaciones frescas (la copia offline se guarda igual). `/api/products` y compañía ya eran network-first; el bug no era la estrategia del SW sino que la app no re-consultaba.
+
+**Verificación**: `node --check` OK en server.js, app.js y sw.js (bash mount NO estaba stale esta vez). Pendiente: `git add/commit/push` + deploy Railway. Nota: el header no-store y el bump de CACHE_VERSION recién tienen efecto pleno cuando los dispositivos cargan el `sw.js` nuevo (se actualiza solo porque `/sw.js` se sirve `no-store`).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.

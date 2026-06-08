@@ -184,8 +184,47 @@
       if (me.level >= 1 && me.level <= 4) {
         api("/api/my-notifications").then(notifyOrderUpdates).catch(() => {});
       }
+      _lastCatalogRefresh = Date.now();
     } catch (e) { console.error(e); }
   }
+
+  // Re-consulta categorías y productos y re-renderiza, conservando el filtro de
+  // categoría, la búsqueda y el cliente seleccionado. Sirve para que los productos
+  // que el admin agrega aparezcan sin tener que cerrar la app ni hacer hard refresh.
+  let _lastCatalogRefresh = 0;
+  let _refreshingCatalog = false;
+  async function refreshCatalog(force) {
+    if (!state.me) return;                 // todavía no terminó el bootstrap inicial
+    if (_refreshingCatalog) return;        // evitar solapamiento
+    const now = Date.now();
+    // Throttle: no refrescar más de una vez cada 10s salvo que se fuerce.
+    if (!force && now - _lastCatalogRefresh < 10000) return;
+    _refreshingCatalog = true;
+    try {
+      const [cats, prods] = await Promise.all([
+        api("/api/categories"), api(productsUrl()),
+      ]);
+      state.categories = cats;
+      state.products = prods;
+      _lastCatalogRefresh = Date.now();
+      renderCategories();
+      renderProducts();
+    } catch (_) {
+      // Sin conexión o error: dejamos el catálogo actual como está.
+    } finally {
+      _refreshingCatalog = false;
+    }
+  }
+
+  // Disparadores del auto-refresh: cuando el usuario vuelve a la app (cambia de
+  // pestaña/app y vuelve, o reabre la PWA desde segundo plano) re-consultamos el
+  // catálogo. Cubre el caso de dispositivos que mantienen la app abierta.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshCatalog();
+  });
+  window.addEventListener("focus", () => refreshCatalog());
+  // pageshow con persisted=true = restaurada desde el back-forward cache.
+  window.addEventListener("pageshow", (e) => { if (e.persisted) refreshCatalog(true); });
 
   function renderUser() {
     const u = state.me; if (!u) return;
