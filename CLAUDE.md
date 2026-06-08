@@ -1048,6 +1048,21 @@ Solución en tres frentes:
 
 **Verificación**: `node --check` OK en server.js, app.js y sw.js (bash mount NO estaba stale esta vez). Pendiente: `git add/commit/push` + deploy Railway. Nota: el header no-store y el bump de CACHE_VERSION recién tienen efecto pleno cuando los dispositivos cargan el `sw.js` nuevo (se actualiza solo porque `/sw.js` se sirve `no-store`).
 
+### Rentabilidad del pedido (solo admin) + Descuento al entregar (8 junio 2026 — `admin.js?v=20260608d`, `styles.css?v=20260608e`)
+
+Dos features encadenadas. Decisiones tomadas con Sergio (AskUserQuestion): rentabilidad con **costo actual** del producto (`products.cost`, sin snapshot); visible para **todos los administradores** (no vendedores); el descuento al entregar **baja la deuda** (ajusta cuenta corriente); descuento aplicable **solo por admin**.
+
+**Rentabilidad del pedido — detalle del pedido (admin)**
+- `server.js` `GET /api/orders/:id` (rama admin): calcula `profitability` con `revenue = Σ unit_price·qty` (bruto), `cost_total = Σ COALESCE(p.cost,0)·qty` (LEFT JOIN products, costo ACTUAL), aplica el descuento del pedido → `revenue_neto = revenue − discount_amount`, `profit = revenue_neto − cost_total`, `margin_pct = profit/revenue_neto·100`. Devuelve `{revenue_gross, discount, revenue, cost_total, profit, margin_pct}`. Solo se calcula si `isAdmin`. Items con producto borrado o `cost` NULL → costo 0 (ganancia inflada; hay que tener los costos cargados).
+- `admin.js` `renderOrderDetail`: si `state.isAdmin && order.profitability`, muestra una caja `.order-profit` ("💰 Rentabilidad $X (Y% margen)" + detalle "Ventas − Desc. = neto · Costo"). CSS `.order-profit`/`.op-*` en styles.css.
+
+**Descuento al entregar (modal Registrar entrega) + rentabilidad live**
+- **Schema** (migración idempotente en `server.js`, junto a is_unified): `orders.discount_type` ('percent'|'fixed'|NULL), `orders.discount_value` REAL (el número crudo: 10 → 10%, 5000 → $5000), `orders.discount_amount` INTEGER (descuento resuelto en pesos). Total NETO = `orders.total − discount_amount`.
+- **`POST /api/orders/:id/deliver`**: acepta `discount_type` + `discount_value` **solo si admin** (el vendedor no descuenta; si entrega, conserva el descuento que dejó el admin). Resuelve `discountAmount` (percent: `round(total·min(val,100)/100)`; fixed: `round(val)`), acotado 0..total. Guarda los 3 campos en el pedido (solo admin). **Contabilidad**: el descuento se registra como un **crédito** "Descuento pedido #id (10%/$5000)" en `account_movements` (no toca el débito bruto original → auditable y reversible); al editar la entrega se revoca el crédito previo (`DELETE ... description LIKE 'Descuento pedido%'`) y se recrea. Funciona sin importar cuándo se creó el débito (creación de pedido admin, facturar presupuesto, o esta misma entrega para pedidos del catálogo). Respuesta incluye `discount_amount` + `net_total`.
+- **Frontend** (`admin.html` + `admin.js`): bloque `#delivery-admin-box` (oculto, se muestra solo si `state.isAdmin`) con selector tipo (Sin descuento / % / $ fijo) + input valor (disabled hasta elegir tipo) + resumen `#delivery-summary`. `openDeliveryModal` hace `GET /api/orders/:id` para traer total + `profitability` (bruto) + descuento ya guardado; `deliveryOrderInfo = {total, revenue_gross, cost_total}`. `deliveryDiscountAmount()` + `renderDeliverySummary()` recalculan en vivo (al cambiar tipo/valor) el neto a cobrar y la rentabilidad neta ("💰 Rentabilidad $X (Y% margen · costo $C)"). El submit manda `discount_type`/`discount_value` solo si admin. CSS `.delivery-summary`/`.ds-line`.
+
+**Verificación**: lógica de descuento y profitability validada aislada en `/tmp` (10% sobre $100.000 → desc $10.000, neto $90.000, rent $30.000 / 33,3%). `node --check` directo no se pudo por **bash mount stale** (veía server.js en 6749 y admin.js en 9305, cortados a mitad de línea; Read confirma ambos íntegros). Regla del proyecto: Read = fuente de verdad. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.

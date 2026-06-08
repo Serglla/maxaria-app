@@ -310,6 +310,17 @@ try { db.exec("ALTER TABLE order_items ADD COLUMN vendedor_cost_unit INTEGER"); 
 try { db.exec("ALTER TABLE orders ADD COLUMN is_unified INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 try { db.exec("ALTER TABLE orders ADD COLUMN unified_parent_id INTEGER REFERENCES orders(id)"); } catch (_) {}
 
+// Migracion: Descuento del pedido (aplicado al entregar, solo admin).
+// - discount_type: 'percent' | 'fixed' | NULL (sin descuento)
+// - discount_value: el numero ingresado (ej: 10 para 10%, o 5000 para $5000)
+// - discount_amount: el descuento resuelto en pesos (lo que efectivamente baja
+//   del total). El total NETO que el cliente debe = orders.total - discount_amount.
+//   En cuenta corriente, el descuento se registra como un credito "Descuento
+//   pedido #id" para no tocar el debito original (auditable y reversible).
+try { db.exec("ALTER TABLE orders ADD COLUMN discount_type TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE orders ADD COLUMN discount_value REAL"); } catch (_) {}
+try { db.exec("ALTER TABLE orders ADD COLUMN discount_amount INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+
 // Migracion: Circuito de pedidos (Pedidos -> Armado -> Entregas -> Entregado).
 // - orders.notified_status: ultimo estado del que se le notifico al cliente.
 //   Sirve para avisarle al ingresar al catalogo cuando su pedido avanza a
@@ -2163,10 +2174,14 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
       "  FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id" +
       "  WHERE oi.order_id = ?"
     ).get(id);
-    const revenue = Number(pr.revenue) || 0;
+    const revenueGross = Number(pr.revenue) || 0;
+    const discount = Number(order.discount_amount) || 0;
+    const revenue = Math.max(0, revenueGross - discount);   // ventas netas (con descuento)
     const costTotal = Number(pr.cost_total) || 0;
     const profit = revenue - costTotal;
     profitability = {
+      revenue_gross: revenueGross,
+      discount: discount,
       revenue: revenue,
       cost_total: costTotal,
       profit: profit,
@@ -3963,6 +3978,24 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     : req.session.userId;
   const notesStr = notes ? String(notes).trim().slice(0, 500) : null;
 
+  // Descuento del pedido — SOLO admin. El vendedor no puede descontar; si entrega,
+  // se conserva el descuento que el admin haya dejado (no se toca). discount_value
+  // es el número crudo (10 → 10% ; 5000 → $5000); discountAmount es en pesos,
+  // acotado entre 0 y el total del pedido.
+  let discountType = null, discountValue = 0, discountAmount = 0;
+  if (isAdmin) {
+    const dt = req.body && req.body.discount_type ? String(req.body.discount_type) : "";
+    const dv = Math.max(0, Number(req.body && req.body.discount_value) || 0);
+    if ((dt === "percent" || dt === "fixed") && dv > 0) {
+      discountType = dt;
+      discountValue = dv;
+      discountAmount = dt === "percent"
+        ? Math.round((Number(order.total) || 0) * Math.min(dv, 100) / 100)
+        : Math.round(dv);
+      discountAmount = Math.max(0, Math.min(discountAmount, Number(order.total) || 0));
+    }
+  }
+
   const existing = db.prepare("SELECT id FROM deliveries WHERE order_id = ?").get(id);
   // Los pedidos individuales absorbidos por un unificado no descuentan stock
   // (lo hace el padre al ser entregado). Misma regla que en PATCH /api/orders/:id.
@@ -3990,6 +4023,13 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     }
     // Marcar el pedido como entregado automaticamente
     db.prepare("UPDATE orders SET status = 'entregado' WHERE id = ?").run(id);
+
+    // Guardar el descuento en el pedido (solo admin; el vendedor no lo toca).
+    if (isAdmin) {
+      db.prepare(
+        "UPDATE orders SET discount_type = ?, discount_value = ?, discount_amount = ? WHERE id = ?"
+      ).run(discountType, discountType ? discountValue : null, discountAmount, id);
+    }
 
     // Si el pedido aun no estaba entregado y no se descuento stock previamente,
     // hacer el descuento de stock + debito en cuenta corriente. Misma logica que
@@ -4039,6 +4079,25 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
       }
     }
 
+    // Descuento del pedido como CRÉDITO en cuenta corriente (baja la deuda).
+    // Se registra aparte del débito original (que queda por el total bruto), así
+    // queda auditable y reversible. Solo el admin lo gestiona; al editar la
+    // entrega se revoca el descuento previo y se recrea con el nuevo valor.
+    if (isAdmin && !order.is_unified) {
+      db.prepare(
+        "DELETE FROM account_movements WHERE order_id = ? AND type = 'credit' AND description LIKE 'Descuento pedido%'"
+      ).run(id);
+      if (discountAmount > 0) {
+        const dlabel = discountType === "percent"
+          ? (discountValue + "%")
+          : ("$" + Math.round(discountValue).toLocaleString("es-AR"));
+        db.prepare(
+          "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+          " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
+        ).run(order.user_id, discountAmount, "Descuento pedido #" + id + " (" + dlabel + ")", id);
+      }
+    }
+
     // Ingresos en las cajas elegidas (saldo corriente). El efectivo cae en
     // cajaEfectivo y la transferencia en cajaTransfer (pueden ser distintas).
     // Revertir los previos de esta entrega y recrear (cubre edición de entrega).
@@ -4057,7 +4116,12 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     }
   })();
 
-  res.json({ ok: true, delivery_id: deliveryId, order_id: id });
+  res.json({
+    ok: true, delivery_id: deliveryId, order_id: id,
+    discount_type: discountType, discount_value: discountType ? discountValue : null,
+    discount_amount: discountAmount,
+    net_total: Math.max(0, (Number(order.total) || 0) - discountAmount),
+  });
 });
 
 // Lista completa de entregas con datos de pago (solo admin)

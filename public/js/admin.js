@@ -264,6 +264,10 @@
     deliveryForm: document.getElementById("delivery-form"),
     deliveryFormMsg: document.getElementById("delivery-form-msg"),
     deliveryTotalPreview: document.getElementById("delivery-total-preview"),
+    deliveryAdminBox: document.getElementById("delivery-admin-box"),
+    deliveryDiscountType: document.getElementById("delivery-discount-type"),
+    deliveryDiscountValue: document.getElementById("delivery-discount-value"),
+    deliverySummary: document.getElementById("delivery-summary"),
 
     // Proveedores
     supSearch: document.getElementById("sup-search"),
@@ -2456,8 +2460,13 @@
     selectEl.value = selectedId ? String(selectedId) : "";
   }
 
+  // Info del pedido para el bloque admin (descuento + rentabilidad). Se llena
+  // al abrir el modal como admin con GET /api/orders/:id.
+  var deliveryOrderInfo = null;
+
   function openDeliveryModal(orderId, orderLabel, existingDelivery) {
     state.deliveryTargetOrderId = orderId;
+    deliveryOrderInfo = null;
     if (els.deliveryModalOrder) els.deliveryModalOrder.textContent = orderLabel;
     if (els.deliveryFormMsg) els.deliveryFormMsg.textContent = "";
     if (els.deliveryForm) {
@@ -2473,10 +2482,71 @@
         updateDeliveryTotalPreview();
       }
     }
+    // Bloque admin: descuento + rentabilidad. Solo para administradores.
+    if (els.deliveryAdminBox) {
+      els.deliveryAdminBox.hidden = !state.isAdmin;
+      if (els.deliveryDiscountType) els.deliveryDiscountType.value = "";
+      if (els.deliveryDiscountValue) { els.deliveryDiscountValue.value = ""; els.deliveryDiscountValue.disabled = true; }
+      if (els.deliverySummary) els.deliverySummary.innerHTML = "";
+      if (state.isAdmin) {
+        // Traer total + rentabilidad (bruta) + descuento existente del pedido.
+        api("/api/orders/" + orderId).then(function(order) {
+          var pf = order.profitability || {};
+          deliveryOrderInfo = {
+            total: Number(order.total) || 0,
+            revenue_gross: Number(pf.revenue_gross != null ? pf.revenue_gross : order.total) || 0,
+            cost_total: Number(pf.cost_total) || 0,
+          };
+          // Pre-cargar descuento ya guardado en el pedido (si lo había).
+          if (order.discount_type && els.deliveryDiscountType) {
+            els.deliveryDiscountType.value = order.discount_type;
+            if (els.deliveryDiscountValue) {
+              els.deliveryDiscountValue.disabled = false;
+              els.deliveryDiscountValue.value = order.discount_value != null ? order.discount_value : "";
+            }
+          }
+          renderDeliverySummary();
+        }).catch(function() {
+          if (els.deliverySummary) els.deliverySummary.innerHTML =
+            '<span class="muted small">No se pudo cargar la rentabilidad.</span>';
+        });
+      }
+    }
     if (els.deliveryModal) els.deliveryModal.hidden = false;
     setTimeout(() => {
       if (els.deliveryForm) els.deliveryForm.querySelector('[name="delivered_to"]').focus();
     }, 50);
+  }
+
+  // Calcula el descuento en pesos según el tipo/valor elegidos, acotado al total.
+  function deliveryDiscountAmount() {
+    if (!deliveryOrderInfo || !els.deliveryDiscountType) return 0;
+    var type = els.deliveryDiscountType.value;
+    var val = Math.max(0, Number(els.deliveryDiscountValue && els.deliveryDiscountValue.value) || 0);
+    if (!type || val <= 0) return 0;
+    var total = deliveryOrderInfo.total;
+    var amt = type === "percent" ? Math.round(total * Math.min(val, 100) / 100) : Math.round(val);
+    return Math.max(0, Math.min(amt, total));
+  }
+
+  // Resumen admin: total bruto, descuento, neto a cobrar, costo y rentabilidad.
+  function renderDeliverySummary() {
+    if (!els.deliverySummary || !deliveryOrderInfo) return;
+    var total = deliveryOrderInfo.total;
+    var disc = deliveryDiscountAmount();
+    var neto = Math.max(0, total - disc);
+    var cost = deliveryOrderInfo.cost_total;
+    var rent = neto - cost;
+    var margin = neto > 0 ? (rent / neto) * 100 : 0;
+    var rentColor = rent > 0 ? "#047857" : (rent < 0 ? "#b91c1c" : "#6b7280");
+    var line1 = disc > 0
+      ? "Total " + fmtPrice(total) + " − Descuento " + fmtPrice(disc) + " = <strong>" + fmtPrice(neto) + "</strong> neto a cobrar"
+      : "Total a cobrar: <strong>" + fmtPrice(total) + "</strong>";
+    els.deliverySummary.innerHTML =
+      '<div class="ds-line">' + line1 + "</div>" +
+      '<div class="ds-line">💰 Rentabilidad: <strong style="color:' + rentColor + '">' + fmtPrice(rent) +
+        '</strong> <span class="muted">(' + margin.toLocaleString("es-AR", { maximumFractionDigits: 1 }) +
+        '% margen · costo ' + fmtPrice(cost) + ')</span></div>';
   }
 
   function updateDeliveryTotalPreview() {
@@ -2485,7 +2555,7 @@
     const tr = Math.max(0, Number(els.deliveryForm.querySelector('[name="transferencia_amount"]').value) || 0);
     const total = ef + tr;
     els.deliveryTotalPreview.textContent = total > 0
-      ? "Total a cobrar: " + fmtPrice(total) + (ef > 0 && tr > 0 ? " (" + fmtPrice(ef) + " efectivo + " + fmtPrice(tr) + " transferencia)" : "")
+      ? "Cobrado: " + fmtPrice(total) + (ef > 0 && tr > 0 ? " (" + fmtPrice(ef) + " efectivo + " + fmtPrice(tr) + " transferencia)" : "")
       : "";
   }
 
@@ -2494,7 +2564,20 @@
       if (e.target.name === "efectivo_amount" || e.target.name === "transferencia_amount") {
         updateDeliveryTotalPreview();
       }
+      if (e.target.name === "discount_value") renderDeliverySummary();
     });
+    // Cambio de tipo de descuento: habilita/limpia el valor y recalcula el resumen.
+    if (els.deliveryDiscountType) {
+      els.deliveryDiscountType.addEventListener("change", function() {
+        var on = !!els.deliveryDiscountType.value;
+        if (els.deliveryDiscountValue) {
+          els.deliveryDiscountValue.disabled = !on;
+          if (!on) els.deliveryDiscountValue.value = "";
+          else els.deliveryDiscountValue.focus();
+        }
+        renderDeliverySummary();
+      });
+    }
 
     els.deliveryForm.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -2508,6 +2591,12 @@
         caja_transfer_id: fd.get("caja_transfer_id") || null,
         notes: fd.get("notes"),
       };
+      // Descuento (solo admin; el server lo ignora para vendedores). Si no hay
+      // tipo elegido, se manda vacío → el server lo interpreta como sin descuento.
+      if (state.isAdmin && els.deliveryDiscountType) {
+        body.discount_type = els.deliveryDiscountType.value || "";
+        body.discount_value = Number(els.deliveryDiscountValue && els.deliveryDiscountValue.value) || 0;
+      }
       const btn = document.getElementById("delivery-submit-btn");
       if (btn) btn.disabled = true;
       els.deliveryFormMsg.textContent = "Guardando…";
@@ -4162,12 +4251,17 @@
       var profit = Number(pf.profit) || 0;
       var margin = Number(pf.margin_pct) || 0;
       var color = profit > 0 ? "#047857" : (profit < 0 ? "#b91c1c" : "#6b7280");
+      var discount = Number(pf.discount) || 0;
+      var detailTxt = discount > 0
+        ? "Ventas " + fmtPrice(pf.revenue_gross || 0) + " − Desc. " + fmtPrice(discount) +
+          " = " + fmtPrice(pf.revenue || 0) + " · Costo " + fmtPrice(pf.cost_total || 0)
+        : "Ventas " + fmtPrice(pf.revenue || 0) + " · Costo " + fmtPrice(pf.cost_total || 0);
       profitHtml =
-        '<div class="order-profit" title="Rentabilidad = ventas − costo actual de los productos">' +
+        '<div class="order-profit" title="Rentabilidad = ventas netas (con descuento) − costo actual de los productos">' +
           '<span class="op-lbl">💰 Rentabilidad</span>' +
           '<span class="op-main" style="color:' + color + '">' + fmtPrice(profit) +
             ' <span class="op-margin">(' + margin.toLocaleString("es-AR", { maximumFractionDigits: 1 }) + '% margen)</span></span>' +
-          '<span class="op-detail">Ventas ' + fmtPrice(pf.revenue || 0) + ' · Costo ' + fmtPrice(pf.cost_total || 0) + '</span>' +
+          '<span class="op-detail">' + detailTxt + '</span>' +
         "</div>";
     }
 
