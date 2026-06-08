@@ -4131,7 +4131,12 @@
     };
     var statusLabel = statusLabels[o.status] || o.status || "";
     var clientLabel = escapeHtml(o.full_name || o.username || "—");
-    var dateLabel = formatDate(o.created_at);
+    // En pedidos entregados mostramos la fecha de ENTREGA (es la que define la
+    // venta y por la que filtra la pestaña Ventas), no la de creación, para que
+    // no confunda ("se creó el 01/06 pero se entregó/vendió esta semana").
+    var dateLabel = (o.status === "entregado" && o.delivered_at)
+      ? "Entregado " + formatDate(o.delivered_at)
+      : formatDate(o.created_at);
     var totalLabel = fmtPrice(o.total || 0);
 
     var vendBadge = "";
@@ -4709,21 +4714,23 @@
                    quantity: it.quantity, unit_price: it.unit_price };
         }) }),
       });
-      // Refrescar el objeto del pedido con los items/total nuevos.
-      order.items = resp.items || [];
-      order.total = resp.total;
-      var o = (state.orders || []).find(function(x) { return x.id === order.id; });
-      if (o) o.total = resp.total;
       // Stock pudo cambiar: invalidar cache de productos del picker de Compras.
       state.allProductsLoaded = false;
       refreshProductsCache(); // y refrescar la tabla de Productos
       showToast("Pedido #" + order.id + " actualizado");
+      // Re-fetchear el pedido completo: el PUT solo devuelve items/total, NO la
+      // rentabilidad (Ventas/Costo/margen) ni el saldo, que el server recalcula
+      // en GET /api/orders/:id. Sin esto, la caja de Rentabilidad quedaba con los
+      // valores viejos de antes de editar (bug reportado).
+      var fresh = await api("/api/orders/" + order.id);
+      var o = (state.orders || []).find(function(x) { return x.id === order.id; });
+      if (o) o.total = fresh.total;
       // Volver a la vista de detalle (solo lectura) ya con los datos nuevos.
-      renderOrderDetail(detailEl, order);
-      wireOrderDetail(detailEl, order);
+      renderOrderDetail(detailEl, fresh);
+      wireOrderDetail(detailEl, fresh);
       // Actualizar el total mostrado en la tarjeta y mantener las vistas en sync.
       var card = detailEl.closest(".order-card");
-      if (card) { var tot = card.querySelector(".order-total"); if (tot) tot.textContent = fmtPrice(resp.total); }
+      if (card) { var tot = card.querySelector(".order-total"); if (tot) tot.textContent = fmtPrice(fresh.total); }
     } catch (err) {
       showToast("Error: " + err.message, "error");
       saveBtn.disabled = false;
