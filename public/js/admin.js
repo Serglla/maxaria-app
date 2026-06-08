@@ -4471,7 +4471,7 @@
       "thead tr{background:#1e3a5f}" +
       "thead th{color:#fff;font-size:11px;font-weight:700;padding:7px 8px;text-align:left;letter-spacing:.03em;border-right:1px solid rgba(255,255,255,0.25)}" +
       "thead th:last-child{border-right:none}" +
-      "tbody tr{border-bottom:1px solid #e5e7eb}" +
+      "tbody tr{border-bottom:1px solid #1e3a5f}" +
       "tbody tr:nth-child(even){background:#f8fafc}" +
       "tbody td{padding:6px 8px;font-size:12.5px;vertical-align:middle;border-right:1px solid #1e3a5f}" +
       "tbody td:last-child{border-right:none}" +
@@ -8164,7 +8164,7 @@
         "<title>Presupuesto " + num + "</title>" +
         "<style>body{font-family:sans-serif;font-size:13px;margin:24px}" +
         "h1{font-size:18px}table{width:100%;border-collapse:collapse;margin-top:12px}" +
-        "th,td{padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:left}" +
+        "th,td{padding:6px 8px;border-bottom:1px solid #1e3a5f;text-align:left}" +
         "th{background:#f1f5f9;font-size:12px;color:#6b7280}" +
         ".total-box{margin-top:12px;text-align:right;font-size:14px}" +
         ".grand-total{font-size:18px;font-weight:700;color:#d97706}</style>" +

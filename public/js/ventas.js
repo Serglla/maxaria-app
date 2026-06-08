@@ -868,7 +868,7 @@
       "thead tr{background:#1e3a5f}" +
       "thead th{color:#fff;font-size:11px;font-weight:700;padding:7px 8px;text-align:left;letter-spacing:.03em;border-right:1px solid rgba(255,255,255,0.25)}" +
       "thead th:last-child{border-right:none}" +
-      "tbody tr{border-bottom:1px solid #e5e7eb}" +
+      "tbody tr{border-bottom:1px solid #1e3a5f}" +
       "tbody tr:nth-child(even){background:#f8fafc}" +
       "tbody td{padding:6px 8px;font-size:12.5px;vertical-align:middle;border-right:1px solid #1e3a5f}" +
       "tbody td:last-child{border-right:none}" +

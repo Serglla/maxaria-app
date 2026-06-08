@@ -5480,6 +5480,8 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
     [colX.prod, colX.cant, colX.price, colX.sub].forEach((x) => {
       doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
     });
+    // separador horizontal azul (marca el renglón)
+    doc.moveTo(MX, cy + ROW_H).lineTo(MX + MW, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
     cy += ROW_H;
   });
 
@@ -5590,6 +5592,8 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
     [colX.cod, colX.prod, colX.cant].forEach((x) => {
       doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
     });
+    // separador horizontal azul (marca el renglón)
+    doc.moveTo(MX, cy + ROW_H).lineTo(MX + MW, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
     cy += ROW_H;
   });
 
