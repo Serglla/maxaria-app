@@ -2150,10 +2150,34 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
     "       COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END),0) AS amount_paid" +
     "  FROM account_movements WHERE order_id = ?"
   ).get(id);
+  // Rentabilidad del pedido (SOLO admin): margen bruto contra el costo ACTUAL del
+  // producto (products.cost). revenue = Σ unit_price·qty ; cost = Σ cost·qty ;
+  // profit = revenue − cost ; margin% = profit/revenue·100. Items cuyo producto
+  // ya no existe o tiene costo NULL cuentan costo 0 (la ganancia sale inflada;
+  // conviene tener los costos cargados).
+  let profitability = null;
+  if (isAdmin) {
+    const pr = db.prepare(
+      "SELECT COALESCE(SUM(oi.unit_price * oi.quantity),0) AS revenue," +
+      "       COALESCE(SUM(COALESCE(p.cost,0) * oi.quantity),0) AS cost_total" +
+      "  FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id" +
+      "  WHERE oi.order_id = ?"
+    ).get(id);
+    const revenue = Number(pr.revenue) || 0;
+    const costTotal = Number(pr.cost_total) || 0;
+    const profit = revenue - costTotal;
+    profitability = {
+      revenue: revenue,
+      cost_total: costTotal,
+      profit: profit,
+      margin_pct: revenue > 0 ? round2((profit / revenue) * 100) : 0,
+    };
+  }
   res.json(Object.assign({}, order, {
     items: items,
     balance_due: pay.balance_due,
     amount_paid: pay.amount_paid,
+    profitability: profitability,
   }));
 });
 

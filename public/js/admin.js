@@ -4154,6 +4154,23 @@
       "</div>";
     var itemsHtml = '<div class="order-items-box">' + itemsTable + actionsRow + "</div>";
 
+    // Rentabilidad del pedido — SOLO admin. Viene calculada del server
+    // (order.profitability) usando el costo actual de cada producto.
+    var profitHtml = "";
+    if (state.isAdmin && order.profitability) {
+      var pf = order.profitability;
+      var profit = Number(pf.profit) || 0;
+      var margin = Number(pf.margin_pct) || 0;
+      var color = profit > 0 ? "#047857" : (profit < 0 ? "#b91c1c" : "#6b7280");
+      profitHtml =
+        '<div class="order-profit" title="Rentabilidad = ventas − costo actual de los productos">' +
+          '<span class="op-lbl">💰 Rentabilidad</span>' +
+          '<span class="op-main" style="color:' + color + '">' + fmtPrice(profit) +
+            ' <span class="op-margin">(' + margin.toLocaleString("es-AR", { maximumFractionDigits: 1 }) + '% margen)</span></span>' +
+          '<span class="op-detail">Ventas ' + fmtPrice(pf.revenue || 0) + ' · Costo ' + fmtPrice(pf.cost_total || 0) + '</span>' +
+        "</div>";
+    }
+
     var statuses = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
     var statusNames = { pendiente: "Pendiente", enviado: "Enviado", preparando: "Preparando", listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado" };
     var statusOpts = statuses.map(function(s) {
@@ -4195,7 +4212,7 @@
 
     detailEl.innerHTML =
       '<div class="order-detail-meta">' + statusRow + vendRow + "</div>" +
-      itemsHtml + notesHtml + delivInfo + budgetRef;
+      itemsHtml + profitHtml + notesHtml + delivInfo + budgetRef;
   }
 
   function wireOrderDetail(detailEl, order) {
