@@ -6410,10 +6410,10 @@ app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
     " FROM orders o" +
     " JOIN users u ON u.id = o.user_id" +
     " LEFT JOIN (" +
-    "   SELECT order_id," +
-    "     SUM(COALESCE(vendedor_cost_unit, 0) * quantity) AS cost_total," +
-    "     SUM((unit_price - COALESCE(vendedor_cost_unit, 0)) * quantity) AS earning_total" +
-    "   FROM order_items GROUP BY order_id" +
+    "   SELECT oi.order_id," +
+    "     SUM(COALESCE(oi.vendedor_cost_unit, p.cost, 0) * oi.quantity) AS cost_total," +
+    "     SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS earning_total" +
+    "   FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id GROUP BY oi.order_id" +
     " ) oi_agg ON oi_agg.order_id = o.id" +
     wStr
   ).get(...params);
@@ -6441,11 +6441,11 @@ app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
     " JOIN users u ON u.id = o.user_id" +
     " LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
     " LEFT JOIN (" +
-    "   SELECT order_id," +
-    "     SUM(COALESCE(vendedor_cost_unit, 0) * quantity) AS cost_total," +
-    "     SUM((unit_price - COALESCE(vendedor_cost_unit, 0)) * quantity) AS earning_total," +
-    "     SUM(quantity) AS items_count" +
-    "   FROM order_items GROUP BY order_id" +
+    "   SELECT oi.order_id," +
+    "     SUM(COALESCE(oi.vendedor_cost_unit, p.cost, 0) * oi.quantity) AS cost_total," +
+    "     SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS earning_total," +
+    "     SUM(oi.quantity) AS items_count" +
+    "   FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id GROUP BY oi.order_id" +
     " ) oi_agg ON oi_agg.order_id = o.id" +
     wStr +
     " ORDER BY o.id DESC LIMIT 500"
