@@ -944,6 +944,12 @@ button { font: inherit; cursor: pointer; }
   color: #10b981;
 }
 .order-delivery-info .odi-sep { color: #6ee7b7; }
+.order-delivery-info .odi-note {
+  flex-basis: 100%;
+  margin-top: 2px;
+  font-style: italic;
+  color: #047857;
+}
 .order-budget-ref {
   margin-top: 8px;
   font-size: 11px;

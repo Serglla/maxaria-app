@@ -2474,6 +2474,18 @@
       els.deliveryForm.reset();
       fillCajaSelect(document.getElementById("delivery-caja-efectivo"), existingDelivery && existingDelivery.caja_id);
       fillCajaSelect(document.getElementById("delivery-caja-transfer"), existingDelivery && existingDelivery.caja_transfer_id);
+      // Fecha de la entrega: si ya existe, su fecha (parte YYYY-MM-DD); si es
+      // nueva, hoy por default. El input date espera YYYY-MM-DD.
+      const dateInput = els.deliveryForm.querySelector('[name="delivered_at"]');
+      if (dateInput) {
+        let dval = "";
+        if (existingDelivery && existingDelivery.delivered_at) {
+          dval = String(existingDelivery.delivered_at).slice(0, 10);
+        } else {
+          dval = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD local
+        }
+        dateInput.value = dval;
+      }
       if (existingDelivery) {
         const f = els.deliveryForm;
         f.querySelector('[name="delivered_to"]').value = existingDelivery.delivered_to || "";
@@ -2591,6 +2603,7 @@
         caja_id: fd.get("caja_id") || null,
         caja_transfer_id: fd.get("caja_transfer_id") || null,
         notes: fd.get("notes"),
+        delivered_at: fd.get("delivered_at") || null,
       };
       // Descuento (solo admin; el server lo ignora para vendedores). Si no hay
       // tipo elegido, se manda vacío → el server lo interpreta como sin descuento.
@@ -4293,13 +4306,19 @@
 
     var delivInfo = "";
     if (order.delivery_id) {
+      var delivDate = order.delivered_at ? formatDate(order.delivered_at) : "";
+      var delivNote = order.delivery_notes
+        ? '<div class="odi-note">📝 ' + escapeHtml(order.delivery_notes) + "</div>"
+        : "";
       delivInfo = '<div class="order-delivery-info">' +
         '<span class="odi-label">Entrega</span>' +
         '<span><strong>' + escapeHtml(order.delivered_to || "—") + "</strong></span>" +
+        (delivDate ? '<span class="odi-sep">·</span><span>' + delivDate + "</span>" : "") +
         '<span class="odi-sep">·</span>' +
         '<span>Efectivo: <strong>' + fmtPrice(order.efectivo_amount || 0) + "</strong></span>" +
         '<span class="odi-sep">·</span>' +
         '<span>Transfer.: <strong>' + fmtPrice(order.transferencia_amount || 0) + "</strong></span>" +
+        delivNote +
       "</div>";
     }
 
@@ -4996,7 +5015,8 @@
               transferencia_amount: orderObj.transferencia_amount || 0,
               caja_id: orderObj.caja_id || null,
               caja_transfer_id: orderObj.caja_transfer_id || null,
-              notes: "",
+              notes: orderObj.delivery_notes || "",
+              delivered_at: orderObj.delivered_at || "",
             };
           }
           const totalLabel = orderObj ? fmtPrice(orderObj.total) : "";

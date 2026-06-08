@@ -2037,7 +2037,7 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "       u.username, u.full_name," +
       "       o.assigned_vendedor_id," +
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
-      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id" +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id, d.notes AS delivery_notes" +
       "  FROM orders o" +
       "  JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
@@ -2128,7 +2128,7 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
       "SELECT o.*, u.username, u.full_name, u.level AS client_level," +
       "       u.price_list_id AS client_price_list_id," +
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
-      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id" +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id, d.notes AS delivery_notes" +
       "  FROM orders o JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
       "  LEFT JOIN deliveries d ON d.order_id = o.id" +
@@ -3978,6 +3978,14 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     : req.session.userId;
   const notesStr = notes ? String(notes).trim().slice(0, 500) : null;
 
+  // Fecha de la entrega (editable). El front manda YYYY-MM-DD; se guarda a las
+  // 12:00 para que las comparaciones por date() de reportes caigan en ese día.
+  // Si no se manda, en INSERT usa el default (datetime('now')) y en UPDATE NO se
+  // toca la fecha existente (antes se forzaba a 'now', lo que pisaba la fecha
+  // real cuando solo se editaba la nota — bug reportado).
+  const rawDate = req.body && req.body.delivered_at ? String(req.body.delivered_at).trim() : "";
+  const deliveredAtSql = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate + " 12:00:00" : null;
+
   // Descuento del pedido — SOLO admin. El vendedor no puede descontar; si entrega,
   // se conserva el descuento que el admin haya dejado (no se toca). discount_value
   // es el número crudo (10 → 10% ; 5000 → $5000); discountAmount es en pesos,
@@ -4009,11 +4017,25 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
   let deliveryId;
   db.transaction(() => {
     if (existing) {
-      db.prepare(
-        "UPDATE deliveries SET delivered_to = ?, efectivo_amount = ?, transferencia_amount = ?, notes = ?," +
-        "  caja_id = ?, caja_transfer_id = ?, delivered_at = datetime('now') WHERE order_id = ?"
-      ).run(deliveredTo, efectivo, transferencia, notesStr, cajaId, cajaTransferId, id);
+      if (deliveredAtSql) {
+        db.prepare(
+          "UPDATE deliveries SET delivered_to = ?, efectivo_amount = ?, transferencia_amount = ?, notes = ?," +
+          "  caja_id = ?, caja_transfer_id = ?, delivered_at = ? WHERE order_id = ?"
+        ).run(deliveredTo, efectivo, transferencia, notesStr, cajaId, cajaTransferId, deliveredAtSql, id);
+      } else {
+        // Sin fecha nueva: se conserva la delivered_at existente (no se pisa).
+        db.prepare(
+          "UPDATE deliveries SET delivered_to = ?, efectivo_amount = ?, transferencia_amount = ?, notes = ?," +
+          "  caja_id = ?, caja_transfer_id = ? WHERE order_id = ?"
+        ).run(deliveredTo, efectivo, transferencia, notesStr, cajaId, cajaTransferId, id);
+      }
       deliveryId = existing.id;
+    } else if (deliveredAtSql) {
+      const r = db.prepare(
+        "INSERT INTO deliveries (order_id, vendedor_id, delivered_to, efectivo_amount, transferencia_amount, notes, caja_id, caja_transfer_id, delivered_at)" +
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(id, vendedorId, deliveredTo, efectivo, transferencia, notesStr, cajaId, cajaTransferId, deliveredAtSql);
+      deliveryId = r.lastInsertRowid;
     } else {
       const r = db.prepare(
         "INSERT INTO deliveries (order_id, vendedor_id, delivered_to, efectivo_amount, transferencia_amount, notes, caja_id, caja_transfer_id)" +
