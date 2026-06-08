@@ -74,6 +74,7 @@
     ventasList: document.getElementById("ventas-list"),
     ventasSummary: document.getElementById("ventas-summary"),
     ventasSearch: document.getElementById("ventas-search"),
+    ventasRange: document.getElementById("ventas-range"),
     ventasFrom: document.getElementById("ventas-from"),
     ventasTo: document.getElementById("ventas-to"),
     ventasClearDates: document.getElementById("ventas-clear-dates"),
@@ -5083,8 +5084,35 @@
 
   // Trae TODOS los pedidos entregados (endpoint dedicado, sin el tope de 200 de
   // /api/orders) y renderiza la pestaña Ventas.
+  // Setea los inputs Desde/Hasta según el período elegido en el selector.
+  // "week" = lunes de la semana actual hasta hoy; "month" = día 1 del mes a hoy;
+  // "all" = sin fechas; "custom" = no toca los inputs (los maneja el usuario).
+  function setVentasRangeDates(range) {
+    if (!els.ventasFrom || !els.ventasTo) return;
+    if (range === "custom") return;
+    if (range === "all") { els.ventasFrom.value = ""; els.ventasTo.value = ""; return; }
+    const ymd = (d) => d.getFullYear() + "-" +
+      String(d.getMonth() + 1).padStart(2, "0") + "-" +
+      String(d.getDate()).padStart(2, "0");
+    const now = new Date();
+    let from;
+    if (range === "week") {
+      const dow = (now.getDay() + 6) % 7; // lunes = 0
+      from = new Date(now); from.setDate(now.getDate() - dow);
+    } else { // month
+      from = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    els.ventasFrom.value = ymd(from);
+    els.ventasTo.value = ymd(now);
+  }
+
   async function loadVentasOrders() {
     if (!els.ventasList) return;
+    // Default al abrir por primera vez: solo la semana actual.
+    if (!state.ventasRangeInit) {
+      state.ventasRangeInit = true;
+      if (els.ventasRange) { els.ventasRange.value = "week"; setVentasRangeDates("week"); }
+    }
     const qs = [];
     if (els.ventasFrom && els.ventasFrom.value) qs.push("from=" + encodeURIComponent(els.ventasFrom.value));
     if (els.ventasTo && els.ventasTo.value) qs.push("to=" + encodeURIComponent(els.ventasTo.value));
@@ -9291,9 +9319,25 @@
 
   // ─────── Buscador de la pestaña Ventas (pedidos entregados) ───────
   if (els.ventasSearch) els.ventasSearch.addEventListener("input", debounce(renderVentasOrders, 150));
-  if (els.ventasFrom) els.ventasFrom.addEventListener("change", loadVentasOrders);
-  if (els.ventasTo) els.ventasTo.addEventListener("change", loadVentasOrders);
+  if (els.ventasRange) els.ventasRange.addEventListener("change", () => {
+    state.ventasRangeInit = true; // ya no pisar con el default
+    setVentasRangeDates(els.ventasRange.value);
+    loadVentasOrders();
+  });
+  // Si el usuario toca las fechas a mano, el período pasa a "Personalizado".
+  if (els.ventasFrom) els.ventasFrom.addEventListener("change", () => {
+    if (els.ventasRange) els.ventasRange.value = "custom";
+    state.ventasRangeInit = true;
+    loadVentasOrders();
+  });
+  if (els.ventasTo) els.ventasTo.addEventListener("change", () => {
+    if (els.ventasRange) els.ventasRange.value = "custom";
+    state.ventasRangeInit = true;
+    loadVentasOrders();
+  });
   if (els.ventasClearDates) els.ventasClearDates.addEventListener("click", () => {
+    if (els.ventasRange) els.ventasRange.value = "all";
+    state.ventasRangeInit = true;
     if (els.ventasFrom) els.ventasFrom.value = "";
     if (els.ventasTo) els.ventasTo.value = "";
     loadVentasOrders();
