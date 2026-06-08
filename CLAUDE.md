@@ -1063,6 +1063,41 @@ Dos features encadenadas. Decisiones tomadas con Sergio (AskUserQuestion): renta
 
 **Verificación**: lógica de descuento y profitability validada aislada en `/tmp` (10% sobre $100.000 → desc $10.000, neto $90.000, rent $30.000 / 33,3%). `node --check` directo no se pudo por **bash mount stale** (veía server.js en 6749 y admin.js en 9305, cortados a mitad de línea; Read confirma ambos íntegros). Regla del proyecto: Read = fuente de verdad. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
 
+### UI tarjetas de pedido + bug 100% en Reportes + sidebar + período en Ventas + fixes de caché stale (8 junio 2026, sesión tarde — `admin.js?v=20260608i`, `styles.css?v=20260608f`)
+
+Sesión de pulido + bugfixes encadenados, todos verificados con Read (el `node --check` por bash mount volvió a estar **stale**: reportaba truncación a mitad de línea en server.js ~6747 y admin.js ~9310, ambos íntegros según Read). En disco local, sin `git add/commit/push` ni deploy.
+
+**1. Tarjetas de pedido: el CLIENTE pasa a ser el título destacado (Pedidos, Armado, Entregas, Ventas)**
+Sergio: el nombre del cliente no destacaba; pidió intercambiar prominencia con "Pedido #N".
+- `admin.js` `orderCardHtml`: el `<h4>` ahora arranca con el nombre del cliente (clase `order-client`) seguido del badge de estado + vend/cobro; el `<span class="meta">` pasó a "Pedido #N · fecha" (antes era al revés). Una sola función → cubre las 4 vistas (comparten `orderCardHtml`).
+- `styles.css`: regla nueva `.order-head h4.order-client` (18px, peso 800, color `#111827`, letter-spacing -0.2px) + `.order-head .meta` con peso 600.
+
+**2. Bug "100% de margen / ganancia = ventas" en Reportes (era bug real)**
+- `GET /api/admin/reports/sales` calculaba el costo como `COALESCE(vendedor_cost_unit, 0)`: para pedidos sin snapshot (clientes sin lista personalizada = la mayoría) el costo daba **0** → ganancia = venta completa → margen 100%. Los otros endpoints (detalle de pedido, actividad) ya usaban `COALESCE(vendedor_cost_unit, p.cost, 0)`.
+- Fix: las **dos** subqueries (KPIs del período + lista de pedidos) ahora hacen `FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id` y usan `COALESCE(oi.vendedor_cost_unit, p.cost, 0)`. Cae al **costo actual** del producto. **Ojo dato**: si un producto no tiene `cost` cargado, su margen sigue saliendo inflado (falta de dato, no bug).
+
+**3. Reorden del sidebar del admin**
+Sergio: tras Operaciones y Personas debería ir Compras, y Reportes al final. Nuevo orden de grupos en `admin.html`: General → Catálogo → Operaciones → Personas → **Compras** → Finanzas → **Reportes** → Sistema. (Se movió el grupo "Reportes" que estaba entre Personas y Compras, a después de Finanzas. "Sistema"/Configuración queda último por ser ajustes.)
+
+**4. Pestaña Ventas: selector de período (default = semana actual)**
+- `admin.html`: `<select id="ventas-range">` con Esta semana / Este mes / Todas / Personalizado, antes del Desde/Hasta.
+- `admin.js`: `els.ventasRange`; helper `setVentasRangeDates(range)` (week = lunes de la semana actual a hoy; month = día 1 a hoy; all = limpia fechas; custom = no toca). `loadVentasOrders` aplica el default **week** la primera vez (`state.ventasRangeInit`). Cambiar el selector setea las fechas y recarga; tocar las fechas a mano pasa el selector a "custom"; "Limpiar" lo pone en "all". Por defecto al abrir Ventas se ven solo las entregas de la semana actual.
+
+**5. 🔴 Caché stale — el cobro en entrega no impactaba en Cuentas (bug reportado por Sergio)**
+- Síntoma: registrar un cobro en una entrega y entrar a Cuentas no mostraba el movimiento hasta apretar Actualizar.
+- Causa: el dispatcher de tabs hacía `if (tab === "cuentas" && !state.accountsLoaded) loadAccounts()` → cache-once. El flujo de entrega (modal `/deliver`) invalida `ordersLoaded`/`entregasLoaded` pero **no** `accountsLoaded`.
+- Fix: `if (tab === "cuentas") { state.accountsLoaded = false; loadAccounts(); }` → siempre recarga al entrar.
+
+**6. 🔴 Mismo patrón, peor: circuito de pedidos cacheado (revisión pedida por Sergio)**
+- Las 3 vistas del circuito (Pedidos, Armado, cola de Entregas) leían de `state.orders` cacheado: `loadArmado`/`loadEntregasQueue` solo hacían fetch `if (!state.ordersLoaded)`, y Pedidos era cache-once. El cache solo se invalidaba al entregar/avanzar. → **Un pedido nuevo entrando del catálogo (cliente/vendedor) o un presupuesto facturado NO aparecía en Pedidos/Armado/Entregas hasta refresh manual.**
+- Fix en el dispatcher: entrar a `pedidos`, `armado` o `entregas` ahora hace `state.ordersLoaded = false` antes de cargar (entregas también `entregasLoaded = false`). Re-consulta `state.orders` cada vez.
+- **Mapa de caché tras la revisión**: recargan siempre → Dashboard, Reportes, Pedidos, Armado, Entregas, Ventas, Cuentas, Ctacte Prov, Caja, Gastos, Cotizaciones. Cachean (se editan en su propia pestaña, OK) → Usuarios, Vendedores, Listas, Config, Proveedores, Compras, Pagos. Pendiente menor no tocado: stats de Vendedores son cache-once (números de resumen, impacto bajo).
+
+**7. Stock de Productos quedaba viejo tras ciertas acciones**
+- Ya existía `refreshProductsCache()` (refetch `/api/admin/products` + `populateCategoryFilter` + `applyFilters`), llamado al cancelar/eliminar pedido, cambiar estado a entregado/cancelado por el select, y editar items.
+- Huecos cerrados: (a) el **modal "Registrar entrega"** (`POST /deliver`) descuenta stock pero no lo llamaba → agregado `refreshProductsCache()` tras recargar orders/entregas. (b) el **guardado de compra** refetcheaba `state.products` pero no re-renderizaba la tabla → reemplazado por `state.allProductsLoaded = false; refreshProductsCache()`.
+- Ajuste de stock ya actualizaba el producto local + `applyFilters`, OK.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.

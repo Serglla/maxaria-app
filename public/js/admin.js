@@ -985,7 +985,7 @@
       els.panels.forEach((p) => { p.hidden = p.id !== "tab-" + tab; });
       if (tab === "dashboard") { loadDashboard(); loadDebtHistory(); }
       if (tab === "reportes") loadReportes();
-      if (tab === "pedidos" && !state.ordersLoaded) loadOrders();
+      if (tab === "pedidos") { state.ordersLoaded = false; loadOrders(); } // siempre recargar: pueden entrar pedidos nuevos del catálogo
       if (tab === "config" && !state.settingsLoaded) loadSettings();
       if (tab === "usuarios") {
         if (!state.usersLoaded) loadUsers();
@@ -1003,17 +1003,17 @@
         if (!state.priceListsLoaded) loadPriceLists();
         else renderPriceLists();
       }
-      if (tab === "armado") loadArmado(); // siempre recargar (refleja avances)
+      if (tab === "armado") { state.ordersLoaded = false; loadArmado(); } // recargar: refleja pedidos nuevos y avances
       if (tab === "entregas") {
-        if (!state.entregasLoaded) loadEntregas();
-        loadEntregasQueue(); // siempre recargar la cola "para entregar"
+        state.entregasLoaded = false; loadEntregas();
+        state.ordersLoaded = false; loadEntregasQueue(); // recargar la cola "para entregar"
       }
       if (tab === "proveedores" && !state.suppliersLoaded) loadSuppliers();
       if (tab === "cotizaciones") loadCotizaciones();
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
-      if (tab === "cuentas" && !state.accountsLoaded) loadAccounts();
+      if (tab === "cuentas") { state.accountsLoaded = false; loadAccounts(); } // siempre recargar (refleja entregas/cobros nuevos)
       if (tab === "ctacte-prov") loadSupplierAccounts(); // siempre recargar (cambia con compras/pagos)
       if (tab === "caja") loadCaja();
       if (tab === "administradores") loadAdmins();
@@ -2617,6 +2617,7 @@
         await loadOrders();      // refresca state.orders + Pedidos
         refreshOrderViews();     // actualiza Armado y la cola de Entregas
         loadEntregas();          // recarga el historial de entregas
+        refreshProductsCache();  // la entrega descuenta stock → refrescar tabla de Productos
       } catch (err) {
         els.deliveryFormMsg.textContent = "Error: " + err.message;
         els.deliveryFormMsg.className = "config-msg err";
@@ -6013,8 +6014,9 @@
         if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = true;
         showToast(isEditing ? "Compra actualizada" : "Compra registrada");
         resetPurchaseModal();
-        // Refrescar productos por cambio de stock
-        try { state.products = await api("/api/admin/products"); state.allProductsLoaded = false; } catch (_) {}
+        // Refrescar productos por cambio de stock (refetch + re-render de la tabla)
+        state.allProductsLoaded = false;
+        refreshProductsCache();
       } catch (err) {
         if (els.purchaseCreateMsg) { els.purchaseCreateMsg.textContent = err.message; els.purchaseCreateMsg.className = "config-msg err"; }
       } finally {
