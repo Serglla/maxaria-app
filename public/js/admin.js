@@ -350,6 +350,7 @@
     newOrderBtn:    document.getElementById("new-order-btn"),
     newOrderModal:  document.getElementById("new-order-modal"),
     noClient:       document.getElementById("no-client"),
+    noPriceList:    document.getElementById("no-price-list"),
     noStatus:       document.getElementById("no-status"),
     noAddBtn:       document.getElementById("no-add-btn"),
     noItemsTbody:   document.getElementById("no-items-tbody"),
@@ -3616,8 +3617,94 @@
   }
   els.importClose.addEventListener("click", () => { els.importModal.hidden = true; });
 
+  // ---------- Listas de precios para pedidos (crear y editar) ----------
+  // Mapea el nivel base de una lista a su columna en products (mirror server:
+  // priceColumnForBaseLevel). "costo" usa products.cost; el resto price_<nivel>.
+  var PL_BASE_COL = {
+    costo: "cost", minorista: "price_minorista", revendedor: "price_revendedor",
+    mayorista: "price_mayorista", vip: "price_vip", publico: "price_publico",
+  };
+  var ORDER_LEVEL_NAME = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
+  var ORDER_LEVEL_COL  = { 1: "price_minorista", 2: "price_revendedor", 3: "price_mayorista", 4: "price_vip" };
+
+  // Precio efectivo de un producto según la config { column, markup }.
+  // Aplica la fórmula de ganancia sobre venta (mirror server computeEffectivePrice):
+  //   precio = round(base / (1 - markup/100))
+  function orderEffPrice(prod, cfg) {
+    if (!prod || !cfg) return 0;
+    var base = Math.max(0, Number(prod[cfg.column]) || 0);
+    var m = Number(cfg.markup) || 0;
+    if (!m) return base;
+    var denom = 1 - m / 100;
+    if (denom <= 0) return base;
+    return Math.round(base / denom);
+  }
+
+  // Construye la config de precio a partir de un valor de <select>:
+  //   "level:N" -> nivel base ; "list:ID" -> lista personalizada
+  function orderCfgFromSel(sel) {
+    sel = String(sel || "");
+    if (sel.indexOf("list:") === 0) {
+      var id = Number(sel.slice(5));
+      var pl = (state.priceLists || []).find(function(l) { return l.id === id; });
+      if (pl) {
+        return { sel: "list:" + pl.id, column: PL_BASE_COL[pl.base_level] || "price_minorista",
+                 markup: Number(pl.markup_percent) || 0, label: pl.name };
+      }
+    }
+    var lvl = sel.indexOf("level:") === 0 ? Number(sel.slice(6)) : 1;
+    if (!ORDER_LEVEL_COL[lvl]) lvl = 1;
+    return { sel: "level:" + lvl, column: ORDER_LEVEL_COL[lvl], markup: 0,
+             label: ORDER_LEVEL_NAME[lvl] || "Minorista" };
+  }
+
+  // Valor de <select> que corresponde al precio "por defecto" de un cliente:
+  // su lista personalizada activa si tiene, sino su nivel.
+  function orderDefaultSel(level, priceListId) {
+    if (priceListId) {
+      var pl = (state.priceLists || []).find(function(l) { return l.id === priceListId && l.active; });
+      if (pl) return "list:" + pl.id;
+    }
+    var lvl = Number(level) || 1;
+    if (!ORDER_LEVEL_COL[lvl]) lvl = 1;
+    return "level:" + lvl;
+  }
+
+  // Llena un <select> de listas de precios: opciones de nivel base + listas
+  // personalizadas activas. Deja seleccionado selectedSel.
+  function fillOrderPriceListSelect(selectEl, selectedSel) {
+    if (!selectEl) return;
+    var html = '<optgroup label="Nivel base">';
+    [1, 2, 3, 4].forEach(function(lvl) {
+      html += '<option value="level:' + lvl + '">' + ORDER_LEVEL_NAME[lvl] + "</option>";
+    });
+    html += "</optgroup>";
+    var lists = (state.priceLists || []).filter(function(l) { return l.active; });
+    if (lists.length) {
+      html += '<optgroup label="Listas personalizadas">';
+      lists.forEach(function(pl) {
+        html += '<option value="list:' + pl.id + '">' + escapeHtml(pl.name) +
+          " (" + escapeHtml(pl.base_level) + ", gana " + (Number(pl.markup_percent) || 0) + "%)</option>";
+      });
+      html += "</optgroup>";
+    }
+    selectEl.innerHTML = html;
+    selectEl.value = selectedSel || "level:1";
+    if (!selectEl.value) selectEl.value = "level:1";
+  }
+
+  // Asegura que state.priceLists esté cargado (las pestañas Pedidos no lo cargan).
+  async function ensurePriceListsLoaded() {
+    if (state.priceListsLoaded) return;
+    try {
+      state.priceLists = await api("/api/admin/price-lists");
+      state.priceListsLoaded = true;
+    } catch (_) { state.priceLists = state.priceLists || []; }
+  }
+
   // ---------- Crear pedido desde admin ----------
   var noItems = [];   // items del nuevo pedido en construcción
+  var noPriceCfg = orderCfgFromSel("level:1");   // config de precio activa del nuevo pedido
 
   function noRecalc() {
     return noItems.reduce(function(s, it) { return s + it.unit_price * it.quantity; }, 0);
@@ -3666,14 +3753,17 @@
     if (els.noNotes) els.noNotes.value = "";
     if (els.noStatus) els.noStatus.value = "pendiente";
     noRenderItems();
+    // Necesitamos las listas de precios para el selector y para calcular precios.
+    await ensurePriceListsLoaded();
     // Poblar select de clientes (level 1-4 activos).
     // Usa state.users si ya están cargados; si no, los carga ahora.
     if (els.noClient) {
       els.noClient.innerHTML = '<option value="">Consumidor final</option>';
       try {
-        var allUsers = state.users && state.users.length ? state.users
-          : await api("/api/admin/users");
-        var clients = (allUsers || []).filter(function(u) { return Number(u.level) >= 1 && Number(u.level) <= 4 && u.active; });
+        if (!(state.users && state.users.length)) {
+          state.users = await api("/api/admin/users");
+        }
+        var clients = (state.users || []).filter(function(u) { return Number(u.level) >= 1 && Number(u.level) <= 4 && u.active; });
         clients.sort(function(a, b) { return (a.full_name || a.username).localeCompare(b.full_name || b.username); });
         clients.forEach(function(c) {
           var opt = document.createElement("option");
@@ -3683,7 +3773,30 @@
         });
       } catch (_) {}
     }
+    // Config de precio inicial = la del cliente seleccionado (o Consumidor final → minorista).
+    noSyncPriceListToClient();
     if (els.newOrderModal) els.newOrderModal.hidden = false;
+  }
+
+  // Ajusta el selector de lista a la lista por defecto del cliente elegido y
+  // actualiza noPriceCfg (sin recalcular items: se usa al abrir o al cambiar cliente).
+  function noSyncPriceListToClient() {
+    var sel = "level:1";
+    if (els.noClient && els.noClient.value) {
+      var client = (state.users || []).find(function(u) { return u.id === Number(els.noClient.value); });
+      if (client) sel = orderDefaultSel(client.level, client.price_list_id);
+    }
+    fillOrderPriceListSelect(els.noPriceList, sel);
+    noPriceCfg = orderCfgFromSel(els.noPriceList ? els.noPriceList.value : sel);
+  }
+
+  // Recalcula el precio unitario de los items ya cargados con la config activa.
+  function noRepriceItems() {
+    noItems.forEach(function(it) {
+      var prod = (state.allProducts || []).find(function(p) { return p.id === it.product_id; });
+      if (prod) it.unit_price = orderEffPrice(prod, noPriceCfg);
+    });
+    noRenderItems();
   }
 
   function noCloseModal() {
@@ -3724,27 +3837,25 @@
   }
 
   // Usa el mismo picker de productos que la edición de pedidos (oie-picker-modal)
-  // pero al confirmar agrega a noItems en vez de a editItems.
+  // pero al confirmar agrega a noItems en vez de a editItems. El precio sale de
+  // la config activa (lista del cliente o la que el admin haya elegido).
   function noOpenPicker() {
-    var priceCol = "price_minorista";
-    if (els.noClient && els.noClient.value) {
-      var clientId = Number(els.noClient.value);
-      var users = state.users || [];
-      var client = users.find(function(u) { return u.id === clientId; });
-      if (client) {
-        var levelMap = { 1: "price_minorista", 2: "price_revendedor", 3: "price_mayorista", 4: "price_vip" };
-        priceCol = levelMap[Number(client.level)] || "price_minorista";
-      }
-    }
-    // Reutilizar openOrderItemPicker con un objeto editItems proxy que al
-    // confirmar vuelca a noItems y llama noRenderItems.
-    var proxy = noItems;
-    openOrderItemPicker(proxy, priceCol, noRenderItems);
+    openOrderItemPicker(noItems, noPriceCfg, noRenderItems);
   }
 
   if (els.newOrderBtn) els.newOrderBtn.addEventListener("click", noOpenModal);
   if (els.noAddBtn) els.noAddBtn.addEventListener("click", noOpenPicker);
   if (els.noSaveBtn) els.noSaveBtn.addEventListener("click", noSave);
+  // Al cambiar de cliente: ajustar la lista por defecto y reprecios los items.
+  if (els.noClient) els.noClient.addEventListener("change", function() {
+    noSyncPriceListToClient();
+    noRepriceItems();
+  });
+  // Al cambiar la lista manualmente: recalcular precios de los items cargados.
+  if (els.noPriceList) els.noPriceList.addEventListener("change", function() {
+    noPriceCfg = orderCfgFromSel(els.noPriceList.value);
+    noRepriceItems();
+  });
   if (els.newOrderModal) {
     els.newOrderModal.addEventListener("click", function(e) {
       if (e.target.matches("[data-close='new-order-modal']")) noCloseModal();
@@ -4222,12 +4333,13 @@
   // Permite cambiar cantidades/precios, quitar y agregar productos. Al guardar
   // hace PUT /api/admin/orders/:id/items (el server recalcula total y ajusta
   // stock si el pedido ya lo tenía descontado).
-  var ORDER_LEVEL_PRICE_COL = { 1: "price_minorista", 2: "price_revendedor", 3: "price_mayorista", 4: "price_vip" };
-
   async function enterOrderItemsEdit(detailEl, order) {
     var box = detailEl.querySelector(".order-items-box");
     if (!box) return;
     await ensureAllProducts();
+    await ensurePriceListsLoaded();
+    // Config de precio activa: arranca en la lista por defecto del cliente.
+    var editCfg = orderCfgFromSel(orderDefaultSel(order.client_level, order.client_price_list_id));
     // Copia editable de los items actuales.
     var editItems = (order.items || []).map(function(it) {
       return {
@@ -4238,6 +4350,15 @@
         unit_price: Math.max(0, Number(it.unit_price) || 0),
       };
     });
+
+    // Recalcula el precio unitario de todos los items con la config activa.
+    function repriceEdit() {
+      editItems.forEach(function(it) {
+        var prod = (state.allProducts || []).find(function(p) { return p.id === it.product_id; });
+        if (prod) it.unit_price = orderEffPrice(prod, editCfg);
+      });
+      render();
+    }
 
     function recalc() {
       return editItems.reduce(function(s, it) { return s + it.unit_price * it.quantity; }, 0);
@@ -4269,6 +4390,9 @@
       box.innerHTML =
         '<div class="order-items-edit">' +
           '<div class="oie-head"><strong>Artículos</strong>' +
+            '<span style="flex:1"></span>' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#6b7280">Lista de precios' +
+              '<select class="cell-input oie-pricelist" style="min-width:170px"></select></label>' +
             '<button type="button" class="btn btn-small btn-primary oie-add-btn">+ Agregar productos</button></div>' +
           "<table><thead><tr><th>Código</th><th>Producto</th><th>Cant.</th>" +
           '<th class="num">P. Unit.</th><th class="num">Subtotal</th><th></th></tr></thead>' +
@@ -4332,8 +4456,7 @@
           b.addEventListener("click", function(ev) {
             ev.stopPropagation();
             hideOieCtxMenu();
-            var col = ORDER_LEVEL_PRICE_COL[order.client_level] || "price_minorista";
-            openOrderItemPicker(editItems, col, render, idx);
+            openOrderItemPicker(editItems, editCfg, render, idx);
           });
           menu.appendChild(b);
           menu.style.display = "block";
@@ -4345,10 +4468,17 @@
           menu.style.top  = y + "px";
         });
       }
+      var plSel = box.querySelector(".oie-pricelist");
+      if (plSel) {
+        fillOrderPriceListSelect(plSel, editCfg.sel);
+        plSel.addEventListener("change", function() {
+          editCfg = orderCfgFromSel(plSel.value);
+          repriceEdit();
+        });
+      }
       var addBtn = box.querySelector(".oie-add-btn");
       if (addBtn) addBtn.addEventListener("click", function() {
-        var col = ORDER_LEVEL_PRICE_COL[order.client_level] || "price_minorista";
-        openOrderItemPicker(editItems, col, render);
+        openOrderItemPicker(editItems, editCfg, render);
       });
       var cancelBtn = box.querySelector(".oie-cancel");
       if (cancelBtn) cancelBtn.addEventListener("click", function() { renderOrderDetail(detailEl, order); wireOrderDetail(detailEl, order); });
@@ -4395,7 +4525,7 @@
   // armador de presupuestos: buscar, tildar, cantidad, "Agregar seleccionados").
   // Comparte la mecánica del picker de Compras. Al confirmar, agrega los
   // productos elegidos a los items del pedido en edición. ----
-  var oieAddCtx = null;                 // { editItems, priceCol, rerender, replaceIdx? }
+  var oieAddCtx = null;                 // { editItems, priceCfg, rerender, replaceIdx? }
   var oiePickerSelected = new Map();    // pid -> cantidad
   var oieShowNoStock = false;           // mostrar productos sin stock en el picker
 
@@ -4414,8 +4544,11 @@
   }
 
   // replaceIdx: si se pasa, el picker reemplaza ese item en vez de agregar.
-  async function openOrderItemPicker(editItems, priceCol, rerender, replaceIdx) {
-    oieAddCtx = { editItems: editItems, priceCol: priceCol, rerender: rerender, replaceIdx: replaceIdx };
+  // priceCfg: config { column, markup } para calcular el precio efectivo. Por
+  // retrocompat acepta también un string de columna (lo envuelve en config nivel).
+  async function openOrderItemPicker(editItems, priceCfg, rerender, replaceIdx) {
+    if (typeof priceCfg === "string") priceCfg = { column: priceCfg, markup: 0 };
+    oieAddCtx = { editItems: editItems, priceCfg: priceCfg, rerender: rerender, replaceIdx: replaceIdx };
     oiePickerSelected.clear();
     await ensureAllProducts();
     if (els.oiePickerSearch) els.oiePickerSearch.value = "";
@@ -4432,7 +4565,7 @@
 
   function renderOiePicker(filter) {
     if (!els.oiePickerTbody) return;
-    var col = oieAddCtx ? oieAddCtx.priceCol : "price_minorista";
+    var cfg = oieAddCtx ? oieAddCtx.priceCfg : { column: "price_minorista", markup: 0 };
     var list = state.allProducts || [];
     if (!oieShowNoStock) {
       // Ocultar sin stock, salvo que ya estén seleccionados (no perder la elección).
@@ -4451,7 +4584,7 @@
     els.oiePickerTbody.innerHTML = list.map(function(p) {
       var sel = oiePickerSelected.has(p.id);
       var qty = sel ? oiePickerSelected.get(p.id) : "";
-      var price = Math.max(0, Number(p[col]) || 0);
+      var price = orderEffPrice(p, cfg);
       return '<tr data-pid="' + p.id + '">' +
         '<td><input type="checkbox" class="oie-pick-cb" data-pid="' + p.id + '"' + (sel ? " checked" : "") + ' /></td>' +
         '<td><div>' + escapeHtml(p.name || "") + '</div><code class="muted">' + escapeHtml(p.code || "") + '</code></td>' +
@@ -4544,7 +4677,7 @@
     els.oiePickerConfirm.addEventListener("click", function() {
       if (!oieAddCtx) { closeOiePicker(); return; }
       var editItems = oieAddCtx.editItems;
-      var col = oieAddCtx.priceCol;
+      var cfg = oieAddCtx.priceCfg;
       var rerender = oieAddCtx.rerender;
       var replaceIdx = oieAddCtx.replaceIdx;
       if (replaceIdx !== undefined && oiePickerSelected.size > 0) {
@@ -4559,7 +4692,7 @@
             product_code: prod.code || "",
             product_name: prod.name || "",
             quantity: origQty,
-            unit_price: Math.max(0, Number(prod[col]) || 0),
+            unit_price: orderEffPrice(prod, cfg),
           };
         }
       } else {
@@ -4576,7 +4709,7 @@
               product_code: prod.code || "",
               product_name: prod.name || "",
               quantity: addQty,
-              unit_price: Math.max(0, Number(prod[col]) || 0),
+              unit_price: orderEffPrice(prod, cfg),
             });
           }
         });

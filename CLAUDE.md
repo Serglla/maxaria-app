@@ -1005,6 +1005,29 @@ Sergio pidió que la pestaña **Cuentas** (cuenta corriente por cliente) sea má
 
 **Pendiente de versionado**: en disco local, sin `git add/commit/push` ni deploy en Railway.
 
+### Selector de lista de precios al crear y editar pedidos (8 junio 2026 — `admin.js?v=20260608a`)
+
+Bug de Sergio: al crear un pedido desde /admin, el sistema no permitía elegir la lista de precios del cliente — usaba siempre el precio por nivel base (minorista), ignorando la lista personalizada (`price_list_id`). Por eso el Alikal de Cristian salía con un precio que no era el suyo. Pidió: tomar la lista por defecto del cliente y mostrarla, permitir cambiarla, y que al cambiarla se recalculen automáticamente los precios de los items ya cargados; lo mismo al **editar** un pedido.
+
+**Causa**: tanto el "Nuevo pedido" (`noOpenPicker`) como la edición de items (`enterOrderItemsEdit`) calculaban el precio con un único `priceCol` = columna del nivel base (`ORDER_LEVEL_PRICE_COL[client_level]`), sin aplicar nunca la fórmula de la lista personalizada (`round(base/(1-markup/100))`). Para el admin, además, el objeto de pedido de `GET /api/orders` (lista) no trae `client_level` ni `price_list_id`, así que caía a minorista.
+
+**server.js**: `GET /api/orders/:id` (rama admin) ahora incluye `u.price_list_id AS client_price_list_id` (ya traía `client_level`). El detalle es lo que usa la vista de edición. El POST/PUT de pedidos sigue confiando en el `unit_price` que manda el front (no se tocó el cálculo server-side ni el snapshot `vendedor_cost_unit`).
+
+**admin.js** (helpers nuevos, compartidos por crear y editar, justo antes de "Crear pedido desde admin"):
+- `PL_BASE_COL` (mirror de `priceColumnForBaseLevel`: costo→`cost`, resto `price_<nivel>`), `ORDER_LEVEL_COL`/`ORDER_LEVEL_NAME`.
+- `orderEffPrice(prod, cfg)` — precio efectivo `{column, markup}` con `round(base/(1-markup/100))` (markup 0 → base directo).
+- `orderCfgFromSel(sel)` — de `"level:N"`/`"list:ID"` a `{sel, column, markup, label}` (usa `state.priceLists`).
+- `orderDefaultSel(level, priceListId)` — el valor del select que corresponde al cliente (su lista activa, o su nivel).
+- `fillOrderPriceListSelect(selectEl, sel)` — optgroups "Nivel base" (1-4) + "Listas personalizadas" (activas).
+- `ensurePriceListsLoaded()` — carga `state.priceLists` (las pestañas de Pedidos no lo hacían).
+- El picker `openOrderItemPicker(editItems, priceCfg, rerender, replaceIdx)` ahora recibe un **config object** (acepta string por retrocompat); `renderOiePicker` y el confirm usan `orderEffPrice(prod, cfg)`. Se eliminó el viejo `ORDER_LEVEL_PRICE_COL`.
+
+**Nuevo pedido** (`new-order-modal`): se agregó `<select id="no-price-list">` (admin.html). `noOpenModal` carga listas + users y llama `noSyncPriceListToClient()` (default = lista del cliente). Al cambiar de cliente: re-sincroniza la lista y reprecios (`noRepriceItems`). Al cambiar la lista a mano: reprecios. El picker usa `noPriceCfg`.
+
+**Editar pedido** (`enterOrderItemsEdit`): selector `.oie-pricelist` en el head, `editCfg` arranca en la lista por defecto del cliente (`order.client_price_list_id`/`client_level`). Cambiarlo recalcula `unit_price` de todos los items (`repriceEdit`) y re-renderiza; el picker y "Cambiar producto" usan `editCfg`. El admin igual puede pisar precios línea por línea a mano.
+
+**Verificación**: `node --check` OK en server.js y admin.js (esta vez el bash mount NO estaba stale). Pendiente: `git add/commit/push` + deploy Railway (en disco local).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.

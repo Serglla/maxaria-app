@@ -2102,6 +2102,7 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
   if (isAdmin) {
     order = db.prepare(
       "SELECT o.*, u.username, u.full_name, u.level AS client_level," +
+      "       u.price_list_id AS client_price_list_id," +
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
       "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id" +
       "  FROM orders o JOIN users u ON u.id = o.user_id" +
