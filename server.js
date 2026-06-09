@@ -1151,15 +1151,51 @@ app.get("/login", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "login.html"));
 });
 
+// Rate limit de /login: proteccion contra fuerza bruta, sin dependencias.
+// Contador en memoria por IP: maximo LOGIN_MAX_ATTEMPTS intentos FALLIDOS por
+// ventana de LOGIN_WINDOW_MS. Un login exitoso resetea el contador de esa IP.
+// Barrido periodico para que el Map no crezca indefinidamente.
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 10;
+const loginAttempts = new Map(); // ip -> { count, first }
+function loginRateOk(ip) {
+  const e = loginAttempts.get(ip);
+  if (!e) return true;
+  if (Date.now() - e.first > LOGIN_WINDOW_MS) { loginAttempts.delete(ip); return true; }
+  return e.count < LOGIN_MAX_ATTEMPTS;
+}
+function loginRateFail(ip) {
+  const now = Date.now();
+  const e = loginAttempts.get(ip);
+  if (!e || now - e.first > LOGIN_WINDOW_MS) loginAttempts.set(ip, { count: 1, first: now });
+  else e.count += 1;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, e] of loginAttempts) {
+    if (now - e.first > LOGIN_WINDOW_MS) loginAttempts.delete(ip);
+  }
+}, 10 * 60 * 1000).unref();
+
 app.post("/login", (req, res) => {
+  const ip = req.ip || "?";
+  if (!loginRateOk(ip)) {
+    return res.status(429).json({ error: "Demasiados intentos fallidos. Esperá unos minutos y probá de nuevo." });
+  }
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: "Faltan datos" });
   const user = db
     .prepare("SELECT id, username, password_hash, full_name, level, active, vendedor_price_level FROM users WHERE username = ?")
     .get(String(username).trim().toLowerCase());
-  if (!user || !user.active) return res.status(401).json({ error: "Usuario o contrasena incorrectos" });
-  if (!bcrypt.compareSync(String(password), user.password_hash))
+  if (!user || !user.active) {
+    loginRateFail(ip);
     return res.status(401).json({ error: "Usuario o contrasena incorrectos" });
+  }
+  if (!bcrypt.compareSync(String(password), user.password_hash)) {
+    loginRateFail(ip);
+    return res.status(401).json({ error: "Usuario o contrasena incorrectos" });
+  }
+  loginAttempts.delete(ip);
   db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").run(user.id);
   req.session.userId = user.id;
   req.session.username = user.username;
@@ -5468,8 +5504,12 @@ async function loadProductImage(imageUrl) {
       if (!resp.ok) return null;
       rawBuf = Buffer.from(await resp.arrayBuffer());
     } else {
-      const fname = decodeURIComponent(clean.split("/").pop());
-      const fpath = path.join(PRODUCT_IMAGES_DIR, fname);
+      // Solo servimos archivos dentro de PRODUCT_IMAGES_DIR. Decodificamos
+      // ANTES de tomar el nombre base: si se hace al reves, un "..%2F"
+      // codificado sobrevive al split y escapa del directorio (path traversal).
+      const fname = path.basename(decodeURIComponent(clean));
+      const fpath = path.resolve(PRODUCT_IMAGES_DIR, fname);
+      if (!fpath.startsWith(path.resolve(PRODUCT_IMAGES_DIR) + path.sep)) return null;
       if (!fs.existsSync(fpath)) return null;
       rawBuf = fs.readFileSync(fpath);
     }
@@ -7001,6 +7041,38 @@ app.use((req, res, next) => {
 });
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 app.use((req, res) => res.status(404).send("No encontrado"));
+
+// Error handler global de Express: cualquier throw en una ruta sincrona cae
+// aca en vez de dejar el request colgado. Para /api respondemos JSON (el
+// frontend espera { error }); para el resto, texto plano. No filtramos el
+// detalle del error al cliente, solo al log del server.
+app.use((err, req, res, next) => {
+  console.error("[error]", req.method, req.path, err && err.stack ? err.stack : err);
+  if (res.headersSent) return next(err);
+  const isApi = req.path && req.path.startsWith("/api/");
+  if (err && err.name === "MulterError") {
+    const msg = err.code === "LIMIT_FILE_SIZE" ? "Archivo demasiado grande" : "Error al subir el archivo";
+    return res.status(400).json({ error: msg });
+  }
+  if (err && err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Payload demasiado grande" });
+  }
+  if (isApi) return res.status(500).json({ error: "Error interno del servidor" });
+  res.status(500).send("Error interno del servidor");
+});
+
+// Red de seguridad a nivel proceso. OJO: las rutas async de Express 4 (hoy
+// solo POST /api/admin/catalog/pdf) NO llegan al error handler de arriba si
+// rechazan — caen aca como unhandledRejection. Logueamos sin tirar el proceso.
+// Un uncaughtException deja el proceso en estado indefinido: log + exit
+// (Railway lo reinicia solo).
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason && reason.stack ? reason.stack : reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err && err.stack ? err.stack : err);
+  process.exit(1);
+});
 
 app.listen(PORT, () => {
   console.log("Maxaria escuchando en http://localhost:" + PORT + "  (" + NODE_ENV + ")");

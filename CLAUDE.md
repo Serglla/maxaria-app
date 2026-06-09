@@ -1146,9 +1146,21 @@ Encabezados clickeables (`th.us-sort` con `data-sort="name|lista|vendedor|activo
 
 **Detalle a tener en cuenta (heredado)**: el `<select>` de Vendedor asignado del modal solo lista vendedores **activos** (`vendedoresActiveCache`). Si a un cliente le quedó asignado un vendedor que después se desactivó, no aparece en las opciones y guardar el modal lo desasignaría. Caso de borde, no blindado (igual comportamiento que el select inline anterior).
 
+### Hardening: rate limit login + error handler global + fix path traversal (9 junio 2026, sesión tarde)
+
+Tres fixes de seguridad/robustez en `server.js` (sin tocar frontend, sin cache busting necesario). Sergio pidió explícitamente **dejar `plain_password` para después**.
+
+**1. Rate limit en `POST /login`** (sin dependencia nueva): contador en memoria por IP (`loginAttempts` Map), máx **10 intentos fallidos por ventana de 15 min** → 429 "Demasiados intentos fallidos...". El login exitoso borra el contador de esa IP; barrido periódico cada 10 min (`setInterval(...).unref()`). Helpers `loginRateOk(ip)` / `loginRateFail(ip)` definidos justo antes de la ruta. Usa `req.ip` (el `trust proxy: 1` ya estaba seteado, así que detrás de Railway toma la IP real del header).
+
+**2. Error handler global de Express + handlers de proceso** (al final, entre el 404 y `app.listen`): middleware de 4 args que loguea stack y responde 500 JSON `{error}` para `/api/*` (texto plano para el resto), con casos especiales `MulterError` (400, "Archivo demasiado grande" si LIMIT_FILE_SIZE) y `entity.too.large` (413). Además `process.on("unhandledRejection")` (solo log — las rutas async de Express 4, hoy solo `POST /api/admin/catalog/pdf`, no llegan al middleware de errores si rechazan) y `process.on("uncaughtException")` (log + `exit(1)`, Railway reinicia).
+
+**3. Path traversal en `loadProductImage` cerrado**: antes hacía `decodeURIComponent(clean.split("/").pop())` — un filename con `..%2F` codificado sobrevivía al split y escapaba del directorio. Ahora: `path.basename(decodeURIComponent(clean))` (decodificar ANTES de tomar el nombre base) + check `path.resolve(...).startsWith(PRODUCT_IMAGES_DIR + sep)`. Verificado aislado: `..%2F..%2Fetc%2Fpasswd` queda en `product-images/passwd`. Nota: `GET /images/products` usa `express.static`, que ya es seguro contra traversal — no se tocó.
+
+**Verificación**: el bash mount volvió a quedar **stale** (veía server.js cortado en 7006 cuando Read confirma 7080 líneas terminando en `app.listen`). Se confió en Read y se validaron los bloques nuevos aislados en `/tmp` (parse + tests funcionales del rate limit y del traversal) → OK. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
+
 ### Próximos pasos pendientes (en orden)
 
-1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.
+1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.
 2. **Cuenta corriente con proveedores**: simétrico a lo que ya existe para clientes — registrar deuda que genera cada orden de compra y los pagos a proveedores.
 3. **Remito PDF por entrega**: ya existe el **remito por impresión HTML** (botón "🖨 Imprimir remito" en el detalle del pedido, 3 jun). Falta la versión **PDF descargable/enviable por WA** (reutiliza la infra del catálogo PDF) y, si Sergio confirma, la variante **sin precios** para el depósito.
 4. **Alerta de stock mínimo en dashboard**: el campo `stock_min` ya existe en productos (implementado 1 jun). Falta: indicador en dashboard + lista de "reponer".
