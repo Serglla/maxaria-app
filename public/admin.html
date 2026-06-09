@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260608h" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260609a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -398,26 +398,20 @@
         <button class="btn btn-primary" id="user-create-btn" type="button">+ Crear usuario</button>
       </div>
 
+      <p class="muted small" style="margin:0 0 8px">Doble click en una fila para ver y editar todos los datos del cliente (usuario, contraseña, teléfono, email, categorías…).</p>
       <div class="admin-table-wrap">
         <table class="admin-table" id="user-table">
           <thead>
             <tr>
-              <th>Usuario</th>
               <th>Nombre</th>
-              <th>Nivel</th>
-              <th>Vendedor asignado</th>
               <th>Lista de precios</th>
-              <th>Teléfono</th>
-              <th>WhatsApp destino</th>
-              <th>Contraseña</th>
-              <th>Email</th>
+              <th>Vendedor asignado</th>
               <th>Activo</th>
               <th>Último login</th>
-              <th>Categorías</th>
-              <th>Acciones</th>
+              <th></th>
             </tr>
           </thead>
-          <tbody id="user-tbody"><tr><td colspan="13" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="user-tbody"><tr><td colspan="6" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -1687,6 +1681,54 @@
     </div>
   </div>
 
+  <!-- Modal editar cliente (doble click en la fila de Usuarios) -->
+  <div class="admin-modal" id="user-edit-modal" hidden>
+    <div class="admin-modal-box">
+      <h3 id="user-edit-title">Editar cliente</h3>
+      <form id="user-edit-form" class="user-form">
+        <div class="ue-grid">
+          <label>Usuario <span class="muted small">(login, no editable)</span>
+            <input type="text" id="ue-username" readonly class="ue-readonly" />
+          </label>
+          <label>Contraseña actual <span class="muted small">(usá "Reset pass" para cambiarla)</span>
+            <input type="text" id="ue-password" readonly class="ue-readonly" />
+          </label>
+          <label>Nombre completo
+            <input type="text" id="ue-full-name" />
+          </label>
+          <label>Lista de precios
+            <select id="ue-pricecfg"></select>
+          </label>
+          <label>Vendedor asignado
+            <select id="ue-vendedor"></select>
+          </label>
+          <label>Teléfono
+            <input type="tel" id="ue-phone" />
+          </label>
+          <label>WhatsApp destino <span class="muted small">(nro al que manda pedidos)</span>
+            <input type="tel" id="ue-whatsapp" placeholder="ej: 5491112345678" />
+          </label>
+          <label>Email
+            <input type="email" id="ue-email" />
+          </label>
+          <label class="ue-active-row">
+            <input type="checkbox" id="ue-active" /> Usuario activo
+          </label>
+        </div>
+        <div class="ue-actions">
+          <button type="button" class="btn btn-small" id="ue-reset-btn">🔑 Reset pass</button>
+          <button type="button" class="btn btn-small" id="ue-cats-btn">🗂 Categorías</button>
+          <button type="button" class="btn btn-small" id="ue-share-btn">📲 Compartir acceso</button>
+        </div>
+        <p id="user-edit-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cerrar</button>
+          <button type="submit" class="btn btn-primary">Guardar cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal categorías por usuario -->
   <div class="admin-modal" id="user-cats-modal" hidden>
     <div class="admin-modal-box">
@@ -2938,6 +2980,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260608o"></script>
+  <script src="/js/admin.js?v=20260609a"></script>
 </body>
 </html>

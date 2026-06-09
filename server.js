@@ -2909,6 +2909,14 @@ app.get("/api/admin/users/:id/activity", requireAdmin, (req, res) => {
     "  FROM activity_log WHERE user_id = ?"
   ).get(userId);
 
+  // "Último ingreso": el activity_log solo tiene logins posteriores a que se
+  // agregó el logging. users.last_login_at es la fuente autoritativa (se
+  // actualiza en cada /login). Si no hay eventos login en el log, caemos a
+  // last_login_at para que coincida con la columna de la tabla de Usuarios.
+  if (summary && !summary.last_login && u.last_login_at) {
+    summary.last_login = u.last_login_at;
+  }
+
   res.json({ user: u, summary: summary, events: events });
 });
 

@@ -149,6 +149,22 @@
     userCatsNone: document.getElementById("user-cats-none"),
     userCatsMsg: document.getElementById("user-cats-msg"),
     userCatsSave: document.getElementById("user-cats-save"),
+    // Modal editar cliente (doble click en la fila)
+    userEditModal: document.getElementById("user-edit-modal"),
+    userEditForm: document.getElementById("user-edit-form"),
+    userEditMsg: document.getElementById("user-edit-msg"),
+    ueUsername: document.getElementById("ue-username"),
+    uePassword: document.getElementById("ue-password"),
+    ueFullName: document.getElementById("ue-full-name"),
+    uePricecfg: document.getElementById("ue-pricecfg"),
+    ueVendedor: document.getElementById("ue-vendedor"),
+    uePhone: document.getElementById("ue-phone"),
+    ueWhatsapp: document.getElementById("ue-whatsapp"),
+    ueEmail: document.getElementById("ue-email"),
+    ueActive: document.getElementById("ue-active"),
+    ueResetBtn: document.getElementById("ue-reset-btn"),
+    ueCatsBtn: document.getElementById("ue-cats-btn"),
+    ueShareBtn: document.getElementById("ue-share-btn"),
     // Administradores (solo superadmin)
     adminsTbody: document.getElementById("admins-tbody"),
     adminCreateBtn: document.getElementById("admin-create-btn"),
@@ -1045,7 +1061,7 @@
   // ---------- Usuarios ----------
   async function loadUsers() {
     try {
-      els.userTbody.innerHTML = '<tr><td colspan="13" class="muted">Cargando…</td></tr>';
+      els.userTbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando…</td></tr>';
       // Cargamos usuarios + vendedores + listas de precios en paralelo:
       // los dos ultimos llenan los selects de las columnas nuevas.
       const [users, vendedores, priceLists] = await Promise.all([
@@ -1064,7 +1080,7 @@
       }
       renderUsers();
     } catch (e) {
-      els.userTbody.innerHTML = '<tr><td colspan="13" class="muted">Error cargando usuarios</td></tr>';
+      els.userTbody.innerHTML = '<tr><td colspan="6" class="muted">Error cargando usuarios</td></tr>';
     }
   }
 
@@ -1099,7 +1115,7 @@
     }
     els.userCount.textContent = list.length + (list.length === 1 ? " usuario" : " usuarios");
     if (!list.length) {
-      els.userTbody.innerHTML = '<tr><td colspan="14" class="muted">Sin resultados</td></tr>';
+      els.userTbody.innerHTML = '<tr><td colspan="6" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.userTbody.innerHTML = list.map(userRowHtml).join("");
@@ -1128,43 +1144,71 @@
     return html;
   }
 
+  // Etiqueta legible de la lista de precios efectiva de un cliente:
+  // lista personalizada si tiene una, sino el nivel base (Minorista/etc).
+  function priceLabelFor(u) {
+    if (u.price_list_id) {
+      const pl = state.priceLists.find((x) => Number(x.id) === Number(u.price_list_id));
+      return pl ? pl.name : ("Lista #" + u.price_list_id);
+    }
+    return PRICE_LEVEL_NAMES[Number(u.level)] || LEVEL_NAMES[Number(u.level)] || ("Nivel " + u.level);
+  }
+
+  // Nombre del vendedor asignado, o "—".
+  function vendLabelFor(u) {
+    if (!u.assigned_vendedor_id) return "—";
+    const v = state.vendedoresActiveCache.find((x) => Number(x.id) === Number(u.assigned_vendedor_id));
+    return v ? (v.full_name || v.username) : ("#" + u.assigned_vendedor_id);
+  }
+
+  // Selector unificado Nivel + Lista de precios. Niveles base (1-4) y listas
+  // personalizadas en un solo <select>. value = "level:N" o "list:ID".
+  function unifiedPriceOptsHtml(u) {
+    const curIsList = !!u.price_list_id;
+    let html = '<optgroup label="Nivel base">';
+    [1, 2, 3, 4].forEach((n) => {
+      const sel = (!curIsList && Number(u.level) === n) ? " selected" : "";
+      html += '<option value="level:' + n + '"' + sel + '>' + PRICE_LEVEL_NAMES[n] + '</option>';
+    });
+    html += '</optgroup>';
+    const lists = state.priceLists.filter((pl) => pl.active);
+    // Incluir la lista asignada aunque esté inactiva, para no perder la selección.
+    if (curIsList && !lists.some((pl) => Number(pl.id) === Number(u.price_list_id))) {
+      const cur = state.priceLists.find((pl) => Number(pl.id) === Number(u.price_list_id));
+      if (cur) lists.push(cur);
+    }
+    if (lists.length) {
+      html += '<optgroup label="Listas personalizadas">';
+      lists.forEach((pl) => {
+        const sel = (curIsList && Number(u.price_list_id) === Number(pl.id)) ? " selected" : "";
+        const tag = pl.active ? "" : " (inactiva)";
+        html += '<option value="list:' + pl.id + '"' + sel + '>' + escapeHtml(pl.name + tag) + '</option>';
+      });
+      html += '</optgroup>';
+    }
+    return html;
+  }
+
+  // Decodifica el value del selector unificado a un body de PATCH.
+  function decodePriceCfg(val) {
+    if (val && val.indexOf("list:") === 0) return { price_list_id: Number(val.slice(5)) };
+    const n = Number((val || "level:1").slice(6)) || 1;
+    return { level: n, price_list_id: null };
+  }
+
   function userRowHtml(u) {
-    const isMe = state.me && state.me.id === u.id;
-    const levelOpts = Object.entries(LEVEL_NAMES).map(([v, n]) =>
-      '<option value="' + v + '"' + (Number(v) === u.level ? " selected" : "") + '>' + n + '</option>'
-    ).join("");
     const lastLogin = u.last_login_at ? formatDate(u.last_login_at) : "—";
-    const loginCount = Number(u.login_count) || 0;
-    const lastLoginCell = lastLogin + (loginCount ? ' <span class="muted">(' + loginCount + ')</span>' : '');
-    // Solo clientes (level 1-4) pueden tener vendedor y lista. Para vendedores
-    // (5) y admin (99) mostramos celdas inactivas con texto.
-    const isClient = [1, 2, 3, 4].includes(Number(u.level));
-    const vendCell = isClient
-      ? '<td><select class="cell-input" data-field="assigned_vendedor_id">' + vendedorOptsHtml(u.assigned_vendedor_id) + '</select></td>'
-      : '<td class="muted small-cell">—</td>';
-    const plCell = isClient
-      ? '<td><select class="cell-input" data-field="price_list_id">' + priceListOptsHtml(u.price_list_id) + '</select></td>'
-      : '<td class="muted small-cell">—</td>';
-    return '<tr data-id="' + u.id + '"' + (u.active ? '' : ' class="row-inactive"') + '>' +
-      '<td class="cell-code">' + escapeHtml(u.username) + (isMe ? ' <span class="muted">(vos)</span>' : '') + '</td>' +
-      '<td><input class="cell-input" data-field="full_name" value="' + escapeHtml(u.full_name || "") + '" /></td>' +
-      '<td>' +
-        '<select class="cell-input cell-level" data-field="level"' + (isMe ? ' title="No podés bajarte de admin a vos mismo"' : '') + '>' + levelOpts + '</select>' +
-      '</td>' +
-      vendCell +
-      plCell +
-      '<td><input class="cell-input" data-field="phone" value="' + escapeHtml(u.phone || "") + '" /></td>' +
-      '<td><input class="cell-input" data-field="whatsapp_number" type="tel" placeholder="ej: 5491112345678" value="' + escapeHtml(u.whatsapp_number || "") + '" /></td>' +
-      '<td class="muted small-cell">' + escapeHtml(u.plain_password || "—") + '</td>' +
-      '<td><input class="cell-input" data-field="email" type="email" value="' + escapeHtml(u.email || "") + '" /></td>' +
-      '<td><label class="cell-toggle"' + (isMe ? ' title="No podés desactivarte a vos mismo"' : '') + '>' +
-        '<input type="checkbox" data-field="active"' + (u.active ? " checked" : "") + (isMe ? " disabled" : "") + ' /><span></span></label></td>' +
-      '<td class="muted small-cell">' + lastLoginCell +
-        ' <button class="btn btn-small btn-activity" data-act="activity" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button" title="Ver actividad y logueos">📊</button></td>' +
-      '<td><button class="btn btn-small btn-cats" data-act="cats" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button" title="Gestionar categorías visibles">Categorías</button></td>' +
-      '<td><button class="btn btn-small btn-reset" data-act="reset" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button">Reset pass</button>' +
-        (isClient ? ' <button class="btn btn-small btn-share" data-act="share" data-id="' + u.id + '" type="button" title="Compartir acceso por WhatsApp">Compartir</button>' : '') +
-      '</td>' +
+    const name = escapeHtml(u.full_name || u.username || "—");
+    const activeBadge = u.active
+      ? '<span class="acc-balance-badge" style="background:#dcfce7;color:#166534">Activo</span>'
+      : '<span class="acc-balance-badge" style="background:#fee2e2;color:#991b1b">Inactivo</span>';
+    return '<tr data-id="' + u.id + '"' + (u.active ? '' : ' class="row-inactive"') + ' title="Doble click para editar">' +
+      '<td class="cell-code" style="font-weight:600">' + name + '</td>' +
+      '<td>' + escapeHtml(priceLabelFor(u)) + '</td>' +
+      '<td>' + escapeHtml(vendLabelFor(u)) + '</td>' +
+      '<td>' + activeBadge + '</td>' +
+      '<td class="muted small-cell">' + lastLogin + '</td>' +
+      '<td><button class="btn btn-small btn-activity" data-act="activity" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button" title="Ver actividad y logueos">📊</button></td>' +
     '</tr>';
   }
 
@@ -1242,111 +1286,45 @@
     return out || ua.slice(0, 30);
   }
 
-  // Auto-save al cambiar nombre/nivel/teléfono/email/active
-  els.userTbody.addEventListener("change", async (e) => {
-    const inp = e.target.closest("[data-field]");
-    if (!inp) return;
-    const tr = inp.closest("tr");
-    if (!tr) return;
-    const id = Number(tr.dataset.id);
-    const field = inp.dataset.field;
-    let value;
-    if (inp.type === "checkbox") value = inp.checked ? 1 : 0;
-    else if (field === "level") value = Number(inp.value);
-    else value = inp.value;
+  // ---- Acciones de usuario (reutilizadas por la tabla y el modal de edición) ----
+  function openResetModal(userId, username) {
+    state.resetTargetId = Number(userId);
+    els.userResetTarget.textContent = "Para el usuario: " + username;
+    els.userResetMsg.textContent = "";
+    els.userResetForm.reset();
+    els.userResetModal.hidden = false;
+    setTimeout(() => els.userResetForm.querySelector('[name="password"]').focus(), 50);
+  }
 
-    inp.classList.add("saving");
-    try {
-      const out = await api("/api/admin/users/" + id, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [field]: value }),
-      });
-      const idx = state.users.findIndex((x) => x.id === id);
-      if (idx >= 0) state.users[idx] = out.user;
-      inp.classList.remove("saving");
-      inp.classList.add("saved");
-      setTimeout(() => inp.classList.remove("saved"), 1200);
-      // Si toggleamos active, refrescar la fila para reflejar la clase row-inactive
-      if (field === "active") {
-        tr.classList.toggle("row-inactive", !out.user.active);
-      }
-    } catch (err) {
-      inp.classList.remove("saving");
-      inp.classList.add("error");
-      // Revertir el valor visual al estado original
-      const orig = state.users.find((x) => x.id === id);
-      if (orig) {
-        if (inp.type === "checkbox") inp.checked = !!orig.active;
-        else if (field === "level") inp.value = String(orig.level);
-        else inp.value = orig[field] || "";
-      }
-      showToast("Error: " + err.message, "err");
-      setTimeout(() => inp.classList.remove("error"), 2000);
-    }
-  });
+  // Compartir acceso por WhatsApp (mensaje con link + credenciales).
+  function shareUserAccess(u) {
+    if (!u) return;
+    const appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
+    const origin = location.origin;
+    const hasPass = u.plain_password && u.plain_password !== "—";
+    let msg = "¡Hola" + (u.full_name ? " " + u.full_name : "") + "! 👋\n\n";
+    msg += "Te damos acceso al catálogo de " + appName + ".\n";
+    msg += "Ingresá desde: " + origin + "\n\n";
+    msg += "👤 Usuario: " + u.username + "\n";
+    if (hasPass) msg += "🔑 Contraseña: " + u.plain_password + "\n";
+    msg += "\nDesde ahí podés ver los productos y armar tu pedido. ¡Cualquier duda, escribinos!";
+    if (navigator.clipboard) { try { navigator.clipboard.writeText(msg); } catch (_) {} }
+    const waNum = (u.whatsapp_number || "").replace(/\D/g, "");
+    window.open("https://wa.me/" + waNum + "?text=" + encodeURIComponent(msg), "_blank", "noopener");
+    showToast(hasPass
+      ? (waNum ? "Abriendo WhatsApp con el acceso · mensaje copiado" : "Sin WhatsApp del cliente: elegí el contacto · mensaje copiado")
+      : "⚠️ Sin contraseña guardada: usá 'Reset pass' y volvé a compartir", hasPass ? "ok" : "err");
+  }
 
-  // Click en botones de accion de la tabla de usuarios
-  els.userTbody.addEventListener("click", async (e) => {
-    // Reset pass
-    const resetBtn = e.target.closest('[data-act="reset"]');
-    if (resetBtn) {
-      state.resetTargetId = Number(resetBtn.dataset.id);
-      els.userResetTarget.textContent = "Para el usuario: " + resetBtn.dataset.username;
-      els.userResetMsg.textContent = "";
-      els.userResetForm.reset();
-      els.userResetModal.hidden = false;
-      setTimeout(() => els.userResetForm.querySelector('[name="password"]').focus(), 50);
-      return;
-    }
-
-    // Compartir acceso con el cliente (mensaje de WhatsApp con link + credenciales)
-    const shareBtn = e.target.closest('[data-act="share"]');
-    if (shareBtn) {
-      const u = state.users.find((x) => x.id === Number(shareBtn.dataset.id));
-      if (!u) return;
-      const appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
-      const origin = location.origin;
-      const hasPass = u.plain_password && u.plain_password !== "—";
-      let msg = "¡Hola" + (u.full_name ? " " + u.full_name : "") + "! 👋\n\n";
-      msg += "Te damos acceso al catálogo de " + appName + ".\n";
-      msg += "Ingresá desde: " + origin + "\n\n";
-      msg += "👤 Usuario: " + u.username + "\n";
-      if (hasPass) msg += "🔑 Contraseña: " + u.plain_password + "\n";
-      msg += "\nDesde ahí podés ver los productos y armar tu pedido. ¡Cualquier duda, escribinos!";
-      // Copia de respaldo al portapapeles (por si quiere mandarlo por otro medio)
-      if (navigator.clipboard) { try { navigator.clipboard.writeText(msg); } catch (_) {} }
-      const waNum = (u.whatsapp_number || "").replace(/\D/g, "");
-      window.open("https://wa.me/" + waNum + "?text=" + encodeURIComponent(msg), "_blank", "noopener");
-      showToast(hasPass
-        ? (waNum ? "Abriendo WhatsApp con el acceso · mensaje copiado" : "Sin WhatsApp del cliente: elegí el contacto · mensaje copiado")
-        : "⚠️ Sin contraseña guardada: usá 'Reset pass' y volvé a compartir", hasPass ? "ok" : "err");
-      return;
-    }
-
-    // Actividad: ver logueos e historial del usuario
-    const actBtn = e.target.closest('[data-act="activity"]');
-    if (actBtn) {
-      openActivityModal(Number(actBtn.dataset.id), actBtn.dataset.username);
-      return;
-    }
-
-    // Categorias: abrir modal de permisos
-    const catsBtn = e.target.closest('[data-act="cats"]');
-    if (!catsBtn) return;
-    const userId = Number(catsBtn.dataset.id);
-    const username = catsBtn.dataset.username;
-    state.catsTargetId = userId;
+  async function openCatsModal(userId, username) {
+    state.catsTargetId = Number(userId);
     els.userCatsTarget.textContent = "Usuario: " + username;
     els.userCatsMsg.textContent = "";
     els.userCatsList.innerHTML = '<span class="muted">Cargando…</span>';
     els.userCatsModal.hidden = false;
-
     try {
       const catData = await api("/api/admin/users/" + userId + "/categories");
-      // catData = { categories: [{id, name, allowed}], restricted: bool }
       const allCats = catData.categories || [];
-
       if (!allCats.length) {
         els.userCatsList.innerHTML = '<span class="muted">No hay categorías cargadas.</span>';
         return;
@@ -1361,6 +1339,87 @@
     } catch (err) {
       els.userCatsList.innerHTML = '<span class="muted err">Error cargando categorías: ' + escapeHtml(err.message) + '</span>';
     }
+  }
+
+  // ---- Modal de edición de cliente (doble click en la fila) ----
+  function openUserEditModal(id) {
+    const u = state.users.find((x) => x.id === Number(id));
+    if (!u) return;
+    state.editUserId = u.id;
+    document.getElementById("user-edit-title").textContent = "Editar cliente · " + (u.full_name || u.username);
+    els.ueUsername.value = u.username || "";
+    els.uePassword.value = u.plain_password || "—";
+    els.ueFullName.value = u.full_name || "";
+    els.uePricecfg.innerHTML = unifiedPriceOptsHtml(u);
+    els.ueVendedor.innerHTML = vendedorOptsHtml(u.assigned_vendedor_id);
+    els.uePhone.value = u.phone || "";
+    els.ueWhatsapp.value = u.whatsapp_number || "";
+    els.ueEmail.value = u.email || "";
+    els.ueActive.checked = !!u.active;
+    els.userEditMsg.textContent = "";
+    els.userEditMsg.className = "config-msg";
+    els.userEditModal.hidden = false;
+  }
+
+  // Doble click en una fila → abrir modal de edición (salvo si tocaron el 📊).
+  els.userTbody.addEventListener("dblclick", (e) => {
+    if (e.target.closest("button")) return;
+    const tr = e.target.closest("tr[data-id]");
+    if (!tr) return;
+    openUserEditModal(Number(tr.dataset.id));
+  });
+
+  // Click en la tabla: solo el botón de actividad (📊).
+  els.userTbody.addEventListener("click", (e) => {
+    const actBtn = e.target.closest('[data-act="activity"]');
+    if (actBtn) openActivityModal(Number(actBtn.dataset.id), actBtn.dataset.username);
+  });
+
+  // Guardar cambios del modal de edición (un solo PATCH con todos los campos).
+  els.userEditForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = state.editUserId;
+    if (!id) return;
+    const body = {
+      full_name: els.ueFullName.value.trim(),
+      phone: els.uePhone.value.trim(),
+      whatsapp_number: els.ueWhatsapp.value.trim(),
+      email: els.ueEmail.value.trim(),
+      active: els.ueActive.checked ? 1 : 0,
+      assigned_vendedor_id: els.ueVendedor.value || null,
+    };
+    Object.assign(body, decodePriceCfg(els.uePricecfg.value));
+    els.userEditMsg.textContent = "Guardando…";
+    els.userEditMsg.className = "config-msg";
+    try {
+      const out = await api("/api/admin/users/" + id, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const idx = state.users.findIndex((x) => x.id === id);
+      if (idx >= 0) state.users[idx] = Object.assign({}, state.users[idx], out.user);
+      els.userEditModal.hidden = true;
+      renderUsers();
+      showToast("Cliente actualizado", "ok");
+    } catch (err) {
+      els.userEditMsg.textContent = "Error: " + err.message;
+      els.userEditMsg.className = "config-msg err";
+    }
+  });
+
+  // Botones de acción dentro del modal de edición.
+  els.ueResetBtn.addEventListener("click", () => {
+    const u = state.users.find((x) => x.id === state.editUserId);
+    if (u) openResetModal(u.id, u.username);
+  });
+  els.ueCatsBtn.addEventListener("click", () => {
+    const u = state.users.find((x) => x.id === state.editUserId);
+    if (u) openCatsModal(u.id, u.username);
+  });
+  els.ueShareBtn.addEventListener("click", () => {
+    const u = state.users.find((x) => x.id === state.editUserId);
+    if (u) shareUserAccess(u);
   });
 
   els.userSearch.addEventListener("input", debounce(renderUsers, 150));
