@@ -1158,6 +1158,30 @@ Tres fixes de seguridad/robustez en `server.js` (sin tocar frontend, sin cache b
 
 **Verificación**: el bash mount volvió a quedar **stale** (veía server.js cortado en 7006 cuando Read confirma 7080 líneas terminando en `app.listen`). Se confió en Read y se validaron los bloques nuevos aislados en `/tmp` (parse + tests funcionales del rate limit y del traversal) → OK. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
 
+### Reporte de Inflación — solo superadmin (9 junio 2026, sesión noche — `admin.js?v=20260609g`)
+
+Idea de Sergio: en Argentina la mercadería aumenta entre compra y compra; lo vendido a precio viejo "pierde" ganancia pero el stock comprado barato la compensa. Quería un informe de cuándo perdió y ganó con los cambios de costo, por compra y por stock general, **solo para el superadmin**. Decisiones (AskUserQuestion): medir **solo hacia adelante** (sin reconstruir histórico), pérdida = **costo de reposición**, contar **todos los orígenes** de cambio de costo.
+
+**Modelo conceptual (por cada cambio de costo de un producto):**
+- **Revalorización del stock** = `stock_at_change × (costo nuevo − costo viejo)` — lo ganado por tener mercadería comprada al costo viejo. El stock se snapshotea AL MOMENTO del cambio (en compras, ANTES de sumar las unidades que entran).
+- **Pérdida por reposición** = unidades vendidas desde la referencia anterior (cambio de costo previo del producto, o compra previa, lo más reciente) hasta este cambio `× delta` — lo vendido con el costo viejo cuesta delta más reponerlo. Si no hay referencia previa (primer cambio registrado), devuelve null ("sin ventana"). Excluye pedidos cancelados y unificados.
+- **Neto** = revalorización − pérdida. Con bajas de costo los signos se invierten solos.
+
+**Schema** (migración idempotente en `server.js`, después de stock_adjustments): tabla `cost_changes` (product_id, old_cost, new_cost, **stock_at_change**, source 'compra'|'manual'|'excel', source_id = purchase_order_id o price_updates.id, created_at) + índices por producto y fecha. Helper `logCostChange(productId, old, new, source, sourceId, stockOverride)` — no registra si old == new; lee el stock actual salvo que el caller pase `stockOverride`.
+
+**Captura en los 3 orígenes:**
+- **Compra**: dentro de `applyPurchaseCostUpdate` (que ganó 4º parámetro `purchaseId`). ⚠️ En POST y PUT de `/api/admin/purchases` se **invirtió el orden**: ahora `applyPurchaseCostUpdate` corre ANTES de `updStock/incStock`, para que el stock registrado sea el previo a la compra (los dos statements son independientes — cost/precios vs stock — el swap no cambia nada más).
+- **Manual**: `PATCH /api/admin/products/:id` y `POST /api/admin/products/bulk-update` — si el patch toca `cost`, snapshot de cost+stock ANTES del UPDATE (por si el mismo patch también cambia stock) y log después, mismo patrón que `recordManualPriceChange`.
+- **Excel**: en `POST /api/admin/import-excel` — snapshot `Map(id → {cost, stock})` de TODOS los productos antes de `importPrices`, diff después, log con `source_id = stats.updateId`. Productos nuevos creados por el import no cuentan como "cambio".
+
+**Endpoint `GET /api/admin/reports/inflation?from&to`** (antes de "REPORTES DE VENTAS"): pasa por `requireAdmin` (sección "reportes" via `sectionForAdminRequest`) pero además exige `getAdminPerms(userId).isSuperadmin` → 403 para admins comunes. Devuelve `{from, to, totals: {changes_count, products_count, revalorizacion, perdida, neto, sin_ventana}, stock_value_now, changes: [...]}`. Cada change: old/new cost, delta, delta_pct, stock_at_change, revalorizacion, window_from, sold_qty, perdida, neto, source. La ventana usa orden `(created_at, id)` para desempatar cambios en el mismo segundo, y al buscar la compra previa **excluye la compra que originó el cambio** (`po.id != source_id`). LIMIT 1000.
+
+**Frontend**: pestaña **🔥 Inflación** en el sidebar (grupo Reportes, entre Reportes y Actividad), clase `superadmin-only` + `hidden`. En `bootstrap()` el gating de `administradores` ahora cubre también `inflacion` (ambas exclusivas del superadmin). Dispatcher: `if (tab === "inflacion") loadInflacion()` (siempre recarga). Panel `#tab-inflacion` en `admin.html`: filtros desde/hasta (default este mes), nota explicativa, 4 KPI cards (Ganado por stock / Perdido por vender a costo viejo / Neto / Valor del stock hoy a costo de reposición) y tabla con totales en tfoot + export CSV (separador `;`, BOM UTF-8). Módulo `infEls`/`infState`/`loadInflacion`/`renderInflacion` en `admin.js`, insertado entre el módulo de Reportes y CAJA. Detalle: las KPI cards de color usan texto blanco sobre gradiente → los valores van con `infSignedText` (texto plano), los de la tabla con `infSigned` (span verde/rojo).
+
+**Verificación**: lógica completa validada en `/tmp` con sqlite3 (Python): compra 100→120 con 50 u. en stock → reval $1.000; 30 u. vendidas en la ventana (excluye canceladas y posteriores) → pérdida $600, neto +$400; segundo cambio usa el cambio anterior como inicio de ventana. Parse de los bloques nuevos OK aislados. El bash mount volvió a estar **stale** (veía server.js y admin.js truncados); Read confirma íntegros (server.js 7283 líneas → `app.listen`; admin.js 10010 → `bootstrap(); })();`). Pendiente: `git add/commit/push` + deploy Railway (en disco local).
+
+**Limitación conocida**: el reporte solo ve cambios de costo posteriores al deploy. El primer cambio de cada producto aparece "sin ventana" para la pérdida **salvo** que el producto tenga compras anteriores cargadas (la compra previa sirve de referencia). La pérdida es una estimación: asume que el costo real subió en algún momento de la ventana, no necesariamente al final.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

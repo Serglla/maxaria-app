@@ -469,6 +469,49 @@ db.exec(
   "CREATE INDEX IF NOT EXISTS idx_stock_adj_date ON stock_adjustments(created_at);"
 );
 
+// Migracion: historial de cambios de COSTO (reporte de inflacion, solo superadmin).
+// Cada vez que cambia products.cost (compra, edicion manual o import Excel) se
+// registra una fila con el stock que habia EN ESE MOMENTO (antes de sumar las
+// unidades de la compra, si vino de una compra). Con eso:
+//   - revalorizacion del stock = stock_at_change * (new_cost - old_cost)
+//     (lo que "ganaste" por tener mercaderia comprada al costo viejo)
+//   - perdida por reposicion   = unidades vendidas desde el cambio ANTERIOR
+//     * (new_cost - old_cost)  (lo vendido a precios basados en el costo viejo
+//     cuesta delta mas reponerlo). Se calcula en el endpoint del reporte.
+// Solo se mide hacia adelante (decision de Sergio, 9 jun 2026): no se
+// reconstruye historial previo al deploy.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS cost_changes (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  product_id INTEGER NOT NULL REFERENCES products(id)," +
+  "  old_cost REAL NOT NULL DEFAULT 0," +
+  "  new_cost REAL NOT NULL DEFAULT 0," +
+  "  stock_at_change INTEGER NOT NULL DEFAULT 0," +
+  "  source TEXT NOT NULL DEFAULT 'manual'," + // compra|manual|excel
+  "  source_id INTEGER," + // purchase_order_id (compra) o price_updates.id (excel)
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_cost_changes_product ON cost_changes(product_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_cost_changes_date ON cost_changes(created_at);"
+);
+
+// Registra un cambio de costo si old != new. stockOverride permite pasar el
+// stock "antes" cuando el caller ya lo conoce; si no, se lee el actual.
+function logCostChange(productId, oldCost, newCost, source, sourceId, stockOverride) {
+  const o = Number(oldCost) || 0;
+  const n = Number(newCost) || 0;
+  if (!productId || o === n) return;
+  let stock = stockOverride;
+  if (stock == null) {
+    const row = db.prepare("SELECT stock FROM products WHERE id = ?").get(productId);
+    stock = row ? Number(row.stock) || 0 : 0;
+  }
+  db.prepare(
+    "INSERT INTO cost_changes (product_id, old_cost, new_cost, stock_at_change, source, source_id)" +
+    " VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(productId, o, n, Math.max(0, Math.floor(Number(stock) || 0)), String(source || "manual"), sourceId || null);
+}
+
 // ─── Pedidos de cotizacion ────────────────────────────────────────────────────
 db.exec(
   "CREATE TABLE IF NOT EXISTS purchase_requests (" +
@@ -2760,6 +2803,12 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   const before = touchesPrice
     ? db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id)
     : null;
+  // Si toca el costo, snapshot para el historial de inflacion (cost_changes).
+  // Se usa el stock ANTES del update por si el mismo patch tambien cambia stock.
+  const touchesCost = cols.includes("cost");
+  const costBefore = touchesCost
+    ? db.prepare("SELECT cost, stock FROM products WHERE id = ?").get(id)
+    : null;
 
   const sets = cols.map((c) => c + " = ?");
   sets.push("updated_at = datetime('now')");
@@ -2775,6 +2824,10 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   if (touchesPrice && before) {
     const after = db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id);
     try { recordManualPriceChange(id, before, after); } catch (_) {}
+  }
+  if (touchesCost && costBefore) {
+    const costAfter = db.prepare("SELECT cost FROM products WHERE id = ?").get(id);
+    try { logCostChange(id, costBefore.cost, costAfter.cost, "manual", null, costBefore.stock); } catch (_) {}
   }
 
   res.json({ ok: true, id: id });
@@ -2814,6 +2867,10 @@ app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
       const before = touchesPrice
         ? db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id)
         : null;
+      const touchesCost = cols.includes("cost");
+      const costBefore = touchesCost
+        ? db.prepare("SELECT cost, stock FROM products WHERE id = ?").get(id)
+        : null;
       const sets = cols.map((c) => c + " = ?");
       sets.push("updated_at = datetime('now')");
       vals.push(id);
@@ -2824,6 +2881,10 @@ app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
           if (touchesPrice && before) {
             const after = db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id);
             recordManualPriceChange(id, before, after);
+          }
+          if (touchesCost && costBefore) {
+            const costAfter = db.prepare("SELECT cost FROM products WHERE id = ?").get(id);
+            logCostChange(id, costBefore.cost, costAfter.cost, "manual", null, costBefore.stock);
           }
         } else failed++;
       } catch (_) { failed++; }
@@ -3415,7 +3476,25 @@ app.post("/api/admin/import-excel", requireAdmin, excelUpload.single("file"), (r
   }
   if (!items.length) return res.status(400).json({ error: "El Excel no tiene filas validas" });
   try {
+    // Snapshot de costo+stock ANTES del import para detectar cambios de costo
+    // (historial de inflacion). El import tambien puede tocar stock, por eso
+    // se guarda el stock previo junto al costo.
+    const beforeCosts = new Map(
+      db.prepare("SELECT id, cost, stock FROM products").all().map((r) => [r.id, r])
+    );
     const stats = importPrices(items, db, { source: "excel-upload" });
+    try {
+      const afterRows = db.prepare("SELECT id, cost FROM products").all();
+      for (const r of afterRows) {
+        const b = beforeCosts.get(r.id);
+        if (!b) continue; // producto nuevo creado por el import: no es un "cambio"
+        if ((Number(b.cost) || 0) !== (Number(r.cost) || 0)) {
+          logCostChange(r.id, b.cost, r.cost, "excel", stats.updateId || null, b.stock);
+        }
+      }
+    } catch (e2) {
+      console.error("import-excel: error registrando cost_changes:", e2);
+    }
     res.json({ ok: true, filas: items.length, stats: stats });
   } catch (e) {
     console.error("import-excel error:", e);
@@ -4361,7 +4440,7 @@ app.get("/api/admin/purchases", requireAdmin, (req, res) => {
 // ajustan los precios de venta en la misma proporción para mantener el margen.
 // Debe llamarse DENTRO de una transacción.
 const PURCHASE_COST_POLICIES = ["higher", "always", "never"];
-function applyPurchaseCostUpdate(productId, newCostRaw, policy) {
+function applyPurchaseCostUpdate(productId, newCostRaw, policy, purchaseId) {
   if (!productId || policy === "never") return;
   const prod = db.prepare(
     "SELECT cost, price_minorista, price_revendedor, price_mayorista, price_vip, price_publico" +
@@ -4372,6 +4451,10 @@ function applyPurchaseCostUpdate(productId, newCostRaw, policy) {
   const newCost = Math.max(0, Number(newCostRaw) || 0);
   const shouldUpdate = policy === "always" || (policy === "higher" && newCost > oldCost);
   if (!shouldUpdate) return;
+  // Historial de costos para el reporte de inflacion. IMPORTANTE: los callers
+  // llaman esta funcion ANTES de sumar el stock de la compra, asi el stock
+  // registrado es el que habia comprado al costo viejo (revalorizacion exacta).
+  try { logCostChange(productId, oldCost, newCost, "compra", purchaseId || null); } catch (_) {}
   if (oldCost > 0 && newCost > 0) {
     // Mantener margen: cada precio de venta se mueve en la misma proporción.
     const ratio = newCost / oldCost;
@@ -4456,8 +4539,10 @@ app.post("/api/admin/purchases", requireAdmin, (req, res) => {
       insItem.run(purchaseId, l.product_id, l.product_code, l.product_name,
                   l.quantity, l.unit_cost, l.subtotal);
       if (l.product_id) {
+        // Costo ANTES de sumar stock: el snapshot de stock del cost_change
+        // debe ser el stock comprado al costo viejo (sin las unidades nuevas).
+        applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy, purchaseId);
         updStock.run(l.quantity, l.product_id);
-        applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy);
       }
     }
 
@@ -4557,8 +4642,9 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     for (const l of lines) {
       insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_cost, l.subtotal);
       if (l.product_id) {
+        // Mismo orden que en el POST: costo antes de sumar stock (ver comentario alla).
+        applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy, id);
         incStock.run(l.quantity, l.product_id);
-        applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy);
       }
     }
 
@@ -6524,6 +6610,123 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("v
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
   db.prepare("DELETE FROM budgets WHERE id = ?").run(budget.id);
   res.json({ ok: true });
+});
+
+// ===== REPORTE DE INFLACION (solo superadmin) =====
+//
+// Mide el impacto de cada aumento (o baja) de costo registrado en cost_changes:
+//  - Revalorizacion del stock: stock_at_change * (costo nuevo - costo viejo).
+//    Mercaderia que tenias comprada al costo viejo y ahora vale mas.
+//  - Perdida por reposicion: unidades vendidas DESDE el cambio de costo
+//    anterior (o la compra anterior, lo que sea mas reciente) hasta este
+//    cambio * delta. Esa mercaderia se vendio con el costo viejo y reponerla
+//    cuesta delta mas. Si no hay referencia previa, se devuelve null
+//    ("sin ventana": primer cambio registrado del producto).
+//  - Neto = revalorizacion - perdida.
+// Con deltas negativos (baja de costo) los signos se invierten solos.
+app.get("/api/admin/reports/inflation", requireAdmin, (req, res) => {
+  const perms = getAdminPerms(req.session.userId);
+  if (!perms.isSuperadmin) {
+    return res.status(403).json({ error: "Solo el superadmin puede ver este reporte" });
+  }
+
+  const { from, to } = req.query;
+  const where = [];
+  const params = [];
+  if (from) { where.push("date(cc.created_at) >= ?"); params.push(String(from)); }
+  if (to)   { where.push("date(cc.created_at) <= ?"); params.push(String(to)); }
+  const wStr = where.length ? " WHERE " + where.join(" AND ") : "";
+
+  const rows = db.prepare(
+    "SELECT cc.id, cc.product_id, cc.old_cost, cc.new_cost, cc.stock_at_change," +
+    "       cc.source, cc.source_id, cc.created_at," +
+    "       p.code, p.name, p.stock AS stock_now" +
+    "  FROM cost_changes cc JOIN products p ON p.id = cc.product_id" +
+    wStr + " ORDER BY cc.created_at DESC, cc.id DESC LIMIT 1000"
+  ).all(...params);
+
+  // Limite de la ventana de "ventas a costo viejo": el cambio de costo anterior
+  // del mismo producto, o la compra anterior (excluyendo la compra que origino
+  // ESTE cambio), lo que sea mas reciente.
+  const prevChangeStmt = db.prepare(
+    "SELECT created_at FROM cost_changes" +
+    " WHERE product_id = ? AND (created_at < ? OR (created_at = ? AND id < ?))" +
+    " ORDER BY created_at DESC, id DESC LIMIT 1"
+  );
+  const prevPurchaseStmt = db.prepare(
+    "SELECT MAX(po.created_at) AS d" +
+    "  FROM purchase_items pi JOIN purchase_orders po ON po.id = pi.purchase_order_id" +
+    " WHERE pi.product_id = ? AND po.created_at < ?" +
+    "   AND (? IS NULL OR po.id != ?)"
+  );
+  const soldStmt = db.prepare(
+    "SELECT COALESCE(SUM(oi.quantity), 0) AS q" +
+    "  FROM order_items oi JOIN orders o ON o.id = oi.order_id" +
+    " WHERE oi.product_id = ? AND o.status != 'cancelado'" +
+    "   AND COALESCE(o.is_unified, 0) = 0" +
+    "   AND o.created_at > ? AND o.created_at <= ?"
+  );
+
+  const changes = rows.map((r) => {
+    const delta = (Number(r.new_cost) || 0) - (Number(r.old_cost) || 0);
+    const revalorizacion = Math.round((Number(r.stock_at_change) || 0) * delta);
+
+    const ownPurchaseId = r.source === "compra" ? (r.source_id || null) : null;
+    const pc = prevChangeStmt.get(r.product_id, r.created_at, r.created_at, r.id);
+    const pp = prevPurchaseStmt.get(r.product_id, r.created_at, ownPurchaseId, ownPurchaseId);
+    let windowFrom = null;
+    if (pc && pc.created_at) windowFrom = pc.created_at;
+    if (pp && pp.d && (!windowFrom || pp.d > windowFrom)) windowFrom = pp.d;
+
+    let soldQty = null, perdida = null;
+    if (windowFrom) {
+      soldQty = Number(soldStmt.get(r.product_id, windowFrom, r.created_at).q) || 0;
+      perdida = Math.round(soldQty * delta);
+    }
+
+    return {
+      id: r.id,
+      product_id: r.product_id,
+      code: r.code,
+      name: r.name,
+      source: r.source,
+      created_at: r.created_at,
+      old_cost: Number(r.old_cost) || 0,
+      new_cost: Number(r.new_cost) || 0,
+      delta: delta,
+      delta_pct: (Number(r.old_cost) || 0) > 0 ? (delta / Number(r.old_cost)) * 100 : null,
+      stock_at_change: Number(r.stock_at_change) || 0,
+      stock_now: Number(r.stock_now) || 0,
+      revalorizacion: revalorizacion,
+      window_from: windowFrom,
+      sold_qty: soldQty,
+      perdida: perdida,
+      neto: revalorizacion - (perdida || 0),
+    };
+  });
+
+  const totals = {
+    changes_count: changes.length,
+    products_count: new Set(changes.map((c) => c.product_id)).size,
+    revalorizacion: changes.reduce((a, c) => a + c.revalorizacion, 0),
+    perdida: changes.reduce((a, c) => a + (c.perdida || 0), 0),
+    sin_ventana: changes.filter((c) => c.window_from == null).length,
+  };
+  totals.neto = totals.revalorizacion - totals.perdida;
+
+  // Contexto: valor actual del stock a costo de reposicion.
+  const stockValue = db.prepare(
+    "SELECT COALESCE(SUM(stock * COALESCE(cost, 0)), 0) AS v" +
+    "  FROM products WHERE active = 1 AND stock > 0"
+  ).get();
+
+  res.json({
+    from: from || null,
+    to: to || null,
+    totals: totals,
+    stock_value_now: Math.round(Number(stockValue.v) || 0),
+    changes: changes,
+  });
 });
 
 // ===== REPORTES DE VENTAS =====

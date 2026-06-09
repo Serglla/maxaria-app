@@ -119,6 +119,9 @@
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="reportes" type="button">
             <span class="admin-sidebar-item-icon">📈</span>Reportes
           </button>
+          <button class="tab-btn admin-sidebar-item admin-only superadmin-only" data-tab="inflacion" type="button" hidden>
+            <span class="admin-sidebar-item-icon">🔥</span>Inflación
+          </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="actividad" type="button">
             <span class="admin-sidebar-item-icon">📊</span>Actividad
           </button>
@@ -746,6 +749,72 @@
             <tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Aplicá los filtros para ver el reporte.</td></tr>
           </tbody>
           <tfoot id="rpt-tfoot"></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== TAB INFLACIÓN (impacto de cambios de costo, solo superadmin) ===== -->
+    <section class="tab-panel" id="tab-inflacion" hidden>
+      <div class="rpt-toolbar">
+        <label class="rpt-filter-label">Desde
+          <input type="date" id="inf-from" class="admin-input" />
+        </label>
+        <label class="rpt-filter-label">Hasta
+          <input type="date" id="inf-to" class="admin-input" />
+        </label>
+        <button class="btn btn-primary" id="inf-apply-btn" type="button">Aplicar</button>
+        <button class="btn btn-ghost" id="inf-export-btn" type="button" title="Exportar como CSV">⬇ CSV</button>
+      </div>
+      <p class="muted" style="margin:0 24px 12px;font-size:12.5px">
+        Cada vez que cambia el costo de un producto (compra, edición manual o Excel) se registra cuánto stock tenías y cuánto se vendió desde el cambio anterior.
+        <strong>Ganado stock</strong> = mercadería comprada barata que ahora vale más. <strong>Perdido ventas</strong> = lo vendido a costo viejo cuesta más reponerlo.
+        El historial se registra desde el deploy de esta función en adelante.
+      </p>
+
+      <div class="dash-kpi-row" id="inf-kpi-row" style="margin:0 24px 16px">
+        <div class="dash-kpi dash-kpi-good">
+          <div class="dash-kpi-label">Ganado por stock</div>
+          <div class="dash-kpi-value" id="inf-kpi-reval">—</div>
+          <div class="dash-kpi-sub">revalorización al subir el costo</div>
+        </div>
+        <div class="dash-kpi dash-kpi-danger">
+          <div class="dash-kpi-label">Perdido por vender a costo viejo</div>
+          <div class="dash-kpi-value" id="inf-kpi-perdida">—</div>
+          <div class="dash-kpi-sub">costo extra de reponer lo vendido</div>
+        </div>
+        <div class="dash-kpi dash-kpi-accent">
+          <div class="dash-kpi-label">Neto del período</div>
+          <div class="dash-kpi-value" id="inf-kpi-neto">—</div>
+          <div class="dash-kpi-sub" id="inf-kpi-cambios"></div>
+        </div>
+        <div class="dash-kpi">
+          <div class="dash-kpi-label">Valor del stock hoy</div>
+          <div class="dash-kpi-value" id="inf-kpi-stock">—</div>
+          <div class="dash-kpi-sub">a costo de reposición actual</div>
+        </div>
+      </div>
+
+      <div class="admin-table-wrap" style="margin:0 24px">
+        <table class="admin-table" id="inf-table">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Producto</th>
+              <th>Origen</th>
+              <th class="num">Costo viejo</th>
+              <th class="num">Costo nuevo</th>
+              <th class="num">Δ %</th>
+              <th class="num" title="Stock que había al momento del cambio (sin contar lo que entró con la compra)">Stock</th>
+              <th class="num" title="Stock al cambio × suba de costo">Ganado stock</th>
+              <th class="num" title="Unidades vendidas desde el cambio de costo anterior">Vendido</th>
+              <th class="num" title="Vendido × suba de costo: lo que cuesta de más reponerlo">Perdido ventas</th>
+              <th class="num">Neto</th>
+            </tr>
+          </thead>
+          <tbody id="inf-tbody">
+            <tr><td colspan="11" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>
+          </tbody>
+          <tfoot id="inf-tfoot"></tfoot>
         </table>
       </div>
     </section>
@@ -2989,6 +3058,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260609e"></script>
+  <script src="/js/admin.js?v=20260609g"></script>
 </body>
 </html>

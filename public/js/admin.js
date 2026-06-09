@@ -664,8 +664,8 @@
         const allowed = Array.isArray(me.adminSections) ? me.adminSections : null;
         els.tabBtns.forEach((btn) => {
           const tab = btn.dataset.tab;
-          if (tab === "administradores") {
-            // Solo el superadmin ve y usa esta pestaña.
+          if (tab === "administradores" || tab === "inflacion") {
+            // Pestañas exclusivas del superadmin (Administradores e Inflación).
             btn.hidden = !isSuper;
             btn.style.display = isSuper ? "" : "none";
             return;
@@ -1063,6 +1063,7 @@
       if (tab === "ctacte-prov") loadSupplierAccounts(); // siempre recargar (cambia con compras/pagos)
       if (tab === "caja") loadCaja();
       if (tab === "administradores") loadAdmins();
+      if (tab === "inflacion") loadInflacion(); // siempre recargar (cambia con compras/ediciones)
       if (tab === "ventas") loadVentasOrders(); // siempre recargar (refleja entregas nuevas)
     });
   });
@@ -9385,6 +9386,147 @@
       const a    = document.createElement("a");
       a.href     = url;
       a.download = "reporte-ventas-" + (rptEls.from ? rptEls.from.value : "hoy") + ".csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // INFLACIÓN (solo superadmin): impacto de los cambios de costo
+  // ─────────────────────────────────────────────────────────────────
+  const infEls = {
+    from:      document.getElementById("inf-from"),
+    to:        document.getElementById("inf-to"),
+    applyBtn:  document.getElementById("inf-apply-btn"),
+    exportBtn: document.getElementById("inf-export-btn"),
+    tbody:     document.getElementById("inf-tbody"),
+    tfoot:     document.getElementById("inf-tfoot"),
+    kpiReval:   document.getElementById("inf-kpi-reval"),
+    kpiPerdida: document.getElementById("inf-kpi-perdida"),
+    kpiNeto:    document.getElementById("inf-kpi-neto"),
+    kpiCambios: document.getElementById("inf-kpi-cambios"),
+    kpiStock:   document.getElementById("inf-kpi-stock"),
+  };
+  const infState = { changes: [] };
+  const INF_SOURCE_LABEL = { compra: "🛒 Compra", manual: "✏️ Manual", excel: "📊 Excel" };
+
+  function infFmt(n) {
+    const v = Math.round(Number(n)) || 0;
+    return "$ " + v.toLocaleString("es-AR");
+  }
+  function infSigned(n) {
+    const v = Math.round(Number(n)) || 0;
+    const s = "$ " + Math.abs(v).toLocaleString("es-AR");
+    if (v > 0) return '<span class="text-good" style="color:#15803d;font-weight:700">+' + s + "</span>";
+    if (v < 0) return '<span style="color:#b91c1c;font-weight:700">−' + s + "</span>";
+    return s;
+  }
+  // Variante texto plano para las KPI cards de color (texto blanco sobre gradiente).
+  function infSignedText(n) {
+    const v = Math.round(Number(n)) || 0;
+    return (v > 0 ? "+" : v < 0 ? "−" : "") + "$ " + Math.abs(v).toLocaleString("es-AR");
+  }
+  function infSetDefaultRange() {
+    if (!infEls.from || infEls.from.value) return;
+    const now = new Date();
+    infEls.from.value = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-01";
+    infEls.to.value = now.toISOString().slice(0, 10);
+  }
+
+  async function loadInflacion() {
+    if (!infEls.tbody) return;
+    infSetDefaultRange();
+    infEls.tbody.innerHTML = '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>';
+    if (infEls.tfoot) infEls.tfoot.innerHTML = "";
+    try {
+      const qs = [
+        infEls.from && infEls.from.value ? "from=" + infEls.from.value : "",
+        infEls.to && infEls.to.value ? "to=" + infEls.to.value : "",
+      ].filter(Boolean).join("&");
+      const data = await api("/api/admin/reports/inflation" + (qs ? "?" + qs : ""));
+      infState.changes = data.changes || [];
+      renderInflacion(data);
+    } catch (e) {
+      infEls.tbody.innerHTML = '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">' +
+        escapeHtml(e.message || "Error cargando el reporte") + "</td></tr>";
+    }
+  }
+
+  function renderInflacion(data) {
+    const t = data.totals || {};
+    if (infEls.kpiReval)   infEls.kpiReval.textContent = infSignedText(t.revalorizacion);
+    if (infEls.kpiPerdida) infEls.kpiPerdida.textContent = infSignedText(-(t.perdida || 0));
+    if (infEls.kpiNeto)    infEls.kpiNeto.textContent = infSignedText(t.neto);
+    if (infEls.kpiCambios) {
+      infEls.kpiCambios.textContent = (t.changes_count || 0) + " cambios · " + (t.products_count || 0) + " productos" +
+        (t.sin_ventana ? " · " + t.sin_ventana + " sin referencia previa" : "");
+    }
+    if (infEls.kpiStock) infEls.kpiStock.textContent = infFmt(data.stock_value_now);
+
+    const rows = infState.changes;
+    if (!rows.length) {
+      infEls.tbody.innerHTML = '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">' +
+        "Sin cambios de costo en el período. Los cambios se registran desde que esta función está activa.</td></tr>";
+      return;
+    }
+    infEls.tbody.innerHTML = rows.map((c) => {
+      const fecha = (c.created_at || "").slice(0, 10).split("-").reverse().join("/");
+      const pct = c.delta_pct == null ? "—"
+        : (c.delta_pct > 0 ? "+" : "") + c.delta_pct.toFixed(1) + "%";
+      const pctColor = c.delta > 0 ? "#b91c1c" : (c.delta < 0 ? "#15803d" : "inherit");
+      return "<tr>" +
+        "<td>" + fecha + "</td>" +
+        "<td><strong>" + escapeHtml(c.name) + "</strong> <span class='muted'>(" + escapeHtml(c.code || "—") + ")</span></td>" +
+        "<td>" + (INF_SOURCE_LABEL[c.source] || escapeHtml(c.source)) + "</td>" +
+        '<td class="num">' + infFmt(c.old_cost) + "</td>" +
+        '<td class="num">' + infFmt(c.new_cost) + "</td>" +
+        '<td class="num" style="font-weight:700;color:' + pctColor + '">' + pct + "</td>" +
+        '<td class="num">' + c.stock_at_change + "</td>" +
+        '<td class="num">' + infSigned(c.revalorizacion) + "</td>" +
+        '<td class="num">' + (c.sold_qty == null ? '<span class="muted" title="Primer cambio registrado del producto: no hay referencia previa para medir ventas">—</span>' : c.sold_qty) + "</td>" +
+        '<td class="num">' + (c.perdida == null ? '<span class="muted">—</span>' : infSigned(-c.perdida)) + "</td>" +
+        '<td class="num">' + infSigned(c.neto) + "</td>" +
+        "</tr>";
+    }).join("");
+    if (infEls.tfoot) {
+      const tr = infState.changes;
+      const sumReval = tr.reduce((a, c) => a + (c.revalorizacion || 0), 0);
+      const sumPerd = tr.reduce((a, c) => a + (c.perdida || 0), 0);
+      infEls.tfoot.innerHTML = "<tr style='font-weight:700;background:#f9f5ef'>" +
+        '<td colspan="7" style="text-align:right">Totales:</td>' +
+        '<td class="num">' + infSigned(sumReval) + "</td>" +
+        "<td></td>" +
+        '<td class="num">' + infSigned(-sumPerd) + "</td>" +
+        '<td class="num">' + infSigned(sumReval - sumPerd) + "</td>" +
+        "</tr>";
+    }
+  }
+
+  if (infEls.applyBtn) infEls.applyBtn.addEventListener("click", loadInflacion);
+  if (infEls.exportBtn) {
+    infEls.exportBtn.addEventListener("click", () => {
+      if (!infState.changes.length) { alert("No hay datos para exportar."); return; }
+      const header = ["Fecha", "Codigo", "Producto", "Origen", "Costo viejo", "Costo nuevo", "Delta %", "Stock al cambio", "Ganado stock", "Vendido", "Perdido ventas", "Neto"];
+      const rows = infState.changes.map((c) => [
+        (c.created_at || "").slice(0, 10),
+        '"' + String(c.code || "").replace(/"/g, '""') + '"',
+        '"' + String(c.name || "").replace(/"/g, '""') + '"',
+        c.source,
+        c.old_cost,
+        c.new_cost,
+        c.delta_pct == null ? "" : c.delta_pct.toFixed(1),
+        c.stock_at_change,
+        c.revalorizacion,
+        c.sold_qty == null ? "" : c.sold_qty,
+        c.perdida == null ? "" : c.perdida,
+        c.neto,
+      ]);
+      const csv = [header, ...rows].map((r) => r.join(";")).join("\n");
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "inflacion-" + (infEls.from && infEls.from.value ? infEls.from.value : "hoy") + ".csv";
       a.click();
       URL.revokeObjectURL(url);
     });
