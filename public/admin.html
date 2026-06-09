@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260608g" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260608h" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -271,6 +271,24 @@
                 </tr>
               </thead>
               <tbody id="dash-deudores-tbody"><tr><td colspan="2" class="muted">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Clientes inactivos -->
+      <div class="dash-two-col">
+        <div class="dash-table-card">
+          <div class="dash-section-label" id="dash-inactive-title">😴 Clientes inactivos</div>
+          <div class="admin-table-wrap">
+            <table class="admin-table" id="dash-inactive-table">
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th class="num">Último ingreso</th>
+                </tr>
+              </thead>
+              <tbody id="dash-inactive-tbody"><tr><td colspan="2" class="muted">Cargando…</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -1047,6 +1065,30 @@
             </thead>
             <tbody id="act-detail-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
             <tfoot id="act-detail-tfoot"></tfoot>
+          </table>
+        </div>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cerrar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal de actividad / logueos de un usuario -->
+    <div class="admin-modal" id="activity-modal" hidden>
+      <div class="admin-modal-box" style="max-width:880px">
+        <h3 id="activity-title">Actividad</h3>
+        <div id="activity-summary" class="act-kpi-grid"></div>
+        <div class="admin-table-wrap" style="max-height:60vh;overflow:auto">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Fecha y hora</th>
+                <th>Evento</th>
+                <th>IP</th>
+                <th>Dispositivo</th>
+              </tr>
+            </thead>
+            <tbody id="activity-tbody"><tr><td colspan="4" class="muted">Cargando…</td></tr></tbody>
           </table>
         </div>
         <div class="admin-modal-foot">
@@ -2896,6 +2938,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260608m"></script>
+  <script src="/js/admin.js?v=20260608o"></script>
 </body>
 </html>

@@ -882,6 +882,27 @@
           ).join("");
         }
       }
+
+      // Clientes inactivos (no ingresan hace +N días o nunca ingresaron)
+      const days = d.inactiveDays || 30;
+      const itTitle = document.getElementById("dash-inactive-title");
+      if (itTitle) itTitle.textContent = "Clientes inactivos (+" + days + " días sin entrar)";
+      const itbody = document.getElementById("dash-inactive-tbody");
+      if (itbody) {
+        const list = d.inactiveClients || [];
+        if (!list.length) {
+          itbody.innerHTML = '<tr><td colspan="2" class="muted">Todos los clientes ingresaron en los últimos ' + days + ' días 👍</td></tr>';
+        } else {
+          itbody.innerHTML = list.map((c) => {
+            const name = escapeHtml(c.full_name || c.username);
+            const info = (c.days_inactive == null)
+              ? '<span style="color:#b91c1c;font-weight:600">Nunca ingresó</span>'
+              : ('hace ' + c.days_inactive + ' días');
+            return "<tr><td>" + name + "</td>" +
+              "<td class=\"muted small\" style=\"text-align:right\">" + info + "</td></tr>";
+          }).join("");
+        }
+      }
     } catch (e) {
       console.error("Dashboard error:", e);
     }
@@ -1113,6 +1134,8 @@
       '<option value="' + v + '"' + (Number(v) === u.level ? " selected" : "") + '>' + n + '</option>'
     ).join("");
     const lastLogin = u.last_login_at ? formatDate(u.last_login_at) : "—";
+    const loginCount = Number(u.login_count) || 0;
+    const lastLoginCell = lastLogin + (loginCount ? ' <span class="muted">(' + loginCount + ')</span>' : '');
     // Solo clientes (level 1-4) pueden tener vendedor y lista. Para vendedores
     // (5) y admin (99) mostramos celdas inactivas con texto.
     const isClient = [1, 2, 3, 4].includes(Number(u.level));
@@ -1136,12 +1159,87 @@
       '<td><input class="cell-input" data-field="email" type="email" value="' + escapeHtml(u.email || "") + '" /></td>' +
       '<td><label class="cell-toggle"' + (isMe ? ' title="No podés desactivarte a vos mismo"' : '') + '>' +
         '<input type="checkbox" data-field="active"' + (u.active ? " checked" : "") + (isMe ? " disabled" : "") + ' /><span></span></label></td>' +
-      '<td class="muted small-cell">' + lastLogin + '</td>' +
+      '<td class="muted small-cell">' + lastLoginCell +
+        ' <button class="btn btn-small btn-activity" data-act="activity" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button" title="Ver actividad y logueos">📊</button></td>' +
       '<td><button class="btn btn-small btn-cats" data-act="cats" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button" title="Gestionar categorías visibles">Categorías</button></td>' +
       '<td><button class="btn btn-small btn-reset" data-act="reset" data-id="' + u.id + '" data-username="' + escapeHtml(u.username) + '" type="button">Reset pass</button>' +
         (isClient ? ' <button class="btn btn-small btn-share" data-act="share" data-id="' + u.id + '" type="button" title="Compartir acceso por WhatsApp">Compartir</button>' : '') +
       '</td>' +
     '</tr>';
+  }
+
+  // ---- Modal de actividad del usuario (logueos + eventos clave) ----
+  const ACT_LABELS = {
+    login: "🔓 Ingreso",
+    logout: "🚪 Salida",
+    catalogo: "🛒 Abrió catálogo",
+    pedido: "📦 Envió pedido",
+    cambios: "💲 Vio cambios de precio",
+  };
+
+  async function openActivityModal(userId, username) {
+    const modal = document.getElementById("activity-modal");
+    const titleEl = document.getElementById("activity-title");
+    const summaryEl = document.getElementById("activity-summary");
+    const bodyEl = document.getElementById("activity-tbody");
+    if (!modal) return;
+    titleEl.textContent = "Actividad de " + (username || "usuario");
+    summaryEl.innerHTML = '<span class="muted">Cargando…</span>';
+    bodyEl.innerHTML = '<tr><td colspan="4" class="muted">Cargando…</td></tr>';
+    modal.hidden = false;
+    try {
+      const data = await api("/api/admin/users/" + userId + "/activity");
+      const s = data.summary || {};
+      summaryEl.innerHTML =
+        actKpi("Ingresos", s.logins || 0) +
+        actKpi("Pedidos", s.pedidos || 0) +
+        actKpi("Vio catálogo", s.catalogos || 0) +
+        actKpi("Vio cambios", s.cambios || 0) +
+        actKpi("Último ingreso", s.last_login ? formatDate(s.last_login) : "—") +
+        actKpi("Última actividad", s.last_activity ? formatDate(s.last_activity) : "—");
+      const evs = data.events || [];
+      if (!evs.length) {
+        bodyEl.innerHTML = '<tr><td colspan="4" class="muted">Sin registros todavía.</td></tr>';
+        return;
+      }
+      bodyEl.innerHTML = evs.map((ev) => {
+        const label = ACT_LABELS[ev.event] || escapeHtml(ev.event);
+        const det = ev.detail ? escapeHtml(ev.detail) : "";
+        const ip = ev.ip ? escapeHtml(ev.ip) : "—";
+        return '<tr>' +
+          '<td class="muted small-cell">' + escapeHtml(formatDate(ev.created_at)) + '</td>' +
+          '<td>' + label + (det ? ' <span class="muted">' + det + '</span>' : '') + '</td>' +
+          '<td class="muted small-cell">' + ip + '</td>' +
+          '<td class="muted small-cell" title="' + escapeHtml(ev.user_agent || "") + '">' + escapeHtml(shortUa(ev.user_agent)) + '</td>' +
+        '</tr>';
+      }).join("");
+    } catch (err) {
+      summaryEl.innerHTML = '<span class="muted">Error</span>';
+      bodyEl.innerHTML = '<tr><td colspan="4" class="muted">Error: ' + escapeHtml(err.message) + '</td></tr>';
+    }
+  }
+
+  function actKpi(label, value) {
+    return '<div class="act-kpi"><div class="act-kpi-value">' + escapeHtml(String(value)) +
+      '</div><div class="act-kpi-label">' + escapeHtml(label) + '</div></div>';
+  }
+
+  // Resume el user-agent a algo legible (navegador + sistema).
+  function shortUa(ua) {
+    if (!ua) return "—";
+    let os = "";
+    if (/Android/i.test(ua)) os = "Android";
+    else if (/iPhone|iPad|iOS/i.test(ua)) os = "iOS";
+    else if (/Windows/i.test(ua)) os = "Windows";
+    else if (/Mac OS X|Macintosh/i.test(ua)) os = "Mac";
+    else if (/Linux/i.test(ua)) os = "Linux";
+    let br = "";
+    if (/Edg\//i.test(ua)) br = "Edge";
+    else if (/Chrome\//i.test(ua)) br = "Chrome";
+    else if (/Firefox\//i.test(ua)) br = "Firefox";
+    else if (/Safari\//i.test(ua)) br = "Safari";
+    const out = [br, os].filter(Boolean).join(" · ");
+    return out || ua.slice(0, 30);
   }
 
   // Auto-save al cambiar nombre/nivel/teléfono/email/active
@@ -1223,6 +1321,13 @@
       showToast(hasPass
         ? (waNum ? "Abriendo WhatsApp con el acceso · mensaje copiado" : "Sin WhatsApp del cliente: elegí el contacto · mensaje copiado")
         : "⚠️ Sin contraseña guardada: usá 'Reset pass' y volvé a compartir", hasPass ? "ok" : "err");
+      return;
+    }
+
+    // Actividad: ver logueos e historial del usuario
+    const actBtn = e.target.closest('[data-act="activity"]');
+    if (actBtn) {
+      openActivityModal(Number(actBtn.dataset.id), actBtn.dataset.username);
       return;
     }
 

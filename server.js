@@ -553,6 +553,37 @@ try {
 // desde la pestaña Cuentas o desde Usuarios.
 try { db.exec("ALTER TABLE users ADD COLUMN credit_limit INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 
+// Migracion: registro de actividad de usuarios (logins y eventos clave).
+// event: 'login' | 'logout' | 'catalogo' | 'pedido' | 'cambios'
+// Se usa sobre todo para clientes (level 1-4): saber si entran, cuando y que hacen.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS activity_log (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  user_id INTEGER REFERENCES users(id)," +
+  "  username TEXT," +
+  "  event TEXT NOT NULL," +
+  "  detail TEXT," +
+  "  ip TEXT," +
+  "  user_agent TEXT," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ")"
+);
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id, created_at)"); } catch (_) {}
+
+// Registra un evento de actividad del usuario logueado. Nunca tira (best-effort).
+function logActivity(req, event, detail) {
+  try {
+    if (!req || !req.session || !req.session.userId) return;
+    var ipRaw = (req.headers && req.headers["x-forwarded-for"]) || "";
+    var ip = String(ipRaw).split(",")[0].trim() ||
+             (req.ip || (req.socket && req.socket.remoteAddress) || null);
+    var ua = ((req.headers && req.headers["user-agent"]) || "").slice(0, 300) || null;
+    db.prepare(
+      "INSERT INTO activity_log (user_id, username, event, detail, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(req.session.userId, req.session.username || null, event, detail || null, ip, ua);
+  } catch (_) {}
+}
+
 // Helper: genera el proximo numero de presupuesto en formato 0001-00000001.
 function nextBudgetNumber() {
   const row = db.prepare(
@@ -1139,10 +1170,12 @@ app.post("/login", (req, res) => {
     req.session.vendedorPriceLevel = [1, 2, 3, 4].includes(Number(user.vendedor_price_level))
       ? Number(user.vendedor_price_level) : 1;
   }
+  logActivity(req, "login", null);
   res.json({ ok: true, user: { id: user.id, username: user.username, fullName: user.full_name, level: user.level, levelName: levelName(user.level) } });
 });
 
 app.post("/logout", (req, res) => {
+  logActivity(req, "logout", null);
   req.session.destroy(() => { res.clearCookie("maxaria.sid"); res.json({ ok: true }); });
 });
 
@@ -1151,6 +1184,8 @@ app.get("/", (req, res) => {
   res.redirect("/login");
 });
 app.get("/catalogo", requireLogin, (req, res) => {
+  // Registrar visita al catalogo solo para clientes (level 1-4).
+  if (req.session.level >= 1 && req.session.level <= 4) logActivity(req, "catalogo", null);
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
@@ -1593,6 +1628,7 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
   if (!userCanSeePriceChanges(level)) {
     return res.status(403).json({ error: "No tenés acceso a esta sección" });
   }
+  if (level >= 1 && level <= 4) logActivity(req, "cambios", null);
 
   // Resolver el "cliente target": para vendedor con cliente seleccionado,
   // es el cliente atendido. Para cliente puro (1-4) es el propio usuario.
@@ -2024,6 +2060,7 @@ app.post("/api/orders", requireLogin, (req, res) => {
     }
   })();
 
+  logActivity(req, "pedido", "Pedido #" + orderId + " · $" + total + " · " + lines.length + " items");
   res.json({ ok: true, order: { id: orderId, total: total, items: lines.length } });
 });
 
@@ -2837,12 +2874,42 @@ function isValidUsername(s) {
 
 app.get("/api/admin/users", requireAdmin, (req, res) => {
   const rows = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password," +
-    "       level, active, created_at, last_login_at," +
-    "       assigned_vendedor_id, price_list_id, vendedor_price_level, is_tercerizado" +
-    "  FROM users ORDER BY level DESC, username"
+    "SELECT u.id, u.username, u.full_name, u.phone, u.whatsapp_number, u.email, u.plain_password," +
+    "       u.level, u.active, u.created_at, u.last_login_at," +
+    "       u.assigned_vendedor_id, u.price_list_id, u.vendedor_price_level, u.is_tercerizado," +
+    "       (SELECT COUNT(*) FROM activity_log a WHERE a.user_id = u.id AND a.event = 'login') AS login_count," +
+    "       (SELECT MAX(a.created_at) FROM activity_log a WHERE a.user_id = u.id) AS last_activity_at" +
+    "  FROM users u ORDER BY u.level DESC, u.username"
   ).all();
   res.json(rows);
+});
+
+// Historial de actividad de un usuario (logins y eventos clave).
+app.get("/api/admin/users/:id/activity", requireAdmin, (req, res) => {
+  const userId = Number(req.params.id);
+  const u = db.prepare("SELECT id, username, full_name, level, last_login_at FROM users WHERE id = ?").get(userId);
+  if (!u) return res.status(404).json({ error: "Usuario no encontrado" });
+
+  const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 1000);
+  const events = db.prepare(
+    "SELECT id, event, detail, ip, user_agent, created_at" +
+    "  FROM activity_log WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?"
+  ).all(userId, limit);
+
+  const summary = db.prepare(
+    "SELECT" +
+    "  COUNT(*) AS total," +
+    "  SUM(CASE WHEN event = 'login' THEN 1 ELSE 0 END) AS logins," +
+    "  SUM(CASE WHEN event = 'pedido' THEN 1 ELSE 0 END) AS pedidos," +
+    "  SUM(CASE WHEN event = 'catalogo' THEN 1 ELSE 0 END) AS catalogos," +
+    "  SUM(CASE WHEN event = 'cambios' THEN 1 ELSE 0 END) AS cambios," +
+    "  MAX(CASE WHEN event = 'login' THEN created_at END) AS last_login," +
+    "  MAX(created_at) AS last_activity," +
+    "  MIN(created_at) AS first_activity" +
+    "  FROM activity_log WHERE user_id = ?"
+  ).get(userId);
+
+  res.json({ user: u, summary: summary, events: events });
 });
 
 // Crear cliente rápido sin credenciales (desde el form de presupuesto).
@@ -6865,6 +6932,22 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     " WHERE COALESCE(o.is_unified,0)=0 AND date(d.delivered_at)=?"
   ).get(todayIso);
 
+  // Clientes inactivos: clientes (level 1-4) activos que no ingresan hace
+  // más de N días (default 30) o que nunca ingresaron. days_inactive = NULL
+  // significa "nunca ingresó". Ordena primero los que nunca entraron y luego
+  // del más viejo al más reciente.
+  const inactiveDays = Math.min(Math.max(Number(req.query.inactiveDays) || 30, 1), 365);
+  const inactiveClients = db.prepare(
+    "SELECT id, full_name, username, last_login_at," +
+    "       CASE WHEN last_login_at IS NULL THEN NULL" +
+    "            ELSE CAST(julianday('now') - julianday(last_login_at) AS INTEGER) END AS days_inactive" +
+    "  FROM users" +
+    " WHERE level BETWEEN 1 AND 4 AND active = 1" +
+    "   AND (last_login_at IS NULL OR last_login_at < datetime('now', ?))" +
+    " ORDER BY (last_login_at IS NULL) DESC, last_login_at ASC" +
+    " LIMIT 50"
+  ).all("-" + inactiveDays + " days");
+
   res.json({
     salesToday:     { total: salesToday.total,     cnt: salesToday.cnt },
     salesWeek:      { total: salesWeek.total,      cnt: salesWeek.cnt },
@@ -6880,6 +6963,8 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     entregadosHoy:  entregadosHoy.cnt,
     recentOrders,
     topDeudores,
+    inactiveClients,
+    inactiveDays,
   });
 });
 

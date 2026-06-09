@@ -1098,6 +1098,30 @@ Sergio: tras Operaciones y Personas debería ir Compras, y Reportes al final. Nu
 - Huecos cerrados: (a) el **modal "Registrar entrega"** (`POST /deliver`) descuenta stock pero no lo llamaba → agregado `refreshProductsCache()` tras recargar orders/entregas. (b) el **guardado de compra** refetcheaba `state.products` pero no re-renderizaba la tabla → reemplazado por `state.allProductsLoaded = false; refreshProductsCache()`.
 - Ajuste de stock ya actualizaba el producto local + `applyFilters`, OK.
 
+### Fix refresco rentabilidad al editar pedido + notas/fecha de entrega + líneas azules en impresiones (8 junio 2026, sesión noche — `admin.js?v=20260608m`, `styles.css?v=20260608g`, `ventas.js?v=20260608m`)
+
+Cuatro cosas encadenadas. Todo verificado con `node --check` aislado en `/tmp` (admin.js/ventas.js OK; server.js confirmado íntegro por Read, el bash mount volvió a estar **stale** mostrando server.js cortado en línea 6896 cuando en disco termina bien en `app.listen`). En disco local, sin `git add/commit/push` ni deploy.
+
+**1. 🔴 La Rentabilidad del pedido no se refrescaba al editar los items**
+- Reporte de Sergio: editó un pedido (quedó con total $169.947) pero la caja "💰 Rentabilidad" seguía mostrando "Ventas $179.680 · Costo $151.390" del estado **anterior** a la edición. Primero pareció "otra lista de precios"; el server calcula `Ventas = SUM(unit_price·qty)` de los mismos `order_items`, así que no era eso.
+- Causa: en `saveOrderItems` (admin.js), tras el `PUT /api/admin/orders/:id/items` se actualizaba `order.items` y `order.total` con la respuesta, pero el PUT **solo devuelve `{items, total}`** — NO `profitability` (que el server recalcula en `GET /api/orders/:id`). El re-render usaba el `order.profitability` viejo.
+- Fix: `saveOrderItems` ahora hace un **re-fetch** `GET /api/orders/:id` después del PUT y renderiza con ese objeto fresco (rentabilidad, saldo y total en sync). Commit `f3be615` ("refresh en pedido cuando se edita").
+- **Nota estructural** (no era el caso acá pero queda documentado): para pedidos facturados desde un **presupuesto con descuento por línea**, el `order_items.subtotal` guarda el monto con descuento pero `unit_price·quantity` es sin descuento. La tabla del detalle muestra `subtotal` (suma = total) y la rentabilidad usa `unit_price·qty`, así que "Ventas" puede ser legítimamente mayor que el total del pedido en esos casos.
+
+**2. Limpieza de archivos `.fuse_hidden*` colados en git**
+- El commit `f3be615` arrastró 3 archivos `data/.fuse_hidden0000...` (huérfanos que crea el mount FUSE del sandbox cuando algo borra/mueve un archivo abierto — copias de `maxaria.db`). Se sacaron con `git rm --cached` y se agregó `.fuse_hidden*` al `.gitignore`.
+
+**3. Notas de entrega visibles + fecha de entrega editable**
+Reporte: "las notas de la entrega no se guardan ni se ven en ningún lado, y necesito editar la fecha de la entrega (no la entregué hoy, solo agregué la nota)".
+- **Notas**: SÍ se guardaban (`deliveries.notes`), pero (a) el modal "Ver entrega" las mostraba vacías porque `existingDelivery.notes` estaba **hardcodeado a `""`** en el wiring del botón, y (b) los SELECT de `/api/orders` (lista, usada por las tarjetas/Ventas) y `/api/orders/:id` **no traían** `d.notes`. Fix: ambos SELECT admin ahora incluyen `d.notes AS delivery_notes` (alias para no chocar con `o.notes`); `existingDelivery.notes = orderObj.delivery_notes`; el detalle del pedido muestra la nota en el bloque verde de Entrega (`.odi-note`, full-width itálica). El historial de la pestaña Entregas (`/api/admin/deliveries`) ya las mostraba.
+- **Fecha editable** (`deliveries.delivered_at`): bug de fondo → el UPDATE de `POST /api/orders/:id/deliver` forzaba `delivered_at = datetime('now')` **siempre**, así que editar una entrega (p. ej. solo para agregar la nota) **pisaba la fecha real a hoy**. Fix: el endpoint acepta `delivered_at` opcional (`YYYY-MM-DD` → se guarda `+ ' 12:00:00'` para que las comparaciones `date()` de reportes caigan en ese día); en INSERT usa ese valor o el default; en UPDATE, si no se manda fecha **no toca** la `delivered_at` existente. Frontend: campo `<input type="date" name="delivered_at" id="delivery-date">` en el modal; `openDeliveryModal` lo prefillea (entrega existente → su fecha `slice(0,10)`; nueva → hoy con `toLocaleDateString("en-CA")`); el submit manda `delivered_at`. Las entregas viejas que ya quedaron con fecha pisada se corrigen abriendo "Ver entrega" y poniendo la fecha correcta.
+
+**4. Líneas de marcación azules entre renglones en TODOS los modelos exportables**
+Pedido de Sergio (con foto de un remito impreso): las filas deben tener líneas azules separando renglones, en todos los modelos que se exportan.
+- Impresiones **HTML**: en `printOrderRemito` (admin.js, remito de pedido) y en el print de presupuesto de `ventas.js`, el `tbody tr{border-bottom}` pasó de gris `#e5e7eb` a azul `#1e3a5f` (igual que las verticales que ya existían). También el print de presupuesto inerte del admin (`th,td border-bottom` → azul).
+- **PDF** (pdfkit, server.js): el remito PDF y la exportación de cotización/compra tenían separadores **verticales** azules por fila pero no horizontales; se agregó `doc.moveTo(MX, cy+ROW_H).lineTo(MX+MW, cy+ROW_H).lineWidth(0.5).strokeColor(BLU).stroke()` bajo cada fila.
+- El **catálogo PDF** se dejó igual: son tarjetas de producto en dos columnas, no renglones de tabla.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may**: rate limit login, validación categorías en POST orders, race condition `nextBudgetNumber`, path traversal `loadProductImage`. Sergio dejó esto fuera de la sesión inicial — retomar cuando haga falta.
