@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260609a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260609d" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -393,6 +393,7 @@
     <section class="tab-panel" id="tab-usuarios" hidden>
       <div class="admin-toolbar">
         <input type="search" id="user-search" class="admin-search" placeholder="Buscar por usuario o nombre..." autocomplete="off" />
+        <button class="btn btn-tool" id="user-sort-reset" type="button" hidden title="Volver al orden por nombre">↕ Limpiar orden</button>
         <span class="admin-spacer"></span>
         <span id="user-count" class="muted">…</span>
         <button class="btn btn-primary" id="user-create-btn" type="button">+ Crear usuario</button>
@@ -401,13 +402,13 @@
       <p class="muted small" style="margin:0 0 8px">Doble click en una fila para ver y editar todos los datos del cliente (usuario, contraseña, teléfono, email, categorías…).</p>
       <div class="admin-table-wrap">
         <table class="admin-table" id="user-table">
-          <thead>
+          <thead id="user-thead">
             <tr>
-              <th>Nombre</th>
-              <th>Lista de precios</th>
-              <th>Vendedor asignado</th>
-              <th>Activo</th>
-              <th>Último login</th>
+              <th class="us-sort" data-sort="name">Nombre <span class="us-arrow"></span></th>
+              <th class="us-sort" data-sort="lista">Lista de precios <span class="us-arrow"></span></th>
+              <th class="us-sort" data-sort="vendedor">Vendedor asignado <span class="us-arrow"></span></th>
+              <th class="us-sort" data-sort="activo">Activo <span class="us-arrow"></span></th>
+              <th class="us-sort" data-sort="login">Último login <span class="us-arrow"></span></th>
               <th></th>
             </tr>
           </thead>
@@ -1687,11 +1688,15 @@
       <h3 id="user-edit-title">Editar cliente</h3>
       <form id="user-edit-form" class="user-form">
         <div class="ue-grid">
-          <label>Usuario <span class="muted small">(login — click para editar)</span>
-            <input type="text" id="ue-username" readonly autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <label>Usuario <span class="muted small">(login)</span>
+            <div class="ue-uname-wrap">
+              <span id="ue-username-text" class="ue-uname-text"></span>
+              <button type="button" class="btn btn-small" id="ue-username-edit">✏️ Editar</button>
+              <input type="text" id="ue-username" hidden autocomplete="off" autocapitalize="off" spellcheck="false" />
+            </div>
           </label>
           <label>Contraseña actual <span class="muted small">(usá "Reset pass" para cambiarla)</span>
-            <input type="text" id="ue-password" readonly class="ue-readonly" autocomplete="off" />
+            <span id="ue-password-text" class="ue-uname-text"></span>
           </label>
           <label>Nombre completo
             <input type="text" id="ue-full-name" />
@@ -2980,6 +2985,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260609b"></script>
+  <script src="/js/admin.js?v=20260609d"></script>
 </body>
 </html>

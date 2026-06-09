@@ -134,6 +134,8 @@
     userSearch: document.getElementById("user-search"),
     userCount: document.getElementById("user-count"),
     userTbody: document.getElementById("user-tbody"),
+    userThead: document.getElementById("user-thead"),
+    userSortReset: document.getElementById("user-sort-reset"),
     userCreateBtn: document.getElementById("user-create-btn"),
     userCreateModal: document.getElementById("user-create-modal"),
     userCreateForm: document.getElementById("user-create-form"),
@@ -154,7 +156,9 @@
     userEditForm: document.getElementById("user-edit-form"),
     userEditMsg: document.getElementById("user-edit-msg"),
     ueUsername: document.getElementById("ue-username"),
-    uePassword: document.getElementById("ue-password"),
+    ueUsernameText: document.getElementById("ue-username-text"),
+    ueUsernameEdit: document.getElementById("ue-username-edit"),
+    uePasswordText: document.getElementById("ue-password-text"),
     ueFullName: document.getElementById("ue-full-name"),
     uePricecfg: document.getElementById("ue-pricecfg"),
     ueVendedor: document.getElementById("ue-vendedor"),
@@ -519,6 +523,9 @@
     priceListsLoaded: false,
     // Cache de vendedores activos para los selects de "asignar vendedor"
     vendedoresActiveCache: [],
+    // Orden tipo Excel de la tabla de Usuarios. El primero es la clave principal;
+    // los siguientes son desempates (se mantiene el orden previo). Default: nombre asc.
+    userSort: [{ key: "name", dir: "asc" }],
   };
 
   const LEVEL_NAMES = {
@@ -1113,12 +1120,85 @@
         (u.email || "").toLowerCase().includes(q)
       );
     }
+    sortUserList(list);
+    updateUserSortHeaders();
     els.userCount.textContent = list.length + (list.length === 1 ? " usuario" : " usuarios");
     if (!list.length) {
       els.userTbody.innerHTML = '<tr><td colspan="6" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.userTbody.innerHTML = list.map(userRowHtml).join("");
+  }
+
+  // Valor comparable de un cliente para una clave de orden.
+  // Devuelve { v, isNull } para poder mandar los vacíos siempre al final.
+  function userSortVal(u, key) {
+    if (key === "name") return { v: (u.full_name || u.username || "").toLowerCase(), isNull: false };
+    if (key === "lista") return { v: priceLabelFor(u).toLowerCase(), isNull: false };
+    if (key === "vendedor") {
+      const lbl = vendLabelFor(u);
+      return { v: lbl === "—" ? "" : lbl.toLowerCase(), isNull: lbl === "—" };
+    }
+    if (key === "activo") return { v: u.active ? 1 : 0, isNull: false };
+    if (key === "login") {
+      const t = u.last_login_at ? Date.parse(u.last_login_at.replace(" ", "T")) : NaN;
+      return { v: isNaN(t) ? 0 : t, isNull: isNaN(t) };
+    }
+    return { v: "", isNull: true };
+  }
+
+  // Orden estable multi-clave: state.userSort[0] es la clave principal y las
+  // siguientes son desempates (mantienen el orden previo, como en Excel).
+  function sortUserList(list) {
+    const keys = state.userSort;
+    if (!keys || !keys.length) return;
+    list.sort((a, b) => {
+      for (const s of keys) {
+        const av = userSortVal(a, s.key), bv = userSortVal(b, s.key);
+        // Vacíos siempre al final, sin importar la dirección.
+        if (av.isNull && !bv.isNull) return 1;
+        if (!av.isNull && bv.isNull) return -1;
+        let c = 0;
+        if (typeof av.v === "number") c = av.v - bv.v;
+        else c = String(av.v).localeCompare(String(bv.v), "es");
+        if (s.dir === "desc") c = -c;
+        if (c) return c;
+      }
+      return 0;
+    });
+  }
+
+  // Dibuja flechas + número de prioridad en los encabezados y toggle del reset.
+  function updateUserSortHeaders() {
+    if (!els.userThead) return;
+    const keys = state.userSort || [];
+    els.userThead.querySelectorAll("th.us-sort").forEach((th) => {
+      const k = th.dataset.sort;
+      const idx = keys.findIndex((s) => s.key === k);
+      const span = th.querySelector(".us-arrow");
+      if (!span) return;
+      if (idx === -1) { span.innerHTML = ""; return; }
+      const arrow = keys[idx].dir === "asc" ? "▲" : "▼";
+      // Mostrar el número de prioridad solo si hay más de una clave activa.
+      const prio = keys.length > 1 ? '<sup>' + (idx + 1) + '</sup>' : "";
+      span.innerHTML = arrow + prio;
+    });
+    const isDefault = keys.length === 1 && keys[0].key === "name" && keys[0].dir === "asc";
+    if (els.userSortReset) els.userSortReset.hidden = isDefault;
+  }
+
+  // Click en un encabezado: lo vuelve clave principal (los previos quedan como
+  // desempate). Si ya era la principal, alterna asc/desc.
+  function onUserSortClick(key) {
+    const arr = state.userSort || [];
+    if (arr.length && arr[0].key === key) {
+      arr[0].dir = arr[0].dir === "asc" ? "desc" : "asc";
+    } else {
+      const existing = arr.find((s) => s.key === key);
+      const dir = existing ? existing.dir : "asc";
+      state.userSort = [{ key: key, dir: dir }].concat(arr.filter((s) => s.key !== key));
+    }
+    renderUsers();
   }
 
   // Opciones <option> para el select de "Vendedor asignado" de un cliente.
@@ -1348,11 +1428,15 @@
     state.editUserId = u.id;
     state.editUserOrigUsername = u.username || "";
     document.getElementById("user-edit-title").textContent = "Editar cliente · " + (u.full_name || u.username);
+    // El usuario se muestra como TEXTO (no input) para que los gestores de
+    // contraseña no lo autocompleten con "admin". Recién al tocar "Editar"
+    // aparece el campo editable.
+    els.ueUsernameText.textContent = u.username || "—";
+    els.ueUsernameText.hidden = false;
+    els.ueUsernameEdit.hidden = false;
+    els.ueUsername.hidden = true;
     els.ueUsername.value = u.username || "";
-    // Readonly al abrir bloquea el autocompletado de gestores de contraseña
-    // (que rellenaban "admin"). Se desbloquea al hacer click/focus (más abajo).
-    els.ueUsername.readOnly = true;
-    els.uePassword.value = u.plain_password || "—";
+    els.uePasswordText.textContent = u.plain_password || "—";
     els.ueFullName.value = u.full_name || "";
     els.uePricecfg.innerHTML = unifiedPriceOptsHtml(u);
     els.ueVendedor.innerHTML = vendedorOptsHtml(u.assigned_vendedor_id);
@@ -1430,11 +1514,32 @@
     const u = state.users.find((x) => x.id === state.editUserId);
     if (u) shareUserAccess(u);
   });
-  // El campo Usuario arranca readonly (anti-autocompletado); se habilita al tocarlo.
-  els.ueUsername.addEventListener("focus", () => { els.ueUsername.readOnly = false; });
-  els.ueUsername.addEventListener("mousedown", () => { els.ueUsername.readOnly = false; });
+  // "Editar" usuario: reemplaza el texto por el campo editable. Recién acá
+  // aparece el input, así el gestor de contraseñas no lo autocompleta al abrir.
+  els.ueUsernameEdit.addEventListener("click", () => {
+    els.ueUsernameText.hidden = true;
+    els.ueUsernameEdit.hidden = true;
+    els.ueUsername.hidden = false;
+    els.ueUsername.focus();
+    els.ueUsername.select();
+  });
 
   els.userSearch.addEventListener("input", debounce(renderUsers, 150));
+
+  // Orden tipo Excel: click en los encabezados de la tabla de Usuarios.
+  if (els.userThead) {
+    els.userThead.addEventListener("click", (e) => {
+      const th = e.target.closest("th.us-sort");
+      if (!th) return;
+      onUserSortClick(th.dataset.sort);
+    });
+  }
+  if (els.userSortReset) {
+    els.userSortReset.addEventListener("click", () => {
+      state.userSort = [{ key: "name", dir: "asc" }];
+      renderUsers();
+    });
+  }
 
   // -------- Vendedores --------
   async function loadVendedores() {

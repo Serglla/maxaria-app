@@ -2413,6 +2413,12 @@ button { font: inherit; cursor: pointer; }
 .cell-level { max-width: 140px; }
 
 /* Form en modal */
+/* Orden tipo Excel en la tabla de Usuarios */
+#user-table th.us-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+#user-table th.us-sort:hover { background: rgba(255,255,255,0.08); }
+#user-table th .us-arrow { font-size: 11px; opacity: 0.9; margin-left: 2px; }
+#user-table th .us-arrow sup { font-size: 8px; opacity: 0.8; }
+
 /* Modal editar cliente (doble click en fila de Usuarios) */
 .ue-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-top: 4px; }
 .ue-grid label {
@@ -2426,6 +2432,9 @@ button { font: inherit; cursor: pointer; }
 }
 .ue-grid input:focus, .ue-grid select:focus { outline: 2px solid #2563eb33; border-color: #2563eb; }
 .ue-readonly { background: #f3f4f6 !important; color: #6b7280; }
+.ue-uname-wrap { display: flex; align-items: center; gap: 8px; }
+.ue-uname-wrap input { flex: 1; }
+.ue-uname-text { font-weight: 600; color: #111827; font-size: 14px; padding: 6px 0; }
 .ue-active-row { flex-direction: row !important; align-items: center; gap: 8px !important; font-weight: 600; }
 .ue-active-row input { width: auto; }
 .ue-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #eceef1; }
