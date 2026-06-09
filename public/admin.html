@@ -1687,11 +1687,11 @@
       <h3 id="user-edit-title">Editar cliente</h3>
       <form id="user-edit-form" class="user-form">
         <div class="ue-grid">
-          <label>Usuario <span class="muted small">(login, no editable)</span>
-            <input type="text" id="ue-username" readonly class="ue-readonly" />
+          <label>Usuario <span class="muted small">(login — click para editar)</span>
+            <input type="text" id="ue-username" readonly autocomplete="off" autocapitalize="off" spellcheck="false" />
           </label>
           <label>Contraseña actual <span class="muted small">(usá "Reset pass" para cambiarla)</span>
-            <input type="text" id="ue-password" readonly class="ue-readonly" />
+            <input type="text" id="ue-password" readonly class="ue-readonly" autocomplete="off" />
           </label>
           <label>Nombre completo
             <input type="text" id="ue-full-name" />
@@ -2980,6 +2980,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260609a"></script>
+  <script src="/js/admin.js?v=20260609b"></script>
 </body>
 </html>

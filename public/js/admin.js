@@ -1346,8 +1346,12 @@
     const u = state.users.find((x) => x.id === Number(id));
     if (!u) return;
     state.editUserId = u.id;
+    state.editUserOrigUsername = u.username || "";
     document.getElementById("user-edit-title").textContent = "Editar cliente · " + (u.full_name || u.username);
     els.ueUsername.value = u.username || "";
+    // Readonly al abrir bloquea el autocompletado de gestores de contraseña
+    // (que rellenaban "admin"). Se desbloquea al hacer click/focus (más abajo).
+    els.ueUsername.readOnly = true;
     els.uePassword.value = u.plain_password || "—";
     els.ueFullName.value = u.full_name || "";
     els.uePricecfg.innerHTML = unifiedPriceOptsHtml(u);
@@ -1388,6 +1392,11 @@
       active: els.ueActive.checked ? 1 : 0,
       assigned_vendedor_id: els.ueVendedor.value || null,
     };
+    // Solo mandamos el usuario si realmente cambió (evita pisarlo por accidente).
+    const newUsername = els.ueUsername.value.trim().toLowerCase();
+    if (newUsername && newUsername !== state.editUserOrigUsername) {
+      body.username = newUsername;
+    }
     Object.assign(body, decodePriceCfg(els.uePricecfg.value));
     els.userEditMsg.textContent = "Guardando…";
     els.userEditMsg.className = "config-msg";
@@ -1421,6 +1430,9 @@
     const u = state.users.find((x) => x.id === state.editUserId);
     if (u) shareUserAccess(u);
   });
+  // El campo Usuario arranca readonly (anti-autocompletado); se habilita al tocarlo.
+  els.ueUsername.addEventListener("focus", () => { els.ueUsername.readOnly = false; });
+  els.ueUsername.addEventListener("mousedown", () => { els.ueUsername.readOnly = false; });
 
   els.userSearch.addEventListener("input", debounce(renderUsers, 150));
 

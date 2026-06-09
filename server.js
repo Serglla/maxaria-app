@@ -2999,6 +2999,15 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   const sets = [];
   const vals = [];
 
+  if ("username" in b) {
+    const uname = String(b.username || "").trim().toLowerCase();
+    if (!isValidUsername(uname))
+      return res.status(400).json({ error: "Usuario invalido: 3-32 caracteres, solo letras, numeros, _ . -" });
+    const clash = db.prepare("SELECT id FROM users WHERE username = ? AND id != ?").get(uname, id);
+    if (clash) return res.status(409).json({ error: "Ya existe un usuario con ese nombre" });
+    sets.push("username = ?");
+    vals.push(uname);
+  }
   if ("full_name" in b) {
     sets.push("full_name = ?");
     vals.push(String(b.full_name || "").trim().slice(0, 120) || null);
