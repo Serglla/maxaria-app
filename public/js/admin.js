@@ -73,6 +73,8 @@
     ordersList: document.getElementById("orders-list"),
     ventasList: document.getElementById("ventas-list"),
     ventasSummary: document.getElementById("ventas-summary"),
+    ventasCount: document.getElementById("ventas-count"),
+    ventasReload: document.getElementById("ventas-reload"),
     ventasSearch: document.getElementById("ventas-search"),
     ventasRange: document.getElementById("ventas-range"),
     ventasFrom: document.getElementById("ventas-from"),
@@ -5383,6 +5385,7 @@
       const totalVendido = list.reduce((s, o) => s + (Number(o.total) || 0), 0);
       els.ventasSummary.textContent = list.length + (list.length === 1 ? " venta · " : " ventas · ") + fmtPrice(totalVendido);
     }
+    if (els.ventasCount) els.ventasCount.textContent = "(" + list.length + ")";
     if (!list.length) {
       els.ventasList.innerHTML = '<p class="muted">Todavía no hay ventas (pedidos entregados).</p>';
       return;
@@ -9629,6 +9632,7 @@
 
   // ─────── Buscador de la pestaña Ventas (pedidos entregados) ───────
   if (els.ventasSearch) els.ventasSearch.addEventListener("input", debounce(renderVentasOrders, 150));
+  if (els.ventasReload) els.ventasReload.addEventListener("click", loadVentasOrders);
   if (els.ventasRange) els.ventasRange.addEventListener("change", () => {
     state.ventasRangeInit = true; // ya no pisar con el default
     setVentasRangeDates(els.ventasRange.value);

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260609e" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260609f" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -1577,6 +1577,10 @@
     <!-- ===== TAB VENTAS ===== -->
     <!-- Ventas concretadas = pedidos ENTREGADOS (datos desde /api/admin/ventas). -->
     <section class="tab-panel" id="tab-ventas" hidden>
+      <div class="armado-queue-head">
+        <h3 class="armado-queue-title">✅ Ventas concretadas <span id="ventas-count" class="muted"></span></h3>
+        <button class="btn btn-small" id="ventas-reload" type="button">↺ Actualizar</button>
+      </div>
       <div class="admin-toolbar">
         <input type="search" id="ventas-search" class="admin-search" placeholder="Buscar venta (# o cliente)…" autocomplete="off" />
         <label class="admin-filter">Período
@@ -2985,6 +2989,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260609d"></script>
+  <script src="/js/admin.js?v=20260609e"></script>
 </body>
 </html>

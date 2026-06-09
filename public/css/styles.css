@@ -1791,14 +1791,14 @@ button { font: inherit; cursor: pointer; }
   flex: 1;
   min-width: 240px;
   max-width: 380px;
-  border: 1px solid #d1d5db;
-  background: #fff;
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
   padding: 8px 12px;
   font: inherit;
   font-size: 14px;
 }
-.admin-search:focus { outline: 2px solid #2563eb33; border-color: #2563eb; }
+.admin-search:focus { outline: 2px solid rgba(30,58,95,.18); border-color: var(--brand); }
 .admin-filter {
   display: inline-flex;
   align-items: center;
@@ -1809,16 +1809,24 @@ button { font: inherit; cursor: pointer; }
   user-select: none;
 }
 .admin-select {
-  border: 1px solid #d1d5db;
-  background: #fff;
-  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
   padding: 5px 8px;
   font: inherit;
   font-size: 13px;
   cursor: pointer;
 }
-.admin-select:focus { outline: 2px solid #2563eb33; border-color: #2563eb; }
+.admin-select:focus { outline: 2px solid rgba(30,58,95,.18); border-color: var(--brand); }
 .admin-spacer { flex: 1; }
+/* .btn-ghost fue pensado para headers oscuros (texto blanco); en las toolbars
+   claras del admin va neutro, en la familia de .btn-x */
+.admin-toolbar .btn-ghost {
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.admin-toolbar .btn-ghost:hover { background: var(--surface-2); }
 
 /* ── Toolbar de Productos reorganizada en 3 zonas ── */
 .admin-toolbar2 {
@@ -2146,15 +2154,15 @@ button { font: inherit; cursor: pointer; }
 
 .admin-input {
   padding: 6px 8px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   font-size: 13px;
-  background: #fff;
+  background: var(--surface);
 }
 .admin-input:focus {
-  outline: 2px solid #1e3a5f;
+  outline: 2px solid rgba(30,58,95,.18);
   outline-offset: -1px;
-  border-color: #1e3a5f;
+  border-color: var(--brand);
 }
 .admin-table {
   width: 100%;
@@ -3170,6 +3178,20 @@ label.cats-check input[type="checkbox"] {
   transition: .15s;
 }
 .btn-x:hover { border-color: var(--danger-line); color: var(--danger); background: var(--danger-bg); }
+/* Botón de avance del circuito (→ Armado / → Entregas): mismo lenguaje
+   que .btn-deliver — el único azul de acción es el navy de marca. */
+.btn-advance {
+  font-size: 12px;
+  padding: 6px 13px;
+  background: var(--brand);
+  color: #fff;
+  border: 1px solid var(--brand);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(30,58,95,.25);
+}
+.btn-advance:hover { background: var(--brand-2); border-color: var(--brand-2); }
 .order-vend-row {
   display: flex;
   align-items: center;
