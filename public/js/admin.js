@@ -4467,8 +4467,8 @@
 
     var delBtn = "";
     if (state.isAdmin && o.status !== "entregado") {
-      delBtn = '<button class="btn btn-small btn-delete-order" data-id="' + o.id +
-        '" type="button" title="Eliminar pedido" style="color:#ef4444;border-color:#ef4444">✕</button>';
+      delBtn = '<button class="btn btn-small btn-x btn-delete-order" data-id="' + o.id +
+        '" type="button" title="Eliminar pedido">✕</button>';
     }
 
     return '<article class="order-card" data-id="' + o.id + '">' +

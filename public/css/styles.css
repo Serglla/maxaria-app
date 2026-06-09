@@ -1,3 +1,41 @@
+/* ============================================================
+   TOKENS DE MARCA — sistema unificado (jun 2026)
+   Un solo azul (navy), un acento cálido (ámbar), tinta y superficies.
+   Las variables solo actúan donde se invocan: esto por sí solo no
+   cambia el render. Migración gradual → reemplazar hex sueltos por var(--x).
+   ============================================================ */
+:root {
+  /* Marca: UN solo azul (el navy de remitos / header de tabla) */
+  --brand:      #1e3a5f;   /* botones primarios, header de tabla, borde de tarjeta */
+  --brand-2:    #2c5282;   /* hover, links, ids en tabla */
+  --brand-soft: #eef3f9;   /* fondo de chips/badges de marca */
+  --brand-line: #cdddee;   /* borde de esos chips */
+
+  /* Acento cálido único (el ámbar de precios) */
+  --accent:      #d97706;
+  --accent-soft: #fff7ed;
+
+  /* Tinta y superficies */
+  --ink:       #0f172a;    /* títulos, montos */
+  --ink-2:     #475569;    /* texto secundario, celdas */
+  --ink-3:     #94a3b8;    /* placeholders, $0, deshabilitado */
+  --surface:   #ffffff;    /* fondo de tarjetas y tabla */
+  --surface-2: #f7f8fa;    /* zebra de tabla, fondos suaves */
+  --line:      #e6e9ee;    /* bordes neutros */
+
+  /* Semánticos (mismo hue, saturación baja) */
+  --ok:     #15803d;  --ok-bg:     #ecfdf3;  --ok-line:     #bbf7d0;
+  --warn:   #b45309;  --warn-bg:   #fef6e7;  --warn-line:   #f3d9a4;
+  --danger: #b91c1c;  --danger-bg: #fef2f2;  --danger-line: #fbc9c9;
+
+  /* Forma */
+  --radius:      14px;
+  --radius-sm:   9px;
+  --radius-pill: 999px;
+  --shadow:       0 1px 2px rgba(15,23,42,.04), 0 4px 14px rgba(15,23,42,.05);
+  --shadow-hover: 0 2px 4px rgba(15,23,42,.05), 0 8px 22px rgba(15,23,42,.07);
+}
+
 /* ====== Reset ====== */
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -665,22 +703,24 @@ button { font: inherit; cursor: pointer; }
 
 /* Lista de pedidos */
 .order-card {
-  border: 1px solid #c9d4e8;
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--brand);   /* liga la tarjeta al header navy de la tabla */
+  border-radius: var(--radius);
   margin-bottom: 12px;
-  background: #fff;
-  box-shadow: 0 2px 6px rgba(30,58,95,.08);
+  background: var(--surface);
+  box-shadow: var(--shadow);
   overflow: hidden;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
+.order-card:hover { border-color: #cdd4dd; box-shadow: var(--shadow-hover); }
 .order-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  padding: 10px 14px;
-  background: linear-gradient(135deg, #f0f4fb 0%, #e8eef8 100%);
-  border-bottom: 2px solid #c9d4e8;
+  padding: 12px 16px;
+  background: var(--surface);
 }
 .order-head h4 {
   margin: 0;
@@ -711,12 +751,12 @@ button { font: inherit; cursor: pointer; }
   border: 1.5px solid transparent;
   box-shadow: 0 1px 2px rgba(0,0,0,.06);
 }
-.order-status.pendiente   { background: #fde68a; color: #854d0e; border-color: #f59e0b; }
-.order-status.enviado     { background: #bfdbfe; color: #1e3a8a; border-color: #3b82f6; }
-.order-status.preparando  { background: #c7d2fe; color: #312e81; border-color: #6366f1; }
-.order-status.listo       { background: #f5d0fe; color: #701a75; border-color: #d946ef; }
-.order-status.entregado   { background: #a7f3d0; color: #065f46; border-color: #10b981; }
-.order-status.cancelado   { background: #fecaca; color: #991b1b; border-color: #ef4444; }
+.order-status.pendiente   { background: var(--warn-bg);   color: var(--warn);   border-color: var(--warn-line); }
+.order-status.enviado     { background: var(--brand-soft); color: var(--brand);  border-color: var(--brand-line); }
+.order-status.preparando  { background: #eef0fa;          color: #4c51bf;        border-color: #c8cdef; }
+.order-status.listo       { background: #fbeef6;          color: #9d4480;        border-color: #f0c4df; }
+.order-status.entregado   { background: var(--ok-bg);     color: var(--ok);     border-color: var(--ok-line); }
+.order-status.cancelado   { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); }
 .order-tag {
   display: inline-block;
   padding: 2px 9px;
@@ -842,13 +882,14 @@ button { font: inherit; cursor: pointer; }
 }
 .order-total {
   font-weight: 800;
-  color: #1e3a5f;
+  color: var(--ink);   /* monto en tinta: no compite con el botón de acción */
   font-size: 16px;
   font-variant-numeric: tabular-nums;
 }
 .order-detail {
   padding: 14px;
   font-size: 13px;
+  border-top: 1px solid var(--line);   /* separa head de detalle solo al expandir */
 }
 /* Fila de meta (Estado, Vendedor) arriba del detail */
 .order-detail-meta {
@@ -3078,10 +3119,10 @@ label.cats-check input[type="checkbox"] {
   font-size: 11.5px;
   font-weight: 700;
   padding: 2px 9px;
-  border-radius: 999px;
-  background: #ede9fe;
-  color: #5b21b6;
-  border: 1.5px solid #a78bfa;
+  border-radius: var(--radius-pill);
+  background: #f1f5fa;
+  color: var(--brand-2);            /* familia del navy, ya no violeta suelto */
+  border: 1px solid #dde6f0;
   white-space: nowrap;
   vertical-align: middle;
 }
@@ -3091,26 +3132,44 @@ label.cats-check input[type="checkbox"] {
   font-size: 11.5px;
   font-weight: 700;
   padding: 2px 9px;
-  border-radius: 999px;
-  background: #d1fae5;
-  color: #065f46;
-  border: 1.5px solid #34d399;
+  border-radius: var(--radius-pill);
+  background: var(--ok-bg);
+  color: var(--ok);
+  border: 1px solid var(--ok-line);
   white-space: nowrap;
   vertical-align: middle;
 }
 .delivery-badge::before { content: "💵 "; }
 .btn-deliver {
-  font-size: 11px;
-  padding: 3px 9px;
-  background: #2563eb;
+  font-size: 12px;
+  padding: 6px 13px;
+  background: var(--brand);          /* el ÚNICO azul de acción */
   color: #fff;
-  border: none;
-  border-radius: 6px;
+  border: 1px solid var(--brand);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
-  font-weight: 600;
+  font-weight: 700;
+  box-shadow: 0 1px 2px rgba(30,58,95,.25);
 }
-.btn-deliver:hover { background: #1d4ed8; }
+.btn-deliver:hover { background: var(--brand-2); border-color: var(--brand-2); }
+/* Botón cancelar (✕): fantasma neutro que solo se pone rojo en hover */
+.btn-x {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: .15s;
+}
+.btn-x:hover { border-color: var(--danger-line); color: var(--danger); background: var(--danger-bg); }
 .order-vend-row {
   display: flex;
   align-items: center;
