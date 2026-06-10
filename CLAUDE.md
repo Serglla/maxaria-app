@@ -1182,6 +1182,27 @@ Idea de Sergio: en Argentina la mercadería aumenta entre compra y compra; lo ve
 
 **Limitación conocida**: el reporte solo ve cambios de costo posteriores al deploy. El primer cambio de cada producto aparece "sin ventana" para la pérdida **salvo** que el producto tenga compras anteriores cargadas (la compra previa sirve de referencia). La pérdida es una estimación: asume que el costo real subió en algún momento de la ventana, no necesariamente al final.
 
+### Chequeo de armado — checklist de picking multi-dispositivo (10 junio 2026 — `admin.js?v=20260610d`, `styles.css?v=20260610b`)
+
+Pedido de Sergio: en la pestaña Armado, un botón por pedido que abra la lista de productos con cantidades para el armador, con checklist tildable (destacando producto y cantidad armada, parcial permitido porque el stock físico puede no coincidir), sincronizado en vivo entre dos armadores con dos dispositivos, y filtrable por categoría (en la práctica el armado se reparte por categorías). Decisiones (AskUserQuestion): al completar solo indicador visual (badge, NO pasa solo a Entregas); permisos = admins con sección Armado (no vendedores).
+
+**Schema** (migración idempotente en `server.js`, después de `notified_status`): `order_items.picked_qty REAL NOT NULL DEFAULT 0` (cantidad armada; 0 = sin armar), `picked_by INTEGER` (user id), `picked_at TEXT`. Sin tabla nueva.
+
+**Backend (`server.js`)**
+- `GET /api/admin/picks/:orderId` (requireAdmin): items del pedido con `picked_qty`, `picked_by_name`, `category_name` (LEFT JOIN products→categories; producto borrado = "Sin categoría"), ordenados por categoría (`sort_order`). Devuelve `{order:{id,status,client_name}, items, total_items, done_items, complete}`.
+- `POST /api/admin/picks/:orderId` body `{item_id, picked_qty}`: valida que el item sea del pedido, acota qty a 0..cantidad pedida; qty>0 guarda picked_by/picked_at, qty=0 limpia. Devuelve el agregado actualizado (done/total/complete). Última escritura gana (sin locks).
+- `sectionForAdminRequest`: `has("picks") → "armado"` (antes de `has("orders")`), así un admin limitado con sección Armado puede usarlo.
+- `GET /api/orders` (rama admin): subselects nuevos `pick_total` / `pick_done` por pedido para pintar avance y badge en las tarjetas.
+
+**Frontend (`admin.html` + `admin.js` + `styles.css`)**
+- `orderCardHtml`: para admin y `status === "preparando"` (= solo en Armado en la práctica), botón **"📋 Chequeo"** (muestra avance `done/total` si hay algo tildado) + badge **"✔ Armado completo"** (`.pick-badge-ok`, verde) cuando todo está tildado. Wiring en `wireOrderCards` (`.btn-pick`, excluido del click que expande la tarjeta).
+- Modal `#pick-modal` (estático en admin.html, cubierto por el cierre genérico data-close/Escape): filtro por categoría (`#pick-cat-filter`, se arma con las categorías de los items), barra de progreso (azul → verde al completar), lista agrupada con headers azules sticky por categoría.
+- Interacción: **click en la fila = tildar/destildar completo**; el input numérico de la derecha guarda **cantidad parcial** (fila ámbar `◐` si parcial, verde tachada `✔` si completa). Muestra `👤 nombre` de quien tildó cada item.
+- **Sync multi-dispositivo por polling**: `setInterval` 4s mientras el modal está abierto (`pickPollTick` corta solo al detectar `modal.hidden`, cubre todos los caminos de cierre). El tick NO re-renderiza si hay un POST en vuelo (`pickState.posting`) o si el armador tiene el foco en un input (no pisarle el tipeo). Cada cambio actualiza también `pick_done/pick_total` en `state.orders` y re-renderiza Armado (botón y badge al día).
+- Módulo autocontenido `pickEls`/`pickState` + funciones `openPickModal`/`pickFetch`/`pickRenderList`/`pickApplyAgg`/`pickPost`, insertado después del wiring de `armadoReload`. No toca `els`.
+
+**Verificación**: `node --check` OK en server.js y admin.js (el mount NO estaba stale esta vez). Lógica de migración + queries + POST simulado validada con Python sqlite3 sobre copia de la DB en `/tmp` (parcial, destildar, completo, subselects de tarjeta — todo OK; ALTERs idempotentes). Ojo: el binding de better-sqlite3 del node_modules es de Windows (invalid ELF en el sandbox) — para tests de DB en sandbox usar Python sqlite3. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

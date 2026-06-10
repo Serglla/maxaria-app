@@ -5394,6 +5394,19 @@
           e.stopPropagation();
           const orderId = Number(advBtn.dataset.id);
           const to = advBtn.dataset.to;
+          // Aviso del chequeo de armado: si se usó el checklist pero quedaron
+          // items sin armar (cantidad 0), confirmar antes de pasar a Entregas.
+          if (to === "listo") {
+            const ord = list.find((x) => x.id === orderId) || {};
+            const started = Number(ord.pick_started) || 0;
+            const ptot = Number(ord.pick_total) || 0;
+            if (started > 0 && started < ptot) {
+              const faltan = ptot - started;
+              if (!confirm("Pedido #" + orderId + ": hay " + faltan +
+                (faltan === 1 ? " item sin armar" : " items sin armar") +
+                " en el chequeo. ¿Pasar a Entregas igual?")) return;
+            }
+          }
           advBtn.disabled = true;
           try {
             await api("/api/orders/" + orderId, {
@@ -5563,6 +5576,7 @@
     progressFill: document.getElementById("pick-progress-fill"),
     progressText: document.getElementById("pick-progress-text"),
     syncInfo: document.getElementById("pick-sync-info"),
+    applyBtn: document.getElementById("pick-apply-btn"),
   };
   const pickState = { orderId: null, items: [], cat: "all", timer: null, posting: 0 };
 
@@ -5607,9 +5621,25 @@
     if (initial) pickBuildCatFilter();
     pickRenderList();
     pickApplyAgg(data.done_items || 0, data.total_items || 0);
+    pickUpdateApplyBtn();
     if (pickEls.syncInfo) {
       pickEls.syncInfo.textContent = "Sincronizado " + new Date().toLocaleTimeString("es-AR") + " · se actualiza solo";
     }
+  }
+
+  // Items con cantidad armada > 0 y distinta a la pedida = diferencias que el
+  // botón "Aplicar cantidades al pedido" puede impactar en el pedido de origen.
+  function pickPendingChanges() {
+    return pickState.items.filter(
+      (i) => Number(i.picked_qty) > 0 && Number(i.picked_qty) !== Number(i.quantity)
+    );
+  }
+
+  function pickUpdateApplyBtn() {
+    if (!pickEls.applyBtn) return;
+    const n = pickPendingChanges().length;
+    pickEls.applyBtn.hidden = n === 0;
+    pickEls.applyBtn.textContent = "📦 Aplicar cantidades al pedido (" + n + ")";
   }
 
   function pickBuildCatFilter() {
@@ -5704,6 +5734,7 @@
       }
       pickRenderList();
       pickApplyAgg(out.done_items || 0, out.total_items || 0);
+      pickUpdateApplyBtn();
       if (pickEls.syncInfo) {
         pickEls.syncInfo.textContent = "Guardado " + new Date().toLocaleTimeString("es-AR") + " · se actualiza solo";
       }
@@ -5743,6 +5774,42 @@
     pickEls.catFilter.addEventListener("change", () => {
       pickState.cat = pickEls.catFilter.value;
       pickRenderList();
+    });
+  }
+
+  // Aplicar las cantidades armadas al pedido de origen: el item del pedido pasa
+  // a la cantidad realmente armada y el total se recalcula (server stock-aware).
+  if (pickEls.applyBtn) {
+    pickEls.applyBtn.addEventListener("click", async () => {
+      const changes = pickPendingChanges();
+      if (!changes.length) return;
+      const detail = changes.slice(0, 8).map(
+        (i) => "· " + (i.product_name || "") + ": " + Number(i.quantity) + " → " + Number(i.picked_qty)
+      ).join("\n") + (changes.length > 8 ? "\n· …y " + (changes.length - 8) + " más" : "");
+      if (!confirm(
+        "Esto cambia las cantidades del pedido #" + pickState.orderId +
+        " a lo realmente armado y recalcula el total:\n\n" + detail + "\n\n¿Continuar?"
+      )) return;
+      pickEls.applyBtn.disabled = true;
+      try {
+        const out = await api("/api/admin/picks/" + pickState.orderId + "/apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        showToast("Pedido #" + pickState.orderId + " actualizado: " + out.changed +
+          " items · nuevo total " + fmtPrice(out.total));
+        const o = (state.orders || []).find((x) => x.id === pickState.orderId);
+        if (o) o.total = out.total;
+        await pickFetch(false); // re-trae: los parciales aplicados quedan completos
+        refreshOrderViews();
+        state.allProductsLoaded = false;
+        refreshProductsCache(); // el stock pudo ajustarse (presupuesto facturado)
+      } catch (err) {
+        showToast("Error: " + err.message, "error");
+      } finally {
+        pickEls.applyBtn.disabled = false;
+      }
     });
   }
 

@@ -2165,7 +2165,8 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
       "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id, d.notes AS delivery_notes," +
       "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS pick_total," +
-      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.picked_qty,0) >= oi.quantity) AS pick_done" +
+      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.picked_qty,0) >= oi.quantity) AS pick_done," +
+      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.picked_qty,0) > 0) AS pick_started" +
       "  FROM orders o" +
       "  JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
@@ -2308,6 +2309,70 @@ app.post("/api/admin/picks/:orderId", requireAdmin, (req, res) => {
     done_items: agg.done || 0,
     complete: agg.total > 0 && Number(agg.done) === Number(agg.total),
   });
+});
+
+// Aplicar las cantidades armadas al pedido de origen (botón explícito del modal).
+// Items con picked_qty > 0 y distinta a la pedida: quantity pasa a la cantidad
+// armada, se recalcula subtotal y total. Items en 0 (sin armar) NO se tocan.
+// Stock-aware como PUT /api/admin/orders/:id/items: si el stock del pedido ya
+// estaba descontado (presupuesto facturado), se ajusta por la diferencia.
+// Mantiene en sync el débito de cuenta corriente si existe.
+app.post("/api/admin/picks/:orderId/apply", requireAdmin, (req, res) => {
+  const orderId = Number(req.params.orderId);
+  if (!orderId) return res.status(400).json({ error: "ID invalido" });
+  const order = db.prepare(
+    "SELECT id, status, total, stock_discounted, unified_parent_id, is_unified FROM orders WHERE id = ?"
+  ).get(orderId);
+  if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+  if (order.status === "cancelado" || order.status === "entregado") {
+    return res.status(409).json({ error: "No se puede modificar un pedido " + order.status });
+  }
+
+  const items = db.prepare(
+    "SELECT id, product_id, quantity, unit_price, COALESCE(picked_qty,0) AS picked_qty" +
+    "  FROM order_items WHERE order_id = ?"
+  ).all(orderId);
+  const changes = items.filter(
+    (i) => Number(i.picked_qty) > 0 && Number(i.picked_qty) !== Number(i.quantity)
+  );
+  if (!changes.length) {
+    return res.json({ ok: true, changed: 0, total: order.total });
+  }
+
+  const linkedBudgetOut = db.prepare(
+    "SELECT stock_discounted FROM budgets WHERE order_id = ? AND stock_discounted = 1 LIMIT 1"
+  ).get(orderId);
+  const anyLinkedBudget = db.prepare("SELECT id FROM budgets WHERE order_id = ? LIMIT 1").get(orderId);
+  const skipStock = order.unified_parent_id != null || !!order.is_unified;
+  const stockCurrentlyOut = anyLinkedBudget ? !!linkedBudgetOut : !!order.stock_discounted;
+
+  let total = 0;
+  db.transaction(() => {
+    const updItem = db.prepare("UPDATE order_items SET quantity = ?, subtotal = ? WHERE id = ?");
+    const adjStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
+    for (const it of changes) {
+      const newQty = Number(it.picked_qty);
+      updItem.run(newQty, round2(Number(it.unit_price) * newQty), it.id);
+      // Stock ya descontado: devolver/descontar la diferencia (viejo - nuevo).
+      if (stockCurrentlyOut && !skipStock && it.product_id) {
+        adjStock.run(Number(it.quantity) - newQty, it.product_id);
+      }
+    }
+    total = round2(
+      db.prepare("SELECT COALESCE(SUM(subtotal),0) AS t FROM order_items WHERE order_id = ?").get(orderId).t
+    );
+    db.prepare("UPDATE orders SET total = ? WHERE id = ?").run(total, orderId);
+    if (!order.is_unified) {
+      const deb = db.prepare(
+        "SELECT id FROM account_movements WHERE order_id = ? AND type = 'debit' LIMIT 1"
+      ).get(orderId);
+      if (deb) db.prepare("UPDATE account_movements SET amount = ? WHERE id = ?").run(total, deb.id);
+    }
+  })();
+
+  logActivity(req, "pedido", "Pedido #" + orderId + " · cantidades del armado aplicadas (" +
+    changes.length + " items) · nuevo total $" + total);
+  res.json({ ok: true, changed: changes.length, total: total });
 });
 
 app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req, res) => {
