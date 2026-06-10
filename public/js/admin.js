@@ -541,6 +541,16 @@
   // ---------- helpers ----------
   function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+  // Búsqueda por inicio de palabra: cada término del query tiene que ser
+  // prefijo de alguna palabra del texto (ignora mayúsculas y acentos).
+  function normSearch(s) {
+    return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  }
+  function matchWords(text, q) {
+    const words = normSearch(text).split(/[^a-z0-9]+/).filter(Boolean);
+    const terms = normSearch(q).split(/[^a-z0-9]+/).filter(Boolean);
+    return terms.every((t) => words.some((w) => w.startsWith(t)));
+  }
   function escapeHtml(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -1117,11 +1127,7 @@
     // se ven y editan en su propia pestaña; los admins por CLI.
     let list = state.users.filter((u) => [1, 2, 3, 4].includes(Number(u.level)));
     if (q) {
-      list = list.filter((u) =>
-        (u.username || "").toLowerCase().includes(q) ||
-        (u.full_name || "").toLowerCase().includes(q) ||
-        (u.email || "").toLowerCase().includes(q)
-      );
+      list = list.filter((u) => matchWords((u.username || "") + " " + (u.full_name || "") + " " + (u.email || ""), q));
     }
     sortUserList(list);
     updateUserSortHeaders();
@@ -1572,10 +1578,7 @@
     const q = (els.vendSearch ? els.vendSearch.value : "").trim().toLowerCase();
     let list = state.vendedores;
     if (q) {
-      list = list.filter((v) =>
-        (v.username || "").toLowerCase().includes(q) ||
-        (v.full_name || "").toLowerCase().includes(q)
-      );
+      list = list.filter((v) => matchWords((v.username || "") + " " + (v.full_name || ""), q));
     }
     if (els.vendCount) els.vendCount.textContent = list.length + (list.length === 1 ? " vendedor" : " vendedores");
     if (!list.length) {
@@ -2450,11 +2453,7 @@
     const q = (els.plSearch ? els.plSearch.value : "").trim().toLowerCase();
     let list = state.priceLists;
     if (q) {
-      list = list.filter((pl) =>
-        (pl.name || "").toLowerCase().includes(q) ||
-        (pl.base_level || "").toLowerCase().includes(q) ||
-        (pl.notes || "").toLowerCase().includes(q)
-      );
+      list = list.filter((pl) => matchWords((pl.name || "") + " " + (pl.base_level || "") + " " + (pl.notes || ""), q));
     }
     if (els.plCount) els.plCount.textContent = list.length + (list.length === 1 ? " lista" : " listas");
     if (!list.length) {
@@ -2682,14 +2681,13 @@
     let list = state.entregas;
     if (vendFilter !== "all") list = list.filter((d) => d.vendedor_username === vendFilter);
     if (q) {
-      list = list.filter((d) =>
-        String(d.order_id).includes(q) ||
-        (d.vendedor_username || "").toLowerCase().includes(q) ||
-        (d.vendedor_full_name || "").toLowerCase().includes(q) ||
-        (d.client_username || "").toLowerCase().includes(q) ||
-        (d.client_full_name || "").toLowerCase().includes(q) ||
-        (d.delivered_to || "").toLowerCase().includes(q)
-      );
+      list = list.filter((d) => matchWords(
+        String(d.order_id) + " " +
+        (d.vendedor_username || "") + " " +
+        (d.vendedor_full_name || "") + " " +
+        (d.client_username || "") + " " +
+        (d.client_full_name || "") + " " +
+        (d.delivered_to || ""), q));
     }
     if (els.entCount) els.entCount.textContent = list.length + (list.length === 1 ? " entrega" : " entregas");
     if (!list.length) {
@@ -3518,11 +3516,7 @@
 
     let list = state.products;
     if (q) {
-      list = list.filter((p) =>
-        (p.code || "").toLowerCase().includes(q) ||
-        (p.name || "").toLowerCase().includes(q) ||
-        (p.category_name || "").toLowerCase().includes(q)
-      );
+      list = list.filter((p) => matchWords((p.code || "") + " " + (p.name || "") + " " + (p.category_name || ""), q));
     }
     if (categoryFilter !== "all") list = list.filter((p) => String(p.category_id) === categoryFilter);
     if (stockMode === "in") list = list.filter((p) => (p.stock || 0) > 0);
@@ -5254,11 +5248,7 @@
       list = list.filter((o) => (o.username || "") === clientFilter);
     }
     if (q) {
-      list = list.filter((o) =>
-        String(o.id).includes(q) ||
-        (o.username || "").toLowerCase().includes(q) ||
-        (o.full_name || "").toLowerCase().includes(q)
-      );
+      list = list.filter((o) => matchWords(String(o.id) + " " + (o.username || "") + " " + (o.full_name || ""), q));
     }
     return list;
   }
@@ -5375,12 +5365,11 @@
     const q = (els.ventasSearch ? els.ventasSearch.value.trim().toLowerCase() : "");
     let list = (state.ventasOrders || []).slice();
     if (q) {
-      list = list.filter((o) =>
-        String(o.id).includes(q) ||
-        (o.username || "").toLowerCase().includes(q) ||
-        (o.full_name || "").toLowerCase().includes(q) ||
-        (o.vendedor_full_name || o.vendedor_username || "").toLowerCase().includes(q)
-      );
+      list = list.filter((o) => matchWords(
+        String(o.id) + " " +
+        (o.username || "") + " " +
+        (o.full_name || "") + " " +
+        (o.vendedor_full_name || o.vendedor_username || ""), q));
     }
     if (els.ventasSummary) {
       const totalVendido = list.reduce((s, o) => s + (Number(o.total) || 0), 0);
@@ -5621,12 +5610,7 @@
     const q = (els.supSearch ? els.supSearch.value : "").trim().toLowerCase();
     let list = state.suppliers;
     if (q) {
-      list = list.filter((s) =>
-        (s.name || "").toLowerCase().includes(q) ||
-        (s.contact || "").toLowerCase().includes(q) ||
-        (s.phone || "").toLowerCase().includes(q) ||
-        (s.email || "").toLowerCase().includes(q)
-      );
+      list = list.filter((s) => matchWords((s.name || "") + " " + (s.contact || "") + " " + (s.phone || "") + " " + (s.email || ""), q));
     }
     if (els.supCount) els.supCount.textContent = list.length + (list.length === 1 ? " proveedor" : " proveedores");
     if (!list.length) {
@@ -6034,7 +6018,7 @@
     let list = state.allProducts || [];
     if (filter) {
       const q = filter.trim().toLowerCase();
-      list = list.filter((p) => (p.name || "").toLowerCase().includes(q) || (p.code || "").toLowerCase().includes(q));
+      list = list.filter((p) => matchWords((p.name || "") + " " + (p.code || ""), q));
     }
     if (!list.length) {
       els.purPickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:16px;text-align:center">Sin resultados</td></tr>';
@@ -6638,7 +6622,7 @@
     const q   = (filter || "").toLowerCase().trim();
     const cat = els.pcotPickerCat ? els.pcotPickerCat.value : "";
     let prods = state.allProducts || [];
-    if (q)   prods = prods.filter((p) => p.name.toLowerCase().includes(q) || (p.code || "").toLowerCase().includes(q));
+    if (q)   prods = prods.filter((p) => matchWords((p.name || "") + " " + (p.code || ""), q));
     if (cat) prods = prods.filter((p) => String(p.category_id) === cat);
     if (!prods.length) {
       els.pcotPickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:16px;text-align:center">Sin resultados.</td></tr>';
@@ -7045,11 +7029,7 @@
     let list = state.payments;
     if (methodFilter !== "all") list = list.filter((p) => p.method === methodFilter);
     if (q) {
-      list = list.filter((p) =>
-        (p.client_username || "").toLowerCase().includes(q) ||
-        (p.client_full_name || "").toLowerCase().includes(q) ||
-        (p.reference || "").toLowerCase().includes(q)
-      );
+      list = list.filter((p) => matchWords((p.client_username || "") + " " + (p.client_full_name || "") + " " + (p.reference || ""), q));
     }
     if (els.payCount) els.payCount.textContent = list.length + (list.length === 1 ? " pago" : " pagos");
     if (!list.length) {
@@ -7526,10 +7506,7 @@
     const q = (els.accSearch ? els.accSearch.value : "").trim().toLowerCase();
     let list = state.accounts.slice();
     if (q) {
-      list = list.filter((a) =>
-        (a.username || "").toLowerCase().includes(q) ||
-        (a.full_name || "").toLowerCase().includes(q)
-      );
+      list = list.filter((a) => matchWords((a.username || "") + " " + (a.full_name || ""), q));
     }
     if (state.accOnlyDebtors) list = list.filter((a) => (Number(a.balance) || 0) < 0);
     const key = state.accSortKey, dir = state.accSortDir === "desc" ? -1 : 1;
@@ -8148,10 +8125,7 @@
     const stFilter = bEls.filterStatus ? bEls.filterStatus.value : "all";
     // Tab Presupuestos: excluir facturado (esos van a Ventas)
     let list = bState.list.filter((b) => b.status !== "facturado");
-    if (q) list = list.filter((b) =>
-      (b.number || "").toLowerCase().includes(q) ||
-      (b.client_name || "").toLowerCase().includes(q) ||
-      (b.vendedor_name || "").toLowerCase().includes(q));
+    if (q) list = list.filter((b) => matchWords((b.number || "") + " " + (b.client_name || "") + " " + (b.vendedor_name || ""), q));
     if (stFilter !== "all") list = list.filter((b) => b.status === stFilter);
     if (!list.length) {
       bEls.tbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">Sin presupuestos.</td></tr>';
@@ -8488,10 +8462,7 @@
     let list = bState.allProducts.filter((p) => p.active);
     if (filter) {
       const q = filter.trim().toLowerCase();
-      list = list.filter((p) =>
-        (p.name || "").toLowerCase().includes(q) ||
-        (p.code || "").toLowerCase().includes(q) ||
-        (p.category_name || "").toLowerCase().includes(q));
+      list = list.filter((p) => matchWords((p.name || "") + " " + (p.code || "") + " " + (p.category_name || ""), q));
     }
     if (!list.length) {
       bEls.pickerTbody.innerHTML = '<tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Sin resultados</td></tr>';
@@ -9142,7 +9113,7 @@
       ].filter(Boolean).join("&");
       let rows = await api("/api/admin/stock-adjustments" + (qs ? "?" + qs : ""));
       const q = search ? search.value.trim().toLowerCase() : "";
-      if (q) rows = rows.filter((r) => (r.product_name + " " + r.product_code).toLowerCase().includes(q));
+      if (q) rows = rows.filter((r) => matchWords(r.product_name + " " + r.product_code, q));
       if (!rows.length) {
         tbody.innerHTML = '<tr><td colspan="8" class="muted">Sin ajustes</td></tr>';
         return;
@@ -9850,7 +9821,7 @@
   function supAccFiltered() {
     const q = (supEls.search ? supEls.search.value : "").trim().toLowerCase();
     let list = supState.list.slice();
-    if (q) list = list.filter((a) => (a.name || "").toLowerCase().includes(q));
+    if (q) list = list.filter((a) => matchWords(a.name, q));
     if (supEls.onlyDebtors && supEls.onlyDebtors.checked) list = list.filter((a) => (Number(a.balance) || 0) > 0.0001);
     list.sort((a, b) => (Number(b.balance) || 0) - (Number(a.balance) || 0));
     return list;

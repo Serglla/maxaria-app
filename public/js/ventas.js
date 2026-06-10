@@ -10,6 +10,17 @@
   // ── Estado global mínimo ──
   const me = { app_name: "Maxaria", level: 0, fullName: "", id: 0, vendedorClientId: null };
 
+  // Búsqueda por inicio de palabra: cada término del query tiene que ser
+  // prefijo de alguna palabra del texto (ignora mayúsculas y acentos).
+  function normSearch(s) {
+    return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  }
+  function matchWords(text, q) {
+    const words = normSearch(text).split(/[^a-z0-9]+/).filter(Boolean);
+    const terms = normSearch(q).split(/[^a-z0-9]+/).filter(Boolean);
+    return terms.every((t) => words.some((w) => w.startsWith(t)));
+  }
+
   // ── Carga inicial de info del usuario ──
   async function loadMe() {
     try {
@@ -513,7 +524,7 @@
     const q = (vEls.search ? vEls.search.value.trim().toLowerCase() : "");
     const stf = vEls.filterStatus ? vEls.filterStatus.value : "all";
     let list = vState.list;
-    if (q) list = list.filter((b) => (b.number||"").toLowerCase().includes(q) || (b.client_name||"").toLowerCase().includes(q));
+    if (q) list = list.filter((b) => matchWords((b.number||"") + " " + (b.client_name||""), q));
     if (stf !== "all") list = list.filter((b) => b.status === stf);
     if (!list.length) {
       vEls.tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">Sin presupuestos.</td></tr>';
@@ -959,7 +970,7 @@
     }
     if (filter) {
       const q = filter.trim().toLowerCase();
-      list = list.filter((p) => (p.name||"").toLowerCase().includes(q) || (p.code||"").toLowerCase().includes(q));
+      list = list.filter((p) => matchWords((p.name||"") + " " + (p.code||""), q));
     }
     if (!list.length) {
       vEls.pickerTbody.innerHTML = '<tr><td colspan="6" class="muted" style="padding:20px;text-align:center">Sin resultados</td></tr>';

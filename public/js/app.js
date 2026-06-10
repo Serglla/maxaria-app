@@ -93,6 +93,16 @@
 
   function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+  // Búsqueda por inicio de palabra: cada término del query tiene que ser
+  // prefijo de alguna palabra del texto (ignora mayúsculas y acentos).
+  function normSearch(s) {
+    return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  }
+  function matchWords(text, q) {
+    const words = normSearch(text).split(/[^a-z0-9]+/).filter(Boolean);
+    const terms = normSearch(q).split(/[^a-z0-9]+/).filter(Boolean);
+    return terms.every((t) => words.some((w) => w.startsWith(t)));
+  }
   function escapeHtml(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -355,11 +365,8 @@
     let list = state.products;
     if (state.cat !== "all") list = list.filter((p) => p.category_id === state.cat);
     if (state.query) {
-      const q = state.query.toLowerCase();
-      list = list.filter((p) =>
-        (p.code || "").toLowerCase().includes(q) ||
-        (p.name || "").toLowerCase().includes(q) ||
-        (p.category_name || "").toLowerCase().includes(q));
+      const q = state.query;
+      list = list.filter((p) => matchWords((p.code || "") + " " + (p.name || "") + " " + (p.category_name || ""), q));
     }
     return list;
   }
@@ -446,9 +453,7 @@
   function renderClientPickerUI(filter) {
     filter = (filter || "").toLowerCase().trim();
     const list = filter
-      ? state.clients.filter((c) =>
-          (c.full_name || "").toLowerCase().includes(filter) ||
-          (c.username || "").toLowerCase().includes(filter))
+      ? state.clients.filter((c) => matchWords((c.full_name || "") + " " + (c.username || ""), filter))
       : state.clients;
 
     let html =
