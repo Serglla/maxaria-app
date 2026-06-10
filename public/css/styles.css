@@ -49,6 +49,30 @@ body {
 img { max-width: 100%; display: block; }
 button { font: inherit; cursor: pointer; }
 
+/* ====== Scrollbar en tonos azules de la marca ====== */
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--brand-2) transparent;
+}
+/* WebKit (Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-track {
+  background: var(--brand-soft);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--brand-2);
+  border-radius: 999px;
+  border: 2px solid var(--brand-soft);   /* aire alrededor del thumb */
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--brand);
+}
+::-webkit-scrollbar-corner { background: transparent; }
+
 /* ====== Botones ====== */
 .btn {
   border: 1px solid transparent;
@@ -1625,7 +1649,14 @@ button { font: inherit; cursor: pointer; }
   height: calc(100vh - 48px);
   overflow-y: auto;
   scrollbar-width: thin;
+  scrollbar-color: rgba(199,210,254,.5) transparent;   /* claro sobre el navy del sidebar */
 }
+.admin-sidebar::-webkit-scrollbar-track { background: transparent; }
+.admin-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(199,210,254,.45);
+  border-color: transparent;
+}
+.admin-sidebar::-webkit-scrollbar-thumb:hover { background: rgba(199,210,254,.7); }
 .admin-sidebar-mobile-head { display: none; }
 .admin-sidebar-nav {
   display: flex;
