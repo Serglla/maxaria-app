@@ -6449,6 +6449,31 @@
     });
   }
 
+  // Re-render de la tabla de items preservando el campo enfocado y la posición
+  // del cursor. Sin esto, editar precio/cantidad y tocar otra celda destruía
+  // todos los inputs (renderCotizacionItems reconstruye el tbody entero) y el
+  // foco saltaba al body, así que había que volver a clickear el campo.
+  function rerenderCotizacionPreservingFocus() {
+    const active = document.activeElement;
+    let key = null, selStart = null, selEnd = null;
+    if (active && els.pcotItemsTbody && els.pcotItemsTbody.contains(active) && active.dataset && active.dataset.cotIdx != null) {
+      const cls = ["pcot-price-input", "pcot-qty-input", "pcot-upb-input", "pcot-pack-input"]
+        .find((c) => active.classList.contains(c));
+      if (cls) {
+        key = { idx: active.dataset.cotIdx, cls };
+        try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (_) {}
+      }
+    }
+    renderCotizacionItems();
+    if (key) {
+      const el = els.pcotItemsTbody.querySelector("." + key.cls + '[data-cot-idx="' + key.idx + '"]');
+      if (el) {
+        el.focus();
+        if (selStart != null) { try { el.setSelectionRange(selStart, selEnd); } catch (_) {} }
+      }
+    }
+  }
+
   function renderCotizacionItems() {
     if (!els.pcotItemsTbody) return;
     if (!state.cotizacionItems.length) {
@@ -6551,7 +6576,7 @@
         const packPrice = Number(inp.value) || 0;
         // Convertir el precio del empaque a precio por unidad (canónico).
         state.cotizacionItems[i].unit_price = packPrice ? Math.round(packPrice / mult) : null;
-        renderCotizacionItems();
+        rerenderCotizacionPreservingFocus();
       });
     });
     // qty change → re-render para actualizar el badge de bultos
@@ -6559,7 +6584,7 @@
       inp.addEventListener("change", () => {
         const i = Number(inp.dataset.cotIdx);
         state.cotizacionItems[i].quantity = Math.max(1, Number(inp.value) || 1);
-        renderCotizacionItems();
+        rerenderCotizacionPreservingFocus();
       });
     });
     // und/bulto change → guarda en item + en producto + re-render
@@ -6582,7 +6607,7 @@
             body: JSON.stringify({ units_per_bulto: upb }),
           }).catch(() => {});
         }
-        renderCotizacionItems();
+        rerenderCotizacionPreservingFocus();
       });
     });
     // empaque (unidad/caja/bulto) change → guarda en item + producto + re-render
@@ -6603,7 +6628,7 @@
             body: JSON.stringify({ pack_unit: pack }),
           }).catch(() => {});
         }
-        renderCotizacionItems();
+        rerenderCotizacionPreservingFocus();
       });
     });
     // remove
@@ -6805,6 +6830,18 @@
         renderCotPickerRows(els.pcotPickerSearch ? els.pcotPickerSearch.value : "");
         updateCotPickerCount();
       });
+      // Al volver a clickear/enfocar el buscador, se limpia para arrancar una
+      // búsqueda nueva (igual que el picker de compras y el de editar pedido).
+      // La selección hecha hasta ahora se conserva (sigue tildada al re-renderizar).
+      const pcotClearSearchOnReuse = () => {
+        if (els.pcotPickerSearch.value) {
+          els.pcotPickerSearch.value = "";
+          renderCotPickerRows("");
+          updateCotPickerCount();
+        }
+      };
+      els.pcotPickerSearch.addEventListener("focus", pcotClearSearchOnReuse);
+      els.pcotPickerSearch.addEventListener("click", pcotClearSearchOnReuse);
     }
 
     // Tipear cantidad marca el checkbox y guarda la cantidad (igual que pur-picker)
