@@ -482,6 +482,8 @@
     allCategories: [],           // Cache de todas las categorias (para el modal)
     vendedores: [],
     vendedoresLoaded: false,
+    orderClients: [],            // Cache de clientes activos para el selector "Cliente" del detalle de pedido
+    orderClientsLoaded: false,
     vendResetTargetId: null,
     entregas: [],
     entregasLoaded: false,
@@ -4488,6 +4490,15 @@
     "</article>";
   }
 
+  // Clientes activos (level 1-4) para el selector "Cliente" del detalle.
+  async function ensureOrderClients() {
+    if (state.orderClientsLoaded) return;
+    try {
+      state.orderClients = await api("/api/clients");
+      state.orderClientsLoaded = true;
+    } catch (_) {}
+  }
+
   async function toggleOrderDetail(card, orderId) {
     var detailEl = card.querySelector(".order-detail");
     if (!detailEl) return;
@@ -4499,7 +4510,9 @@
     if (detailEl.dataset.loaded) return;
     detailEl.innerHTML = '<p class="muted">Cargando…</p>';
     try {
-      var order = await api("/api/orders/" + orderId);
+      var fetches = [api("/api/orders/" + orderId)];
+      if (state.isAdmin) fetches.push(ensureOrderClients());
+      var order = (await Promise.all(fetches))[0];
       detailEl.dataset.loaded = "1";
       renderOrderDetail(detailEl, order);
       wireOrderDetail(detailEl, order);
@@ -4571,6 +4584,23 @@
     var statusRow = '<label>Estado<br>' +
       '<select class="order-status-select cell-select" data-order-id="' + order.id + '">' + statusOpts + "</select></label>";
 
+    // Cliente del pedido (solo admin): permite corregir a quién pertenece,
+    // p. ej. una venta que se cargó sin cliente y quedó a nombre del admin.
+    var clientRow = "";
+    if (state.isAdmin) {
+      var clients = state.orderClients || [];
+      var hasCurrent = clients.some(function(c) { return c.id === order.user_id; });
+      var clientOpts =
+        (hasCurrent ? "" : '<option value="' + order.user_id + '" selected>' +
+          escapeHtml(order.full_name || order.username || "—") + "</option>") +
+        clients.map(function(c) {
+          return '<option value="' + c.id + '"' + (c.id === order.user_id ? " selected" : "") + ">" +
+            escapeHtml(c.full_name || c.username) + "</option>";
+        }).join("");
+      clientRow = '<label>Cliente<br>' +
+        '<select class="order-client-select cell-select" data-order-id="' + order.id + '">' + clientOpts + "</select></label>";
+    }
+
     var vendRow = "";
     if (state.isAdmin) {
       var vendOpts = '<option value="">Sin asignar</option>' +
@@ -4609,7 +4639,7 @@
       : "";
 
     detailEl.innerHTML =
-      '<div class="order-detail-meta">' + statusRow + vendRow + "</div>" +
+      '<div class="order-detail-meta">' + statusRow + clientRow + vendRow + "</div>" +
       itemsHtml + profitHtml + notesHtml + delivInfo + budgetRef;
   }
 
@@ -4650,6 +4680,34 @@
         } catch (err) {
           showToast("Error: " + err.message, "error");
           statusSel.value = order.status;
+        }
+      });
+    }
+
+    var clientSel = detailEl.querySelector(".order-client-select");
+    if (clientSel) {
+      clientSel.addEventListener("change", async function() {
+        var newUserId = Number(clientSel.value);
+        var orderId = Number(clientSel.dataset.orderId);
+        try {
+          await api("/api/admin/orders/" + orderId + "/assign", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: newUserId }),
+          });
+          var c = (state.orderClients || []).find(function(x) { return x.id === newUserId; });
+          order.user_id = newUserId;
+          if (c) { order.username = c.username; order.full_name = c.full_name; }
+          var o = state.orders.find(function(x) { return x.id === orderId; });
+          if (o) {
+            o.user_id = newUserId;
+            if (c) { o.username = c.username; o.full_name = c.full_name; }
+          }
+          refreshOrderViews();
+          showToast("Cliente actualizado");
+        } catch (err) {
+          showToast("Error: " + err.message, "error");
+          clientSel.value = String(order.user_id);
         }
       });
     }

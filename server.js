@@ -4109,19 +4109,44 @@ app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
 });
 
 // Asignar (o desasignar) un vendedor a un pedido (solo admin)
+// Reasignar vendedor y/o cliente de un pedido. Cada campo se actualiza solo si
+// viene en el body (asi cambiar el cliente no desasigna el vendedor ni al reves).
 app.patch("/api/admin/orders/:id/assign", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
-  const order = db.prepare("SELECT id FROM orders WHERE id = ?").get(id);
+  const order = db.prepare("SELECT id, user_id FROM orders WHERE id = ?").get(id);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
 
-  const vendedorId = req.body && req.body.vendedor_id ? Number(req.body.vendedor_id) : null;
-  if (vendedorId) {
-    const vendedor = db.prepare("SELECT id FROM users WHERE id = ? AND level = 5 AND active = 1").get(vendedorId);
-    if (!vendedor) return res.status(400).json({ error: "Vendedor no encontrado o inactivo" });
+  const body = req.body || {};
+  const hasVend = Object.prototype.hasOwnProperty.call(body, "vendedor_id");
+  const hasUser = Object.prototype.hasOwnProperty.call(body, "user_id");
+  if (!hasVend && !hasUser) return res.status(400).json({ error: "Nada para actualizar" });
+
+  let vendedorId = null;
+  if (hasVend) {
+    vendedorId = body.vendedor_id ? Number(body.vendedor_id) : null;
+    if (vendedorId) {
+      const vendedor = db.prepare("SELECT id FROM users WHERE id = ? AND level = 5 AND active = 1").get(vendedorId);
+      if (!vendedor) return res.status(400).json({ error: "Vendedor no encontrado o inactivo" });
+    }
   }
-  db.prepare("UPDATE orders SET assigned_vendedor_id = ? WHERE id = ?").run(vendedorId, id);
-  res.json({ ok: true, id, vendedor_id: vendedorId });
+  let userId = null;
+  if (hasUser) {
+    userId = Number(body.user_id) || 0;
+    const client = db.prepare("SELECT id FROM users WHERE id = ? AND level IN (1,2,3,4) AND active = 1").get(userId);
+    if (!client) return res.status(400).json({ error: "Cliente no encontrado o inactivo" });
+  }
+
+  db.transaction(() => {
+    if (hasVend) db.prepare("UPDATE orders SET assigned_vendedor_id = ? WHERE id = ?").run(vendedorId, id);
+    if (hasUser && userId !== order.user_id) {
+      db.prepare("UPDATE orders SET user_id = ? WHERE id = ?").run(userId, id);
+      // Los movimientos de cuenta corriente del pedido (debito de la entrega,
+      // cobros) siguen al nuevo cliente, sino el saldo queda en el viejo.
+      db.prepare("UPDATE account_movements SET user_id = ? WHERE order_id = ?").run(userId, id);
+    }
+  })();
+  res.json({ ok: true, id, vendedor_id: hasVend ? vendedorId : null, user_id: hasUser ? userId : null });
 });
 
 // Registrar entrega de un pedido (admin o vendedor asignado)
