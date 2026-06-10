@@ -5185,7 +5185,14 @@
   function updateOiePickerCount() {
     var n = oiePickerSelected.size;
     if (els.oiePickerCount) {
-      els.oiePickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados");
+      // Monto que va sumando el pedido con lo tildado (qty × precio efectivo).
+      var cfg = oieAddCtx ? oieAddCtx.priceCfg : { column: "price_minorista", markup: 0 };
+      var sum = 0;
+      oiePickerSelected.forEach(function(qty, pid) {
+        var p = (state.allProducts || []).find(function(x) { return x.id === pid; });
+        if (p) sum += orderEffPrice(p, cfg) * qty;
+      });
+      els.oiePickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados") + (n ? " · " + fmtPrice(sum) : "");
     }
     if (els.oiePickerConfirm) {
       els.oiePickerConfirm.disabled = n === 0;
@@ -6385,7 +6392,13 @@
   function updatePurPickerCount() {
     if (els.purPickerCount) {
       const n = state.purPickerSelected.size;
-      els.purPickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados");
+      // Monto que va sumando la compra con lo tildado (qty × costo).
+      let sum = 0;
+      state.purPickerSelected.forEach((qty, pid) => {
+        const p = (state.allProducts || []).find((x) => x.id === pid);
+        if (p) sum += (Number(p.cost) || 0) * qty;
+      });
+      els.purPickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados") + (n ? " · " + fmtPrice(sum) : "");
     }
     if (els.purPickerConfirm) els.purPickerConfirm.disabled = state.purPickerSelected.size === 0;
   }
@@ -7028,6 +7041,7 @@
         const pid = Number(inp.dataset.id);
         if (state.cotPickerSelected.has(pid)) {
           state.cotPickerSelected.get(pid).qty = Math.max(1, Number(inp.value) || 1);
+          updateCotPickerCount();
         }
       });
     });
@@ -7041,7 +7055,15 @@
 
   function updateCotPickerCount() {
     const n = state.cotPickerSelected.size;
-    if (els.pcotPickerCount) els.pcotPickerCount.textContent = n + " seleccionado" + (n !== 1 ? "s" : "");
+    if (els.pcotPickerCount) {
+      // Monto que va sumando la cotización con lo tildado (qty × costo o precio guardado).
+      let sum = 0;
+      state.cotPickerSelected.forEach(({ qty, product, existingPrice }) => {
+        const price = existingPrice != null ? Number(existingPrice) : Math.max(0, Number(product && product.cost) || 0);
+        sum += price * qty;
+      });
+      els.pcotPickerCount.textContent = n + " seleccionado" + (n !== 1 ? "s" : "") + (n ? " · " + fmtPrice(sum) : "");
+    }
     if (els.pcotPickerConfirm) els.pcotPickerConfirm.disabled = n === 0;
   }
 
@@ -8872,7 +8894,13 @@
   function pickerUpdateCount() {
     if (!bEls.pickerCount) return;
     const n = bState.pickerSelected.size;
-    bEls.pickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados");
+    // Monto que va sumando el presupuesto con lo tildado (1 unidad × precio minorista).
+    let sum = 0;
+    bState.pickerSelected.forEach((pid) => {
+      const p = bState.allProducts.find((x) => x.id === pid);
+      if (p) sum += Number(p.price_minorista) || 0;
+    });
+    bEls.pickerCount.textContent = n + (n === 1 ? " seleccionado" : " seleccionados") + (n ? " · " + fmtPrice(sum) : "");
     if (bEls.pickerConfirm) bEls.pickerConfirm.disabled = n === 0;
   }
 

@@ -996,7 +996,15 @@
 
   function vPickerCount() {
     const n = vState.pickerSelected.size;
-    if (vEls.pickerCount) vEls.pickerCount.textContent = n + (n===1?" seleccionado":" seleccionados");
+    if (vEls.pickerCount) {
+      // Monto que va sumando el pedido con lo tildado (qty × precio efectivo).
+      let sum = 0;
+      vState.pickerSelected.forEach((qty, pid) => {
+        const p = vState.allProducts.find((x) => x.id === pid);
+        if (p) sum += (Number(p.price) || 0) * qty;
+      });
+      vEls.pickerCount.textContent = n + (n===1?" seleccionado":" seleccionados") + (n ? " · " + vFmt(vRound2(sum)) : "");
+    }
     if (vEls.pickerConfirm) {
       vEls.pickerConfirm.disabled = n === 0;
       if (vState.pickerReplaceIdx !== null) {
