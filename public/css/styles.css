@@ -1040,6 +1040,69 @@ button { font: inherit; cursor: pointer; }
   background: #f8fafc; display: flex; flex-direction: column; gap: 4px;
 }
 .delivery-summary .ds-line { font-size: 13px; color: #374151; }
+
+/* Chequeo de armado: checklist de picking (modal #pick-modal) */
+.pick-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.pick-toolbar select {
+  border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 8px; font-size: 13px;
+  background: #fff; max-width: 100%;
+}
+.pick-progress { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 140px; }
+.pick-progress-bar {
+  flex: 1; height: 10px; border-radius: 999px; background: #e5e7eb; overflow: hidden;
+}
+#pick-progress-fill {
+  height: 100%; width: 0; background: #2563eb; border-radius: 999px;
+  transition: width .25s ease;
+}
+#pick-progress-fill.full { background: #16a34a; }
+#pick-progress-text { font-size: 13px; font-weight: 800; color: #374151; white-space: nowrap; }
+.pick-list {
+  flex: 1; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 10px;
+  background: #fff; min-height: 120px;
+}
+.pick-cat-head {
+  position: sticky; top: 0; z-index: 1;
+  background: #1e3a5f; color: #fff; font-size: 11.5px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: .4px; padding: 5px 10px;
+}
+.pick-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-bottom: 1px solid #eef0f3; cursor: pointer; user-select: none;
+}
+.pick-item:hover { background: #f3f6fb; }
+.pick-check {
+  flex: 0 0 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border: 2px solid #cbd5e1; border-radius: 8px; font-size: 14px; font-weight: 800;
+  color: #16a34a; background: #fff;
+}
+.pick-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pick-name { font-size: 13.5px; font-weight: 600; color: #111827; }
+.pick-code { font-size: 11.5px; color: #6b7280; }
+.pick-who { color: #7c3aed; font-weight: 600; }
+.pick-qtybox { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.pick-qty-input {
+  width: 58px; border: 1px solid #d1d5db; border-radius: 6px; padding: 4px 6px;
+  font-size: 13px; text-align: right;
+}
+.pick-qty-req { font-size: 13px; font-weight: 700; color: #374151; white-space: nowrap; }
+/* Item armado completo: verde, destacado */
+.pick-item.pick-done { background: #ecfdf5; }
+.pick-item.pick-done:hover { background: #d1fae5; }
+.pick-item.pick-done .pick-check { border-color: #16a34a; background: #dcfce7; }
+.pick-item.pick-done .pick-name { color: #166534; text-decoration: line-through; }
+/* Item parcial: ámbar (se armó menos que lo pedido) */
+.pick-item.pick-partial { background: #fffbeb; }
+.pick-item.pick-partial .pick-check { border-color: #d97706; color: #d97706; background: #fef3c7; }
+/* Badge en la tarjeta del pedido cuando el checklist está completo */
+.pick-badge-ok {
+  display: inline-block; font-size: 11px; font-weight: 800; padding: 2px 8px;
+  border-radius: 999px; background: #dcfce7; color: #166534; border: 1px solid #16a34a;
+  white-space: nowrap; vertical-align: middle;
+}
 .order-items-edit { margin-top: 6px; }
 .order-items-edit .cell-input {
   border: 1px solid #d1d5db; border-radius: 6px; padding: 3px 6px; font-size: 13px;

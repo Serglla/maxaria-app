@@ -335,6 +335,15 @@ try {
   db.exec("UPDATE orders SET notified_status = status");
 } catch (_) {}
 
+// Migracion: Chequeo de armado (checklist de picking por item del pedido).
+// - order_items.picked_qty: cantidad ya armada/juntada del item (0 = sin armar).
+// - picked_by / picked_at: quien y cuando lo tildo por ultima vez (auditoria).
+// Sincronizacion multi-dispositivo: los armadores postean a /api/admin/picks
+// y el modal hace polling del GET; ultima escritura gana.
+try { db.exec("ALTER TABLE order_items ADD COLUMN picked_qty REAL NOT NULL DEFAULT 0"); } catch (_) {}
+try { db.exec("ALTER TABLE order_items ADD COLUMN picked_by INTEGER"); } catch (_) {}
+try { db.exec("ALTER TABLE order_items ADD COLUMN picked_at TEXT"); } catch (_) {}
+
 // Migracion: Presupuestos / Ventas.
 // - budgets: cabecera del presupuesto (cliente, vendedor, totales, estado).
 // - budget_items: lineas del presupuesto (producto, cantidad, precio, descuento).
@@ -1058,6 +1067,7 @@ function sectionForAdminRequest(p) {
   if (has("products") || has("import-excel") || has("stock-adjustments") || has("catalog")) return "productos";
   if (has("price-lists")) return "price-lists";
   if (has("ventas"))      return "ventas";
+  if (has("picks"))       return "armado";
   if (has("orders"))      return "pedidos";
   if (has("deliveries"))  return "entregas";
   if (has("users"))       return "usuarios";
@@ -2153,7 +2163,9 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "       u.username, u.full_name," +
       "       o.assigned_vendedor_id," +
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
-      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id, d.notes AS delivery_notes" +
+      "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id, d.notes AS delivery_notes," +
+      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS pick_total," +
+      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.picked_qty,0) >= oi.quantity) AS pick_done" +
       "  FROM orders o" +
       "  JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
@@ -2231,6 +2243,71 @@ app.get("/api/admin/ventas", requireAdmin, (req, res) => {
     "  ORDER BY COALESCE(d.delivered_at, o.created_at) DESC LIMIT 1000";
   const rows = db.prepare(sql).all(...params);
   res.json(rows);
+});
+
+// ---- CHEQUEO DE ARMADO --------------------------------------------------
+// Checklist de picking por pedido (pestaña Armado). Cada armador tilda items
+// con la cantidad que junto; el modal hace polling del GET para sincronizar
+// entre dispositivos (ultima escritura gana). Solo admins con seccion "armado"
+// (sectionForAdminRequest mapea /api/admin/picks -> armado).
+app.get("/api/admin/picks/:orderId", requireAdmin, (req, res) => {
+  const orderId = Number(req.params.orderId);
+  if (!orderId) return res.status(400).json({ error: "ID invalido" });
+  const order = db.prepare("SELECT id, status, user_id FROM orders WHERE id = ?").get(orderId);
+  if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+  const client = db.prepare("SELECT full_name, username FROM users WHERE id = ?").get(order.user_id) || {};
+  const items = db.prepare(
+    "SELECT oi.id, oi.product_code, oi.product_name, oi.quantity," +
+    "       COALESCE(oi.picked_qty, 0) AS picked_qty, oi.picked_at," +
+    "       pu.full_name AS picked_by_name," +
+    "       COALESCE(c.name, 'Sin categoría') AS category_name" +
+    "  FROM order_items oi" +
+    "  LEFT JOIN products p ON p.id = oi.product_id" +
+    "  LEFT JOIN categories c ON c.id = p.category_id" +
+    "  LEFT JOIN users pu ON pu.id = oi.picked_by" +
+    " WHERE oi.order_id = ?" +
+    " ORDER BY COALESCE(c.sort_order, 9999), category_name, oi.product_name"
+  ).all(orderId);
+  const done = items.filter((i) => Number(i.picked_qty) >= Number(i.quantity)).length;
+  res.json({
+    order: { id: order.id, status: order.status, client_name: client.full_name || client.username || "" },
+    items: items,
+    total_items: items.length,
+    done_items: done,
+    complete: items.length > 0 && done === items.length,
+  });
+});
+
+app.post("/api/admin/picks/:orderId", requireAdmin, (req, res) => {
+  const orderId = Number(req.params.orderId);
+  const itemId = Number(req.body && req.body.item_id);
+  let qty = Number(req.body && req.body.picked_qty);
+  if (!orderId || !itemId || !isFinite(qty)) {
+    return res.status(400).json({ error: "item_id y picked_qty requeridos" });
+  }
+  const item = db.prepare("SELECT id, quantity FROM order_items WHERE id = ? AND order_id = ?").get(itemId, orderId);
+  if (!item) return res.status(404).json({ error: "Item no encontrado en este pedido" });
+  // Se acota 0..cantidad pedida (parcial permitido: el stock fisico puede no alcanzar).
+  qty = Math.max(0, Math.min(qty, Number(item.quantity)));
+  if (qty > 0) {
+    db.prepare("UPDATE order_items SET picked_qty = ?, picked_by = ?, picked_at = datetime('now') WHERE id = ?")
+      .run(qty, req.session.userId, itemId);
+  } else {
+    db.prepare("UPDATE order_items SET picked_qty = 0, picked_by = NULL, picked_at = NULL WHERE id = ?").run(itemId);
+  }
+  const agg = db.prepare(
+    "SELECT COUNT(*) AS total," +
+    "       SUM(CASE WHEN COALESCE(picked_qty,0) >= quantity THEN 1 ELSE 0 END) AS done" +
+    "  FROM order_items WHERE order_id = ?"
+  ).get(orderId);
+  res.json({
+    ok: true,
+    item_id: itemId,
+    picked_qty: qty,
+    total_items: agg.total,
+    done_items: agg.done || 0,
+    complete: agg.total > 0 && Number(agg.done) === Number(agg.total),
+  });
 });
 
 app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req, res) => {

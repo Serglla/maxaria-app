@@ -4470,17 +4470,33 @@
         '" type="button" title="Eliminar pedido">✕</button>';
     }
 
+    // Chequeo de armado: checklist de picking (solo admin, pedidos en armado).
+    // El botón muestra el avance (hecho/total); badge verde cuando está completo.
+    var pickBtn = "";
+    var pickBadge = "";
+    if (state.isAdmin && o.status === "preparando") {
+      var ptot = Number(o.pick_total) || 0;
+      var pdone = Number(o.pick_done) || 0;
+      var pickInfo = ptot > 0 && pdone > 0 ? " " + pdone + "/" + ptot : "";
+      pickBtn = '<button class="btn btn-small btn-pick" data-id="' + o.id +
+        '" type="button" title="Checklist de armado (sincroniza entre dispositivos)">📋 Chequeo' + pickInfo + "</button>";
+      if (ptot > 0 && pdone >= ptot) {
+        pickBadge = ' <span class="pick-badge-ok">✔ Armado completo</span>';
+      }
+    }
+
     return '<article class="order-card" data-id="' + o.id + '">' +
       '<div class="order-head">' +
         '<div>' +
           '<h4 class="order-client">' + clientLabel +
             ' <span class="order-status ' + (o.status || "") + '">' + escapeHtml(statusLabel) + "</span>" +
-            vendBadge + delivBadge +
+            vendBadge + delivBadge + pickBadge +
           "</h4>" +
           '<span class="meta">Pedido #' + o.id + " · " + dateLabel + "</span>" +
         "</div>" +
         '<div class="order-card-right">' +
           '<span class="order-total">' + totalLabel + "</span>" +
+          pickBtn +
           advBtn +
           delivBtn +
           delBtn +
@@ -5328,9 +5344,17 @@
     container.querySelectorAll(".order-card").forEach((card) => {
       const head = card.querySelector(".order-head");
       if (head) head.addEventListener("click", (e) => {
-        if (e.target.closest(".btn-deliver") || e.target.closest(".btn-advance") || e.target.closest(".btn-delete-order")) return;
+        if (e.target.closest(".btn-deliver") || e.target.closest(".btn-advance") || e.target.closest(".btn-delete-order") || e.target.closest(".btn-pick")) return;
         toggleOrderDetail(card, Number(card.dataset.id));
       });
+
+      const pickBtn = card.querySelector(".btn-pick");
+      if (pickBtn) {
+        pickBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openPickModal(Number(pickBtn.dataset.id));
+        });
+      }
 
       const deliverBtn = card.querySelector(".btn-deliver");
       if (deliverBtn) {
@@ -5525,6 +5549,202 @@
   if (els.ordersStatusFilter) els.ordersStatusFilter.addEventListener("change", renderOrders);
   if (els.armadoReload) els.armadoReload.addEventListener("click", loadArmado);
   if (els.entQueueReload) els.entQueueReload.addEventListener("click", loadEntregasQueue);
+
+  // ---------- Chequeo de armado (checklist de picking) ----------
+  // El armador tilda cada producto a medida que lo junta; la cantidad armada
+  // puede ser parcial (el stock físico puede no coincidir). Sincronización
+  // multi-dispositivo por polling cada 4s mientras el modal está abierto:
+  // dos armadores con dos dispositivos ven los avances del otro solos.
+  const pickEls = {
+    modal: document.getElementById("pick-modal"),
+    orderInfo: document.getElementById("pick-modal-order"),
+    catFilter: document.getElementById("pick-cat-filter"),
+    list: document.getElementById("pick-list"),
+    progressFill: document.getElementById("pick-progress-fill"),
+    progressText: document.getElementById("pick-progress-text"),
+    syncInfo: document.getElementById("pick-sync-info"),
+  };
+  const pickState = { orderId: null, items: [], cat: "all", timer: null, posting: 0 };
+
+  async function openPickModal(orderId) {
+    if (!pickEls.modal) return;
+    pickState.orderId = orderId;
+    pickState.items = [];
+    pickState.cat = "all";
+    pickEls.list.innerHTML = '<p class="muted">Cargando…</p>';
+    pickEls.orderInfo.textContent = "Pedido #" + orderId;
+    if (pickEls.syncInfo) pickEls.syncInfo.textContent = "";
+    pickEls.modal.hidden = false;
+    try {
+      await pickFetch(true);
+    } catch (err) {
+      pickEls.list.innerHTML = '<p class="muted">Error: ' + escapeHtml(err.message) + "</p>";
+    }
+    if (pickState.timer) clearInterval(pickState.timer);
+    pickState.timer = setInterval(pickPollTick, 4000);
+  }
+
+  // Tick del polling: si el modal se cerró (data-close / Escape) corta solo.
+  // No re-renderiza si hay un POST en vuelo o el armador está tipeando una
+  // cantidad parcial (no pisarle el input).
+  async function pickPollTick() {
+    if (!pickEls.modal || pickEls.modal.hidden) {
+      clearInterval(pickState.timer);
+      pickState.timer = null;
+      return;
+    }
+    if (pickState.posting > 0) return;
+    const ae = document.activeElement;
+    if (ae && pickEls.list.contains(ae)) return;
+    try { await pickFetch(false); } catch (_) {}
+  }
+
+  async function pickFetch(initial) {
+    const data = await api("/api/admin/picks/" + pickState.orderId);
+    pickState.items = data.items || [];
+    pickEls.orderInfo.textContent = "Pedido #" + data.order.id +
+      (data.order.client_name ? " · " + data.order.client_name : "");
+    if (initial) pickBuildCatFilter();
+    pickRenderList();
+    pickApplyAgg(data.done_items || 0, data.total_items || 0);
+    if (pickEls.syncInfo) {
+      pickEls.syncInfo.textContent = "Sincronizado " + new Date().toLocaleTimeString("es-AR") + " · se actualiza solo";
+    }
+  }
+
+  function pickBuildCatFilter() {
+    if (!pickEls.catFilter) return;
+    const cats = [];
+    pickState.items.forEach((i) => {
+      const c = i.category_name || "Sin categoría";
+      if (cats.indexOf(c) === -1) cats.push(c);
+    });
+    pickEls.catFilter.innerHTML =
+      '<option value="all">Todas las categorías (' + pickState.items.length + " items)</option>" +
+      cats.map((c) => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + "</option>").join("");
+    pickEls.catFilter.value = "all";
+  }
+
+  function pickRowHtml(it) {
+    const done = Number(it.picked_qty) >= Number(it.quantity);
+    const partial = !done && Number(it.picked_qty) > 0;
+    const who = it.picked_by_name
+      ? ' <span class="pick-who" title="Último que tildó">👤 ' + escapeHtml(it.picked_by_name) + "</span>"
+      : "";
+    return '<div class="pick-item' + (done ? " pick-done" : partial ? " pick-partial" : "") +
+      '" data-item="' + it.id + '">' +
+      '<span class="pick-check">' + (done ? "✔" : partial ? "◐" : "") + "</span>" +
+      '<div class="pick-info">' +
+        '<span class="pick-name">' + escapeHtml(it.product_name || "") + "</span>" +
+        '<span class="pick-code">' + escapeHtml(it.product_code || "") + who + "</span>" +
+      "</div>" +
+      '<div class="pick-qtybox" title="Cantidad armada — editá para marcar parcial">' +
+        '<input type="number" class="pick-qty-input" min="0" max="' + Number(it.quantity) +
+          '" step="1" value="' + Number(it.picked_qty) + '" />' +
+        '<span class="pick-qty-req">/ ' + Number(it.quantity) + "</span>" +
+      "</div>" +
+    "</div>";
+  }
+
+  function pickRenderList() {
+    if (!pickEls.list) return;
+    let items = pickState.items;
+    if (pickState.cat !== "all") {
+      items = items.filter((i) => (i.category_name || "Sin categoría") === pickState.cat);
+    }
+    if (!items.length) {
+      pickEls.list.innerHTML = '<p class="muted">Sin items.</p>';
+      return;
+    }
+    let html = "";
+    let lastCat = null;
+    items.forEach((it) => {
+      const cat = it.category_name || "Sin categoría";
+      if (cat !== lastCat) {
+        html += '<div class="pick-cat-head">' + escapeHtml(cat) + "</div>";
+        lastCat = cat;
+      }
+      html += pickRowHtml(it);
+    });
+    pickEls.list.innerHTML = html;
+  }
+
+  // Actualiza barra de progreso del modal + contador del botón "📋 Chequeo"
+  // y el badge "✔ Armado completo" de la tarjeta en la pestaña Armado.
+  function pickApplyAgg(done, total) {
+    if (pickEls.progressText) pickEls.progressText.textContent = done + "/" + total;
+    if (pickEls.progressFill) {
+      pickEls.progressFill.style.width = (total ? Math.round((done / total) * 100) : 0) + "%";
+      pickEls.progressFill.classList.toggle("full", total > 0 && done >= total);
+    }
+    const o = (state.orders || []).find((x) => x.id === pickState.orderId);
+    if (o && (Number(o.pick_done) !== done || Number(o.pick_total) !== total)) {
+      o.pick_total = total;
+      o.pick_done = done;
+      renderArmado();
+    }
+  }
+
+  async function pickPost(itemId, qty) {
+    pickState.posting++;
+    try {
+      const out = await api("/api/admin/picks/" + pickState.orderId, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_id: itemId, picked_qty: qty }),
+      });
+      const it = pickState.items.find((i) => i.id === itemId);
+      if (it) {
+        it.picked_qty = out.picked_qty;
+        if (out.picked_qty > 0 && state.me) {
+          it.picked_by_name = state.me.fullName || state.me.full_name || state.me.username || it.picked_by_name;
+        } else if (out.picked_qty === 0) {
+          it.picked_by_name = null;
+        }
+      }
+      pickRenderList();
+      pickApplyAgg(out.done_items || 0, out.total_items || 0);
+      if (pickEls.syncInfo) {
+        pickEls.syncInfo.textContent = "Guardado " + new Date().toLocaleTimeString("es-AR") + " · se actualiza solo";
+      }
+    } catch (err) {
+      showToast("Error al guardar: " + err.message, "error");
+      try { await pickFetch(false); } catch (_) {}
+    } finally {
+      pickState.posting--;
+    }
+  }
+
+  if (pickEls.list) {
+    // Click en la fila (fuera del input de cantidad) = tildar/destildar completo.
+    pickEls.list.addEventListener("click", (e) => {
+      if (e.target.closest(".pick-qtybox")) return;
+      const row = e.target.closest(".pick-item");
+      if (!row) return;
+      const id = Number(row.dataset.item);
+      const it = pickState.items.find((i) => i.id === id);
+      if (!it) return;
+      const done = Number(it.picked_qty) >= Number(it.quantity);
+      pickPost(id, done ? 0 : Number(it.quantity));
+    });
+    // Cambio en el input de cantidad = guardar cantidad parcial.
+    pickEls.list.addEventListener("change", (e) => {
+      const inp = e.target.closest(".pick-qty-input");
+      if (!inp) return;
+      const row = inp.closest(".pick-item");
+      if (!row) return;
+      let qty = Number(inp.value);
+      if (!isFinite(qty) || qty < 0) qty = 0;
+      inp.blur();
+      pickPost(Number(row.dataset.item), qty);
+    });
+  }
+  if (pickEls.catFilter) {
+    pickEls.catFilter.addEventListener("change", () => {
+      pickState.cat = pickEls.catFilter.value;
+      pickRenderList();
+    });
+  }
 
   // ---------- Modal de imagen de producto ----------
   const imgState = { productId: null };

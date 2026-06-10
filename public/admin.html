@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260610a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260610b" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -1965,6 +1965,30 @@
     </div>
   </div>
 
+  <!-- Modal Chequeo de armado (checklist de picking, sync multi-dispositivo) -->
+  <div class="admin-modal" id="pick-modal" hidden>
+    <div class="admin-modal-box" style="max-width:680px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+      <h3 style="margin-bottom:2px">✅ Chequeo de armado</h3>
+      <p id="pick-modal-order" class="muted" style="margin:0 0 8px"></p>
+      <div class="pick-toolbar">
+        <select id="pick-cat-filter">
+          <option value="all">Todas las categorías</option>
+        </select>
+        <div class="pick-progress">
+          <div class="pick-progress-bar"><div id="pick-progress-fill"></div></div>
+          <span id="pick-progress-text">0/0</span>
+        </div>
+      </div>
+      <div id="pick-list" class="pick-list">
+        <p class="muted">Cargando…</p>
+      </div>
+      <div class="admin-modal-foot">
+        <span id="pick-sync-info" class="muted" style="margin-right:auto;font-size:11px"></span>
+        <button type="button" class="btn" data-close>Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal crear vendedor -->
   <div class="admin-modal" id="vend-create-modal" hidden>
     <div class="admin-modal-box">
@@ -3058,6 +3082,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260610c"></script>
+  <script src="/js/admin.js?v=20260610d"></script>
 </body>
 </html>
