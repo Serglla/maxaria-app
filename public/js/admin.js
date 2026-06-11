@@ -1070,6 +1070,7 @@
       if (tab === "proveedores" && !state.suppliersLoaded) loadSuppliers();
       if (tab === "cotizaciones") loadCotizaciones();
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
+      if (tab === "recepcion") loadRecepcion(); // siempre recargar (cambia con compras nuevas)
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas") { state.accountsLoaded = false; loadAccounts(); } // siempre recargar (refleja entregas/cobros nuevos)
@@ -5817,6 +5818,350 @@
         showToast("Error: " + err.message, "error");
       } finally {
         pickEls.applyBtn.disabled = false;
+      }
+    });
+  }
+
+  // ---------- Recepción: control de mercadería recibida ----------
+  // Lista de compras con estado del control + checklist por compra (modal),
+  // calcado del chequeo de armado: sync multi-dispositivo por polling, carga
+  // en bultos o unidades (products.units_per_bulto, el proveedor factura por
+  // bulto) y botón explícito para aplicar las diferencias a la compra.
+  const recvEls = {
+    tbody: document.getElementById("recv-tbody"),
+    filter: document.getElementById("recv-filter"),
+    count: document.getElementById("recv-count"),
+    reload: document.getElementById("recv-reload"),
+    modal: document.getElementById("recv-modal"),
+    info: document.getElementById("recv-modal-info"),
+    catFilter: document.getElementById("recv-cat-filter"),
+    list: document.getElementById("recv-list"),
+    progressFill: document.getElementById("recv-progress-fill"),
+    progressText: document.getElementById("recv-progress-text"),
+    syncInfo: document.getElementById("recv-sync-info"),
+    applyBtn: document.getElementById("recv-apply-btn"),
+  };
+  const recvState = { rows: [], purchaseId: null, items: [], cat: "all", timer: null, posting: 0 };
+
+  async function loadRecepcion() {
+    if (!recvEls.tbody) return;
+    recvEls.tbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+    try {
+      recvState.rows = await api("/api/admin/reception");
+      renderRecepcion();
+    } catch (e) {
+      recvEls.tbody.innerHTML = '<tr><td colspan="8" class="muted">Error: ' + escapeHtml(e.message) + "</td></tr>";
+    }
+  }
+
+  function recvStatusOf(r) {
+    const total = Number(r.items_count) || 0;
+    const done = Number(r.checked_count) || 0;
+    if (!total || done === 0) return "pending";
+    return done >= total ? "done" : "partial";
+  }
+
+  function recvChipHtml(r) {
+    const st = recvStatusOf(r);
+    const diffs = Number(r.diff_count) || 0;
+    if (st === "done") {
+      return diffs > 0
+        ? '<span class="recv-chip recv-chip-diff" title="Controlada con diferencias contra lo cargado">✔ con ' + diffs + (diffs === 1 ? " dif." : " difs.") + "</span>"
+        : '<span class="recv-chip recv-chip-ok">✔ Completo</span>';
+    }
+    if (st === "partial") {
+      return '<span class="recv-chip recv-chip-mid">' + (r.checked_count || 0) + "/" + (r.items_count || 0) + "</span>" +
+        (diffs > 0 ? ' <span class="recv-chip recv-chip-diff">≠ ' + diffs + "</span>" : "");
+    }
+    return '<span class="recv-chip recv-chip-none">Sin controlar</span>';
+  }
+
+  function renderRecepcion() {
+    if (!recvEls.tbody) return;
+    const f = recvEls.filter ? recvEls.filter.value : "all";
+    let list = recvState.rows;
+    if (f !== "all") list = list.filter((r) => recvStatusOf(r) === f);
+    if (recvEls.count) recvEls.count.textContent = list.length + (list.length === 1 ? " compra" : " compras");
+    if (!list.length) {
+      recvEls.tbody.innerHTML = '<tr><td colspan="8" class="muted">Sin compras para este filtro.</td></tr>';
+      return;
+    }
+    recvEls.tbody.innerHTML = list.map((r) =>
+      '<tr data-id="' + r.id + '">' +
+        '<td class="cell-code">#' + r.id + "</td>" +
+        "<td>" + escapeHtml(r.supplier_name || "—") + "</td>" +
+        "<td>" + escapeHtml(r.reference || "—") + "</td>" +
+        '<td class="muted small-cell">' + formatDate(r.received_at) + "</td>" +
+        '<td class="num">' + (r.items_count || 0) + "</td>" +
+        '<td class="num"><strong>' + fmtPrice(r.total_cost) + "</strong></td>" +
+        "<td>" + recvChipHtml(r) + "</td>" +
+        '<td><button class="btn btn-mini recv-open-btn" data-id="' + r.id + '" type="button">📋 Controlar</button></td>' +
+      "</tr>"
+    ).join("");
+  }
+
+  if (recvEls.tbody) {
+    recvEls.tbody.addEventListener("click", (e) => {
+      const btn = e.target.closest(".recv-open-btn");
+      if (btn) openRecvModal(Number(btn.dataset.id));
+    });
+  }
+  if (recvEls.filter) recvEls.filter.addEventListener("change", renderRecepcion);
+  if (recvEls.reload) recvEls.reload.addEventListener("click", loadRecepcion);
+
+  // ----- Modal checklist de recepción -----
+  async function openRecvModal(purchaseId) {
+    if (!recvEls.modal) return;
+    recvState.purchaseId = purchaseId;
+    recvState.items = [];
+    recvState.cat = "all";
+    recvEls.list.innerHTML = '<p class="muted">Cargando…</p>';
+    recvEls.info.textContent = "Compra #" + purchaseId;
+    if (recvEls.syncInfo) recvEls.syncInfo.textContent = "";
+    recvEls.modal.hidden = false;
+    try {
+      await recvFetch(true);
+    } catch (err) {
+      recvEls.list.innerHTML = '<p class="muted">Error: ' + escapeHtml(err.message) + "</p>";
+    }
+    if (recvState.timer) clearInterval(recvState.timer);
+    recvState.timer = setInterval(recvPollTick, 4000);
+  }
+
+  // Tick del polling: si el modal se cerró (data-close / Escape) corta solo.
+  // No re-renderiza si hay un POST en vuelo o si el que cuenta está tipeando.
+  async function recvPollTick() {
+    if (!recvEls.modal || recvEls.modal.hidden) {
+      clearInterval(recvState.timer);
+      recvState.timer = null;
+      return;
+    }
+    if (recvState.posting > 0) return;
+    const ae = document.activeElement;
+    if (ae && recvEls.list.contains(ae)) return;
+    try { await recvFetch(false); } catch (_) {}
+  }
+
+  async function recvFetch(initial) {
+    const data = await api("/api/admin/reception/" + recvState.purchaseId);
+    recvState.items = data.items || [];
+    recvEls.info.textContent = "Compra #" + data.purchase.id +
+      (data.purchase.supplier_name ? " · " + data.purchase.supplier_name : "") +
+      (data.purchase.reference ? " · " + data.purchase.reference : "");
+    if (initial) recvBuildCatFilter();
+    recvRenderList();
+    recvApplyAgg(data.done_items || 0, data.total_items || 0, data.diff_items || 0);
+    recvUpdateApplyBtn();
+    if (recvEls.syncInfo) {
+      recvEls.syncInfo.textContent = "Sincronizado " + new Date().toLocaleTimeString("es-AR") + " · se actualiza solo";
+    }
+  }
+
+  // Items contados con cantidad distinta a la cargada = diferencias que el
+  // botón "Aplicar diferencias a la compra" puede impactar.
+  function recvPendingChanges() {
+    return recvState.items.filter(
+      (i) => i.checked_qty != null && Number(i.checked_qty) !== Number(i.quantity)
+    );
+  }
+
+  function recvUpdateApplyBtn() {
+    if (!recvEls.applyBtn) return;
+    const n = recvPendingChanges().length;
+    recvEls.applyBtn.hidden = n === 0;
+    recvEls.applyBtn.textContent = "📦 Aplicar diferencias a la compra (" + n + ")";
+  }
+
+  function recvBuildCatFilter() {
+    if (!recvEls.catFilter) return;
+    const cats = [];
+    recvState.items.forEach((i) => {
+      const c = i.category_name || "Sin categoría";
+      if (cats.indexOf(c) === -1) cats.push(c);
+    });
+    recvEls.catFilter.innerHTML =
+      '<option value="all">Todas las categorías (' + recvState.items.length + " items)</option>" +
+      cats.map((c) => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + "</option>").join("");
+    recvEls.catFilter.value = "all";
+  }
+
+  // Redondeo corto para mostrar bultos (puede dar fraccionado: 2,5 bultos).
+  function recvFmtB(n) {
+    return String(Math.round(Number(n) * 100) / 100).replace(".", ",");
+  }
+
+  function recvRowHtml(it) {
+    const upb = Math.max(1, Number(it.units_per_bulto) || 1);
+    const qty = Number(it.quantity);
+    const checked = it.checked_qty != null;
+    const ok = checked && Number(it.checked_qty) === qty;
+    const diff = checked && !ok;
+    const who = it.checked_by_name
+      ? ' <span class="pick-who" title="Último que contó">👤 ' + escapeHtml(it.checked_by_name) + "</span>"
+      : "";
+    const bultosEsp = upb > 1 ? " = " + recvFmtB(qty / upb) + " bultos ×" + upb : "";
+    const unitsVal = checked ? String(Number(it.checked_qty)) : "";
+    const bultosVal = checked ? recvFmtB(Number(it.checked_qty) / upb).replace(",", ".") : "";
+    return '<div class="pick-item' + (ok ? " pick-done" : diff ? " pick-diff" : "") +
+      '" data-item="' + it.id + '">' +
+      '<span class="pick-check">' + (ok ? "✔" : diff ? "≠" : "") + "</span>" +
+      '<div class="pick-info">' +
+        '<span class="pick-name">' + escapeHtml(it.product_name || "") + "</span>" +
+        '<span class="pick-code">' + escapeHtml(it.product_code || "") +
+          " · cargado: " + qty + " un." + escapeHtml(bultosEsp) + who + "</span>" +
+      "</div>" +
+      '<div class="pick-qtybox recv-qtybox" title="Cantidad recibida — cargá bultos o unidades; click en la fila = tildar lo cargado">' +
+        (upb > 1
+          ? '<input type="number" class="pick-qty-input recv-bulto-input" min="0" step="any" placeholder="0" value="' + bultosVal + '" /><span class="recv-qty-sep">bultos</span>'
+          : "") +
+        '<input type="number" class="pick-qty-input recv-unit-input" min="0" step="any" placeholder="0" value="' + unitsVal + '" />' +
+        '<span class="pick-qty-req">/ ' + qty + " un.</span>" +
+      "</div>" +
+    "</div>";
+  }
+
+  function recvRenderList() {
+    if (!recvEls.list) return;
+    let items = recvState.items;
+    if (recvState.cat !== "all") {
+      items = items.filter((i) => (i.category_name || "Sin categoría") === recvState.cat);
+    }
+    if (!items.length) {
+      recvEls.list.innerHTML = '<p class="muted">Sin items.</p>';
+      return;
+    }
+    let html = "";
+    let lastCat = null;
+    items.forEach((it) => {
+      const cat = it.category_name || "Sin categoría";
+      if (cat !== lastCat) {
+        html += '<div class="pick-cat-head">' + escapeHtml(cat) + "</div>";
+        lastCat = cat;
+      }
+      html += recvRowHtml(it);
+    });
+    recvEls.list.innerHTML = html;
+  }
+
+  // Actualiza barra de progreso del modal + el chip de la fila en la tabla
+  // de Recepción (queda al día sin recargar la lista).
+  function recvApplyAgg(done, total, diffs) {
+    if (recvEls.progressText) recvEls.progressText.textContent = done + "/" + total;
+    if (recvEls.progressFill) {
+      recvEls.progressFill.style.width = (total ? Math.round((done / total) * 100) : 0) + "%";
+      recvEls.progressFill.classList.toggle("full", total > 0 && done >= total);
+    }
+    const r = (recvState.rows || []).find((x) => x.id === recvState.purchaseId);
+    if (r && (Number(r.checked_count) !== done || Number(r.diff_count) !== diffs)) {
+      r.checked_count = done;
+      r.diff_count = diffs;
+      r.items_count = total;
+      renderRecepcion();
+    }
+  }
+
+  // qty numérica = guardar lo contado; null = destildar (vuelve a sin controlar).
+  async function recvPost(itemId, qty) {
+    recvState.posting++;
+    try {
+      const out = await api("/api/admin/reception/" + recvState.purchaseId, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_id: itemId, checked_qty: qty }),
+      });
+      const it = recvState.items.find((i) => i.id === itemId);
+      if (it) {
+        it.checked_qty = out.checked_qty;
+        if (out.checked_qty != null && state.me) {
+          it.checked_by_name = state.me.fullName || state.me.full_name || state.me.username || it.checked_by_name;
+        } else if (out.checked_qty == null) {
+          it.checked_by_name = null;
+        }
+      }
+      recvRenderList();
+      recvApplyAgg(out.done_items || 0, out.total_items || 0, out.diff_items || 0);
+      recvUpdateApplyBtn();
+      if (recvEls.syncInfo) {
+        recvEls.syncInfo.textContent = "Guardado " + new Date().toLocaleTimeString("es-AR") + " · se actualiza solo";
+      }
+    } catch (err) {
+      showToast("Error al guardar: " + err.message, "error");
+      try { await recvFetch(false); } catch (_) {}
+    } finally {
+      recvState.posting--;
+    }
+  }
+
+  if (recvEls.list) {
+    // Click en la fila (fuera de los inputs) = tildar con lo cargado / destildar.
+    recvEls.list.addEventListener("click", (e) => {
+      if (e.target.closest(".recv-qtybox")) return;
+      const row = e.target.closest(".pick-item");
+      if (!row) return;
+      const id = Number(row.dataset.item);
+      const it = recvState.items.find((i) => i.id === id);
+      if (!it) return;
+      recvPost(id, it.checked_qty != null ? null : Number(it.quantity));
+    });
+    // Cambio en los inputs: unidades guarda directo; bultos convierte con
+    // units_per_bulto. Vaciar el input destilda el item.
+    recvEls.list.addEventListener("change", (e) => {
+      const inp = e.target.closest(".pick-qty-input");
+      if (!inp) return;
+      const row = inp.closest(".pick-item");
+      if (!row) return;
+      const id = Number(row.dataset.item);
+      const it = recvState.items.find((i) => i.id === id);
+      if (!it) return;
+      const upb = Math.max(1, Number(it.units_per_bulto) || 1);
+      let qty = null;
+      if (inp.value !== "") {
+        let n = Number(inp.value);
+        if (!isFinite(n) || n < 0) n = 0;
+        qty = inp.classList.contains("recv-bulto-input") ? Math.round(n * upb * 100) / 100 : n;
+      }
+      inp.blur();
+      recvPost(id, qty);
+    });
+  }
+  if (recvEls.catFilter) {
+    recvEls.catFilter.addEventListener("change", () => {
+      recvState.cat = recvEls.catFilter.value;
+      recvRenderList();
+    });
+  }
+
+  // Aplicar lo contado a la compra: cantidades, total, stock y deuda del
+  // proveedor pasan a reflejar lo realmente recibido (server hace todo).
+  if (recvEls.applyBtn) {
+    recvEls.applyBtn.addEventListener("click", async () => {
+      const changes = recvPendingChanges();
+      if (!changes.length) return;
+      const detail = changes.slice(0, 8).map(
+        (i) => "· " + (i.product_name || "") + ": " + Number(i.quantity) + " → " + Number(i.checked_qty)
+      ).join("\n") + (changes.length > 8 ? "\n· …y " + (changes.length - 8) + " más" : "");
+      if (!confirm(
+        "Esto cambia las cantidades de la compra #" + recvState.purchaseId +
+        " a lo realmente recibido, recalcula el total y ajusta el stock:\n\n" + detail + "\n\n¿Continuar?"
+      )) return;
+      recvEls.applyBtn.disabled = true;
+      try {
+        const out = await api("/api/admin/reception/" + recvState.purchaseId + "/apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        showToast("Compra #" + recvState.purchaseId + " actualizada: " + out.changed +
+          " items · nuevo total " + fmtPrice(out.total));
+        await recvFetch(false); // re-trae: las diferencias aplicadas quedan en verde
+        await loadRecepcion();  // total de la fila al día
+        state.purchasesLoaded = false; // la pestaña Compras recarga al entrar
+        state.allProductsLoaded = false;
+        refreshProductsCache(); // el stock se ajustó
+      } catch (err) {
+        showToast("Error: " + err.message, "error");
+      } finally {
+        recvEls.applyBtn.disabled = false;
       }
     });
   }

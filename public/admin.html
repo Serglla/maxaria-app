@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260610b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260611a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -98,6 +98,9 @@
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="compras" type="button">
             <span class="admin-sidebar-item-icon">📥</span>Compras
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="recepcion" type="button">
+            <span class="admin-sidebar-item-icon">📦</span>Recepción
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="ctacte-prov" type="button">
             <span class="admin-sidebar-item-icon">🧾</span>Ctacte Proveedores
@@ -1424,6 +1427,39 @@
       </div>
     </section>
 
+    <!-- ===== TAB RECEPCION ===== -->
+    <section class="tab-panel" id="tab-recepcion" hidden>
+      <div class="admin-toolbar">
+        <select id="recv-filter" class="admin-select" title="Filtrar por estado del control">
+          <option value="all">Todas las compras</option>
+          <option value="pending">Sin controlar</option>
+          <option value="partial">Control a medias</option>
+          <option value="done">Controladas</option>
+        </select>
+        <span class="admin-spacer"></span>
+        <span id="recv-count" class="muted">…</span>
+        <button class="btn btn-ghost" id="recv-reload" type="button" title="Actualizar">↺ Actualizar</button>
+      </div>
+      <p class="muted" style="margin:0 0 10px">Control de mercadería recibida: abrí una compra y contá los items contra la factura o remito del proveedor. Si el proveedor factura por bulto, cada item muestra la equivalencia (unidades por bulto). Las diferencias impactan en la compra (cantidades, total, stock y deuda) solo con el botón "Aplicar" del checklist.</p>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="recv-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Proveedor</th>
+              <th>Referencia</th>
+              <th>Fecha recibido</th>
+              <th class="num">Items</th>
+              <th class="num">Costo total</th>
+              <th>Control</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="recv-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- ===== TAB GASTOS ===== -->
     <section class="tab-panel" id="tab-gastos" hidden>
       <div class="admin-toolbar">
@@ -1986,6 +2022,32 @@
         <span id="pick-sync-info" class="muted" style="margin-right:auto;font-size:11px"></span>
         <button type="button" class="btn btn-primary" id="pick-apply-btn" hidden
           title="Cambia las cantidades del pedido a lo realmente armado y recalcula el total">📦 Aplicar cantidades al pedido</button>
+        <button type="button" class="btn" data-close>Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Control de recepción (checklist contra la factura del proveedor) -->
+  <div class="admin-modal" id="recv-modal" hidden>
+    <div class="admin-modal-box" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+      <h3 style="margin-bottom:2px">📦 Control de recepción</h3>
+      <p id="recv-modal-info" class="muted" style="margin:0 0 8px"></p>
+      <div class="pick-toolbar">
+        <select id="recv-cat-filter">
+          <option value="all">Todas las categorías</option>
+        </select>
+        <div class="pick-progress">
+          <div class="pick-progress-bar"><div id="recv-progress-fill"></div></div>
+          <span id="recv-progress-text">0/0</span>
+        </div>
+      </div>
+      <div id="recv-list" class="pick-list">
+        <p class="muted">Cargando…</p>
+      </div>
+      <div class="admin-modal-foot">
+        <span id="recv-sync-info" class="muted" style="margin-right:auto;font-size:11px"></span>
+        <button type="button" class="btn btn-primary" id="recv-apply-btn" hidden
+          title="Cambia las cantidades de la compra a lo realmente recibido, recalcula el total y ajusta el stock">📦 Aplicar diferencias a la compra</button>
         <button type="button" class="btn" data-close>Cerrar</button>
       </div>
     </div>
@@ -3085,6 +3147,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260610g"></script>
+  <script src="/js/admin.js?v=20260611a"></script>
 </body>
 </html>

@@ -344,6 +344,16 @@ try { db.exec("ALTER TABLE order_items ADD COLUMN picked_qty REAL NOT NULL DEFAU
 try { db.exec("ALTER TABLE order_items ADD COLUMN picked_by INTEGER"); } catch (_) {}
 try { db.exec("ALTER TABLE order_items ADD COLUMN picked_at TEXT"); } catch (_) {}
 
+// Migracion: Control de recepcion de mercaderia (pestaña Recepcion).
+// - purchase_items.checked_qty: cantidad contada al recibir la compra.
+//   NULL = item sin controlar; 0 es valido ("no llego nada de este item").
+// - checked_by / checked_at: quien y cuando lo conto por ultima vez.
+// Mismo esquema de sync multi-dispositivo que el chequeo de armado: POST por
+// item + polling del GET (ultima escritura gana).
+try { db.exec("ALTER TABLE purchase_items ADD COLUMN checked_qty REAL"); } catch (_) {}
+try { db.exec("ALTER TABLE purchase_items ADD COLUMN checked_by INTEGER"); } catch (_) {}
+try { db.exec("ALTER TABLE purchase_items ADD COLUMN checked_at TEXT"); } catch (_) {}
+
 // Migracion: Presupuestos / Ventas.
 // - budgets: cabecera del presupuesto (cliente, vendedor, totales, estado).
 // - budget_items: lineas del presupuesto (producto, cantidad, precio, descuento).
@@ -1052,6 +1062,7 @@ const ADMIN_SECTIONS = [
   { key: "cuentas",     label: "Cuentas" },
   { key: "proveedores", label: "Proveedores" },
   { key: "compras",     label: "Compras" },
+  { key: "recepcion",   label: "Recepción" },
   { key: "gastos",      label: "Gastos" },
   { key: "caja",        label: "Caja" },
   { key: "config",      label: "Configuración" },
@@ -1077,6 +1088,7 @@ function sectionForAdminRequest(p) {
   if (has("payments"))    return "pagos";
   if (has("accounts"))    return "cuentas";
   if (has("suppliers"))   return "proveedores";
+  if (has("reception"))   return "recepcion";
   if (has("purchases"))   return "compras";
   if (has("expenses") || has("expense-categories")) return "gastos";
   if (has("caja"))        return "caja";
@@ -4837,6 +4849,162 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     "  FROM purchase_items WHERE purchase_order_id = ? ORDER BY id"
   ).all(id);
   res.json({ ok: true, purchase: Object.assign({}, purchase, { items: items }) });
+});
+
+// ===== Control de recepcion de mercaderia (pestaña Recepcion) =====
+//
+// El encargado controla lo que llego de cada compra contra lo cargado, item por
+// item, con la equivalencia bulto/unidad (products.units_per_bulto): el
+// proveedor suele facturar por bulto y el sistema carga unidades sueltas.
+// Mismo esquema de sync multi-dispositivo que el chequeo de armado: POST por
+// item + polling del GET (ultima escritura gana). Las diferencias se impactan
+// en la compra (cantidades, total, stock, deuda) solo con el boton explicito
+// del modal (apply).
+
+// Lista de compras con el estado del control (sin control / parcial / completo).
+app.get("/api/admin/reception", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT po.id, po.supplier_id, s.name AS supplier_name," +
+    "       po.reference, po.total_cost, po.received_at, po.created_at," +
+    "       COUNT(pi.id) AS items_count," +
+    "       SUM(CASE WHEN pi.checked_qty IS NOT NULL THEN 1 ELSE 0 END) AS checked_count," +
+    "       SUM(CASE WHEN pi.checked_qty IS NOT NULL AND pi.checked_qty != pi.quantity THEN 1 ELSE 0 END) AS diff_count" +
+    "  FROM purchase_orders po" +
+    "  LEFT JOIN suppliers s ON s.id = po.supplier_id" +
+    "  LEFT JOIN purchase_items pi ON pi.purchase_order_id = po.id" +
+    "  GROUP BY po.id" +
+    "  ORDER BY po.received_at DESC LIMIT 200"
+  ).all();
+  res.json(rows);
+});
+
+// Items de una compra para el checklist de control.
+app.get("/api/admin/reception/:purchaseId", requireAdmin, (req, res) => {
+  const purchaseId = Number(req.params.purchaseId);
+  if (!purchaseId) return res.status(400).json({ error: "ID invalido" });
+  const purchase = db.prepare(
+    "SELECT po.id, po.reference, po.received_at, s.name AS supplier_name" +
+    "  FROM purchase_orders po LEFT JOIN suppliers s ON s.id = po.supplier_id" +
+    " WHERE po.id = ?"
+  ).get(purchaseId);
+  if (!purchase) return res.status(404).json({ error: "Compra no encontrada" });
+  const items = db.prepare(
+    "SELECT pi.id, pi.product_id, pi.product_code, pi.product_name, pi.quantity, pi.unit_cost," +
+    "       pi.checked_qty, pi.checked_at," +
+    "       cu.full_name AS checked_by_name," +
+    "       COALESCE(p.units_per_bulto, 1) AS units_per_bulto," +
+    "       COALESCE(c.name, 'Sin categoría') AS category_name" +
+    "  FROM purchase_items pi" +
+    "  LEFT JOIN products p ON p.id = pi.product_id" +
+    "  LEFT JOIN categories c ON c.id = p.category_id" +
+    "  LEFT JOIN users cu ON cu.id = pi.checked_by" +
+    " WHERE pi.purchase_order_id = ?" +
+    " ORDER BY COALESCE(c.sort_order, 9999), category_name, pi.product_name"
+  ).all(purchaseId);
+  const done = items.filter((i) => i.checked_qty != null).length;
+  const diffs = items.filter(
+    (i) => i.checked_qty != null && Number(i.checked_qty) !== Number(i.quantity)
+  ).length;
+  res.json({
+    purchase: purchase,
+    items: items,
+    total_items: items.length,
+    done_items: done,
+    diff_items: diffs,
+    complete: items.length > 0 && done === items.length,
+  });
+});
+
+// Guardar lo contado de un item. checked_qty >= 0 (puede superar lo cargado:
+// el proveedor pudo mandar de mas); null/"" destilda (vuelve a "sin controlar").
+app.post("/api/admin/reception/:purchaseId", requireAdmin, (req, res) => {
+  const purchaseId = Number(req.params.purchaseId);
+  const itemId = Number(req.body && req.body.item_id);
+  if (!purchaseId || !itemId) return res.status(400).json({ error: "item_id requerido" });
+  const item = db.prepare(
+    "SELECT id FROM purchase_items WHERE id = ? AND purchase_order_id = ?"
+  ).get(itemId, purchaseId);
+  if (!item) return res.status(404).json({ error: "Item no encontrado en esta compra" });
+  const raw = req.body ? req.body.checked_qty : null;
+  let qty = null;
+  if (raw !== null && raw !== undefined && raw !== "") {
+    qty = Number(raw);
+    if (!isFinite(qty) || qty < 0) return res.status(400).json({ error: "Cantidad invalida" });
+  }
+  if (qty !== null) {
+    db.prepare(
+      "UPDATE purchase_items SET checked_qty = ?, checked_by = ?, checked_at = datetime('now') WHERE id = ?"
+    ).run(qty, req.session.userId, itemId);
+  } else {
+    db.prepare(
+      "UPDATE purchase_items SET checked_qty = NULL, checked_by = NULL, checked_at = NULL WHERE id = ?"
+    ).run(itemId);
+  }
+  const agg = db.prepare(
+    "SELECT COUNT(*) AS total," +
+    "       SUM(CASE WHEN checked_qty IS NOT NULL THEN 1 ELSE 0 END) AS done," +
+    "       SUM(CASE WHEN checked_qty IS NOT NULL AND checked_qty != quantity THEN 1 ELSE 0 END) AS diffs" +
+    "  FROM purchase_items WHERE purchase_order_id = ?"
+  ).get(purchaseId);
+  res.json({
+    ok: true,
+    item_id: itemId,
+    checked_qty: qty,
+    total_items: agg.total,
+    done_items: agg.done || 0,
+    diff_items: agg.diffs || 0,
+    complete: agg.total > 0 && Number(agg.done) === Number(agg.total),
+  });
+});
+
+// Aplicar lo contado a la compra (boton explicito del modal). Items controlados
+// con cantidad distinta a la cargada: quantity pasa a lo contado, se recalcula
+// subtotal/total_cost y el stock se ajusta por la diferencia (la compra ya
+// habia sumado lo cargado al crearse). Mantiene en sync la deuda del proveedor
+// (el debit de esta compra), igual que PUT /api/admin/purchases/:id.
+app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
+  const purchaseId = Number(req.params.purchaseId);
+  if (!purchaseId) return res.status(400).json({ error: "ID invalido" });
+  const purchase = db.prepare(
+    "SELECT id, supplier_id FROM purchase_orders WHERE id = ?"
+  ).get(purchaseId);
+  if (!purchase) return res.status(404).json({ error: "Compra no encontrada" });
+
+  const items = db.prepare(
+    "SELECT id, product_id, quantity, unit_cost, checked_qty" +
+    "  FROM purchase_items WHERE purchase_order_id = ?"
+  ).all(purchaseId);
+  const changes = items.filter(
+    (i) => i.checked_qty != null && Number(i.checked_qty) !== Number(i.quantity)
+  );
+  if (!changes.length) return res.json({ ok: true, changed: 0 });
+
+  let total = 0;
+  db.transaction(() => {
+    const updItem = db.prepare("UPDATE purchase_items SET quantity = ?, subtotal = ? WHERE id = ?");
+    const adjStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
+    for (const it of changes) {
+      const newQty = Number(it.checked_qty);
+      updItem.run(newQty, round2(Number(it.unit_cost) * newQty), it.id);
+      // La compra sumo lo cargado al crearse: ajustar por la diferencia.
+      if (it.product_id) adjStock.run(newQty - Number(it.quantity), it.product_id);
+    }
+    total = round2(
+      db.prepare(
+        "SELECT COALESCE(SUM(subtotal),0) AS t FROM purchase_items WHERE purchase_order_id = ?"
+      ).get(purchaseId).t
+    );
+    db.prepare("UPDATE purchase_orders SET total_cost = ? WHERE id = ?").run(total, purchaseId);
+    if (purchase.supplier_id) {
+      db.prepare(
+        "UPDATE supplier_movements SET amount = ? WHERE purchase_order_id = ? AND type = 'debit'"
+      ).run(total, purchaseId);
+    }
+  })();
+
+  logActivity(req, "compra", "Compra #" + purchaseId + " · control de recepcion aplicado (" +
+    changes.length + " items) · nuevo total $" + total);
+  res.json({ ok: true, changed: changes.length, total: total });
 });
 
 // ===== Pedidos de cotizacion =====
