@@ -325,6 +325,7 @@
     pcotExportBultosBtn: document.getElementById("pcot-export-bultos-btn"),
     pcotExportCancelBtn: document.getElementById("pcot-export-cancel-btn"),
     pcotItemsTfoot: document.getElementById("pcot-items-tfoot"),
+    pcotTotalDisp: document.getElementById("pcot-total-disp"),
     pcotCreateMsg: document.getElementById("pcot-create-msg"),
     pcotPickerModal: document.getElementById("pcot-picker-modal"),
     pcotPickerSearch: document.getElementById("pcot-picker-search"),
@@ -6837,6 +6838,7 @@
     if (!state.cotizacionItems.length) {
       els.pcotItemsTbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr>';
       if (els.pcotItemsTfoot) els.pcotItemsTfoot.innerHTML = "";
+      if (els.pcotTotalDisp) els.pcotTotalDisp.textContent = "";
       return;
     }
     let totalSubtotal = 0, totalDiff = 0;
@@ -6924,6 +6926,12 @@
         '</td>' +
         '<td colspan="2"></td>' +
         '</tr>';
+    }
+
+    // Total siempre visible en el pie sticky del modal (el tfoot queda lejos con muchos items).
+    if (els.pcotTotalDisp) {
+      const nItems = state.cotizacionItems.length;
+      els.pcotTotalDisp.textContent = nItems + (nItems === 1 ? " producto" : " productos") + " · Total: " + fmtPrice(totalSubtotal);
     }
 
     // precio change
@@ -7035,14 +7043,23 @@
         updateCotPickerCount();
       });
     });
-    // qty change updates selection
+    // Tipear cantidad marca el checkbox y actualiza el monto en vivo
+    // (misma mecánica que los pickers de ventas/pedidos/compras).
     els.pcotPickerTbody.querySelectorAll(".pcot-pick-qty").forEach((inp) => {
-      inp.addEventListener("change", () => {
+      inp.addEventListener("input", () => {
         const pid = Number(inp.dataset.id);
-        if (state.cotPickerSelected.has(pid)) {
-          state.cotPickerSelected.get(pid).qty = Math.max(1, Number(inp.value) || 1);
-          updateCotPickerCount();
+        if (inp.value === "") return;
+        const qty = Math.max(1, Number(inp.value) || 1);
+        const entry = state.cotPickerSelected.get(pid);
+        if (entry) {
+          entry.qty = qty;
+        } else {
+          const prod = state.allProducts.find((p) => p.id === pid);
+          state.cotPickerSelected.set(pid, { qty, product: prod });
         }
+        const cb = els.pcotPickerTbody.querySelector('.pcot-pick-cb[data-id="' + pid + '"]');
+        if (cb && !cb.checked) cb.checked = true;
+        updateCotPickerCount();
       });
     });
     // select-all checkbox sync
