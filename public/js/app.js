@@ -1572,6 +1572,18 @@
         ? '<button class="btn-reenviar" type="button">Reenviar por WhatsApp</button>'
         : "";
 
+      // Cambios confirmados en el armado del pedido (faltantes / redondeo):
+      // el cliente los ve para no sorprenderse con cantidades distintas.
+      const pickChgHtml = (o.pick_changes && o.pick_changes.length)
+        ? '<div class="order-pick-changes"><strong>📋 Cambios en el armado:</strong><ul>' +
+            o.pick_changes.map((c) => {
+              const nq = Number(c.new_qty);
+              return "<li>" + escapeHtml(c.product_name || c.product_code || "") + ": " +
+                Number(c.old_qty) + " → " + (nq > 0 ? nq : "0 (sin stock, quitado)") + "</li>";
+            }).join("") +
+          "</ul></div>"
+        : "";
+
       det.innerHTML =
         '<table>' +
           '<thead><tr>' +
@@ -1580,6 +1592,7 @@
           '</tr></thead>' +
           '<tbody>' + rows + '</tbody>' +
         '</table>' +
+        pickChgHtml +
         (o.notes ? '<div class="order-notes">Nota: ' + escapeHtml(o.notes) + '</div>' : "") +
         (!isAdmin ? paymentDetailHtml(o) : "") +
         '<div class="order-det-foot">' + statusSelect + reenviarBtn + '</div>';

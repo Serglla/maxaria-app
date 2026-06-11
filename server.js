@@ -343,6 +343,32 @@ try {
 try { db.exec("ALTER TABLE order_items ADD COLUMN picked_qty REAL NOT NULL DEFAULT 0"); } catch (_) {}
 try { db.exec("ALTER TABLE order_items ADD COLUMN picked_by INTEGER"); } catch (_) {}
 try { db.exec("ALTER TABLE order_items ADD COLUMN picked_at TEXT"); } catch (_) {}
+// - order_items.pick_checked: 1 = item CONTROLADO en el chequeo (la cantidad
+//   armada puede ser 0 = "no hay stock", o mayor a la pedida = "redondeo de
+//   caja"). 0 = todavia sin controlar. Antes "controlado" se infería de
+//   picked_qty > 0, lo que impedia controlar un item en 0; el UPDATE corre una
+//   sola vez (cuando el ALTER tiene exito) para marcar lo ya tildado.
+try {
+  db.exec("ALTER TABLE order_items ADD COLUMN pick_checked INTEGER NOT NULL DEFAULT 0");
+  db.exec("UPDATE order_items SET pick_checked = 1 WHERE COALESCE(picked_qty,0) > 0");
+} catch (_) {}
+// Registro de los cambios confirmados del chequeo de armado: cada vez que el
+// armador confirma el chequeo y hay diferencias (cantidad distinta a la pedida
+// o item quitado por falta de stock), queda una fila por item. Se muestran en
+// el detalle del pedido (admin y cliente) y en la notificacion del catalogo.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS pick_changes (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  order_id INTEGER NOT NULL," +
+  "  product_code TEXT," +
+  "  product_name TEXT," +
+  "  old_qty REAL NOT NULL," +
+  "  new_qty REAL NOT NULL," +
+  "  changed_by INTEGER," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ")"
+);
+db.exec("CREATE INDEX IF NOT EXISTS idx_pick_changes_order ON pick_changes(order_id)");
 
 // Migracion: Control de recepcion de mercaderia (pestaña Recepcion).
 // - purchase_items.checked_qty: cantidad contada al recibir la compra.
@@ -2199,8 +2225,8 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
       "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id, d.notes AS delivery_notes," +
       "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS pick_total," +
-      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.picked_qty,0) >= oi.quantity) AS pick_done," +
-      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.picked_qty,0) > 0) AS pick_started" +
+      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.pick_checked,0) = 1) AS pick_done," +
+      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.pick_checked,0) = 1) AS pick_started" +
       "  FROM orders o" +
       "  JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
@@ -2293,7 +2319,8 @@ app.get("/api/admin/picks/:orderId", requireAdmin, (req, res) => {
   const client = db.prepare("SELECT full_name, username FROM users WHERE id = ?").get(order.user_id) || {};
   const items = db.prepare(
     "SELECT oi.id, oi.product_code, oi.product_name, oi.quantity," +
-    "       COALESCE(oi.picked_qty, 0) AS picked_qty, oi.picked_at," +
+    "       COALESCE(oi.picked_qty, 0) AS picked_qty," +
+    "       COALESCE(oi.pick_checked, 0) AS pick_checked, oi.picked_at," +
     "       pu.full_name AS picked_by_name," +
     "       COALESCE(c.name, 'Sin categoría') AS category_name" +
     "  FROM order_items oi" +
@@ -2303,7 +2330,8 @@ app.get("/api/admin/picks/:orderId", requireAdmin, (req, res) => {
     " WHERE oi.order_id = ?" +
     " ORDER BY COALESCE(c.sort_order, 9999), category_name, oi.product_name"
   ).all(orderId);
-  const done = items.filter((i) => Number(i.picked_qty) >= Number(i.quantity)).length;
+  // "Controlado" = pick_checked (la cantidad puede ser 0 o mayor a la pedida).
+  const done = items.filter((i) => Number(i.pick_checked) === 1).length;
   res.json({
     order: { id: order.id, status: order.status, client_name: client.full_name || client.username || "" },
     items: items,
@@ -2316,41 +2344,52 @@ app.get("/api/admin/picks/:orderId", requireAdmin, (req, res) => {
 app.post("/api/admin/picks/:orderId", requireAdmin, (req, res) => {
   const orderId = Number(req.params.orderId);
   const itemId = Number(req.body && req.body.item_id);
-  let qty = Number(req.body && req.body.picked_qty);
-  if (!orderId || !itemId || !isFinite(qty)) {
+  // picked_qty null/"" = destildar (vuelve a "sin controlar"). Numero >= 0 =
+  // controlado con esa cantidad: 0 es valido ("no hay stock") y tambien puede
+  // ser MAYOR a la pedida (redondear la caja). Sin tope superior.
+  const rawQty = req.body ? req.body.picked_qty : undefined;
+  const uncheck = rawQty === null || rawQty === undefined || rawQty === "";
+  let qty = Number(rawQty);
+  if (!orderId || !itemId || (!uncheck && (!isFinite(qty) || qty < 0))) {
     return res.status(400).json({ error: "item_id y picked_qty requeridos" });
   }
   const item = db.prepare("SELECT id, quantity FROM order_items WHERE id = ? AND order_id = ?").get(itemId, orderId);
   if (!item) return res.status(404).json({ error: "Item no encontrado en este pedido" });
-  // Se acota 0..cantidad pedida (parcial permitido: el stock fisico puede no alcanzar).
-  qty = Math.max(0, Math.min(qty, Number(item.quantity)));
-  if (qty > 0) {
-    db.prepare("UPDATE order_items SET picked_qty = ?, picked_by = ?, picked_at = datetime('now') WHERE id = ?")
-      .run(qty, req.session.userId, itemId);
+  if (uncheck) {
+    db.prepare(
+      "UPDATE order_items SET pick_checked = 0, picked_qty = 0, picked_by = NULL, picked_at = NULL WHERE id = ?"
+    ).run(itemId);
+    qty = 0;
   } else {
-    db.prepare("UPDATE order_items SET picked_qty = 0, picked_by = NULL, picked_at = NULL WHERE id = ?").run(itemId);
+    db.prepare(
+      "UPDATE order_items SET pick_checked = 1, picked_qty = ?, picked_by = ?, picked_at = datetime('now') WHERE id = ?"
+    ).run(qty, req.session.userId, itemId);
   }
   const agg = db.prepare(
     "SELECT COUNT(*) AS total," +
-    "       SUM(CASE WHEN COALESCE(picked_qty,0) >= quantity THEN 1 ELSE 0 END) AS done" +
+    "       SUM(CASE WHEN COALESCE(pick_checked,0) = 1 THEN 1 ELSE 0 END) AS done" +
     "  FROM order_items WHERE order_id = ?"
   ).get(orderId);
   res.json({
     ok: true,
     item_id: itemId,
     picked_qty: qty,
+    pick_checked: uncheck ? 0 : 1,
     total_items: agg.total,
     done_items: agg.done || 0,
     complete: agg.total > 0 && Number(agg.done) === Number(agg.total),
   });
 });
 
-// Aplicar las cantidades armadas al pedido de origen (botón explícito del modal).
-// Items con picked_qty > 0 y distinta a la pedida: quantity pasa a la cantidad
-// armada, se recalcula subtotal y total. Items en 0 (sin armar) NO se tocan.
-// Stock-aware como PUT /api/admin/orders/:id/items: si el stock del pedido ya
-// estaba descontado (presupuesto facturado), se ajusta por la diferencia.
-// Mantiene en sync el débito de cuenta corriente si existe.
+// Confirmar el chequeo de armado (botón explícito del modal): aplica las
+// cantidades controladas al pedido de origen. Items CONTROLADOS (pick_checked)
+// con cantidad distinta a la pedida: quantity pasa a lo armado (puede ser
+// mayor a lo pedido — redondeo de caja); controlados en 0 se QUITAN del pedido
+// (no habia stock). Items sin controlar NO se tocan. Cada diferencia queda
+// registrada en pick_changes (visible en el detalle del pedido y en la
+// notificacion del cliente). Stock-aware como PUT /api/admin/orders/:id/items:
+// si el stock ya estaba descontado (presupuesto facturado), se ajusta por la
+// diferencia. Mantiene en sync el débito de cuenta corriente si existe.
 app.post("/api/admin/picks/:orderId/apply", requireAdmin, (req, res) => {
   const orderId = Number(req.params.orderId);
   if (!orderId) return res.status(400).json({ error: "ID invalido" });
@@ -2363,14 +2402,17 @@ app.post("/api/admin/picks/:orderId/apply", requireAdmin, (req, res) => {
   }
 
   const items = db.prepare(
-    "SELECT id, product_id, quantity, unit_price, COALESCE(picked_qty,0) AS picked_qty" +
+    "SELECT id, product_id, product_code, product_name, quantity, unit_price," +
+    "       COALESCE(picked_qty,0) AS picked_qty, COALESCE(pick_checked,0) AS pick_checked" +
     "  FROM order_items WHERE order_id = ?"
   ).all(orderId);
   const changes = items.filter(
-    (i) => Number(i.picked_qty) > 0 && Number(i.picked_qty) !== Number(i.quantity)
+    (i) => Number(i.pick_checked) === 1 && Number(i.picked_qty) !== Number(i.quantity)
   );
   if (!changes.length) {
-    return res.json({ ok: true, changed: 0, total: order.total });
+    // Chequeo confirmado sin diferencias: igual queda asentado en actividad.
+    logActivity(req, "pedido", "Pedido #" + orderId + " · chequeo de armado confirmado sin diferencias");
+    return res.json({ ok: true, changed: 0, total: order.total, changes: [] });
   }
 
   const linkedBudgetOut = db.prepare(
@@ -2383,14 +2425,27 @@ app.post("/api/admin/picks/:orderId/apply", requireAdmin, (req, res) => {
   let total = 0;
   db.transaction(() => {
     const updItem = db.prepare("UPDATE order_items SET quantity = ?, subtotal = ? WHERE id = ?");
+    const delItem = db.prepare("DELETE FROM order_items WHERE id = ?");
     const adjStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
+    const insChange = db.prepare(
+      "INSERT INTO pick_changes (order_id, product_code, product_name, old_qty, new_qty, changed_by)" +
+      " VALUES (?, ?, ?, ?, ?, ?)"
+    );
     for (const it of changes) {
       const newQty = Number(it.picked_qty);
-      updItem.run(newQty, round2(Number(it.unit_price) * newQty), it.id);
+      if (newQty <= 0) {
+        // Controlado en 0 = no habia stock: el item se quita del pedido.
+        delItem.run(it.id);
+      } else {
+        updItem.run(newQty, round2(Number(it.unit_price) * newQty), it.id);
+      }
       // Stock ya descontado: devolver/descontar la diferencia (viejo - nuevo).
+      // Si se armo de mas (newQty > pedido) el delta es negativo y descuenta.
       if (stockCurrentlyOut && !skipStock && it.product_id) {
         adjStock.run(Number(it.quantity) - newQty, it.product_id);
       }
+      insChange.run(orderId, it.product_code || null, it.product_name || null,
+        Number(it.quantity), newQty, req.session.userId);
     }
     total = round2(
       db.prepare("SELECT COALESCE(SUM(subtotal),0) AS t FROM order_items WHERE order_id = ?").get(orderId).t
@@ -2404,9 +2459,18 @@ app.post("/api/admin/picks/:orderId/apply", requireAdmin, (req, res) => {
     }
   })();
 
-  logActivity(req, "pedido", "Pedido #" + orderId + " · cantidades del armado aplicadas (" +
-    changes.length + " items) · nuevo total $" + total);
-  res.json({ ok: true, changed: changes.length, total: total });
+  logActivity(req, "pedido", "Pedido #" + orderId + " · chequeo de armado confirmado (" +
+    changes.length + " cambios) · nuevo total $" + total);
+  res.json({
+    ok: true,
+    changed: changes.length,
+    total: total,
+    changes: changes.map((c) => ({
+      product_name: c.product_name,
+      old_qty: Number(c.quantity),
+      new_qty: Number(c.picked_qty),
+    })),
+  });
 });
 
 app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req, res) => {
@@ -2480,11 +2544,18 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
       margin_pct: revenue > 0 ? round2((profit / revenue) * 100) : 0,
     };
   }
+  // Cambios confirmados del chequeo de armado (visibles para todos los roles:
+  // el cliente tambien tiene que enterarse si se le quito o cambio un item).
+  const pickChanges = db.prepare(
+    "SELECT product_code, product_name, old_qty, new_qty, created_at" +
+    "  FROM pick_changes WHERE order_id = ? ORDER BY id"
+  ).all(id);
   res.json(Object.assign({}, order, {
     items: items,
     balance_due: pay.balance_due,
     amount_paid: pay.amount_paid,
     profitability: profitability,
+    pick_changes: pickChanges,
   }));
 });
 
@@ -2627,11 +2698,22 @@ app.get("/api/my-notifications", requireLogin, (req, res) => {
     listo: "está para entregar",
     entregado: "fue entregado",
   };
-  res.json(rows.map((r) => ({
-    order_id: r.id,
-    status: r.status,
-    message: "Tu pedido #" + r.id + " " + (MSG[r.status] || ("pasó a " + r.status)),
-  })));
+  // Si en el armado hubo cambios confirmados (faltantes / redondeo de caja),
+  // se comunican en el mismo aviso para que el cliente no se sorprenda.
+  const chgStmt = db.prepare(
+    "SELECT product_name, old_qty, new_qty FROM pick_changes WHERE order_id = ? ORDER BY id"
+  );
+  res.json(rows.map((r) => {
+    let msg = "Tu pedido #" + r.id + " " + (MSG[r.status] || ("pasó a " + r.status));
+    const chg = chgStmt.all(r.id);
+    if (chg.length) {
+      msg += ". Cambios en el armado: " + chg.map((c) =>
+        c.product_name + " " + Number(c.old_qty) + " → " +
+        (Number(c.new_qty) > 0 ? Number(c.new_qty) : "sin stock (quitado)")
+      ).join(", ");
+    }
+    return { order_id: r.id, status: r.status, message: msg };
+  }));
 });
 
 // Crear pedido desde el panel admin (sin restricciones de vendedor/WA).

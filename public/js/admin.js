@@ -4704,9 +4704,25 @@
       ? '<p class="order-budget-ref">Facturado desde presupuesto ' + escapeHtml(order.budget_number) + "</p>"
       : "";
 
+    // Cambios confirmados en el chequeo de armado (registro persistente).
+    var pickChgHtml = "";
+    if (order.pick_changes && order.pick_changes.length) {
+      pickChgHtml = '<div class="order-pick-changes">' +
+        '<span class="opc-lbl">📋 Cambios del armado</span><ul>' +
+        order.pick_changes.map(function(c) {
+          var nq = Number(c.new_qty);
+          return "<li>" + escapeHtml(c.product_name || c.product_code || "") + ": " +
+            Number(c.old_qty) + " → " +
+            (nq > 0 ? nq : "0 (sin stock, quitado)") +
+            (c.created_at ? ' <span class="opc-date">' + formatDate(c.created_at) + "</span>" : "") +
+          "</li>";
+        }).join("") +
+      "</ul></div>";
+    }
+
     detailEl.innerHTML =
       '<div class="order-detail-meta">' + statusRow + clientRow + vendRow + "</div>" +
-      itemsHtml + profitHtml + notesHtml + delivInfo + budgetRef;
+      itemsHtml + pickChgHtml + profitHtml + notesHtml + delivInfo + budgetRef;
   }
 
   function wireOrderDetail(detailEl, order) {
@@ -5684,19 +5700,30 @@
     }
   }
 
-  // Items con cantidad armada > 0 y distinta a la pedida = diferencias que el
-  // botón "Aplicar cantidades al pedido" puede impactar en el pedido de origen.
+  // Items CONTROLADOS con cantidad distinta a la pedida (incluye 0 = "no hay"
+  // y de más = redondeo de caja) = diferencias que la confirmación del chequeo
+  // impacta en el pedido de origen y deja registradas.
   function pickPendingChanges() {
     return pickState.items.filter(
-      (i) => Number(i.picked_qty) > 0 && Number(i.picked_qty) !== Number(i.quantity)
+      (i) => Number(i.pick_checked) === 1 && Number(i.picked_qty) !== Number(i.quantity)
     );
   }
 
+  function pickAllChecked() {
+    return pickState.items.length > 0 &&
+      pickState.items.every((i) => Number(i.pick_checked) === 1);
+  }
+
+  // El botón de confirmación aparece cuando hay diferencias para aplicar o
+  // cuando el chequeo está completo (todos controlados, aunque sin cambios).
   function pickUpdateApplyBtn() {
     if (!pickEls.applyBtn) return;
     const n = pickPendingChanges().length;
-    pickEls.applyBtn.hidden = n === 0;
-    pickEls.applyBtn.textContent = "📦 Aplicar cantidades al pedido (" + n + ")";
+    const complete = pickAllChecked();
+    pickEls.applyBtn.hidden = n === 0 && !complete;
+    pickEls.applyBtn.textContent = n > 0
+      ? "✅ Confirmar chequeo (" + n + " cambio" + (n === 1 ? "" : "s") + ")"
+      : "✅ Confirmar chequeo";
   }
 
   function pickBuildCatFilter() {
@@ -5713,21 +5740,25 @@
   }
 
   function pickRowHtml(it) {
-    const done = Number(it.picked_qty) >= Number(it.quantity);
-    const partial = !done && Number(it.picked_qty) > 0;
+    // Controlado = pick_checked. Coincide → verde ✔. Controlado con cantidad
+    // distinta (0 = "no hay", menos, o MAS para redondear caja) → rojo ≠.
+    // Sin controlar → vacío (el input se muestra vacío, no en 0).
+    const checked = Number(it.pick_checked) === 1;
+    const match = checked && Number(it.picked_qty) === Number(it.quantity);
+    const diff = checked && !match;
     const who = it.picked_by_name
       ? ' <span class="pick-who" title="Último que tildó">👤 ' + escapeHtml(it.picked_by_name) + "</span>"
       : "";
-    return '<div class="pick-item' + (done ? " pick-done" : partial ? " pick-partial" : "") +
+    return '<div class="pick-item' + (match ? " pick-done" : diff ? " pick-diff" : "") +
       '" data-item="' + it.id + '">' +
-      '<span class="pick-check">' + (done ? "✔" : partial ? "◐" : "") + "</span>" +
+      '<span class="pick-check">' + (match ? "✔" : diff ? "≠" : "") + "</span>" +
       '<div class="pick-info">' +
         '<span class="pick-name">' + escapeHtml(it.product_name || "") + "</span>" +
         '<span class="pick-code">' + escapeHtml(it.product_code || "") + who + "</span>" +
       "</div>" +
-      '<div class="pick-qtybox" title="Cantidad armada — editá para marcar parcial">' +
-        '<input type="number" class="pick-qty-input" min="0" max="' + Number(it.quantity) +
-          '" step="1" value="' + Number(it.picked_qty) + '" />' +
+      '<div class="pick-qtybox" title="Cantidad armada — 0 = no hay; se puede poner de más (redondeo de caja); vacío = sin controlar">' +
+        '<input type="number" class="pick-qty-input" min="0" step="1"' +
+          ' value="' + (checked ? Number(it.picked_qty) : "") + '" placeholder="—" />' +
         '<span class="pick-qty-req">/ ' + Number(it.quantity) + "</span>" +
       "</div>" +
     "</div>";
@@ -5772,6 +5803,7 @@
     }
   }
 
+  // qty numérico (0 permitido, sin tope) = controlar; null = destildar.
   async function pickPost(itemId, qty) {
     pickState.posting++;
     try {
@@ -5783,9 +5815,10 @@
       const it = pickState.items.find((i) => i.id === itemId);
       if (it) {
         it.picked_qty = out.picked_qty;
-        if (out.picked_qty > 0 && state.me) {
+        it.pick_checked = out.pick_checked;
+        if (out.pick_checked && state.me) {
           it.picked_by_name = state.me.fullName || state.me.full_name || state.me.username || it.picked_by_name;
-        } else if (out.picked_qty === 0) {
+        } else if (!out.pick_checked) {
           it.picked_by_name = null;
         }
       }
@@ -5804,7 +5837,8 @@
   }
 
   if (pickEls.list) {
-    // Click en la fila (fuera del input de cantidad) = tildar/destildar completo.
+    // Click en la fila (fuera del input de cantidad) = controlar con lo pedido
+    // / destildar (vuelve a "sin controlar").
     pickEls.list.addEventListener("click", (e) => {
       if (e.target.closest(".pick-qtybox")) return;
       const row = e.target.closest(".pick-item");
@@ -5812,17 +5846,22 @@
       const id = Number(row.dataset.item);
       const it = pickState.items.find((i) => i.id === id);
       if (!it) return;
-      const done = Number(it.picked_qty) >= Number(it.quantity);
-      pickPost(id, done ? 0 : Number(it.quantity));
+      const checked = Number(it.pick_checked) === 1;
+      pickPost(id, checked ? null : Number(it.quantity));
     });
-    // Cambio en el input de cantidad = guardar cantidad parcial.
+    // Cambio en el input de cantidad = controlar con esa cantidad (0 = "no
+    // hay"; puede ser mayor a lo pedido). Vaciar el input = destildar.
     pickEls.list.addEventListener("change", (e) => {
       const inp = e.target.closest(".pick-qty-input");
       if (!inp) return;
       const row = inp.closest(".pick-item");
       if (!row) return;
-      let qty = Number(inp.value);
-      if (!isFinite(qty) || qty < 0) qty = 0;
+      const raw = String(inp.value).trim();
+      let qty = null;
+      if (raw !== "") {
+        qty = Number(raw);
+        if (!isFinite(qty) || qty < 0) qty = 0;
+      }
       inp.blur();
       pickPost(Number(row.dataset.item), qty);
     });
@@ -5834,19 +5873,29 @@
     });
   }
 
-  // Aplicar las cantidades armadas al pedido de origen: el item del pedido pasa
-  // a la cantidad realmente armada y el total se recalcula (server stock-aware).
+  // Confirmar el chequeo: anuncia las diferencias (faltantes, quitados por 0,
+  // de más por redondeo), las aplica al pedido (server stock-aware) y quedan
+  // registradas en pick_changes (visibles en el detalle del pedido y en la
+  // notificación al cliente).
   if (pickEls.applyBtn) {
     pickEls.applyBtn.addEventListener("click", async () => {
       const changes = pickPendingChanges();
-      if (!changes.length) return;
-      const detail = changes.slice(0, 8).map(
-        (i) => "· " + (i.product_name || "") + ": " + Number(i.quantity) + " → " + Number(i.picked_qty)
-      ).join("\n") + (changes.length > 8 ? "\n· …y " + (changes.length - 8) + " más" : "");
-      if (!confirm(
-        "Esto cambia las cantidades del pedido #" + pickState.orderId +
-        " a lo realmente armado y recalcula el total:\n\n" + detail + "\n\n¿Continuar?"
-      )) return;
+      let confirmMsg;
+      if (changes.length) {
+        const detail = changes.slice(0, 8).map((i) => {
+          const nq = Number(i.picked_qty);
+          const extra = nq === 0 ? " (sin stock — se quita del pedido)"
+            : nq > Number(i.quantity) ? " (se agrega de más)" : "";
+          return "· " + (i.product_name || "") + ": " + Number(i.quantity) + " → " + nq + extra;
+        }).join("\n") + (changes.length > 8 ? "\n· …y " + (changes.length - 8) + " más" : "");
+        confirmMsg = "Confirmar el chequeo del pedido #" + pickState.orderId +
+          " aplica estos cambios al pedido, recalcula el total y los deja registrados:\n\n" +
+          detail + "\n\n¿Confirmar?";
+      } else {
+        confirmMsg = "Chequeo del pedido #" + pickState.orderId +
+          " sin diferencias: todo coincide con lo pedido.\n\n¿Confirmar?";
+      }
+      if (!confirm(confirmMsg)) return;
       pickEls.applyBtn.disabled = true;
       try {
         const out = await api("/api/admin/picks/" + pickState.orderId + "/apply", {
@@ -5854,11 +5903,13 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
         });
-        showToast("Pedido #" + pickState.orderId + " actualizado: " + out.changed +
-          " items · nuevo total " + fmtPrice(out.total));
+        showToast(out.changed > 0
+          ? "Chequeo confirmado: " + out.changed + " cambio" + (out.changed === 1 ? "" : "s") +
+            " registrados · nuevo total " + fmtPrice(out.total)
+          : "Chequeo confirmado sin diferencias");
         const o = (state.orders || []).find((x) => x.id === pickState.orderId);
         if (o) o.total = out.total;
-        await pickFetch(false); // re-trae: los parciales aplicados quedan completos
+        await pickFetch(false); // re-trae: los aplicados quedan coincidiendo
         refreshOrderViews();
         state.allProductsLoaded = false;
         refreshProductsCache(); // el stock pudo ajustarse (presupuesto facturado)
