@@ -2670,6 +2670,9 @@ button { font: inherit; cursor: pointer; }
   padding: 16px;
   box-sizing: border-box;
 }
+/* La clase .app-confirm (display:flex) gana al atributo hidden del navegador;
+   sin esta regla el modal queda siempre visible al cargar. */
+.app-confirm[hidden] { display: none; }
 .app-confirm-box {
   background: #fff;
   border-radius: 14px;
