@@ -9569,6 +9569,211 @@
   }
 
   // ─────────────────────────────────────────────────────────────────
+  // REPLICAR % / CATEGORÍA A OTROS PRODUCTOS (desde Editar producto)
+  // ─────────────────────────────────────────────────────────────────
+  const epRepModal     = document.getElementById("ep-rep-modal");
+  const epRepBtn       = document.getElementById("ep-replicate-btn");
+  const epRepTbody     = document.getElementById("ep-rep-tbody");
+  const epRepSearch    = document.getElementById("ep-rep-search");
+  const epRepCount     = document.getElementById("ep-rep-count");
+  const epRepApplyBtn  = document.getElementById("ep-rep-apply-btn");
+  const epRepCheckAll  = document.getElementById("ep-rep-check-all");
+  const epRepApplyPcts = document.getElementById("ep-rep-apply-pcts");
+  const epRepApplyCat  = document.getElementById("ep-rep-apply-cat");
+  const epRepSelected  = new Set();
+  let epRepVisible = []; // ids que matchean el filtro actual (para "todos")
+
+  const EP_REP_PRICE_KEY = {
+    "ep-vip": "price_vip", "ep-revendedor": "price_revendedor",
+    "ep-mayorista": "price_mayorista", "ep-minorista": "price_minorista",
+    "ep-publico": "price_publico",
+  };
+
+  function epRepUpdateCount() {
+    if (epRepCount) epRepCount.textContent = epRepSelected.size + " seleccionado" + (epRepSelected.size === 1 ? "" : "s");
+    if (epRepApplyBtn) {
+      epRepApplyBtn.disabled = epRepSelected.size === 0 ||
+        (!(epRepApplyPcts && epRepApplyPcts.checked) && !(epRepApplyCat && epRepApplyCat.checked));
+    }
+  }
+
+  function epRepRender(q) {
+    if (!epRepTbody) return;
+    q = (q || "").trim().toLowerCase();
+    const list = (state.allProducts || []).filter((p) => {
+      if (p.id === editProdId) return false; // el producto que estoy editando no
+      if (!q) return true;
+      return (
+        String(p.code || "").toLowerCase().includes(q) ||
+        String(p.name || "").toLowerCase().includes(q) ||
+        String(p.category_name || "").toLowerCase().includes(q)
+      );
+    });
+    epRepVisible = list.map((p) => p.id);
+    if (!list.length) {
+      epRepTbody.innerHTML = '<tr><td colspan="4" class="muted" style="padding:14px;text-align:center">Sin resultados</td></tr>';
+    } else {
+      epRepTbody.innerHTML = list.slice(0, 400).map((p) =>
+        '<tr data-prod-id="' + p.id + '" style="cursor:pointer">' +
+          '<td><input type="checkbox" class="ep-rep-cb"' + (epRepSelected.has(p.id) ? " checked" : "") + ' /></td>' +
+          '<td>' + escapeHtml(p.code || "") + '</td>' +
+          '<td>' + escapeHtml(p.name || "") + (Number(p.cost) > 0 ? "" : ' <span class="np-note">(sin costo)</span>') + '</td>' +
+          '<td>' + escapeHtml(p.category_name || "—") + '</td>' +
+        '</tr>'
+      ).join("") + (list.length > 400
+        ? '<tr><td colspan="4" class="muted" style="padding:8px;text-align:center">Mostrando 400 de ' + list.length + ' — afiná la búsqueda (la selección y "todos" igual abarcan todos los que matchean)</td></tr>'
+        : "");
+    }
+    if (epRepCheckAll) epRepCheckAll.checked = epRepVisible.length > 0 && epRepVisible.every((id) => epRepSelected.has(id));
+    epRepUpdateCount();
+  }
+
+  if (epRepBtn) {
+    epRepBtn.addEventListener("click", async () => {
+      if (!epRepModal || !editProdId) return;
+      epRepSelected.clear();
+      if (epRepSearch) epRepSearch.value = "";
+      if (epRepCheckAll) epRepCheckAll.checked = false;
+      // Resumen de los % que se van a replicar (los del modal, al momento de abrir)
+      const sumEl = document.getElementById("ep-rep-pcts-summary");
+      if (sumEl) {
+        const labels = { "ep-vip-pct": "VIP", "ep-revendedor-pct": "Rev", "ep-mayorista-pct": "May", "ep-minorista-pct": "Min", "ep-publico-pct": "Púb" };
+        sumEl.textContent = "(" + EP_PAIRS.map(({ pctId }) => {
+          const el = document.getElementById(pctId);
+          return labels[pctId] + " " + (Number(el && el.value) || 0) + "%";
+        }).join(" · ") + ")";
+      }
+      // Categoría elegida en el modal de edición (la que se replicaría)
+      const catNameEl = document.getElementById("ep-rep-cat-name");
+      if (catNameEl) {
+        let catName = "Sin categoría";
+        if (epCatSelect && epCatSelect.value) {
+          const opt = epCatSelect.options[epCatSelect.selectedIndex];
+          if (opt) catName = opt.text;
+        }
+        catNameEl.textContent = catName;
+      }
+      epRepTbody.innerHTML = '<tr><td colspan="4" class="muted" style="padding:14px;text-align:center">Cargando…</td></tr>';
+      epRepModal.hidden = false;
+      await ensureAllProducts();
+      epRepRender("");
+      if (epRepSearch) epRepSearch.focus();
+    });
+  }
+
+  if (epRepTbody) {
+    epRepTbody.addEventListener("click", (e) => {
+      const tr = e.target.closest("tr[data-prod-id]");
+      if (!tr) return;
+      const cb = tr.querySelector(".ep-rep-cb");
+      if (!cb) return;
+      if (e.target !== cb) cb.checked = !cb.checked; // click en la fila = toggle
+      const pid = Number(tr.dataset.prodId);
+      if (cb.checked) epRepSelected.add(pid);
+      else epRepSelected.delete(pid);
+      if (epRepCheckAll) epRepCheckAll.checked = epRepVisible.length > 0 && epRepVisible.every((id) => epRepSelected.has(id));
+      epRepUpdateCount();
+    });
+  }
+
+  if (epRepCheckAll) {
+    epRepCheckAll.addEventListener("change", () => {
+      if (epRepCheckAll.checked) epRepVisible.forEach((id) => epRepSelected.add(id));
+      else epRepVisible.forEach((id) => epRepSelected.delete(id));
+      epRepRender(epRepSearch ? epRepSearch.value : "");
+    });
+  }
+
+  if (epRepSearch) {
+    epRepSearch.addEventListener("input", debounce((e) => epRepRender(e.target.value), 200));
+  }
+
+  [epRepApplyPcts, epRepApplyCat].forEach((el) => {
+    if (el) el.addEventListener("change", epRepUpdateCount);
+  });
+
+  if (epRepApplyBtn) {
+    epRepApplyBtn.addEventListener("click", async () => {
+      if (!epRepSelected.size) return;
+      const doPcts = epRepApplyPcts && epRepApplyPcts.checked;
+      const doCat  = epRepApplyCat && epRepApplyCat.checked;
+      if (!doPcts && !doCat) { alert("Elegí qué replicar: porcentajes y/o categoría."); return; }
+
+      // % actuales del modal de edición (pueden estar editados sin guardar — se
+      // replican tal como se ven en pantalla)
+      const pcts = {};
+      EP_PAIRS.forEach(({ pctId, priceId }) => {
+        const el = document.getElementById(pctId);
+        pcts[priceId] = Number(el && el.value) || 0;
+      });
+      const catId = epCatSelect && epCatSelect.value ? Number(epCatSelect.value) : null;
+      let catName = "";
+      if (catId && epCatSelect) {
+        const opt = epCatSelect.options[epCatSelect.selectedIndex];
+        if (opt) catName = opt.text;
+      }
+
+      // Cada producto recalcula sus precios desde SU PROPIO costo con los % replicados
+      const patches = [];
+      let skippedNoCost = 0;
+      epRepSelected.forEach((pid) => {
+        const prod = (state.allProducts || []).find((p) => p.id === pid);
+        if (!prod) return;
+        const patch = { id: pid };
+        if (doPcts) {
+          const cost = Number(prod.cost) || 0;
+          if (cost > 0) {
+            Object.entries(EP_REP_PRICE_KEY).forEach(([priceId, field]) => {
+              patch[field] = round2(cost * (1 + pcts[priceId] / 100));
+            });
+          } else skippedNoCost++;
+        }
+        if (doCat) patch.category_id = catId;
+        if (Object.keys(patch).length > 1) patches.push(patch);
+      });
+      if (!patches.length) {
+        alert("Ninguno de los seleccionados se puede actualizar" + (skippedNoCost ? " (no tienen costo cargado)" : "") + ".");
+        return;
+      }
+
+      const parts = [];
+      if (doPcts) parts.push("los porcentajes de ganancia");
+      if (doCat) parts.push('la categoría "' + (catName || "Sin categoría") + '"');
+      let msg = "Se va a aplicar " + parts.join(" y ") + " a " + patches.length + " producto" + (patches.length === 1 ? "" : "s") + ".";
+      if (skippedNoCost) {
+        msg += "\n\n" + skippedNoCost + " sin costo cargado: no se les recalculan precios" + (doCat ? " (solo se les cambia la categoría)" : " y quedan afuera") + ".";
+      }
+      if (!confirm(msg + "\n\n¿Continuar?")) return;
+
+      try {
+        epRepApplyBtn.disabled = true;
+        const out = await api("/api/admin/products/bulk-update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ patches }),
+        });
+        // Sync de los caches locales (tabla de Productos + picker de Compras)
+        patches.forEach((patch) => {
+          [state.products, state.allProducts].forEach((arr) => {
+            const p = (arr || []).find((x) => x.id === patch.id);
+            if (!p) return;
+            Object.keys(patch).forEach((k) => { if (k !== "id") p[k] = patch[k]; });
+            if ("category_id" in patch) p.category_name = catId ? catName : "";
+          });
+        });
+        applyFilters();
+        showToast("Replicado a " + (out && out.updated != null ? out.updated : patches.length) + " producto(s)");
+        epRepSelected.clear();
+        epRepModal.hidden = true;
+      } catch (e) {
+        alert(e.message || "Error al replicar");
+      } finally {
+        epRepApplyBtn.disabled = false;
+      }
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
   // NUEVO PRODUCTO
   // ─────────────────────────────────────────────────────────────────
   const newProdModal     = document.getElementById("new-product-modal");

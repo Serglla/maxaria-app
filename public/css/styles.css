@@ -1993,6 +1993,38 @@ button { font: inherit; cursor: pointer; }
   border-top: 1px solid #eceef1;
   border-bottom: 1px solid #eceef1;
 }
+/* Controles de la barra de filtros: borde nítido + alto parejo para que se
+   distingan claramente como campos editables (buscador con lupa). */
+.tb-filters .admin-search {
+  height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>") no-repeat 11px center;
+  padding: 0 12px 0 36px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.tb-filters .admin-select {
+  height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #fff;
+  padding: 0 11px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.tb-filters .admin-search:focus,
+.tb-filters .admin-select:focus {
+  border-color: #2563eb;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+}
+.tb-filters .admin-filter {
+  font-size: 13px;
+  font-weight: 700;
+  color: #475569;
+  gap: 7px;
+}
 .tb-clear {
   border: none;
   background: none;
@@ -4756,4 +4788,39 @@ html.in-modal .ventas-wrap {
   padding: 4px 10px;
   border-radius: 6px;
   text-decoration: none;
+}
+
+/* ── Replicar % / categoría a otros productos (modal desde Editar producto) ── */
+.ep-rep-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.ep-rep-opts label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #334155;
+}
+.ep-rep-list-wrap {
+  max-height: 45vh;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+/* .admin-table tiene min-width 1200px global — acá desbordaría el modal */
+#ep-rep-table { min-width: 0; }
+#ep-rep-table th { white-space: normal; }
+.ep-rep-list-wrap thead th {
+  position: sticky;
+  top: 0;
+  background: #f1f5f9;
+  z-index: 1;
 }
