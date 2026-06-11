@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260611g" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260611h" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -3225,9 +3225,22 @@
     </div>
   </div>
 
+  <!-- Modal de confirmación propio (reemplaza al confirm() nativo del navegador,
+       que muestra el dominio "...railway.app dice" y botones no editables). -->
+  <div id="confirm-modal" class="app-confirm" hidden>
+    <div class="app-confirm-box">
+      <h3 id="confirm-modal-title" class="app-confirm-title">Confirmar</h3>
+      <div id="confirm-modal-body" class="app-confirm-body"></div>
+      <div class="app-confirm-foot">
+        <button type="button" class="btn" id="confirm-modal-cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="confirm-modal-ok">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260611g"></script>
+  <script src="/js/admin.js?v=20260611h"></script>
 </body>
 </html>

@@ -2656,6 +2656,39 @@ button { font: inherit; cursor: pointer; }
 .import-stats { margin: 8px 0 12px; padding-left: 18px; }
 .import-stats li { margin-bottom: 4px; }
 
+/* Modal de confirmación propio (reemplaza confirm() nativo). Clase aparte de
+   .admin-modal para que el cierre genérico por Escape/data-close no interfiera
+   con la promesa del helper confirmModal(). z-index alto: aparece sobre
+   cualquier otro modal (chequeo, edición, etc). */
+.app-confirm {
+  position: fixed; inset: 0;
+  background: rgba(17,24,39,.6);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 2200;
+  padding: 16px;
+  box-sizing: border-box;
+}
+.app-confirm-box {
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid #cbd5e1;
+  border-top: 4px solid #f59e0b;
+  padding: 22px 24px;
+  max-width: 460px;
+  width: calc(100% - 32px);
+  box-shadow: 0 24px 60px rgba(0,0,0,.32), 0 0 0 1px rgba(0,0,0,.05);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+.app-confirm-title { margin: 0 0 10px; font-size: 17px; color: #111827; }
+.app-confirm-body {
+  white-space: pre-wrap;
+  font-size: 14px; line-height: 1.45; color: #374151; margin-bottom: 18px;
+}
+.app-confirm-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
 /* Toast */
 .admin-toast {
   position: fixed;

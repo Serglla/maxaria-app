@@ -618,6 +618,54 @@
     els.toast._t = setTimeout(() => { els.toast.hidden = true; }, 2400);
   }
 
+  // Modal de confirmación propio (reemplaza al confirm() nativo, que muestra el
+  // dominio "...railway.app dice" y botones que no se pueden editar). Devuelve
+  // una Promise<boolean>. Maneja su propio cierre (Escape=cancelar, Enter=ok,
+  // click en overlay=cancelar) en fase de captura, así no dispara el handler
+  // global de Escape que cerraría el modal de abajo. Fallback a confirm() nativo
+  // si el HTML del modal no está presente.
+  function confirmModal(opts) {
+    opts = opts || {};
+    return new Promise((resolve) => {
+      const modal = document.getElementById("confirm-modal");
+      const titleEl = document.getElementById("confirm-modal-title");
+      const bodyEl = document.getElementById("confirm-modal-body");
+      const okBtn = document.getElementById("confirm-modal-ok");
+      const cancelBtn = document.getElementById("confirm-modal-cancel");
+      if (!modal || !okBtn || !cancelBtn) {
+        resolve(window.confirm(opts.message || ""));
+        return;
+      }
+      const appName = (state.me && (state.me.app_name || state.me.appName)) || "Maxaria";
+      titleEl.textContent = opts.title || appName;
+      bodyEl.textContent = opts.message || "";
+      okBtn.textContent = opts.confirmText || "Confirmar";
+      cancelBtn.textContent = opts.cancelText || "Cancelar";
+      okBtn.className = "btn " + (opts.danger ? "btn-danger" : "btn-primary");
+      modal.hidden = false;
+      function cleanup(val) {
+        modal.hidden = true;
+        okBtn.removeEventListener("click", onOk);
+        cancelBtn.removeEventListener("click", onCancel);
+        modal.removeEventListener("click", onOverlay);
+        document.removeEventListener("keydown", onKey, true);
+        resolve(val);
+      }
+      function onOk() { cleanup(true); }
+      function onCancel() { cleanup(false); }
+      function onOverlay(e) { if (e.target === modal) cleanup(false); }
+      function onKey(e) {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(false); }
+        else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); cleanup(true); }
+      }
+      okBtn.addEventListener("click", onOk);
+      cancelBtn.addEventListener("click", onCancel);
+      modal.addEventListener("click", onOverlay);
+      document.addEventListener("keydown", onKey, true);
+      okBtn.focus();
+    });
+  }
+
   async function api(url, opts) {
     const res = await fetch(url, opts);
     if (res.status === 401) { location.href = "/login"; throw new Error("no auth"); }
@@ -5888,14 +5936,19 @@
             : nq > Number(i.quantity) ? " (se agrega de más)" : "";
           return "· " + (i.product_name || "") + ": " + Number(i.quantity) + " → " + nq + extra;
         }).join("\n") + (changes.length > 8 ? "\n· …y " + (changes.length - 8) + " más" : "");
-        confirmMsg = "Confirmar el chequeo del pedido #" + pickState.orderId +
-          " aplica estos cambios al pedido, recalcula el total y los deja registrados:\n\n" +
-          detail + "\n\n¿Confirmar?";
+        confirmMsg = "Se aplican estos cambios al pedido #" + pickState.orderId +
+          ", se recalcula el total y quedan registrados:\n\n" + detail;
       } else {
-        confirmMsg = "Chequeo del pedido #" + pickState.orderId +
-          " sin diferencias: todo coincide con lo pedido.\n\n¿Confirmar?";
+        confirmMsg = "El chequeo del pedido #" + pickState.orderId +
+          " no tiene diferencias: todo coincide con lo pedido.";
       }
-      if (!confirm(confirmMsg)) return;
+      const ok = await confirmModal({
+        title: "✅ Confirmar chequeo de armado",
+        message: confirmMsg,
+        confirmText: "Confirmar chequeo",
+        cancelText: "Cancelar",
+      });
+      if (!ok) return;
       pickEls.applyBtn.disabled = true;
       try {
         const out = await api("/api/admin/picks/" + pickState.orderId + "/apply", {
