@@ -1932,7 +1932,9 @@ app.get("/api/categories", requireLogin, (req, res) => {
   // Visibilidad global: las categorias desactivadas no las ve nadie en el
   // catalogo (clientes ni vendedores). El admin (99) ve todas: este endpoint
   // tambien alimenta los selects del panel (modales de producto, PDF, etc).
-  if (req.session.level !== 99) {
+  // Excepcion: con ?preview=1 el admin pide la vista filtrada (catalogo
+  // "viendo como" un nivel/lista, simula lo que ve un cliente).
+  if (req.session.level !== 99 || req.query.preview === "1") {
     rows = rows.filter((c) => Number(c.active) === 1);
   }
   if (allowedIds !== null) {
@@ -2046,8 +2048,11 @@ app.get("/api/products", requireLogin, (req, res) => {
     "  WHERE p.active = 1" + (includeNoStock ? "" : " AND p.stock > 0");
   // Visibilidad global de categorias: productos de una categoria desactivada
   // no se muestran a clientes ni vendedores (el admin si los ve). Productos
-  // sin categoria (c.active NULL) quedan visibles via COALESCE.
-  if (req.session.level !== 99) {
+  // sin categoria (c.active NULL) quedan visibles via COALESCE. Con ?preview=1
+  // el admin pide la vista filtrada (catalogo "viendo como" un nivel/lista);
+  // los pickers internos (/ventas, presupuestos) no mandan preview y siguen
+  // viendo todo.
+  if (req.session.level !== 99 || req.query.preview === "1") {
     sql += " AND COALESCE(c.active, 1) = 1";
   }
   const params = [...priceParams];

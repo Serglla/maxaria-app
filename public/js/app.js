@@ -134,12 +134,24 @@
 
   function productsUrl() {
     if (state.me && state.me.level === 99) {
-      // Admin viendo como otra lista personalizada (L1, L2, etc)
-      if (state.viewAsListId) return "/api/products?as_list_id=" + state.viewAsListId;
+      // Admin viendo como otra lista personalizada (L1, L2, etc). preview=1
+      // hace que el server tambien oculte las categorias desactivadas
+      // (visibilidad global), igual que lo veria un cliente real.
+      if (state.viewAsListId) return "/api/products?as_list_id=" + state.viewAsListId + "&preview=1";
       // Admin viendo como otro nivel base (Minorista/Revendedor/Mayorista/VIP)
-      if (state.viewAsLevel)  return "/api/products?as_level=" + state.viewAsLevel;
+      if (state.viewAsLevel)  return "/api/products?as_level=" + state.viewAsLevel + "&preview=1";
     }
     return "/api/products";
+  }
+
+  function categoriesUrl() {
+    // Admin "viendo como" un nivel/lista: pedir la vista filtrada (preview),
+    // que oculta las categorias desactivadas en Configuracion, igual que la
+    // ve un cliente. Sin "ver como" activo, el admin ve todas.
+    if (state.me && state.me.level === 99 && (state.viewAsListId || state.viewAsLevel)) {
+      return "/api/categories?preview=1";
+    }
+    return "/api/categories";
   }
 
   async function bootstrap() {
@@ -178,7 +190,7 @@
         state.clients = await api("/api/clients");
       }
       const [cats, prods] = await Promise.all([
-        api("/api/categories"), api(productsUrl()),
+        api(categoriesUrl()), api(productsUrl()),
       ]);
       state.categories = cats; state.products = prods;
       if (me.app_name) {
@@ -212,7 +224,7 @@
     _refreshingCatalog = true;
     try {
       const [cats, prods] = await Promise.all([
-        api("/api/categories"), api(productsUrl()),
+        api(categoriesUrl()), api(productsUrl()),
       ]);
       state.categories = cats;
       state.products = prods;
@@ -1689,7 +1701,13 @@
         }
       } catch (_) {}
       try {
-        state.products = await api(productsUrl());
+        // Tambien re-pedimos categorias: con "ver como" activo el server
+        // oculta las desactivadas (preview), y el sidebar debe reflejarlo.
+        const [cats, prods] = await Promise.all([
+          api(categoriesUrl()), api(productsUrl()),
+        ]);
+        state.categories = cats;
+        state.products = prods;
         renderUser();
         renderCategories();
         renderProducts();
