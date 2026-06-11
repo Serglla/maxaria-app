@@ -427,69 +427,19 @@
     <section class="tab-panel" id="tab-caja" hidden>
       <div class="caja-layout">
 
-        <!-- Panel izquierdo: cuentas + form movimiento -->
+        <!-- Panel izquierdo: cuentas -->
         <div class="caja-left">
 
-          <!-- Saldos por cuenta -->
+          <!-- Saldos por cuenta agrupados por responsable -->
           <div class="caja-accounts-header">
             <span class="dash-section-label" style="margin:0">Cuentas</span>
-            <button class="btn btn-small" id="caja-add-account-btn" type="button">+ Nueva cuenta</button>
+            <button class="btn btn-primary caja-new-acc-btn" id="caja-add-account-btn" type="button" hidden>+ Nueva cuenta</button>
           </div>
           <div id="caja-accounts-wrap" class="caja-accounts-wrap">
             <div class="muted">Cargando…</div>
           </div>
 
-          <!-- Form nueva cuenta (oculto) -->
-          <div id="caja-new-account-form" class="caja-form-box" hidden>
-            <strong style="font-size:13px">Nueva cuenta</strong>
-            <label class="caja-form-label">Nombre
-              <input type="text" id="caja-acc-name" class="admin-input" placeholder="ej: Banco Galicia" />
-            </label>
-            <label class="caja-form-label">Tipo
-              <select id="caja-acc-type" class="admin-select">
-                <option value="efectivo">💵 Efectivo</option>
-                <option value="banco">🏦 Banco</option>
-                <option value="digital">📱 Digital (billeteras)</option>
-              </select>
-            </label>
-            <label class="caja-form-label">Responsable <span class="muted">(cajero, opcional)</span>
-              <select id="caja-acc-resp" class="admin-select">
-                <option value="">— Sin responsable (caja general) —</option>
-              </select>
-            </label>
-            <div style="display:flex;gap:8px;margin-top:8px">
-              <button class="btn btn-primary btn-small" id="caja-acc-save-btn" type="button">Guardar</button>
-              <button class="btn btn-small" id="caja-acc-cancel-btn" type="button">Cancelar</button>
-            </div>
-          </div>
-
-          <!-- Form movimiento rápido -->
-          <div class="dash-section-label" style="margin-top:20px">Registrar movimiento</div>
-          <div class="caja-form-box">
-            <div class="caja-mov-type-toggle">
-              <button class="btn caja-type-btn active" data-type="ingreso" type="button">▲ Ingreso</button>
-              <button class="btn caja-type-btn" data-type="egreso" type="button">▼ Egreso</button>
-              <button class="btn caja-type-btn" data-type="transferencia" type="button">⇄ Transferencia</button>
-            </div>
-            <label class="caja-form-label">Cuenta origen
-              <select id="caja-mov-account" class="admin-select"></select>
-            </label>
-            <div id="caja-mov-dest-wrap" hidden>
-              <label class="caja-form-label">Cuenta destino
-                <select id="caja-mov-counterpart" class="admin-select"></select>
-              </label>
-            </div>
-            <label class="caja-form-label">Monto
-              <input type="number" id="caja-mov-amount" class="admin-input" placeholder="0" min="0" step="1" />
-            </label>
-            <label class="caja-form-label">Descripción
-              <input type="text" id="caja-mov-desc" class="admin-input" placeholder="Opcional" />
-            </label>
-            <label class="caja-form-label">Fecha
-              <input type="date" id="caja-mov-date" class="admin-input" />
-            </label>
-            <button class="btn btn-primary" id="caja-mov-save-btn" type="button" style="margin-top:10px;width:100%">Registrar</button>
-          </div>
+          <button class="btn btn-primary caja-mov-open-btn" id="caja-mov-open-btn" type="button">＋ Registrar movimiento</button>
         </div>
 
         <!-- Panel derecho: historial de movimientos -->
@@ -522,6 +472,78 @@
           </div>
         </div>
 
+      </div>
+
+      <!-- Modal crear / editar cuenta -->
+      <div id="caja-account-modal" class="admin-modal" hidden>
+        <div class="admin-modal-box" style="max-width:420px">
+          <div class="admin-modal-head">
+            <strong id="caja-account-modal-title">Editar cuenta</strong>
+            <button type="button" class="admin-modal-close" data-close>✕</button>
+          </div>
+          <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
+            <label class="np-label"><span>Nombre</span>
+              <input type="text" id="caja-acc-name" class="admin-input" placeholder="ej: Banco Galicia" />
+            </label>
+            <label class="np-label"><span>Tipo</span>
+              <select id="caja-acc-type" class="admin-select">
+                <option value="efectivo">💵 Efectivo</option>
+                <option value="banco">🏦 Banco</option>
+                <option value="digital">📱 Digital (billeteras)</option>
+              </select>
+            </label>
+            <label class="np-label" id="caja-acc-resp-wrap"><span>Responsable <span class="np-note">(cajero · solo superadmin)</span></span>
+              <select id="caja-acc-resp" class="admin-select">
+                <option value="">— Sin responsable (caja general) —</option>
+              </select>
+            </label>
+            <label id="caja-acc-active-wrap" style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#0f172a;cursor:pointer">
+              <input type="checkbox" id="caja-acc-active" checked /> Cuenta activa
+            </label>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+              <button type="button" class="btn" data-close>Cancelar</button>
+              <button class="btn btn-primary" id="caja-acc-save-btn" type="button">Guardar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal registrar movimiento -->
+      <div id="caja-mov-modal" class="admin-modal" hidden>
+        <div class="admin-modal-box" style="max-width:440px">
+          <div class="admin-modal-head">
+            <strong>Registrar movimiento</strong>
+            <button type="button" class="admin-modal-close" data-close>✕</button>
+          </div>
+          <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
+            <div class="caja-mov-type-toggle">
+              <button class="btn caja-type-btn active" data-type="ingreso" type="button">▲ Ingreso</button>
+              <button class="btn caja-type-btn" data-type="egreso" type="button">▼ Egreso</button>
+              <button class="btn caja-type-btn" data-type="transferencia" type="button">⇄ Transferencia</button>
+            </div>
+            <label class="np-label"><span id="caja-mov-account-label">Cuenta</span>
+              <select id="caja-mov-account" class="admin-select"></select>
+            </label>
+            <div id="caja-mov-dest-wrap" hidden>
+              <label class="np-label"><span>Cuenta destino</span>
+                <select id="caja-mov-counterpart" class="admin-select"></select>
+              </label>
+            </div>
+            <label class="np-label"><span>Monto</span>
+              <input type="number" id="caja-mov-amount" class="admin-input" placeholder="0" min="0" step="1" />
+            </label>
+            <label class="np-label"><span>Descripción</span>
+              <input type="text" id="caja-mov-desc" class="admin-input" placeholder="Opcional" />
+            </label>
+            <label class="np-label"><span>Fecha</span>
+              <input type="date" id="caja-mov-date" class="admin-input" />
+            </label>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+              <button type="button" class="btn" data-close>Cancelar</button>
+              <button class="btn btn-primary" id="caja-mov-save-btn" type="button">Registrar movimiento</button>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
