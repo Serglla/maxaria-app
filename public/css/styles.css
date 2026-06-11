@@ -1957,6 +1957,13 @@ button { font: inherit; cursor: pointer; }
 }
 .admin-toolbar .btn-ghost:hover { background: var(--surface-2); }
 
+/* Hoja de Productos con celeste sutil para distinguir los controles blancos */
+#tab-productos {
+  background: #e8f1fb;
+  border: 1px solid #cdddef;
+  border-radius: 14px;
+  padding: 16px 18px;
+}
 /* ── Toolbar de Productos reorganizada en 3 zonas ── */
 .admin-toolbar2 {
   display: flex;
@@ -1997,7 +2004,7 @@ button { font: inherit; cursor: pointer; }
    distingan claramente como campos editables (buscador con lupa). */
 .tb-filters .admin-search {
   height: 38px;
-  border: 1px solid #cbd5e1;
+  border: 1.5px solid #94a3b8;
   border-radius: 9px;
   background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>") no-repeat 11px center;
   padding: 0 12px 0 36px;
@@ -2006,7 +2013,7 @@ button { font: inherit; cursor: pointer; }
 }
 .tb-filters .admin-select {
   height: 38px;
-  border: 1px solid #cbd5e1;
+  border: 1.5px solid #94a3b8;
   border-radius: 9px;
   background: #fff;
   padding: 0 11px;
@@ -2021,8 +2028,8 @@ button { font: inherit; cursor: pointer; }
 }
 .tb-filters .admin-filter {
   font-size: 13px;
-  font-weight: 700;
-  color: #475569;
+  font-weight: 800;
+  color: #1e3a5f;
   gap: 7px;
 }
 .tb-clear {
