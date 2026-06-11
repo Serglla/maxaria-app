@@ -3288,6 +3288,54 @@
     // Refrescar dbinfo cada vez que entran a Config (asi siempre se ve
     // el ultimo tamano y la lista de backups actualizada).
     checkDbInfo();
+    // Categorias visibles del catalogo (visibilidad global)
+    loadCfgCategories();
+  }
+
+  // ---------- Config: categorias visibles del catalogo ----------
+  const cfgCatsList = document.getElementById("cfg-cats-list");
+
+  async function loadCfgCategories() {
+    if (!cfgCatsList) return;
+    try {
+      const cats = await api("/api/admin/categories");
+      if (!cats.length) {
+        cfgCatsList.innerHTML = '<span class="muted">No hay categorías.</span>';
+        return;
+      }
+      cfgCatsList.innerHTML = cats.map((c) =>
+        '<label class="cats-check">' +
+          '<input type="checkbox" data-cfgcat-id="' + c.id + '"' + (Number(c.active) === 1 ? " checked" : "") + ' />' +
+          '<span class="cats-check-lbl" title="' + escapeHtml(c.name) + ' (' + c.products_count + ' productos activos)">' + escapeHtml(c.name) + '</span>' +
+        '</label>'
+      ).join("");
+    } catch (e) {
+      cfgCatsList.innerHTML = '<span class="muted">Error cargando categorías</span>';
+    }
+  }
+
+  if (cfgCatsList) {
+    cfgCatsList.addEventListener("change", async (e) => {
+      const cb = e.target.closest("[data-cfgcat-id]");
+      if (!cb) return;
+      const id = Number(cb.dataset.cfgcatId);
+      const active = cb.checked;
+      cb.disabled = true;
+      try {
+        await api("/api/admin/categories/" + id, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active: active ? 1 : 0 }),
+        });
+        const lbl = cb.nextElementSibling ? cb.nextElementSibling.textContent : "Categoría";
+        showToast('"' + lbl + '" ' + (active ? "visible en el catálogo" : "oculta del catálogo"));
+      } catch (err) {
+        cb.checked = !active; // revertir el tilde si falló
+        alert(err.message || "Error al guardar");
+      } finally {
+        cb.disabled = false;
+      }
+    });
   }
 
   // Guardar nombre de la app

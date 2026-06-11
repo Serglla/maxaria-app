@@ -416,6 +416,11 @@ try { db.exec("ALTER TABLE products ADD COLUMN units_per_bulto INTEGER NOT NULL 
 try { db.exec("ALTER TABLE products ADD COLUMN pack_unit TEXT NOT NULL DEFAULT 'bulto'"); } catch (_) {}
 // Precio cotizado en pedidos de cotizacion (lo que responde el proveedor)
 try { db.exec("ALTER TABLE purchase_request_items ADD COLUMN unit_price INTEGER"); } catch (_) {}
+// Visibilidad GLOBAL de la categoria en el catalogo (se maneja desde
+// Configuracion). 0 = nadie la ve (clientes ni vendedores) hasta reactivarla.
+// Es independiente de user_category_access: activar una categoria global NO
+// se la muestra a un usuario que la tiene restringida por su propia config.
+try { db.exec("ALTER TABLE categories ADD COLUMN active INTEGER NOT NULL DEFAULT 1"); } catch (_) {}
 
 // Migracion: Gastos generales del negocio (transporte, alquiler, servicios,
 // impuestos, etc). Distinto de purchase_orders (que son compras de mercaderia
@@ -1092,7 +1097,7 @@ function sectionForAdminRequest(p) {
   if (has("purchases"))   return "compras";
   if (has("expenses") || has("expense-categories")) return "gastos";
   if (has("caja"))        return "caja";
-  if (has("settings") || has("dbinfo")) return "config";
+  if (has("settings") || has("dbinfo") || has("categories")) return "config";
   return null;
 }
 
@@ -1923,7 +1928,13 @@ app.get("/api/categories", requireLogin, (req, res) => {
     userLevel = req.session.vendedorClientLevel;
   }
   const allowedIds = getUserAllowedCategoryIds(userId, userLevel);
-  let rows = db.prepare("SELECT id, name, icon_url FROM categories ORDER BY sort_order, name").all();
+  let rows = db.prepare("SELECT id, name, icon_url, active FROM categories ORDER BY sort_order, name").all();
+  // Visibilidad global: las categorias desactivadas no las ve nadie en el
+  // catalogo (clientes ni vendedores). El admin (99) ve todas: este endpoint
+  // tambien alimenta los selects del panel (modales de producto, PDF, etc).
+  if (req.session.level !== 99) {
+    rows = rows.filter((c) => Number(c.active) === 1);
+  }
   if (allowedIds !== null) {
     rows = rows.filter((c) => allowedIds.has(c.id));
   }
@@ -2033,6 +2044,12 @@ app.get("/api/products", requireLogin, (req, res) => {
     "       p.name, p.description, p.image_url, " + priceExpr + " AS price, p.stock" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  WHERE p.active = 1" + (includeNoStock ? "" : " AND p.stock > 0");
+  // Visibilidad global de categorias: productos de una categoria desactivada
+  // no se muestran a clientes ni vendedores (el admin si los ve). Productos
+  // sin categoria (c.active NULL) quedan visibles via COALESCE.
+  if (req.session.level !== 99) {
+    sql += " AND COALESCE(c.active, 1) = 1";
+  }
   const params = [...priceParams];
   if (allowedIds !== null && allowedIds.size > 0) {
     const placeholders = Array.from(allowedIds).map(() => "?").join(",");
@@ -3086,6 +3103,29 @@ app.get("/api/admin/settings", requireAdmin, (req, res) => {
     whatsapp_number: getSetting("whatsapp_number", WHATSAPP_NUMBER || ""),
     price_changes_visible_levels: Array.from(getPriceChangesVisibleLevels()).sort(),
   });
+});
+
+// Visibilidad global de categorias (Configuracion). Lista TODAS las categorias
+// con su flag active y cuantos productos activos tiene cada una.
+app.get("/api/admin/categories", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT c.id, c.name, c.active," +
+    "       (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.active = 1) AS products_count" +
+    "  FROM categories c ORDER BY c.sort_order, c.name"
+  ).all();
+  res.json(rows);
+});
+
+// Activar/desactivar una categoria a nivel global. No toca user_category_access:
+// las restricciones por usuario se respetan siempre por encima de este flag.
+app.patch("/api/admin/categories/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const body = req.body || {};
+  if (!("active" in body)) return res.status(400).json({ error: "Nada para actualizar" });
+  const r = db.prepare("UPDATE categories SET active = ? WHERE id = ?").run(body.active ? 1 : 0, id);
+  if (!r.changes) return res.status(404).json({ error: "Categoria no encontrada" });
+  res.json({ ok: true, id: id, active: body.active ? 1 : 0 });
 });
 
 app.patch("/api/admin/settings", requireAdmin, (req, res) => {

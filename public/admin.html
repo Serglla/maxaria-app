@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260611e" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260611f" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -574,6 +574,22 @@
         <p class="muted small">
           El admin siempre puede ver esta solapa, sin importar la configuración.
           Si no marcás ningún nivel, ningún cliente la ve.
+        </p>
+      </div>
+
+      <div class="config-card">
+        <h3>Categorías visibles del catálogo</h3>
+        <p class="muted">
+          Las categorías destildadas se ocultan del catálogo para <strong>todos</strong>
+          (clientes y vendedores) hasta que las vuelvas a tildar. Se guarda solo al tocar cada tilde.
+        </p>
+        <div id="cfg-cats-list" class="cats-check-list">
+          <span class="muted">Cargando…</span>
+        </div>
+        <p class="muted small">
+          Esto no pisa las "Categorías visibles" de cada usuario: si un usuario tiene
+          la categoría restringida en su propia configuración, sigue sin verla aunque
+          acá esté activada. Vos (admin) seguís viendo todas las categorías en el panel.
         </p>
       </div>
 
@@ -1301,6 +1317,9 @@
 
     <!-- ===== TAB PEDIDOS ===== -->
     <section class="tab-panel" id="tab-pedidos" hidden>
+      <div class="armado-queue-head">
+        <h3 class="armado-queue-title">📦 Pedidos</h3>
+      </div>
       <div class="admin-toolbar">
         <input type="search" id="orders-search" class="admin-search" placeholder="Buscar por # o cliente..." autocomplete="off" />
         <select id="orders-status-filter" class="admin-select" title="Filtrar por estado">
@@ -3187,6 +3206,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260611d"></script>
+  <script src="/js/admin.js?v=20260611e"></script>
 </body>
 </html>

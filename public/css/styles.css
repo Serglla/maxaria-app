@@ -850,6 +850,63 @@ button { font: inherit; cursor: pointer; }
   border-top: 1px solid #e2e8f0;
   margin: 22px 0 14px;
 }
+/* Hoja celeste + título grande + controles marcados para Pedidos / Armado /
+   Entregas / Ventas (mismo tratamiento que la pestaña Productos) */
+#tab-pedidos,
+#tab-armado,
+#tab-entregas,
+#tab-ventas {
+  background: #e8f1fb;
+  border: 1px solid #cdddef;
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+.armado-queue-title { font-size: 20px; font-weight: 800; color: #13294a; letter-spacing: -0.3px; }
+#tab-pedidos .admin-search,
+#tab-armado .admin-search,
+#tab-entregas .admin-search,
+#tab-ventas .admin-search {
+  height: 38px;
+  border: 1.5px solid #94a3b8;
+  border-radius: 9px;
+  background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>") no-repeat 11px center;
+  padding: 0 12px 0 36px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+#tab-pedidos .admin-select,
+#tab-armado .admin-select,
+#tab-entregas .admin-select,
+#tab-ventas .admin-select,
+#tab-ventas .admin-input {
+  height: 38px;
+  border: 1.5px solid #94a3b8;
+  border-radius: 9px;
+  background: #fff;
+  padding: 0 11px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+#tab-pedidos .admin-search:focus,
+#tab-armado .admin-search:focus,
+#tab-entregas .admin-search:focus,
+#tab-ventas .admin-search:focus,
+#tab-pedidos .admin-select:focus,
+#tab-armado .admin-select:focus,
+#tab-entregas .admin-select:focus,
+#tab-ventas .admin-select:focus,
+#tab-ventas .admin-input:focus {
+  border-color: #2563eb;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+}
+#tab-pedidos .admin-filter,
+#tab-entregas .admin-filter,
+#tab-ventas .admin-filter {
+  font-size: 13px;
+  font-weight: 800;
+  color: #1e3a5f;
+}
 
 /* Pedido unificado: barra superior del drawer "Mis pedidos" para el vendedor tercerizado */
 .dispatch-bar {
