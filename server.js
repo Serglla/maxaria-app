@@ -6603,6 +6603,12 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
   if (!budget) return res.status(404).json({ error: "No encontrado" });
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
 
+  // En estados finales los items ya no se editan (facturado: los items viven en
+  // el pedido; cancelado: el stock ya fue devuelto y un edit lo desincronizaría).
+  if (budget.status === "facturado" || budget.status === "cancelado") {
+    return res.status(409).json({ error: "No se puede editar un presupuesto " + budget.status });
+  }
+
   const b = req.body || {};
   const clientId = b.client_id ? Number(b.client_id) : null;
   const clientName = b.client_name || "Consumidor final";
@@ -6628,6 +6634,19 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
   const total = round2(afterDiscount * (1 + surchargePct / 100));
 
   const updateBudget = db.transaction(() => {
+    // El presupuesto descuenta stock al crearse (stock_discounted=1). Al editar
+    // items hay que ajustar por la diferencia: devolver el stock de los items
+    // viejos y descontar el de los nuevos, igual que PUT /api/admin/orders/:id/items.
+    // Sin esto, un producto agregado en una edición nunca descontaba stock.
+    if (budget.stock_discounted) {
+      const oldItems = db.prepare(
+        "SELECT product_id, quantity FROM budget_items WHERE budget_id = ?"
+      ).all(budget.id);
+      const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
+      for (const oi of oldItems) {
+        if (oi.product_id) retStock.run(oi.quantity, oi.product_id);
+      }
+    }
     db.prepare(
       "UPDATE budgets SET client_id=?, client_name=?, payment_method=?, currency=?," +
       "  discount_percent=?, surcharge_percent=?, subtotal=?, total=?, notes=?, price_basis=?," +
@@ -6639,9 +6658,15 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
       "INSERT INTO budget_items (budget_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +
       "  VALUES (?,?,?,?,?,?,?,?)"
     );
+    // Mismo criterio que al crear: el admin puede dejar stock negativo
+    // (productos a reponer), vendedores mantienen el clamp en 0.
+    const decStock = Number(u.level) === 99
+      ? db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?")
+      : db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
     for (const it of computedItems) {
       insItem.run(budget.id, it.product_id || null, it.product_code || "", it.product_name || "",
                   it.quantity, it.unit_price, it.discount_percent, it.subtotal);
+      if (budget.stock_discounted && it.product_id) decStock.run(it.quantity, it.product_id);
     }
   });
 
@@ -6775,7 +6800,38 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("v
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
-  db.prepare("DELETE FROM budgets WHERE id = ?").run(budget.id);
+
+  // El presupuesto descuenta stock al crearse (stock_discounted=1): al borrarlo
+  // hay que devolverlo, igual que al cancelar. Excepcion: si esta vinculado a un
+  // pedido con orders.stock_discounted=1 (facturado/entregado), el descuento ya
+  // es del pedido y devolverlo dejaria la venta sin descontar. Si el pedido
+  // vinculado tiene stock_discounted=0 (pedido del catalogo aun no entregado),
+  // si se devuelve: al entregarse, el deliver re-descuenta porque ya no habra
+  // budget con stock_discounted=1.
+  let returnStock = !!budget.stock_discounted;
+  if (returnStock && budget.order_id) {
+    const linkedOrder = db.prepare(
+      "SELECT stock_discounted FROM orders WHERE id = ?"
+    ).get(budget.order_id);
+    if (linkedOrder && linkedOrder.stock_discounted) returnStock = false;
+  }
+
+  try {
+    db.transaction(() => {
+      if (returnStock) {
+        const budgetItems = db.prepare(
+          "SELECT product_id, quantity FROM budget_items WHERE budget_id = ?"
+        ).all(budget.id);
+        const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
+        for (const it of budgetItems) {
+          if (it.product_id) retStock.run(it.quantity, it.product_id);
+        }
+      }
+      db.prepare("DELETE FROM budgets WHERE id = ?").run(budget.id);
+    })();
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
   res.json({ ok: true });
 });
 
