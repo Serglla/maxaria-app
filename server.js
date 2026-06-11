@@ -7342,8 +7342,11 @@ app.get("/api/cajas", requireVendedorOrAdmin, (req, res) => {
   res.json(rows);
 });
 
-// POST /api/admin/caja/accounts — crear cuenta
+// POST /api/admin/caja/accounts — crear cuenta (solo superadmin)
 app.post("/api/admin/caja/accounts", requireAdmin, (req, res) => {
+  if (!getAdminPerms(req.session.userId).isSuperadmin) {
+    return res.status(403).json({ error: "Solo el superadmin puede crear cajas" });
+  }
   const { name, type, sort_order, responsable_user_id } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: "Nombre requerido" });
   const validTypes = ["efectivo","banco","digital"];
@@ -7372,6 +7375,10 @@ app.patch("/api/admin/caja/accounts/:id", requireAdmin, (req, res) => {
   if (active !== undefined)     updates.active     = active ? 1 : 0;
   if (sort_order !== undefined) updates.sort_order = Number(sort_order) || 0;
   if (responsable_user_id !== undefined) {
+    // Cambiar el responsable de una caja es exclusivo del superadmin.
+    if (!getAdminPerms(req.session.userId).isSuperadmin) {
+      return res.status(403).json({ error: "Solo el superadmin puede cambiar el responsable de una caja" });
+    }
     updates.responsable_user_id = responsable_user_id ? Number(responsable_user_id) : null;
   }
   if (!Object.keys(updates).length) return res.json({ ok: true });

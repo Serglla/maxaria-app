@@ -8573,19 +8573,21 @@
       els.catalogPriceListsGroup.innerHTML = "<option disabled>No hay listas activas</option>";
     }
 
-    // Poblar categorías (checkboxes)
-    if (!state.allCategories.length) {
-      try { state.allCategories = await api("/api/categories"); } catch (_) {}
-    }
+    // Poblar categorías (checkboxes). Se refresca SIEMPRE el cache: el flag
+    // "active" (visibilidad global, Configuración) pudo cambiar en esta sesión.
+    try { state.allCategories = await api("/api/categories"); } catch (_) {}
     if (els.catalogCatsLoading) els.catalogCatsLoading.remove();
     els.catalogCatsWrap.innerHTML = "";
     state.allCategories.forEach((c) => {
+      // Categorías ocultas del catálogo (active=0): destildadas por default.
+      // El admin puede tildarlas a mano (o con "Todas") si las quiere incluir.
+      const isActive = Number(c.active) !== 0;
       const lbl = document.createElement("label");
       lbl.className = "cats-check";
-      lbl.title = c.name;
+      lbl.title = isActive ? c.name : c.name + " — oculta del catálogo (Configuración)";
       lbl.innerHTML =
-        '<input type="checkbox" data-cat-id="' + c.id + '" checked>' +
-        '<span class="cats-check-lbl">' + escapeHtml(c.name) + '</span>';
+        '<input type="checkbox" data-cat-id="' + c.id + '"' + (isActive ? " checked" : "") + '>' +
+        '<span class="cats-check-lbl">' + escapeHtml(c.name) + (isActive ? "" : ' <span class="np-note">(oculta)</span>') + '</span>';
       els.catalogCatsWrap.appendChild(lbl);
     });
 
@@ -8641,14 +8643,22 @@
   }
 
   // Al elegir un cliente, las categorías a incluir heredan las que ese cliente
-  // tiene permitidas (user_category_access). Sin restricción = todas marcadas.
+  // tiene permitidas (user_category_access), intersectadas con la visibilidad
+  // global (las ocultas en Configuración quedan destildadas igual, como en el
+  // catálogo real del cliente). Sin cliente = el default global (activas).
   async function applyCatalogClientCategories(clientId) {
     const boxes = els.catalogCatsWrap.querySelectorAll("input[type=checkbox]");
-    if (!clientId) { boxes.forEach((b) => { b.checked = true; }); return; }
+    const activeIds = new Set(
+      (state.allCategories || []).filter((c) => Number(c.active) !== 0).map((c) => c.id)
+    );
+    if (!clientId) { boxes.forEach((b) => { b.checked = activeIds.has(Number(b.dataset.catId)); }); return; }
     try {
       const data = await api("/api/admin/users/" + clientId + "/categories");
       const allowed = new Set((data.categories || []).filter((c) => c.allowed).map((c) => c.id));
-      boxes.forEach((b) => { b.checked = allowed.has(Number(b.dataset.catId)); });
+      boxes.forEach((b) => {
+        const id = Number(b.dataset.catId);
+        b.checked = allowed.has(id) && activeIds.has(id);
+      });
     } catch (_) { /* si falla, se dejan como están */ }
   }
 
