@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260611b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260611c" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -2905,8 +2905,9 @@
         <strong>Editar producto</strong>
         <button type="button" class="admin-modal-close" data-close>✕</button>
       </div>
-      <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">
+      <div style="padding:16px 20px;display:flex;flex-direction:column;gap:14px">
+        <div class="prod-section-title">Datos del producto</div>
+        <div class="prod-grid-2">
           <label class="np-label">
             <span>Código</span>
             <input type="text" id="ep-code" class="admin-input" autocomplete="off" />
@@ -2915,18 +2916,19 @@
             <span>Categoría</span>
             <select id="ep-category" class="admin-select"></select>
           </label>
+          <label class="np-label np-col-full">
+            <span>Nombre <span class="req">*</span></span>
+            <input type="text" id="ep-name" class="admin-input" placeholder="Nombre del producto" />
+          </label>
         </div>
-        <label class="np-label">
-          <span>Nombre <span class="req">*</span></span>
-          <input type="text" id="ep-name" class="admin-input" placeholder="Nombre del producto" />
-        </label>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+        <div class="prod-section-title">Stock y empaque</div>
+        <div class="prod-grid-2">
           <label class="np-label">
             <span>Stock actual</span>
             <input type="number" id="ep-stock" class="admin-input" min="0" step="1" />
           </label>
           <label class="np-label">
-            <span>Stock mínimo <span style="font-weight:400;color:#9ca3af">(alerta)</span></span>
+            <span>Stock mínimo <span class="np-note">(alerta)</span></span>
             <input type="number" id="ep-stock-min" class="admin-input" min="0" step="1" value="0" />
           </label>
           <label class="np-label">
@@ -2938,17 +2940,18 @@
             </select>
           </label>
           <label class="np-label">
-            <span>Unidades por caja/bulto <span style="font-weight:400;color:#9ca3af" title="Unidades de venta que componen ese empaque (caja o bulto)">(?)</span></span>
+            <span>Unidades por caja/bulto <span class="np-note" title="Unidades de venta que componen ese empaque (caja o bulto)">(?)</span></span>
             <input type="number" id="ep-units-per-bulto" class="admin-input" min="1" step="1" value="1" />
           </label>
+          <label class="np-label np-col-full">
+            <span>Costo</span>
+            <input type="number" id="ep-cost" class="admin-input" min="0" step="0.01" />
+          </label>
         </div>
-        <label class="np-label">
-          <span>Costo</span>
-          <input type="number" id="ep-cost" class="admin-input" min="0" step="0.01" />
-        </label>
-        <div id="ep-prices-box" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
+        <div class="prod-section-title">Precios por nivel</div>
+        <div id="ep-prices-box" class="bidir-box">
           <div class="bidir-header">
-            <span>Nivel</span><span>%</span><span>$$$</span>
+            <span>Nivel</span><span>Ganancia %</span><span>Precio</span>
           </div>
           <div class="bidir-row">
             <span class="bidir-lbl">VIP</span>
@@ -2994,10 +2997,10 @@
         <strong>Nuevo producto</strong>
         <button type="button" class="admin-modal-close" data-close>✕</button>
       </div>
-      <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
+      <div style="padding:16px 20px;display:flex;flex-direction:column;gap:14px">
 
-        <!-- Fila 1: Código + Categoría -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">
+        <div class="prod-section-title">Datos del producto</div>
+        <div class="prod-grid-2">
           <label class="np-label">
             <span>Código <span class="req">*</span></span>
             <input type="text" id="np-code" class="admin-input" placeholder="ej: 4088" />
@@ -3006,33 +3009,32 @@
             <span>Categoría</span>
             <select id="np-category" class="admin-select"></select>
           </label>
+          <label class="np-label np-col-full">
+            <span>Nombre <span class="req">*</span></span>
+            <input type="text" id="np-name" class="admin-input" placeholder="Nombre del producto" />
+          </label>
         </div>
 
-        <!-- Fila 2: Nombre -->
-        <label class="np-label">
-          <span>Nombre <span class="req">*</span></span>
-          <input type="text" id="np-name" class="admin-input" placeholder="Nombre del producto" />
-        </label>
-
-        <!-- Fila 3: Stock + Stock mínimo -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <label class="np-label">Stock inicial
+        <div class="prod-section-title">Stock y empaque</div>
+        <div class="prod-grid-2">
+          <label class="np-label">
+            <span>Stock inicial</span>
             <input type="number" id="np-stock" class="admin-input" placeholder="0" min="0" step="1" value="0" />
           </label>
           <label class="np-label">
-            <span>Stock mínimo <span style="font-weight:400;color:#9ca3af">(alerta)</span></span>
+            <span>Stock mínimo <span class="np-note">(alerta)</span></span>
             <input type="number" id="np-stock-min" class="admin-input" placeholder="0" min="0" step="1" value="0" />
           </label>
+          <label class="np-label np-col-full">
+            <span>Costo</span>
+            <input type="number" id="np-cost" class="admin-input" placeholder="0" min="0" step="0.01" value="0" />
+          </label>
         </div>
-        <!-- Fila 4: Costo -->
-        <label class="np-label">Costo
-          <input type="number" id="np-cost" class="admin-input" placeholder="0" min="0" step="0.01" value="0" />
-        </label>
 
-        <!-- Precios — % del costo, bidireccional -->
-        <div id="np-prices-box" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
+        <div class="prod-section-title">Precios por nivel</div>
+        <div id="np-prices-box" class="bidir-box">
           <div class="bidir-header">
-            <span>Nivel</span><span>%</span><span>$$$</span>
+            <span>Nivel</span><span>Ganancia %</span><span>Precio</span>
           </div>
           <div class="bidir-row">
             <span class="bidir-lbl">VIP</span>
