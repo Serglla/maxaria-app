@@ -109,6 +109,62 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
+  // Modal de confirmación/aviso propio (reemplaza confirm()/alert() nativos, que
+  // muestran el dominio "...railway.app dice" y botones no editables). Acepta
+  // string (= mensaje) u objeto { title, message, confirmText, cancelText,
+  // danger, alert }. Devuelve Promise<boolean>. Con alert:true oculta Cancelar.
+  // Maneja su cierre en captura (Escape/Enter/overlay). Fallback a nativo si
+  // falta el HTML.
+  function confirmModal(opts) {
+    if (typeof opts === "string") opts = { message: opts };
+    opts = opts || {};
+    return new Promise((resolve) => {
+      const modal = document.getElementById("confirm-modal");
+      const titleEl = document.getElementById("confirm-modal-title");
+      const bodyEl = document.getElementById("confirm-modal-body");
+      const okBtn = document.getElementById("confirm-modal-ok");
+      const cancelBtn = document.getElementById("confirm-modal-cancel");
+      if (!modal || !okBtn || !cancelBtn) {
+        if (opts.alert) { window.alert(opts.message || ""); resolve(true); }
+        else resolve(window.confirm(opts.message || ""));
+        return;
+      }
+      const appName = (state.me && (state.me.app_name || state.me.appName)) || "Maxaria";
+      titleEl.textContent = opts.title || appName;
+      bodyEl.textContent = opts.message || "";
+      okBtn.textContent = opts.confirmText || (opts.alert ? "Aceptar" : "Confirmar");
+      cancelBtn.textContent = opts.cancelText || "Cancelar";
+      cancelBtn.hidden = !!opts.alert;
+      okBtn.className = "btn " + (opts.danger ? "btn-danger" : "btn-primary");
+      modal.hidden = false;
+      function cleanup(val) {
+        modal.hidden = true;
+        cancelBtn.hidden = false;
+        okBtn.removeEventListener("click", onOk);
+        cancelBtn.removeEventListener("click", onCancel);
+        modal.removeEventListener("click", onOverlay);
+        document.removeEventListener("keydown", onKey, true);
+        resolve(val);
+      }
+      function onOk() { cleanup(true); }
+      function onCancel() { cleanup(false); }
+      function onOverlay(e) { if (e.target === modal) cleanup(!!opts.alert); }
+      function onKey(e) {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(!!opts.alert); }
+        else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); cleanup(true); }
+      }
+      okBtn.addEventListener("click", onOk);
+      cancelBtn.addEventListener("click", onCancel);
+      modal.addEventListener("click", onOverlay);
+      document.addEventListener("keydown", onKey, true);
+      okBtn.focus();
+    });
+  }
+  function alertModal(opts) {
+    if (typeof opts === "string") opts = { message: opts };
+    return confirmModal(Object.assign({}, opts, { alert: true }));
+  }
+
   async function api(url, opts) {
     const res = await fetch(url, opts);
     if (res.status === 401) { location.href = "/login"; throw new Error("no auth"); }
@@ -509,7 +565,7 @@
 
   async function selectClient(client) {
     if (state.cart.size > 0) {
-      const ok = confirm(
+      const ok = await confirmModal(
         "Tenés " + state.cart.size + " producto(s) en el carrito.\n\n" +
         "¿Cambiar al cliente " + (client.full_name || client.username) + " y vaciar el carrito?"
       );
@@ -557,10 +613,10 @@
         try {
           await applyClientLocally();
         } catch (e2) {
-          alert("Sin conexión y no hay catálogo guardado. Abrí la app con internet al menos una vez.");
+          alertModal("Sin conexión y no hay catálogo guardado. Abrí la app con internet al menos una vez.");
         }
       } else {
-        alert("Error al seleccionar cliente: " + (e.message || "Error desconocido"));
+        alertModal("Error al seleccionar cliente: " + (e.message || "Error desconocido"));
       }
     }
   }
@@ -838,7 +894,7 @@
 
   // Guarda el carrito actual como pedido offline (sin conexión)
   function saveCartOffline(phone) {
-    if (!window.OfflineMode) { alert("Sin conexión para enviar el pedido."); return; }
+    if (!window.OfflineMode) { alertModal("Sin conexión para enviar el pedido."); return; }
     const apiItems  = Array.from(state.cart.values()).map((it) => ({ id: it.id, qty: it.qty }));
     const snapshot  = Array.from(state.cart.values());
     const notes     = (els.cartNotes && els.cartNotes.value.trim()) || null;
@@ -862,7 +918,7 @@
       clearedIds.forEach(refreshCardForProduct);
       closeDrawers();
     }).catch(function () {
-      alert("No se pudo guardar el pedido sin conexión. Intentá de nuevo.");
+      alertModal("No se pudo guardar el pedido sin conexión. Intentá de nuevo.");
     });
   }
 
@@ -873,10 +929,10 @@
       // Para clientes (1-4): el phone viene del vendedor asignado o, si no hay,
       // del WhatsApp global de la empresa. Si tampoco hay global, no hay destino.
       if ([1, 2, 3, 4].includes(Number(state.me && state.me.level))) {
-        alert("No hay número de WhatsApp configurado.\n" +
+        alertModal("No hay número de WhatsApp configurado.\n" +
               "Pedile al administrador que cargue el WhatsApp principal de la empresa.");
       } else {
-        alert("No hay numero de WhatsApp configurado.");
+        alertModal("No hay numero de WhatsApp configurado.");
       }
       return;
     }
@@ -907,7 +963,7 @@
       if (!resp.ok) {
         if (popup && !popup.closed) popup.close();
         const body = await resp.json().catch(() => ({}));
-        alert("No se pudo guardar el pedido: " + (body.error || resp.status));
+        alertModal("No se pudo guardar el pedido: " + (body.error || resp.status));
         return;
       }
       const out = await resp.json();
@@ -944,7 +1000,7 @@
         return;
       }
       console.error(e);
-      alert("Error de conexion al enviar el pedido");
+      alertModal("Error de conexion al enviar el pedido");
     } finally {
       els.cartSend.disabled = false;
       els.cartSend.textContent = original;
@@ -1038,7 +1094,7 @@
   // la captura para que se rendericen todas las secciones.
   async function sharePriceUpdateAsImage(blockEl) {
     if (typeof window.html2canvas !== "function") {
-      alert("No se pudo cargar la herramienta de exportacion. Revisa tu conexion.");
+      alertModal("No se pudo cargar la herramienta de exportacion. Revisa tu conexion.");
       return;
     }
 
@@ -1107,7 +1163,7 @@
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     } catch (e) {
       console.error(e);
-      alert("Error al generar la imagen: " + (e && e.message ? e.message : e));
+      alertModal("Error al generar la imagen: " + (e && e.message ? e.message : e));
     } finally {
       if (headerEl && headerEl.parentNode) headerEl.parentNode.removeChild(headerEl);
       blockEl.classList.remove("pc-capturing");
@@ -1372,7 +1428,7 @@
   async function doDispatch(btn) {
     const ids = selectedDispatchIds();
     if (!ids.length) return;
-    if (!confirm("Vas a unificar " + ids.length + " pedido(s) y mandarlo al admin. Despues los originales quedan marcados como 'enviado'. Seguir?")) return;
+    if (!await confirmModal("Vas a unificar " + ids.length + " pedido(s) y mandarlo al admin. Despues los originales quedan marcados como 'enviado'. Seguir?")) return;
     btn.disabled = true;
     const prevText = btn.textContent;
     btn.textContent = "Enviando...";
@@ -1385,12 +1441,12 @@
       if (res && res.whatsapp_link) {
         window.open(res.whatsapp_link, "_blank");
       } else {
-        alert("Pedido unificado creado (#" + res.unified_order_id + ") pero falta configurar el numero principal de WhatsApp en /admin > Configuracion.");
+        alertModal("Pedido unificado creado (#" + res.unified_order_id + ") pero falta configurar el numero principal de WhatsApp en /admin > Configuracion.");
       }
       // Refrescar la lista
       await openOrders();
     } catch (e) {
-      alert((e && e.message) || "Error al enviar el pedido unificado");
+      alertModal((e && e.message) || "Error al enviar el pedido unificado");
       btn.disabled = false;
       btn.textContent = prevText;
     }
@@ -1685,7 +1741,7 @@
       }
 
       if (state.cart.size > 0) {
-        const ok = confirm(
+        const ok = await confirmModal(
           "Tenés " + state.cart.size + " producto(s) en el carrito con precios " +
           "anteriores.\n\n¿Vaciar el carrito y cambiar a " + label + "?"
         );
@@ -1726,7 +1782,7 @@
         renderProducts();
       } catch (e) {
         console.error(e);
-        alert("No se pudieron cargar los precios para " + label);
+        alertModal("No se pudieron cargar los precios para " + label);
       }
     });
   }

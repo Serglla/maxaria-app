@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Catálogo</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260611g" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260611i" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -218,8 +218,21 @@
     </div>
   </div>
 
+  <!-- Modal de confirmación/aviso propio (reemplaza confirm()/alert() nativos
+       que muestran el dominio "...railway.app dice"). CSS .app-confirm compartido. -->
+  <div id="confirm-modal" class="app-confirm" hidden>
+    <div class="app-confirm-box">
+      <h3 id="confirm-modal-title" class="app-confirm-title">Confirmar</h3>
+      <div id="confirm-modal-body" class="app-confirm-body"></div>
+      <div class="app-confirm-foot">
+        <button type="button" class="btn" id="confirm-modal-cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="confirm-modal-ok">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="/js/offline.js"></script>
-  <script src="/js/app.js?v=20260611g"></script>
+  <script src="/js/app.js?v=20260611i"></script>
 </body>
 </html>

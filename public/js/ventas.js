@@ -331,6 +331,15 @@
       try { vConfEls.ok.focus(); } catch (_) {}
     });
   }
+  // Aviso propio (un solo botón) reusando el mismo modal: oculta Cancelar.
+  // Reemplaza al alert() nativo (que muestra el dominio).
+  function vAlert(message, opts) {
+    opts = opts || {};
+    if (!vConfEls.modal) { window.alert(message); return Promise.resolve(); }
+    const p = vConfirm(message, { title: opts.title || "Aviso", okText: opts.okText || "Aceptar" });
+    if (vConfEls.cancel) vConfEls.cancel.hidden = true;
+    return p.then((r) => { if (vConfEls.cancel) vConfEls.cancel.hidden = false; return r; });
+  }
   if (vConfEls.ok)     vConfEls.ok.addEventListener("click", () => vCloseConfirm(true));
   if (vConfEls.cancel) vConfEls.cancel.addEventListener("click", () => vCloseConfirm(false));
   // Teclado: Enter confirma, Esc cancela (mientras el modal está abierto).
@@ -686,7 +695,7 @@
       });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        alert(err.error || "Error al crear el cliente");
+        vAlert(err.error || "Error al crear el cliente");
         return;
       }
       const newClient = await r.json();
@@ -700,7 +709,7 @@
       vEls.client.dispatchEvent(new Event("change"));
       vCloseQuickClient();
     } catch (e) {
-      alert("Error de red: " + e.message);
+      vAlert("Error de red: " + e.message);
     } finally {
       vEls.qcSaveBtn.disabled = false;
       vEls.qcSaveBtn.textContent = "Crear cliente";

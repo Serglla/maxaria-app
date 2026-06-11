@@ -618,13 +618,16 @@
     els.toast._t = setTimeout(() => { els.toast.hidden = true; }, 2400);
   }
 
-  // Modal de confirmación propio (reemplaza al confirm() nativo, que muestra el
-  // dominio "...railway.app dice" y botones que no se pueden editar). Devuelve
-  // una Promise<boolean>. Maneja su propio cierre (Escape=cancelar, Enter=ok,
-  // click en overlay=cancelar) en fase de captura, así no dispara el handler
-  // global de Escape que cerraría el modal de abajo. Fallback a confirm() nativo
-  // si el HTML del modal no está presente.
+  // Modal de confirmación propio (reemplaza al confirm()/alert() nativos, que
+  // muestran el dominio "...railway.app dice" y botones que no se pueden editar).
+  // Acepta un string (= mensaje) o un objeto { title, message, confirmText,
+  // cancelText, danger, alert }. Devuelve Promise<boolean>. Con alert:true se
+  // oculta el botón Cancelar (sirve de aviso). Maneja su propio cierre
+  // (Escape/Enter/overlay) en fase de captura, así no dispara el handler global
+  // de Escape que cerraría el modal de abajo. Fallback a confirm()/alert()
+  // nativos si el HTML del modal no está presente.
   function confirmModal(opts) {
+    if (typeof opts === "string") opts = { message: opts };
     opts = opts || {};
     return new Promise((resolve) => {
       const modal = document.getElementById("confirm-modal");
@@ -633,18 +636,21 @@
       const okBtn = document.getElementById("confirm-modal-ok");
       const cancelBtn = document.getElementById("confirm-modal-cancel");
       if (!modal || !okBtn || !cancelBtn) {
-        resolve(window.confirm(opts.message || ""));
+        if (opts.alert) { window.alert(opts.message || ""); resolve(true); }
+        else resolve(window.confirm(opts.message || ""));
         return;
       }
       const appName = (state.me && (state.me.app_name || state.me.appName)) || "Maxaria";
       titleEl.textContent = opts.title || appName;
       bodyEl.textContent = opts.message || "";
-      okBtn.textContent = opts.confirmText || "Confirmar";
+      okBtn.textContent = opts.confirmText || (opts.alert ? "Aceptar" : "Confirmar");
       cancelBtn.textContent = opts.cancelText || "Cancelar";
+      cancelBtn.hidden = !!opts.alert;
       okBtn.className = "btn " + (opts.danger ? "btn-danger" : "btn-primary");
       modal.hidden = false;
       function cleanup(val) {
         modal.hidden = true;
+        cancelBtn.hidden = false; // restaurar para el próximo uso
         okBtn.removeEventListener("click", onOk);
         cancelBtn.removeEventListener("click", onCancel);
         modal.removeEventListener("click", onOverlay);
@@ -653,9 +659,9 @@
       }
       function onOk() { cleanup(true); }
       function onCancel() { cleanup(false); }
-      function onOverlay(e) { if (e.target === modal) cleanup(false); }
+      function onOverlay(e) { if (e.target === modal) cleanup(!!opts.alert); }
       function onKey(e) {
-        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(false); }
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(!!opts.alert); }
         else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); cleanup(true); }
       }
       okBtn.addEventListener("click", onOk);
@@ -664,6 +670,13 @@
       document.addEventListener("keydown", onKey, true);
       okBtn.focus();
     });
+  }
+
+  // Aviso propio (un solo botón Aceptar). Reemplaza a alert(). No bloquea el
+  // hilo como el alert() nativo; devuelve Promise<void> por si se quiere await.
+  function alertModal(opts) {
+    if (typeof opts === "string") opts = { message: opts };
+    return confirmModal(Object.assign({}, opts, { alert: true }));
   }
 
   async function api(url, opts) {
@@ -2591,7 +2604,7 @@
       const act = btn.dataset.act;
 
       if (act === "pl-delete") {
-        if (!confirm("¿Borrar esta lista de precios? Esta acción no se puede deshacer.")) return;
+        if (!await confirmModal({ message: "¿Borrar esta lista de precios? Esta acción no se puede deshacer.", confirmText: "Borrar", danger: true })) return;
         try {
           await api("/api/admin/price-lists/" + id, { method: "DELETE" });
           state.priceLists = state.priceLists.filter((x) => x.id !== id);
@@ -3379,7 +3392,7 @@
         showToast('"' + lbl + '" ' + (active ? "visible en el catálogo" : "oculta del catálogo"));
       } catch (err) {
         cb.checked = !active; // revertir el tilde si falló
-        alert(err.message || "Error al guardar");
+        alertModal(err.message || "Error al guardar");
       } finally {
         cb.disabled = false;
       }
@@ -3481,7 +3494,7 @@
         if (!Array.isArray(list) || !list.length) {
           throw new Error("No encontré usuarios en el archivo");
         }
-        const ok = confirm(
+        const ok = await confirmModal(
           "Vas a importar " + list.length + " usuario(s).\n" +
           "Los que ya existan se ACTUALIZAN (mismo username).\n" +
           "Los nuevos se crean. Ningún usuario se borra.\n\n¿Seguir?"
@@ -3978,7 +3991,7 @@
     const stockVal = enStock ? Math.round(Number(document.getElementById("pbm-stock-value").value) || 0) : 0;
     const activeVal = enActive ? Number((document.querySelector('input[name="pbm-active"]:checked') || {}).value) : null;
 
-    if (ids.length > 20 && !confirm("Vas a modificar " + ids.length + " productos. ¿Confirmás?")) return;
+    if (ids.length > 20 && !(await confirmModal("Vas a modificar " + ids.length + " productos. ¿Confirmás?"))) return;
 
     const factor = (enPrice && scope === "uniform" && priceMode === "pct") ? 1 + pricePct / 100 : 1;
     const patches = ids.map((id) => {
@@ -4461,9 +4474,9 @@
     }
   }
 
-  // vConfirm: usa el confirm nativo si no hay modal de confirmación.
+  // vConfirm: confirmación con el modal propio (string o {opts}).
   function vConfirm(msg) {
-    return Promise.resolve(window.confirm(msg));
+    return confirmModal(msg);
   }
 
   // ---------- Pedidos ----------
@@ -4781,7 +4794,7 @@
         var orderId = Number(statusSel.dataset.orderId);
         // Al cancelar se devuelve el stock de los productos del pedido: avisar.
         if (newStatus === "cancelado") {
-          if (!confirm("Al cancelar el pedido, los productos vuelven al stock.\n\n¿Confirmás la cancelación?")) {
+          if (!await confirmModal({ message: "Al cancelar el pedido, los productos vuelven al stock.\n\n¿Confirmás la cancelación?", confirmText: "Cancelar pedido", cancelText: "Volver", danger: true })) {
             statusSel.value = order.status;
             return;
           }
@@ -5523,7 +5536,7 @@
             const ptot = Number(ord.pick_total) || 0;
             if (started > 0 && started < ptot) {
               const faltan = ptot - started;
-              if (!confirm("Pedido #" + orderId + ": hay " + faltan +
+              if (!await confirmModal("Pedido #" + orderId + ": hay " + faltan +
                 (faltan === 1 ? " item sin armar" : " items sin armar") +
                 " en el chequeo. ¿Pasar a Entregas igual?")) return;
             }
@@ -6292,10 +6305,12 @@
       const detail = changes.slice(0, 8).map(
         (i) => "· " + (i.product_name || "") + ": " + Number(i.quantity) + " → " + Number(i.checked_qty)
       ).join("\n") + (changes.length > 8 ? "\n· …y " + (changes.length - 8) + " más" : "");
-      if (!confirm(
-        "Esto cambia las cantidades de la compra #" + recvState.purchaseId +
-        " a lo realmente recibido, recalcula el total y ajusta el stock:\n\n" + detail + "\n\n¿Continuar?"
-      )) return;
+      if (!await confirmModal({
+        title: "📦 Confirmar recepción",
+        message: "Esto cambia las cantidades de la compra #" + recvState.purchaseId +
+          " a lo realmente recibido, recalcula el total y ajusta el stock:\n\n" + detail,
+        confirmText: "Confirmar recepción",
+      })) return;
       recvEls.applyBtn.disabled = true;
       try {
         const out = await api("/api/admin/reception/" + recvState.purchaseId + "/apply", {
@@ -7236,7 +7251,7 @@
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
         const id = Number(btn.dataset.id);
-        if (!confirm("¿Eliminar cotización #" + id + "?")) return;
+        if (!await confirmModal({ message: "¿Eliminar cotización #" + id + "?", confirmText: "Eliminar", danger: true })) return;
         try {
           await api("/api/admin/purchase-requests/" + id, { method: "DELETE" });
           state.cotizaciones = state.cotizaciones.filter((c) => c.id !== id);
@@ -7961,7 +7976,7 @@
         const id = Number(btn.dataset.id);
         const client = btn.dataset.client;
         const amount = btn.dataset.amount;
-        if (!confirm("Eliminar el pago de " + fmtPrice(amount) + " de " + client + "?\nEsto también eliminará el movimiento de cuenta corriente.")) return;
+        if (!await confirmModal({ message: "Eliminar el pago de " + fmtPrice(amount) + " de " + client + "?\nEsto también eliminará el movimiento de cuenta corriente.", confirmText: "Eliminar", danger: true })) return;
         try {
           await api("/api/admin/payments/" + id, { method: "DELETE" });
           state.payments = state.payments.filter((p) => p.id !== id);
@@ -8236,12 +8251,12 @@
         if (row) openExpenseForm(row);
       } else if (del) {
         const id = Number(del.dataset.id);
-        if (!confirm("¿Borrar este gasto? Esta acción no se puede deshacer.")) return;
+        if (!await confirmModal({ message: "¿Borrar este gasto? Esta acción no se puede deshacer.", confirmText: "Borrar", danger: true })) return;
         try {
           await api("/api/admin/expenses/" + id, { method: "DELETE" });
           await loadExpenses();
         } catch (err) {
-          alert("Error al borrar: " + err.message);
+          alertModal("Error al borrar: " + err.message);
         }
       }
     });
@@ -8358,7 +8373,7 @@
         await loadExpenseCategories();
         renderExpenseCategoriesAdmin();
       } catch (err) {
-        alert("Error: " + err.message);
+        alertModal("Error: " + err.message);
         await loadExpenseCategories();
         renderExpenseCategoriesAdmin();
       }
@@ -8368,13 +8383,13 @@
       const btn = ev.target.closest('[data-cat-act="del"]');
       if (!btn) return;
       const id = Number(btn.dataset.id);
-      if (!confirm("¿Borrar esta categoría?")) return;
+      if (!await confirmModal({ message: "¿Borrar esta categoría?", confirmText: "Borrar", danger: true })) return;
       try {
         await api("/api/admin/expense-categories/" + id, { method: "DELETE" });
         await loadExpenseCategories();
         renderExpenseCategoriesAdmin();
       } catch (err) {
-        alert("Error: " + err.message);
+        alertModal("Error: " + err.message);
       }
     });
   }
@@ -9259,7 +9274,7 @@
   if (bEls.cancelBtn) {
     bEls.cancelBtn.addEventListener("click", async () => {
       if (!bState.editingId) return;
-      if (!confirm("Al cancelar el presupuesto, los productos vuelven al stock.\n\n¿Confirmás la cancelación?")) return;
+      if (!await confirmModal({ message: "Al cancelar el presupuesto, los productos vuelven al stock.\n\n¿Confirmás la cancelación?", confirmText: "Cancelar presupuesto", cancelText: "Volver", danger: true })) return;
       try {
         await api("/api/budgets/" + bState.editingId + "/status", { method: "PATCH", body: JSON.stringify({ status: "cancelado" }) });
         bState.editingStatus = "cancelado";
@@ -9286,8 +9301,11 @@
   if (bEls.invoiceBtn) {
     bEls.invoiceBtn.addEventListener("click", async () => {
       if (!bState.editingId) return;
-      if (!confirm("¿Facturar este presupuesto?\n\nSe va a descontar el stock de los artículos" +
-          (bState.items.some(() => true) ? " y, si hay un cliente con cuenta corriente, se le debitará el total." : "."))) return;
+      if (!await confirmModal({
+        message: "¿Facturar este presupuesto?\n\nSe va a descontar el stock de los artículos" +
+          (bState.items.some(() => true) ? " y, si hay un cliente con cuenta corriente, se le debitará el total." : "."),
+        confirmText: "Facturar",
+      })) return;
       bEls.invoiceBtn.disabled = true;
       try {
         const data = await api("/api/budgets/" + bState.editingId + "/invoice", { method: "POST" });
@@ -9675,9 +9693,9 @@
       if (!editProdId) return;
       const get = (id) => { const el = document.getElementById(id); return el ? el.value : ""; };
       const name = get("ep-name").trim();
-      if (!name) { alert("El nombre es obligatorio."); return; }
+      if (!name) { alertModal("El nombre es obligatorio."); return; }
       const code = get("ep-code").trim();
-      if (!code) { alert("El código es obligatorio."); return; }
+      if (!code) { alertModal("El código es obligatorio."); return; }
       const activeChk = document.getElementById("ep-active");
       const body = {
         code,
@@ -9723,7 +9741,7 @@
         showToast("Producto guardado");
         if (editProdModal) { editProdModal.hidden = true; editProdModal.style.zIndex = ""; }
       } catch (e) {
-        alert(e.message || "Error al guardar");
+        alertModal(e.message || "Error al guardar");
       } finally {
         epSaveBtn.disabled = false;
       }
@@ -9859,7 +9877,7 @@
       if (!epRepSelected.size) return;
       const doPcts = epRepApplyPcts && epRepApplyPcts.checked;
       const doCat  = epRepApplyCat && epRepApplyCat.checked;
-      if (!doPcts && !doCat) { alert("Elegí qué replicar: porcentajes y/o categoría."); return; }
+      if (!doPcts && !doCat) { alertModal("Elegí qué replicar: porcentajes y/o categoría."); return; }
 
       // % actuales del modal de edición (pueden estar editados sin guardar — se
       // replican tal como se ven en pantalla)
@@ -9894,7 +9912,7 @@
         if (Object.keys(patch).length > 1) patches.push(patch);
       });
       if (!patches.length) {
-        alert("Ninguno de los seleccionados se puede actualizar" + (skippedNoCost ? " (no tienen costo cargado)" : "") + ".");
+        alertModal("Ninguno de los seleccionados se puede actualizar" + (skippedNoCost ? " (no tienen costo cargado)" : "") + ".");
         return;
       }
 
@@ -9905,7 +9923,7 @@
       if (skippedNoCost) {
         msg += "\n\n" + skippedNoCost + " sin costo cargado: no se les recalculan precios" + (doCat ? " (solo se les cambia la categoría)" : " y quedan afuera") + ".";
       }
-      if (!confirm(msg + "\n\n¿Continuar?")) return;
+      if (!await confirmModal(msg)) return;
 
       try {
         epRepApplyBtn.disabled = true;
@@ -9928,7 +9946,7 @@
         epRepSelected.clear();
         epRepModal.hidden = true;
       } catch (e) {
-        alert(e.message || "Error al replicar");
+        alertModal(e.message || "Error al replicar");
       } finally {
         epRepApplyBtn.disabled = false;
       }
@@ -10067,10 +10085,10 @@
     npSaveBtn.addEventListener("click", async () => {
       const code = (document.getElementById("np-code")?.value || "").trim();
       const name = (document.getElementById("np-name")?.value || "").trim();
-      if (!code) { alert("El código es obligatorio."); return; }
-      if (!name) { alert("El nombre es obligatorio."); return; }
+      if (!code) { alertModal("El código es obligatorio."); return; }
+      if (!name) { alertModal("El nombre es obligatorio."); return; }
       const cost = npGetCost();
-      if (!cost) { alert("Ingresá un costo mayor a 0."); return; }
+      if (!cost) { alertModal("Ingresá un costo mayor a 0."); return; }
       const getPrice = (id) => parsePrice(document.getElementById(id)?.value);
       npSavePcts();
       const body = {
@@ -10127,7 +10145,7 @@
         npForPurchase = false;
         npForCotizacion = false;
       } catch (e) {
-        alert(e.message || "Error al crear producto");
+        alertModal(e.message || "Error al crear producto");
       } finally {
         npSaveBtn.disabled = false;
       }
@@ -10189,7 +10207,7 @@
       const qty     = Number(qtyInp  ? qtyInp.value  : 0);
       const type    = typeEl  ? typeEl.value  : "ajuste";
       const reason  = reasonEl? reasonEl.value.trim() : "";
-      if (isNaN(qty)) { alert("Ingresá una cantidad válida."); return; }
+      if (isNaN(qty)) { alertModal("Ingresá una cantidad válida."); return; }
       try {
         adjSaveBtn.disabled = true;
         const result = await api("/api/admin/stock-adjustments", {
@@ -10212,7 +10230,7 @@
         showToast("Stock ajustado: " + result.qty_before + " → " + result.qty_after);
         if (adjModal) adjModal.hidden = true;
       } catch (e) {
-        alert(e.message || "Error al guardar ajuste");
+        alertModal(e.message || "Error al guardar ajuste");
       } finally {
         adjSaveBtn.disabled = false;
       }
@@ -10477,7 +10495,7 @@
   // Export CSV
   if (rptEls.exportBtn) {
     rptEls.exportBtn.addEventListener("click", () => {
-      if (!rptState.rows.length) { alert("No hay datos para exportar."); return; }
+      if (!rptState.rows.length) { alertModal("No hay datos para exportar."); return; }
       const header = ["#","Fecha","Cliente","Vendedor","Estado","Items","Total","Ganancia","Margen %"];
       const rows = rptState.rows.map((o) => [
         o.id,
@@ -10615,7 +10633,7 @@
   if (infEls.applyBtn) infEls.applyBtn.addEventListener("click", loadInflacion);
   if (infEls.exportBtn) {
     infEls.exportBtn.addEventListener("click", () => {
-      if (!infState.changes.length) { alert("No hay datos para exportar."); return; }
+      if (!infState.changes.length) { alertModal("No hay datos para exportar."); return; }
       const header = ["Fecha", "Codigo", "Producto", "Origen", "Costo viejo", "Costo nuevo", "Delta %", "Stock al cambio", "Ganado stock", "Vendido", "Perdido ventas", "Neto"];
       const rows = infState.changes.map((c) => [
         (c.created_at || "").slice(0, 10),
@@ -10791,7 +10809,7 @@
   if (cajaEls.movSaveBtn) {
     cajaEls.movSaveBtn.addEventListener("click", async () => {
       const amount = Number(cajaEls.movAmount ? cajaEls.movAmount.value : 0);
-      if (!amount || amount <= 0) { alert("Ingresá un monto mayor a 0."); return; }
+      if (!amount || amount <= 0) { alertModal("Ingresá un monto mayor a 0."); return; }
       const body = {
         account_id:             cajaEls.movAccount    ? Number(cajaEls.movAccount.value)    : null,
         type:                   cajaState.movType,
@@ -10809,7 +10827,7 @@
         showToast("Movimiento registrado");
         await loadCaja(); // refresca saldos + tabla
       } catch (e) {
-        alert(e.message || "Error al guardar");
+        alertModal(e.message || "Error al guardar");
       } finally {
         cajaEls.movSaveBtn.disabled = false;
       }
@@ -10825,12 +10843,12 @@
     cajaTbodyEl.addEventListener("click", async (e) => {
       const btn = e.target.closest("[data-caja-del]");
       if (!btn) return;
-      if (!confirm("¿Eliminar este movimiento?")) return;
+      if (!await confirmModal({ message: "¿Eliminar este movimiento?", confirmText: "Eliminar", danger: true })) return;
       try {
         await api("/api/admin/caja/movements/" + btn.dataset.cajaDel, { method:"DELETE" });
         showToast("Movimiento eliminado");
         await loadCaja();
-      } catch (err) { alert(err.message || "Error"); }
+      } catch (err) { alertModal(err.message || "Error"); }
     });
   }
 
@@ -10870,7 +10888,7 @@
       const name = cajaEls.accName ? cajaEls.accName.value.trim() : "";
       const type = cajaEls.accType ? cajaEls.accType.value : "efectivo";
       const responsable_user_id = cajaEls.accResp && cajaEls.accResp.value ? Number(cajaEls.accResp.value) : null;
-      if (!name) { alert("Ingresá un nombre para la cuenta."); return; }
+      if (!name) { alertModal("Ingresá un nombre para la cuenta."); return; }
       try {
         await api("/api/admin/caja/accounts", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, type, responsable_user_id }) });
         if (cajaEls.accName) cajaEls.accName.value = "";
@@ -10878,7 +10896,7 @@
         state.cajasList = null; // invalidar cache de selectores de cobro
         showToast("Cuenta creada");
         await loadCaja();
-      } catch (e) { alert(e.message || "Error"); }
+      } catch (e) { alertModal(e.message || "Error"); }
     });
   }
 
@@ -11045,7 +11063,7 @@
       cell.querySelectorAll(".sup-mov-del").forEach((btn) => {
         btn.addEventListener("click", async (e) => {
           e.stopPropagation();
-          if (!confirm("¿Eliminar este pago? Se revierte la deuda y el egreso de caja.")) return;
+          if (!await confirmModal({ message: "¿Eliminar este pago? Se revierte la deuda y el egreso de caja.", confirmText: "Eliminar", danger: true })) return;
           try {
             await api("/api/admin/supplier-payments/" + Number(btn.dataset.pay), { method: "DELETE" });
             showToast("Pago eliminado");
