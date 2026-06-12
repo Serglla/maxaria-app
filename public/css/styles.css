@@ -2764,27 +2764,64 @@ button { font: inherit; cursor: pointer; }
 @media (max-width: 640px) { .ue-grid { grid-template-columns: 1fr; } }
 
 .user-form { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+/* Etiquetas chiquitas, grises y en mayúsculas; los campos quedan blancos con
+   borde marcado y texto grande — se distingue al toque qué es dato cargable y
+   qué es nombre. Mismo criterio que el modal de Registrar entrega. */
 .user-form label {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #64748b;
+}
+.user-form label .muted {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+/* No marcar como etiqueta las filas de checkbox/radio ni los checklists de
+   categorías: ahí el texto ES el dato (nombre de categoría, "Usuario activo"). */
+.user-form label:has(input[type="checkbox"]),
+.user-form label:has(input[type="radio"]),
+.user-form .cats-check-list label,
+.user-form label.cats-check {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
   font-size: 13px;
   color: #374151;
 }
-.user-form label .muted { font-size: 11px; font-weight: 400; }
-.user-form input,
-.user-form select {
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 8px 10px;
-  font: inherit;
-  font-size: 14px;
+.user-form input:not([type="checkbox"]):not([type="radio"]),
+.user-form select,
+.user-form textarea {
   background: #fff;
+  border: 1.5px solid #b6c2d0;
+  border-radius: 8px;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+  text-transform: none;
+  letter-spacing: 0;
 }
-.user-form input:focus,
-.user-form select:focus {
-  outline: 2px solid #2563eb33;
-  border-color: #2563eb;
+.user-form input:not([type="checkbox"]):not([type="radio"]):focus,
+.user-form select:focus,
+.user-form textarea:focus {
+  border-color: #1e3a5f;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.12);
+}
+.user-form input:not([type="checkbox"]):not([type="radio"]):disabled,
+.user-form select:disabled,
+.user-form textarea:disabled {
+  background: #eef1f5;
+  color: #94a3b8;
+  border-color: #dbe2ea;
 }
 .admin-modal-foot {
   display: flex;
@@ -4746,7 +4783,7 @@ html.in-modal .ventas-wrap {
   margin-top: 0;
   height: 38px;
   padding: 0 11px;
-  border: 1px solid #cbd5e1;
+  border: 1.5px solid #b6c2d0;
   border-radius: 9px;
   background: #fff;
   font-size: 14px;
@@ -4759,6 +4796,12 @@ html.in-modal .ventas-wrap {
   border-color: #2563eb;
   outline: none;
   box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+}
+.np-label .admin-input:disabled,
+.np-label .admin-select:disabled {
+  background: #eef1f5;
+  color: #94a3b8;
+  border-color: #dbe2ea;
 }
 .np-label .req { color: #dc2626; }
 /* Modal de producto: secciones, grilla pareja y nota suave */
