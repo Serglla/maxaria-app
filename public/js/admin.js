@@ -2839,8 +2839,9 @@
         f.querySelector('[name="efectivo_amount"]').value = existingDelivery.efectivo_amount || 0;
         f.querySelector('[name="transferencia_amount"]').value = existingDelivery.transferencia_amount || 0;
         f.querySelector('[name="notes"]').value = existingDelivery.notes || "";
-        updateDeliveryTotalPreview();
       }
+      updateDeliveryTotalPreview();
+      deliverySyncTransferLock();
     }
     // Bloque admin: descuento + rentabilidad. Solo para administradores.
     if (els.deliveryAdminBox) {
@@ -2848,30 +2849,34 @@
       if (els.deliveryDiscountType) els.deliveryDiscountType.value = "";
       if (els.deliveryDiscountValue) { els.deliveryDiscountValue.value = ""; els.deliveryDiscountValue.disabled = true; }
       if (els.deliverySummary) els.deliverySummary.innerHTML = "";
-      if (state.isAdmin) {
-        // Traer total + rentabilidad (bruta) + descuento existente del pedido.
-        api("/api/orders/" + orderId).then(function(order) {
-          var pf = order.profitability || {};
-          deliveryOrderInfo = {
-            total: Number(order.total) || 0,
-            revenue_gross: Number(pf.revenue_gross != null ? pf.revenue_gross : order.total) || 0,
-            cost_total: Number(pf.cost_total) || 0,
-          };
-          // Pre-cargar descuento ya guardado en el pedido (si lo había).
-          if (order.discount_type && els.deliveryDiscountType) {
-            els.deliveryDiscountType.value = order.discount_type;
-            if (els.deliveryDiscountValue) {
-              els.deliveryDiscountValue.disabled = false;
-              els.deliveryDiscountValue.value = order.discount_value != null ? order.discount_value : "";
-            }
-          }
-          renderDeliverySummary();
-        }).catch(function() {
-          if (els.deliverySummary) els.deliverySummary.innerHTML =
-            '<span class="muted small">No se pudo cargar la rentabilidad.</span>';
-        });
-      }
     }
+    // Traer el pedido SIEMPRE (admin y vendedor): el total alimenta el tilde
+    // "Pagó el total", el saldo adeudado en vivo y el bloqueo de transferencia.
+    api("/api/orders/" + orderId).then(function(order) {
+      var pf = order.profitability || {};
+      deliveryOrderInfo = {
+        total: Number(order.total) || 0,
+        revenue_gross: Number(pf.revenue_gross != null ? pf.revenue_gross : order.total) || 0,
+        cost_total: Number(pf.cost_total) || 0,
+      };
+      if (state.isAdmin) {
+        // Pre-cargar descuento ya guardado en el pedido (si lo había).
+        if (order.discount_type && els.deliveryDiscountType) {
+          els.deliveryDiscountType.value = order.discount_type;
+          if (els.deliveryDiscountValue) {
+            els.deliveryDiscountValue.disabled = false;
+            els.deliveryDiscountValue.value = order.discount_value != null ? order.discount_value : "";
+          }
+        }
+        renderDeliverySummary();
+      }
+      deliverySyncPaidFull();
+      deliverySyncTransferLock();
+      updateDeliveryTotalPreview();
+    }).catch(function() {
+      if (state.isAdmin && els.deliverySummary) els.deliverySummary.innerHTML =
+        '<span class="muted small">No se pudo cargar la rentabilidad.</span>';
+    });
     if (els.deliveryModal) els.deliveryModal.hidden = false;
     setTimeout(() => {
       if (els.deliveryForm) els.deliveryForm.querySelector('[name="delivered_to"]').focus();
@@ -2909,23 +2914,119 @@
         '% margen · costo ' + fmtPrice(cost) + ')</span></div>';
   }
 
+  // Total NETO a cobrar (total del pedido − descuento elegido). null si el
+  // pedido todavía no se cargó (fetch en vuelo o falló).
+  function deliveryNetTotal() {
+    if (!deliveryOrderInfo) return null;
+    return Math.max(0, deliveryOrderInfo.total - deliveryDiscountAmount());
+  }
+
+  function deliveryAmounts() {
+    const f = els.deliveryForm;
+    if (!f) return { ef: 0, tr: 0 };
+    return {
+      ef: Math.max(0, Number(f.querySelector('[name="efectivo_amount"]').value) || 0),
+      tr: Math.max(0, Number(f.querySelector('[name="transferencia_amount"]').value) || 0),
+    };
+  }
+
+  // Tilde "Pagó el total en efectivo": etiqueta con el monto neto + estado
+  // según lo que haya en los campos (se destilda solo si tocan los montos).
+  function deliverySyncPaidFull() {
+    const chk = document.getElementById("delivery-paid-full");
+    const amtEl = document.getElementById("delivery-paid-full-amt");
+    const neto = deliveryNetTotal();
+    if (amtEl) amtEl.textContent = neto != null ? "(= " + fmtPrice(neto) + ")" : "";
+    if (chk) {
+      const a = deliveryAmounts();
+      chk.checked = neto != null && neto > 0 && a.ef === neto && a.tr === 0;
+    }
+  }
+
+  // Si el efectivo ya cubre el total, la transferencia no aplica: se bloquean
+  // y limpian su monto y su caja.
+  function deliverySyncTransferLock() {
+    const f = els.deliveryForm;
+    if (!f) return;
+    const neto = deliveryNetTotal();
+    const ef = Math.max(0, Number(f.querySelector('[name="efectivo_amount"]').value) || 0);
+    const lock = neto != null && neto > 0 && ef >= neto;
+    const trInput = f.querySelector('[name="transferencia_amount"]');
+    const trSel = document.getElementById("delivery-caja-transfer");
+    if (trInput) {
+      trInput.disabled = lock;
+      if (lock) trInput.value = 0;
+    }
+    if (trSel) {
+      trSel.disabled = lock;
+      if (lock) trSel.value = "";
+    }
+  }
+
+  // Estado del cobro, bien visible: pagado completo / queda adeudado / de más.
   function updateDeliveryTotalPreview() {
     if (!els.deliveryForm || !els.deliveryTotalPreview) return;
-    const ef = Math.max(0, Number(els.deliveryForm.querySelector('[name="efectivo_amount"]').value) || 0);
-    const tr = Math.max(0, Number(els.deliveryForm.querySelector('[name="transferencia_amount"]').value) || 0);
-    const total = ef + tr;
-    els.deliveryTotalPreview.textContent = total > 0
-      ? "Cobrado: " + fmtPrice(total) + (ef > 0 && tr > 0 ? " (" + fmtPrice(ef) + " efectivo + " + fmtPrice(tr) + " transferencia)" : "")
-      : "";
+    const a = deliveryAmounts();
+    const cobrado = a.ef + a.tr;
+    const el = els.deliveryTotalPreview;
+    el.classList.remove("dcs-debt", "dcs-ok", "dcs-over");
+    const neto = deliveryNetTotal();
+    const breakdown = a.ef > 0 && a.tr > 0
+      ? " (" + fmtPrice(a.ef) + " efectivo + " + fmtPrice(a.tr) + " transf.)" : "";
+    if (neto == null) {
+      // Sin datos del pedido: comportamiento viejo (solo lo cobrado).
+      el.textContent = cobrado > 0 ? "Cobrado: " + fmtPrice(cobrado) + breakdown : "";
+      return;
+    }
+    const deuda = neto - cobrado;
+    if (deuda > 0) {
+      el.classList.add("dcs-debt");
+      el.innerHTML = "⚠ Queda adeudado: <strong>" + fmtPrice(deuda) + "</strong>" +
+        ' <span class="dcs-sub">cobrado ' + fmtPrice(cobrado) + breakdown + " de " + fmtPrice(neto) + "</span>";
+    } else if (deuda === 0) {
+      el.classList.add("dcs-ok");
+      el.innerHTML = "✔ Pagado completo: <strong>" + fmtPrice(neto) + "</strong>" +
+        (breakdown ? ' <span class="dcs-sub">' + breakdown.trim() + "</span>" : "");
+    } else {
+      el.classList.add("dcs-over");
+      el.innerHTML = "Cobrado de más: <strong>" + fmtPrice(-deuda) + "</strong>" +
+        ' <span class="dcs-sub">cobrado ' + fmtPrice(cobrado) + " sobre " + fmtPrice(neto) + "</span>";
+    }
   }
 
   if (els.deliveryForm) {
     els.deliveryForm.addEventListener("input", (e) => {
       if (e.target.name === "efectivo_amount" || e.target.name === "transferencia_amount") {
+        deliverySyncTransferLock();
+        deliverySyncPaidFull();
         updateDeliveryTotalPreview();
       }
-      if (e.target.name === "discount_value") renderDeliverySummary();
+      if (e.target.name === "discount_value") {
+        renderDeliverySummary();
+        // El descuento cambia el neto → re-evaluar tilde, bloqueo y adeudado.
+        deliverySyncPaidFull();
+        deliverySyncTransferLock();
+        updateDeliveryTotalPreview();
+      }
     });
+    // Tilde "Pagó el total en efectivo": carga el neto en efectivo y limpia
+    // la transferencia (que queda bloqueada por deliverySyncTransferLock).
+    const deliveryPaidChk = document.getElementById("delivery-paid-full");
+    if (deliveryPaidChk) {
+      deliveryPaidChk.addEventListener("change", () => {
+        const f = els.deliveryForm;
+        const neto = deliveryNetTotal();
+        if (deliveryPaidChk.checked) {
+          if (neto == null || neto <= 0) { deliveryPaidChk.checked = false; return; }
+          f.querySelector('[name="efectivo_amount"]').value = neto;
+          f.querySelector('[name="transferencia_amount"]').value = 0;
+        } else {
+          f.querySelector('[name="efectivo_amount"]').value = 0;
+        }
+        deliverySyncTransferLock();
+        updateDeliveryTotalPreview();
+      });
+    }
     // Cambio de tipo de descuento: habilita/limpia el valor y recalcula el resumen.
     if (els.deliveryDiscountType) {
       els.deliveryDiscountType.addEventListener("change", function() {
@@ -2936,6 +3037,9 @@
           else els.deliveryDiscountValue.focus();
         }
         renderDeliverySummary();
+        deliverySyncPaidFull();
+        deliverySyncTransferLock();
+        updateDeliveryTotalPreview();
       });
     }
 

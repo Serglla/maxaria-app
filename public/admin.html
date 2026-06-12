@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260612c" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260612d" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -2023,6 +2023,10 @@
         <label>Fecha de la entrega <span class="muted">(si no fue hoy, cambiala)</span>
           <input type="date" name="delivered_at" id="delivery-date" />
         </label>
+        <label class="delivery-paid-full" id="delivery-paid-full-wrap">
+          <input type="checkbox" id="delivery-paid-full" />
+          <span>💵 Pagó el total en efectivo <span id="delivery-paid-full-amt" class="muted"></span></span>
+        </label>
         <label>Efectivo — monto cobrado ($)
           <input type="number" name="efectivo_amount" min="0" step="1" value="0" placeholder="0" />
         </label>
@@ -2039,7 +2043,7 @@
             <option value="">— Sin imputar a caja —</option>
           </select>
         </label>
-        <div id="delivery-total-preview" class="muted small" style="margin-top:2px"></div>
+        <div id="delivery-total-preview" class="delivery-cobro-status"></div>
         <!-- Bloque admin: descuento + rentabilidad (se muestra solo a admins) -->
         <div id="delivery-admin-box" hidden>
           <label>Descuento <span class="muted">(opcional)</span>
@@ -3265,6 +3269,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260612c"></script>
+  <script src="/js/admin.js?v=20260612d"></script>
 </body>
 </html>

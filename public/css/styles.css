@@ -5071,6 +5071,90 @@ html.in-modal .ventas-wrap {
 .caja-saldo-ok  { color: #15803d; }
 .caja-saldo-neg { color: #dc2626; }
 
+/* ── Modal Registrar entrega: contraste etiquetas vs campos ──
+   Las etiquetas pasan a ser chiquitas, grises y en mayúsculas; los campos
+   quedan blancos, con borde más marcado y texto grande — se distingue al
+   toque qué es dato cargable y qué es nombre. */
+#delivery-form > label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #64748b;
+}
+#delivery-form > label .muted {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+}
+#delivery-form input[type="text"],
+#delivery-form input[type="number"],
+#delivery-form input[type="date"],
+#delivery-form select {
+  background: #fff;
+  border: 1.5px solid #b6c2d0;
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+  text-transform: none;
+  letter-spacing: 0;
+}
+#delivery-form input:focus,
+#delivery-form select:focus {
+  border-color: #1e3a5f;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.12);
+}
+#delivery-form input:disabled,
+#delivery-form select:disabled {
+  background: #eef1f5;
+  color: #94a3b8;
+  border-color: #dbe2ea;
+}
+
+/* Tilde "Pagó el total en efectivo" */
+#delivery-form label.delivery-paid-full {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  background: #f0f7ff;
+  border: 1.5px solid #b9d5f2;
+  border-radius: 9px;
+  padding: 11px 12px;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #0f172a;
+  text-transform: none;
+  letter-spacing: 0;
+}
+#delivery-form label.delivery-paid-full input[type="checkbox"] {
+  width: 19px;
+  height: 19px;
+  accent-color: #1e3a5f;
+  cursor: pointer;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+/* Estado del cobro: pagado completo / queda adeudado / cobrado de más */
+.delivery-cobro-status {
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 13.5px;
+  font-weight: 800;
+  border: 1.5px solid transparent;
+  color: #475569;
+}
+.delivery-cobro-status:empty { display: none; }
+.delivery-cobro-status .dcs-sub { font-weight: 600; font-size: 12px; opacity: 0.85; display: block; margin-top: 2px; }
+.delivery-cobro-status.dcs-debt { background: #fff7ed; border-color: #fdba74; color: #b45309; }
+.delivery-cobro-status.dcs-ok   { background: #ecfdf5; border-color: #6ee7b7; color: #047857; }
+.delivery-cobro-status.dcs-over { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
+
 /* Modal ordenar pestañas */
 .caja-order-list { display: flex; flex-direction: column; gap: 6px; }
 .caja-order-row {
