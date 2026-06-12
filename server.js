@@ -631,6 +631,9 @@ try { db.exec("ALTER TABLE payments ADD COLUMN caja_id INTEGER REFERENCES cash_a
 // transferencia a otra (caja_transfer_id, ej. billeteras del cajero).
 try { db.exec("ALTER TABLE deliveries ADD COLUMN caja_id INTEGER REFERENCES cash_accounts(id)"); } catch (_) {}
 try { db.exec("ALTER TABLE deliveries ADD COLUMN caja_transfer_id INTEGER REFERENCES cash_accounts(id)"); } catch (_) {}
+// Cada gasto sale de una caja (egreso en cash_movements, source 'gasto').
+// NULL = gastos historicos anteriores a esta migracion (sin imputar).
+try { db.exec("ALTER TABLE expenses ADD COLUMN caja_id INTEGER REFERENCES cash_accounts(id)"); } catch (_) {}
 // Renombrar la cuenta "Mercado Pago" -> "Billeteras" en instancias ya existentes
 // (solo si no hay ya una "Billeteras", para no chocar con el UNIQUE de name).
 try {
@@ -5986,9 +5989,11 @@ app.get("/api/admin/expenses", requireAdmin, (req, res) => {
     "SELECT e.id, e.expense_category_id, e.category_name, e.amount, e.description," +
     "       e.payment_method, e.reference, e.notes, e.expense_date," +
     "       e.registered_by, u.username AS registered_by_username," +
+    "       e.caja_id, ca.name AS caja_name," +
     "       e.created_at" +
     "  FROM expenses e" +
     "  LEFT JOIN users u ON u.id = e.registered_by" +
+    "  LEFT JOIN cash_accounts ca ON ca.id = e.caja_id" +
     " WHERE " + conds.join(" AND ") +
     " ORDER BY e.expense_date DESC, e.id DESC LIMIT 500"
   );
@@ -6030,16 +6035,32 @@ app.post("/api/admin/expenses", requireAdmin, (req, res) => {
   const description = String(b.description || "").trim();
   const reference = String(b.reference || "").trim() || null;
   const notes = String(b.notes || "").trim() || null;
-  const info = db.prepare(
-    "INSERT INTO expenses (expense_category_id, category_name, amount, description," +
-    "  payment_method, reference, notes, expense_date, registered_by)" +
-    "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(catId, categoryName, amount, description || null, method, reference, notes, expenseDate, req.session.userId || null);
+  // El gasto SIEMPRE sale de una caja: se exige caja_id valida y activa,
+  // y se registra el egreso en cash_movements (source 'gasto').
+  const cajaId = b.caja_id ? Number(b.caja_id) : null;
+  if (!cajaId) return res.status(400).json({ error: "Elegí la caja de la que sale el gasto" });
+  const caja = db.prepare("SELECT id, name FROM cash_accounts WHERE id = ? AND active = 1").get(cajaId);
+  if (!caja) return res.status(400).json({ error: "Caja invalida o inactiva" });
+  let newId;
+  db.transaction(() => {
+    const info = db.prepare(
+      "INSERT INTO expenses (expense_category_id, category_name, amount, description," +
+      "  payment_method, reference, notes, expense_date, caja_id, registered_by)" +
+      "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(catId, categoryName, amount, description || null, method, reference, notes, expenseDate, caja.id, req.session.userId || null);
+    newId = info.lastInsertRowid;
+    db.prepare(
+      "INSERT INTO cash_movements (account_id, type, amount, description, source, related_id, movement_date, registered_by)" +
+      " VALUES (?, 'egreso', ?, ?, 'gasto', ?, ?, ?)"
+    ).run(caja.id, amount, "Gasto: " + categoryName + (description ? " · " + description : ""), newId, expenseDate, req.session.userId || null);
+  })();
   const row = db.prepare(
-    "SELECT id, expense_category_id, category_name, amount, description," +
-    "       payment_method, reference, notes, expense_date, created_at" +
-    "  FROM expenses WHERE id = ?"
-  ).get(info.lastInsertRowid);
+    "SELECT e.id, e.expense_category_id, e.category_name, e.amount, e.description," +
+    "       e.payment_method, e.reference, e.notes, e.expense_date, e.created_at," +
+    "       e.caja_id, ca.name AS caja_name" +
+    "  FROM expenses e LEFT JOIN cash_accounts ca ON ca.id = e.caja_id" +
+    " WHERE e.id = ?"
+  ).get(newId);
   res.json(row);
 });
 
@@ -6085,18 +6106,45 @@ app.patch("/api/admin/expenses/:id", requireAdmin, (req, res) => {
   if (b.notes !== undefined) {
     sets.push("notes = ?"); params.push(String(b.notes || "").trim() || null);
   }
+  if (b.caja_id !== undefined) {
+    const cid = b.caja_id ? Number(b.caja_id) : null;
+    if (!cid) return res.status(400).json({ error: "Elegí la caja de la que sale el gasto" });
+    const caja = db.prepare("SELECT id FROM cash_accounts WHERE id = ? AND active = 1").get(cid);
+    if (!caja) return res.status(400).json({ error: "Caja invalida o inactiva" });
+    sets.push("caja_id = ?"); params.push(cid);
+  }
   if (!sets.length) return res.json({ ok: true });
   params.push(id);
-  const stmt = db.prepare("UPDATE expenses SET " + sets.join(", ") + " WHERE id = ?");
-  stmt.run.apply(stmt, params);
+  db.transaction(() => {
+    const stmt = db.prepare("UPDATE expenses SET " + sets.join(", ") + " WHERE id = ?");
+    stmt.run.apply(stmt, params);
+    // Re-sincronizar el movimiento de caja: se borra el egreso vinculado y se
+    // recrea desde el gasto ya actualizado (cubre cambios de monto, caja,
+    // fecha y categoria de una sola vez). Gastos historicos sin caja_id no
+    // generan movimiento.
+    const e = db.prepare(
+      "SELECT id, caja_id, amount, category_name, description, expense_date, registered_by FROM expenses WHERE id = ?"
+    ).get(id);
+    db.prepare("DELETE FROM cash_movements WHERE source = 'gasto' AND related_id = ?").run(id);
+    if (e && e.caja_id) {
+      db.prepare(
+        "INSERT INTO cash_movements (account_id, type, amount, description, source, related_id, movement_date, registered_by)" +
+        " VALUES (?, 'egreso', ?, ?, 'gasto', ?, ?, ?)"
+      ).run(e.caja_id, e.amount, "Gasto: " + e.category_name + (e.description ? " · " + e.description : ""), e.id, e.expense_date, e.registered_by || null);
+    }
+  })();
   res.json({ ok: true, id });
 });
 
 app.delete("/api/admin/expenses/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
-  const info = db.prepare("DELETE FROM expenses WHERE id = ?").run(id);
-  if (info.changes === 0) return res.status(404).json({ error: "Gasto no encontrado" });
+  let changes = 0;
+  db.transaction(() => {
+    db.prepare("DELETE FROM cash_movements WHERE source = 'gasto' AND related_id = ?").run(id);
+    changes = db.prepare("DELETE FROM expenses WHERE id = ?").run(id).changes;
+  })();
+  if (changes === 0) return res.status(404).json({ error: "Gasto no encontrado" });
   res.json({ ok: true });
 });
 
@@ -7621,6 +7669,11 @@ app.post("/api/admin/caja/movements", requireAdmin, (req, res) => {
 app.delete("/api/admin/caja/movements/:id", requireAdmin, (req, res) => {
   const mov = db.prepare("SELECT * FROM cash_movements WHERE id=?").get(req.params.id);
   if (!mov) return res.status(404).json({ error: "No encontrado" });
+  // Los egresos de gastos se manejan desde la pestaña Gastos: borrarlos solo
+  // de la caja dejaria el gasto registrado sin su salida de plata (desync).
+  if (mov.source === "gasto" && mov.related_id) {
+    return res.status(409).json({ error: "Este movimiento viene de un gasto. Eliminá el gasto desde la pestaña Gastos." });
+  }
   // Si es transferencia, borrar también la contraparte
   if (mov.source === "transferencia" && mov.counterpart_account_id) {
     // Buscar el movimiento espejo: mismo amount, misma fecha, cuenta = counterpart, source=transferencia, counterpart=esta cuenta

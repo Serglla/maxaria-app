@@ -1275,6 +1275,24 @@ Sergio reportó que la card "Categorías visibles del catálogo" (Configuración
 
 **Verificación** (preview local, login `testadmin`/`Claude123!` — hubo que agregarle temporalmente la sección `config` a `admin_sections`, se revirtió): desactivar **NUEVO** → `/api/categories?preview=1` y `/api/products?as_level=1&preview=1` la excluyen, sin preview la incluyen; UI con "ver como Minorista" no muestra **NUEVO**, sin "ver como" sí; cero errores de consola; categoría reactivada al cierre. `node --check` OK (corrido desde PowerShell, sin pasar por el bash mount). Pendiente: `git add/commit/push` + deploy Railway.
 
+### Sidebar Finanzas unificado + Gastos impactan en caja (12 junio 2026 — `admin.js?v=20260612a`)
+
+**Sidebar reorganizado**: el grupo **Finanzas** ahora agrupa todo lo de plata: Caja · Pagos · Cuentas · Ctacte Proveedores · Gastos. *Compras* quedó con Proveedores/Cotizaciones/Compras/Recepción; *Reportes* con Reportes/Inflación/Actividad. Solo se movieron botones en `admin.html` — las claves `data-tab` y `ADMIN_SECTIONS` no cambiaron, permisos intactos.
+
+**Gastos → Caja** (era el único módulo de plata sin vínculo con `cash_accounts`; Pagos, Entregas y Pagos a proveedores ya lo tenían):
+- **Schema**: migración idempotente `expenses.caja_id INTEGER REFERENCES cash_accounts(id)` (junto a las otras de caja). NULL = gastos históricos sin imputar.
+- **POST /api/admin/expenses**: `caja_id` **obligatorio** (400 si falta o la caja está inactiva). En transacción: INSERT del gasto + `cash_movements` egreso `source='gasto'`, `related_id=expense.id`, `movement_date=expense_date`, descripción "Gasto: <categoría> · <descripción>".
+- **PATCH**: acepta `caja_id` (también obligatorio si se manda). Tras el UPDATE, **borra y recrea** el movimiento desde el gasto ya actualizado (cubre cambios de monto/caja/fecha/categoría de una vez). Gastos históricos sin caja no generan movimiento.
+- **DELETE**: borra gasto + movimiento en transacción.
+- **GET**: devuelve `caja_id` + `caja_name` (LEFT JOIN).
+- **Guard en `DELETE /api/admin/caja/movements/:id`**: si `source='gasto'` con `related_id` → 409 "eliminá el gasto desde la pestaña Gastos" (evita desync caja↔gastos). Los sources cobro/entrega/pago_proveedor siguen borrables desde Caja como antes (comportamiento heredado, no se tocó).
+- **Frontend**: select "Sale de la caja" (`name="caja_id"`, required) en el modal crear/editar gasto; `fillCajaSelect` ganó 3er parámetro opcional `firstLabel` ("— Elegí una caja —" acá, default "— Sin imputar a caja —" en el resto). Columna "Caja" nueva en la tabla de gastos (colspans 7→8, tfoot 5→6). La pestaña Caja ya recargaba siempre al entrar, así que el egreso aparece solo.
+
+**Verificación**: `node --check` OK en server.js y admin.js (mount NO stale esta vez). Flujo POST/PATCH/DELETE validado con Python sqlite3 sobre copia de la DB: saldo baja al crear, el PATCH mueve el egreso de caja y restaura la vieja, DELETE sin huérfanos, LEFT JOIN OK con históricos. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
+
+**Botón "⇄ Transferir entre cajas" (misma sesión — `admin.js?v=20260612b`, `styles.css?v=20260612b`)**
+Sergio pidió "traspaso de caja" (una caja le presta a la otra). La feature YA existía (modal Registrar movimiento → toggle Transferencia, crea egreso+ingreso en transacción) pero no la encontraba — quedó confirmado por AskUserQuestion que era un problema de visibilidad, no de funcionalidad. Fix: botón dedicado **"⇄ Transferir entre cajas"** (`#caja-transfer-open-btn`, clase `.caja-transfer-btn` estilo secundario borde azul) junto a "＋ Registrar movimiento" en `.caja-foot-actions` (ahora con `gap:10px`). `cajaOpenMovModal(presetType)` acepta tipo preseteado ("transferencia" muestra el selector de cuenta destino de entrada); el listener viejo pasaba el event como 1er arg, ahora ambos botones usan arrow wrappers. Verificación: el mount volvió a estar **stale** (veía admin.js cortado en 11412 a mitad de línea; Read confirma íntegro hasta `bootstrap(); })();` en 11425). Bloque nuevo validado aislado en /tmp.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

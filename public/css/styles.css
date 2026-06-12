@@ -5048,7 +5048,15 @@ html.in-modal .ventas-wrap {
 .caja-tab-content .caja-acc-group-head { grid-column: 1 / -1; }
 
 .caja-movs-block { border-top: 1px solid #e5e7eb; padding-top: 14px; }
-.caja-foot-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.caja-foot-actions { display: flex; justify-content: flex-end; margin-top: 12px; gap: 10px; }
+/* Botón de transferencia entre cajas: mismo peso visual que el de movimiento,
+   pero estilo secundario (borde azul) para distinguirlo del primario. */
+.caja-transfer-btn {
+  background: #fff;
+  border: 1.5px solid #1e3a5f;
+  color: #1e3a5f;
+}
+.caja-transfer-btn:hover { background: #eef3f9; }
 
 /* Modal ordenar pestañas */
 .caja-order-list { display: flex; flex-direction: column; gap: 6px; }

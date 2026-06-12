@@ -2796,10 +2796,10 @@
   function cajaTypeLabel(t) {
     return t === "banco" ? "🏦" : (t === "digital" ? "📱" : "💵");
   }
-  async function fillCajaSelect(selectEl, selectedId) {
+  async function fillCajaSelect(selectEl, selectedId, firstLabel) {
     if (!selectEl) return;
     const cajas = await ensureCajas();
-    const opts = ['<option value="">— Sin imputar a caja —</option>'];
+    const opts = ['<option value="">' + (firstLabel || "— Sin imputar a caja —") + '</option>'];
     for (const c of cajas) {
       const resp = c.responsable_full_name ? " · " + c.responsable_full_name : "";
       opts.push('<option value="' + c.id + '">' + cajaTypeLabel(c.type) + " " + escapeHtml(c.name) + escapeHtml(resp) + '</option>');
@@ -8170,7 +8170,7 @@
     if (els.expCatFilter && els.expCatFilter.value !== "all") qs.push("category_id=" + encodeURIComponent(els.expCatFilter.value));
     if (els.expSearch && els.expSearch.value.trim()) qs.push("q=" + encodeURIComponent(els.expSearch.value.trim()));
     const url = "/api/admin/expenses" + (qs.length ? ("?" + qs.join("&")) : "");
-    if (els.expTbody) els.expTbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando…</td></tr>';
+    if (els.expTbody) els.expTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
     try {
       const data = await api(url);
       expState.rows = data.rows || [];
@@ -8178,7 +8178,7 @@
       expState.total = data.total || 0;
       renderExpenses();
     } catch (e) {
-      if (els.expTbody) els.expTbody.innerHTML = '<tr><td colspan="7" class="muted">Error cargando gastos</td></tr>';
+      if (els.expTbody) els.expTbody.innerHTML = '<tr><td colspan="8" class="muted">Error cargando gastos</td></tr>';
     }
   }
 
@@ -8205,7 +8205,7 @@
     }
     // Tabla
     if (!rows.length) {
-      els.expTbody.innerHTML = '<tr><td colspan="7" class="muted">No hay gastos en el período. Registrá uno con el botón "+ Registrar gasto".</td></tr>';
+      els.expTbody.innerHTML = '<tr><td colspan="8" class="muted">No hay gastos en el período. Registrá uno con el botón "+ Registrar gasto".</td></tr>';
       if (els.expTfoot) els.expTfoot.innerHTML = "";
       return;
     }
@@ -8216,6 +8216,7 @@
         '<td><strong>' + escapeHtml(e.category_name || "—") + '</strong></td>' +
         '<td>' + escapeHtml(e.description || "") + '</td>' +
         '<td class="muted small">' + escapeHtml(methodNice) + '</td>' +
+        '<td class="muted small">' + (e.caja_name ? "💰 " + escapeHtml(e.caja_name) : '<span class="muted">—</span>') + '</td>' +
         '<td class="muted small">' + escapeHtml(e.reference || "") + '</td>' +
         '<td class="num"><strong>' + fmtMoney(e.amount) + '</strong></td>' +
         '<td>' +
@@ -8225,7 +8226,7 @@
       '</tr>';
     }).join("");
     if (els.expTfoot) {
-      els.expTfoot.innerHTML = '<tr><th colspan="5">Total</th>' +
+      els.expTfoot.innerHTML = '<tr><th colspan="6">Total</th>' +
         '<th class="num"><strong>' + fmtMoney(expState.total) + '</strong></th>' +
         '<th></th></tr>';
     }
@@ -8267,6 +8268,9 @@
         form.expense_date.value = new Date().toISOString().slice(0, 10);
         form.payment_method.value = "efectivo";
       }
+      // El gasto sale siempre de una caja (obligatorio). En edición se
+      // preselecciona la caja actual del gasto.
+      fillCajaSelect(form.caja_id, existing && existing.caja_id, "— Elegí una caja —");
       if (els.expCreateMsg) { els.expCreateMsg.textContent = ""; els.expCreateMsg.className = "muted small"; }
       els.expCreateModal.hidden = false;
       setTimeout(() => { try { form.amount.focus(); } catch (_) {} }, 50);
@@ -8311,9 +8315,14 @@
         payment_method: form.payment_method.value,
         reference: form.reference.value.trim(),
         notes: form.notes.value.trim(),
+        caja_id: form.caja_id.value ? Number(form.caja_id.value) : null,
       };
       if (!body.amount || body.amount <= 0) {
         if (els.expCreateMsg) { els.expCreateMsg.textContent = "Monto invalido"; els.expCreateMsg.className = "config-msg err"; }
+        return;
+      }
+      if (!body.caja_id) {
+        if (els.expCreateMsg) { els.expCreateMsg.textContent = "Elegí la caja de la que sale el gasto"; els.expCreateMsg.className = "config-msg err"; }
         return;
       }
       if (els.expCreateSubmit) els.expCreateSubmit.disabled = true;
@@ -10999,12 +11008,14 @@
 
   // Abrir el modal de registrar movimiento, preseleccionando la caja del
   // usuario logueado (donde es responsable); si no tiene, la primera.
-  function cajaOpenMovModal() {
+  function cajaOpenMovModal(presetType) {
     if (!cajaEls.movModal) return;
-    // Reset a "ingreso"
-    cajaState.movType = "ingreso";
-    if (cajaEls.typeBtns) cajaEls.typeBtns.forEach((b) => b.classList.toggle("active", b.dataset.type === "ingreso"));
-    if (cajaEls.movDestWrap) cajaEls.movDestWrap.hidden = true;
+    // Tipo inicial: "ingreso" por default, o el preseteado (ej: el botón
+    // "Transferir entre cajas" abre directo en modo transferencia).
+    const t = (presetType === "egreso" || presetType === "transferencia") ? presetType : "ingreso";
+    cajaState.movType = t;
+    if (cajaEls.typeBtns) cajaEls.typeBtns.forEach((b) => b.classList.toggle("active", b.dataset.type === t));
+    if (cajaEls.movDestWrap) cajaEls.movDestWrap.hidden = (t !== "transferencia");
     if (cajaEls.movAmount) cajaEls.movAmount.value = "";
     if (cajaEls.movDesc)   cajaEls.movDesc.value   = "";
     if (cajaEls.movDate)   cajaEls.movDate.value   = cajaTodayIso();
@@ -11018,7 +11029,9 @@
     cajaEls.movModal.hidden = false;
     if (cajaEls.movAmount) cajaEls.movAmount.focus();
   }
-  if (cajaEls.movOpenBtn) cajaEls.movOpenBtn.addEventListener("click", cajaOpenMovModal);
+  if (cajaEls.movOpenBtn) cajaEls.movOpenBtn.addEventListener("click", () => cajaOpenMovModal());
+  const cajaTransferBtn = document.getElementById("caja-transfer-open-btn");
+  if (cajaTransferBtn) cajaTransferBtn.addEventListener("click", () => cajaOpenMovModal("transferencia"));
 
   // ── Ordenar pestañas de responsables ──
   let cajaOrderDraft = []; // [{ key, label }] en el orden que se está editando

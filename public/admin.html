@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260611j" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260612b" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -102,18 +102,24 @@
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="recepcion" type="button">
             <span class="admin-sidebar-item-icon">📦</span>Recepción
           </button>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="ctacte-prov" type="button">
-            <span class="admin-sidebar-item-icon">🧾</span>Ctacte Proveedores
-          </button>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="gastos" type="button">
-            <span class="admin-sidebar-item-icon">💸</span>Gastos
-          </button>
         </div>
 
         <div class="admin-sidebar-group">
           <div class="admin-sidebar-group-title">Finanzas</div>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="caja" type="button">
             <span class="admin-sidebar-item-icon">💰</span>Caja
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="pagos" type="button">
+            <span class="admin-sidebar-item-icon">💵</span>Pagos
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="cuentas" type="button">
+            <span class="admin-sidebar-item-icon">📈</span>Cuentas
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="ctacte-prov" type="button">
+            <span class="admin-sidebar-item-icon">🧾</span>Ctacte Proveedores
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="gastos" type="button">
+            <span class="admin-sidebar-item-icon">💸</span>Gastos
           </button>
         </div>
 
@@ -127,12 +133,6 @@
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="actividad" type="button">
             <span class="admin-sidebar-item-icon">📊</span>Actividad
-          </button>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="pagos" type="button">
-            <span class="admin-sidebar-item-icon">💵</span>Pagos
-          </button>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="cuentas" type="button">
-            <span class="admin-sidebar-item-icon">📈</span>Cuentas
           </button>
         </div>
 
@@ -467,6 +467,7 @@
           </table>
         </div>
         <div class="caja-foot-actions">
+          <button class="btn caja-mov-open-btn caja-transfer-btn" id="caja-transfer-open-btn" type="button" title="Pasar plata de una caja a otra (préstamo entre cajas)">⇄ Transferir entre cajas</button>
           <button class="btn btn-primary caja-mov-open-btn" id="caja-mov-open-btn" type="button">＋ Registrar movimiento</button>
         </div>
       </div>
@@ -1547,12 +1548,13 @@
               <th>Categoría</th>
               <th>Descripción</th>
               <th>Método</th>
+              <th>Caja</th>
               <th>Referencia</th>
               <th class="num">Monto</th>
               <th>Acciones</th>
             </tr>
           </thead>
-          <tbody id="exp-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="exp-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
           <tfoot id="exp-tfoot"></tfoot>
         </table>
       </div>
@@ -1595,10 +1597,14 @@
               </select>
             </label>
             <label>
-              <span class="form-label-head">Referencia <span class="muted">(comprobante, factura)</span></span>
-              <input type="text" name="reference" maxlength="80" autocomplete="off" />
+              <span class="form-label-head">Sale de la caja</span>
+              <select name="caja_id" id="exp-form-caja" required></select>
             </label>
           </div>
+          <label>
+            <span class="form-label-head">Referencia <span class="muted">(comprobante, factura)</span></span>
+            <input type="text" name="reference" maxlength="80" autocomplete="off" />
+          </label>
           <label>
             <span class="form-label-head">Notas</span>
             <textarea name="notes" rows="2" maxlength="500"></textarea>
@@ -3256,6 +3262,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260611j"></script>
+  <script src="/js/admin.js?v=20260612b"></script>
 </body>
 </html>
