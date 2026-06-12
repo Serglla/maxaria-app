@@ -341,6 +341,7 @@
     purSupFilter: document.getElementById("pur-sup-filter"),
     purMonthFilter: document.getElementById("pur-month-filter"),
     purCount: document.getElementById("pur-count"),
+    purTfoot: document.getElementById("pur-tfoot"),
     purchaseModalTitle: document.getElementById("purchase-modal-title"),
     purTbody: document.getElementById("pur-tbody"),
     purCreateBtn: document.getElementById("pur-create-btn"),
@@ -6837,9 +6838,27 @@
     if (els.purCount) els.purCount.textContent = list.length + (list.length === 1 ? " compra" : " compras");
     if (!list.length) {
       els.purTbody.innerHTML = '<tr><td colspan="6" class="muted">Sin compras registradas.</td></tr>';
+      if (els.purTfoot) els.purTfoot.innerHTML = "";
       return;
     }
     els.purTbody.innerHTML = list.map(purchaseRowHtml).join("");
+    // Total que respeta los filtros activos (mes y/o proveedor).
+    if (els.purTfoot) {
+      const totalItems = list.reduce((s, p) => s + (Number(p.items_count) || 0), 0);
+      const totalCost  = list.reduce((s, p) => s + (Number(p.total_cost) || 0), 0);
+      const parts = [];
+      if (monthFilter !== "all" && els.purMonthFilter && els.purMonthFilter.selectedOptions[0])
+        parts.push(els.purMonthFilter.selectedOptions[0].textContent);
+      if (supFilter !== "all" && els.purSupFilter && els.purSupFilter.selectedOptions[0])
+        parts.push(els.purSupFilter.selectedOptions[0].textContent);
+      const label = "Total" + (parts.length ? " · " + parts.join(" · ") : "");
+      els.purTfoot.innerHTML =
+        '<tr class="pur-total-row">' +
+          '<td colspan="4" style="text-align:right"><strong>' + escapeHtml(label) + '</strong></td>' +
+          '<td class="num"><strong>' + totalItems + '</strong></td>' +
+          '<td class="num"><strong>' + fmtPrice(totalCost) + '</strong></td>' +
+        '</tr>';
+    }
     // Wiring de click para expandir detalle
     els.purTbody.querySelectorAll("tr.pur-row").forEach((tr) => {
       tr.addEventListener("click", () => togglePurchaseDetail(tr));

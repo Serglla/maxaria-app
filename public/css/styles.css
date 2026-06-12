@@ -1389,6 +1389,7 @@ button { font: inherit; cursor: pointer; }
 .order-items-edit-table .item-qty,
 .order-items-edit-table .item-price { width: 72px; text-align: right; padding: 3px 5px; font-size: 13px; }
 .order-total-row td { font-weight: 700; color: #1e3a5f; padding: 8px 10px; border-top: 2px solid #1e3a5f; font-size: 14px; }
+.pur-total-row td { font-weight: 800; color: #1e3a5f; padding: 10px 12px; border-top: 2px solid #1e3a5f; background: #f1f5fb; font-size: 14px; }
 .order-total-label { text-align: right; color: #374151; }
 .order-total-cell { font-variant-numeric: tabular-nums; }
 .btn-del-item { background: #fee2e2; color: #dc2626; border: 0; border-radius: 4px;
