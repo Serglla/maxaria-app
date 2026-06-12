@@ -57,6 +57,7 @@
     selOnly:    document.getElementById("prod-sel-only"),
     selClear:   document.getElementById("prod-sel-clear"),
     selEdit:    document.getElementById("prod-sel-edit"),
+    selCosts:   document.getElementById("prod-sel-costs"),
     selCancel:  document.getElementById("prod-sel-cancel"),
     pbmModal:   document.getElementById("prod-bulk-modal"),
     pbmCount:   document.getElementById("pbm-count"),
@@ -3880,6 +3881,7 @@
     }
     if (els.selCount) els.selCount.textContent = txt;
     if (els.selEdit) els.selEdit.disabled = n === 0;
+    if (els.selCosts) els.selCosts.disabled = n === 0;
   }
   // Inserta/quita la columna de checkbox en el header y refleja el master-check
   function syncSelectHeader() {
@@ -4054,6 +4056,19 @@
     els.pbmModal.hidden = false;
   }
   if (els.selEdit) els.selEdit.addEventListener("click", openBulkModal);
+
+  // Botón directo "Cambiar costos": abre el modal en lote ya configurado en modo
+  // "por producto (costo)" — con la sección Precios activada y el scope perproduct.
+  async function openBulkModalCosts() {
+    if (!state.selectedIds.size) return;
+    await openBulkModal();
+    const enPrice = document.getElementById("pbm-en-price");
+    if (enPrice && !enPrice.checked) { enPrice.checked = true; enPrice.dispatchEvent(new Event("change")); }
+    const ppRadio = document.querySelector('input[name="pbm-price-scope"][value="perproduct"]');
+    if (ppRadio) ppRadio.checked = true;
+    syncPbmScope();
+  }
+  if (els.selCosts) els.selCosts.addEventListener("click", openBulkModalCosts);
   if (els.pbmCancel) els.pbmCancel.addEventListener("click", () => { els.pbmModal.hidden = true; });
   if (els.pbmApply) els.pbmApply.addEventListener("click", async () => {
     const ids = [...state.selectedIds];
@@ -9779,6 +9794,7 @@
   // ─────────────────────────────────────────────────────────────────
   const editProdModal   = document.getElementById("edit-product-modal");
   const epSaveBtn       = document.getElementById("ep-save-btn");
+  const epDeleteBtn     = document.getElementById("ep-delete-btn");
   const epCatSelect     = document.getElementById("ep-category");
   const epCostInp       = document.getElementById("ep-cost");
   let   editProdId      = null;
@@ -9860,6 +9876,8 @@
     if (epCatSelect) epCatSelect.value = p.category_id || "";
     const activeChk = document.getElementById("ep-active");
     if (activeChk) activeChk.checked = !!p.active;
+    // Botón de borrar: solo para el superadmin.
+    if (epDeleteBtn) epDeleteBtn.hidden = !(state.me && state.me.isSuperadmin);
     if (editProdModal) editProdModal.hidden = false;
     const nameEl = document.getElementById("ep-name");
     if (nameEl) nameEl.focus();
@@ -9945,6 +9963,43 @@
         alertModal(e.message || "Error al guardar");
       } finally {
         epSaveBtn.disabled = false;
+      }
+    });
+  }
+
+  // Borrar producto (solo superadmin). El server bloquea si tiene movimientos.
+  if (epDeleteBtn) {
+    epDeleteBtn.addEventListener("click", async () => {
+      if (!editProdId) return;
+      const p = state.products.find((x) => x.id === editProdId) ||
+                (state.allProducts || []).find((x) => x.id === editProdId);
+      const nombre = p ? (p.name + " (" + (p.code || "—") + ")") : ("#" + editProdId);
+      const ok = await confirmModal({
+        title: "Borrar producto",
+        message: "¿Borrar definitivamente " + nombre + "?\n\n" +
+          "Si el producto tiene pedidos o compras, el sistema NO lo va a borrar (en ese caso desactivalo). " +
+          "Esta acción no se puede deshacer.",
+        confirmText: "Borrar",
+        danger: true,
+      });
+      if (!ok) return;
+      const delId = editProdId;
+      epDeleteBtn.disabled = true;
+      try {
+        await api("/api/admin/products/" + delId, { method: "DELETE" });
+        state.products = (state.products || []).filter((x) => x.id !== delId);
+        state.allProducts = (state.allProducts || []).filter((x) => x.id !== delId);
+        applyFilters();
+        if (els.purPickerModal && !els.purPickerModal.hidden) {
+          renderPurPicker(els.purPickerSearch ? els.purPickerSearch.value : "");
+          updatePurPickerCount();
+        }
+        showToast("Producto borrado");
+        if (editProdModal) { editProdModal.hidden = true; editProdModal.style.zIndex = ""; }
+      } catch (e) {
+        alertModal(e.message || "No se pudo borrar el producto");
+      } finally {
+        epDeleteBtn.disabled = false;
       }
     });
   }

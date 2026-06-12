@@ -360,6 +360,7 @@
           <label class="pbm-chk" style="font-size:12px" title="Mostrar en la tabla solo los productos seleccionados"><input type="checkbox" id="prod-sel-only"> Ver solo seleccionados</label>
           <button class="btn btn-small" id="prod-sel-clear" type="button" title="Limpiar selección">Limpiar</button>
           <button class="btn btn-primary btn-small" id="prod-sel-edit" type="button" disabled>✎ Editar seleccionados</button>
+          <button class="btn btn-small" id="prod-sel-costs" type="button" disabled title="Cambiar el costo de cada producto seleccionado, uno por uno">💲 Cambiar costos</button>
           <button class="btn btn-small" id="prod-sel-cancel" type="button">Cancelar</button>
         </span>
       </div>
@@ -3054,7 +3055,9 @@
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer">
           <input type="checkbox" id="ep-active" /> Producto activo
         </label>
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+          <button type="button" class="btn btn-danger" id="ep-delete-btn" hidden title="Borrar el producto (solo superadmin). Se bloquea si tiene pedidos o compras.">🗑 Borrar producto</button>
+          <span style="flex:1"></span>
           <button type="button" class="btn" data-close>Cancelar</button>
           <button type="button" class="btn btn-primary" id="ep-save-btn">Guardar cambios</button>
         </div>
@@ -3271,6 +3274,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260612h"></script>
+  <script src="/js/admin.js?v=20260612i"></script>
 </body>
 </html>

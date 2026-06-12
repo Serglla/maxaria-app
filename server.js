@@ -3159,6 +3159,49 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   res.json({ ok: true, id: id });
 });
 
+// DELETE /api/admin/products/:id — borrar un producto (solo superadmin).
+// Se bloquea si el producto tiene movimientos reales (pedidos, compras,
+// cotizaciones o presupuestos): ahí conviene DESACTIVARLO para no perder
+// historial. Si no tiene movimientos, se borra junto con sus registros de log
+// (cambios de costo, ajustes de stock, historial de cambios de precio).
+app.delete("/api/admin/products/:id", requireAdmin, (req, res) => {
+  const perms = getAdminPerms(req.session.userId);
+  if (!perms.isSuperadmin) {
+    return res.status(403).json({ error: "Solo el superadmin puede borrar productos" });
+  }
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "id invalido" });
+  const prod = db.prepare("SELECT id, name FROM products WHERE id = ?").get(id);
+  if (!prod) return res.status(404).json({ error: "Producto no encontrado" });
+
+  // Referencias transaccionales (no se deben perder). Si hay alguna → 409.
+  const cnt = (sql) => Number(db.prepare(sql).get(id).n) || 0;
+  const inOrders = cnt("SELECT COUNT(*) AS n FROM order_items WHERE product_id = ?");
+  const inPurch  = cnt("SELECT COUNT(*) AS n FROM purchase_items WHERE product_id = ?");
+  const inPReq   = cnt("SELECT COUNT(*) AS n FROM purchase_request_items WHERE product_id = ?");
+  const inBudg   = cnt("SELECT COUNT(*) AS n FROM budget_items WHERE product_id = ?");
+  if (inOrders || inPurch || inPReq || inBudg) {
+    const partes = [];
+    if (inOrders) partes.push(inOrders + " pedido(s)");
+    if (inPurch)  partes.push(inPurch + " compra(s)");
+    if (inPReq)   partes.push(inPReq + " cotización(es)");
+    if (inBudg)   partes.push(inBudg + " presupuesto(s)");
+    return res.status(409).json({
+      error: "No se puede borrar: el producto está en " + partes.join(", ") +
+        ". Desactivalo para sacarlo del catálogo sin perder el historial.",
+    });
+  }
+
+  // Sin movimientos: borrar logs + producto en una transacción.
+  db.transaction(() => {
+    db.prepare("DELETE FROM cost_changes WHERE product_id = ?").run(id);
+    db.prepare("DELETE FROM stock_adjustments WHERE product_id = ?").run(id);
+    db.prepare("DELETE FROM price_changes WHERE product_id = ?").run(id);
+    db.prepare("DELETE FROM products WHERE id = ?").run(id);
+  })();
+  res.json({ ok: true, deleted: id });
+});
+
 // Edición en lote (selección múltiple): aplica cambios a varios productos en UNA
 // transacción. Body: { patches: [{ id, ...campos }] }. Cada patch trae solo los
 // campos a tocar (el front ya computó %/sumar-restar por producto).
