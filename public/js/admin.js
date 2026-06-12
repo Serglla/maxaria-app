@@ -5200,8 +5200,38 @@
     render();
   }
 
+  // ¿La edición cambia cantidades / agrega / quita items? (cambios solo de
+  // precio no cuentan). Se usa para avisar antes de mandar un pedido de Entregas
+  // de vuelta a Armado.
+  function orderItemsChangedQty(original, edited) {
+    var oldMap = {};
+    (original || []).forEach(function(it) { if (it.product_id) oldMap[it.product_id] = Number(it.quantity); });
+    var seen = {};
+    for (var i = 0; i < edited.length; i++) {
+      var it = edited[i];
+      seen[it.product_id] = true;
+      if (!(it.product_id in oldMap)) return true;            // item nuevo
+      if (Number(it.quantity) !== oldMap[it.product_id]) return true; // cantidad cambió
+    }
+    for (var j = 0; j < (original || []).length; j++) {
+      var o = original[j];
+      if (o.product_id && !seen[o.product_id]) return true;   // item quitado
+    }
+    return false;
+  }
+
   async function saveOrderItems(detailEl, order, editItems, saveBtn) {
     if (!editItems.length) { showToast("El pedido debe tener al menos un item", "error"); return; }
+    // Si el pedido está en Entregas (listo) y cambian cantidades/items, avisar
+    // que vuelve a Armado para preparar los cambios.
+    if (order.status === "listo" && orderItemsChangedQty(order.items, editItems)) {
+      var ok = await confirmModal({
+        title: "Volver a Armado",
+        message: "Este pedido está en Entregas. Al cambiar cantidades o productos vuelve a Armado para preparar los cambios, que quedan registrados.\n\n¿Seguir?",
+        confirmText: "Volver a Armado",
+      });
+      if (!ok) return;
+    }
     saveBtn.disabled = true;
     try {
       var resp = await api("/api/admin/orders/" + order.id + "/items", {
@@ -5215,20 +5245,26 @@
       // Stock pudo cambiar: invalidar cache de productos del picker de Compras.
       state.allProductsLoaded = false;
       refreshProductsCache(); // y refrescar la tabla de Productos
-      showToast("Pedido #" + order.id + " actualizado");
       // Re-fetchear el pedido completo: el PUT solo devuelve items/total, NO la
       // rentabilidad (Ventas/Costo/margen) ni el saldo, que el server recalcula
       // en GET /api/orders/:id. Sin esto, la caja de Rentabilidad quedaba con los
       // valores viejos de antes de editar (bug reportado).
       var fresh = await api("/api/orders/" + order.id);
       var o = (state.orders || []).find(function(x) { return x.id === order.id; });
-      if (o) o.total = fresh.total;
-      // Volver a la vista de detalle (solo lectura) ya con los datos nuevos.
-      renderOrderDetail(detailEl, fresh);
-      wireOrderDetail(detailEl, fresh);
-      // Actualizar el total mostrado en la tarjeta y mantener las vistas en sync.
-      var card = detailEl.closest(".order-card");
-      if (card) { var tot = card.querySelector(".order-total"); if (tot) tot.textContent = fmtPrice(fresh.total); }
+      if (o) { o.total = fresh.total; o.status = fresh.status; }
+      if (resp.back_to_armado) {
+        // El pedido salió de Entregas y volvió a Armado: re-render de las vistas
+        // para que la tarjeta aparezca en su nueva sección.
+        showToast("Pedido #" + order.id + " volvió a Armado para preparar los cambios");
+        refreshOrderViews();
+      } else {
+        showToast("Pedido #" + order.id + " actualizado");
+        // Volver a la vista de detalle (solo lectura) ya con los datos nuevos.
+        renderOrderDetail(detailEl, fresh);
+        wireOrderDetail(detailEl, fresh);
+        var card = detailEl.closest(".order-card");
+        if (card) { var tot = card.querySelector(".order-total"); if (tot) tot.textContent = fmtPrice(fresh.total); }
+      }
     } catch (err) {
       showToast("Error: " + err.message, "error");
       saveBtn.disabled = false;
@@ -10666,12 +10702,18 @@
   const cajaEls = {
     accountsWrap:    document.getElementById("caja-accounts-wrap"),
     addAccountBtn:   document.getElementById("caja-add-account-btn"),
-    newAccountForm:  document.getElementById("caja-new-account-form"),
+    accModal:        document.getElementById("caja-account-modal"),
+    accModalTitle:   document.getElementById("caja-account-modal-title"),
     accName:         document.getElementById("caja-acc-name"),
     accType:         document.getElementById("caja-acc-type"),
     accResp:         document.getElementById("caja-acc-resp"),
+    accRespWrap:     document.getElementById("caja-acc-resp-wrap"),
+    accActive:       document.getElementById("caja-acc-active"),
+    accActiveWrap:   document.getElementById("caja-acc-active-wrap"),
     accSaveBtn:      document.getElementById("caja-acc-save-btn"),
-    accCancelBtn:    document.getElementById("caja-acc-cancel-btn"),
+    movModal:        document.getElementById("caja-mov-modal"),
+    movOpenBtn:      document.getElementById("caja-mov-open-btn"),
+    movAccountLabel: document.getElementById("caja-mov-account-label"),
     typeBtns:        document.querySelectorAll(".caja-type-btn"),
     movAccount:      document.getElementById("caja-mov-account"),
     movDestWrap:     document.getElementById("caja-mov-dest-wrap"),
@@ -10687,28 +10729,55 @@
     movTbody:        document.getElementById("caja-mov-tbody"),
     movSummary:      document.getElementById("caja-mov-summary"),
   };
-  const cajaState = { accounts: [], movType: "ingreso" };
+  const cajaState = { accounts: [], movType: "ingreso", editAccountId: null };
+  function cajaIsSuper() { return !!(state.me && state.me.isSuperadmin); }
 
   function cajaFmt(n) { return "$ " + Number(n).toLocaleString("es-AR"); }
   function cajaTodayIso() { return new Date().toISOString().slice(0, 10); }
+
+  const CAJA_ICON = { efectivo:"💵", banco:"🏦", digital:"📱" };
+
+  function cajaAccCardHtml(a) {
+    const saldo = Number(a.saldo) || 0;
+    const cls   = saldo < 0 ? "caja-acc-neg" : "caja-acc-pos";
+    const inactive = Number(a.active) === 0 ? ' caja-acc-inactive' : '';
+    return '<div class="caja-acc-card' + inactive + '" data-caja-edit="' + a.id + '" title="Tocá para editar esta caja">' +
+      '<span class="caja-acc-icon">' + (CAJA_ICON[a.type] || "💰") + '</span>' +
+      '<div class="caja-acc-info">' +
+        '<span class="caja-acc-name">' + escapeHtml(a.name) +
+          (inactive ? ' <span class="caja-acc-off">inactiva</span>' : '') + '</span>' +
+        '<span class="caja-acc-type muted small">' + escapeHtml(a.type) + '</span>' +
+      '</div>' +
+      '<span class="caja-acc-saldo ' + cls + '">' + cajaFmt(saldo) + '</span>' +
+    '</div>';
+  }
 
   function cajaRenderAccounts() {
     if (!cajaEls.accountsWrap) return;
     const accs = cajaState.accounts;
     if (!accs.length) { cajaEls.accountsWrap.innerHTML = '<p class="muted">Sin cuentas.</p>'; return; }
-    const ICON = { efectivo:"💵", banco:"🏦", digital:"📱" };
-    cajaEls.accountsWrap.innerHTML = accs.map((a) => {
-      const saldo = Number(a.saldo) || 0;
-      const cls   = saldo < 0 ? "caja-acc-neg" : "caja-acc-pos";
-      const resp = a.responsable_full_name || a.responsable_username;
-      const respHtml = resp ? ' · 👤 ' + escapeHtml(resp) : '';
-      return '<div class="caja-acc-card">' +
-        '<span class="caja-acc-icon">' + (ICON[a.type] || "💰") + '</span>' +
-        '<div class="caja-acc-info">' +
-          '<span class="caja-acc-name">' + escapeHtml(a.name) + '</span>' +
-          '<span class="caja-acc-type muted small">' + a.type + respHtml + '</span>' +
+    // Agrupar por responsable: cada cajero con sus cajas, y un grupo final para
+    // las cajas generales (sin responsable).
+    const groups = [];     // [{ key, label, accs:[] }]
+    const byKey  = {};
+    for (const a of accs) {
+      const rid = a.responsable_user_id || 0;
+      const label = rid
+        ? ('👤 ' + (a.responsable_full_name || a.responsable_username || ('#' + rid)))
+        : '🏢 Cajas generales';
+      if (!byKey[rid]) { byKey[rid] = { key: rid, label: label, accs: [] }; groups.push(byKey[rid]); }
+      byKey[rid].accs.push(a);
+    }
+    // Responsables primero, "generales" al final.
+    groups.sort((g1, g2) => (g1.key === 0) - (g2.key === 0));
+    cajaEls.accountsWrap.innerHTML = groups.map((g) => {
+      const total = g.accs.reduce((s, a) => s + (Number(a.saldo) || 0), 0);
+      return '<div class="caja-acc-group">' +
+        '<div class="caja-acc-group-head">' +
+          '<span class="caja-acc-group-name">' + escapeHtml(g.label) + '</span>' +
+          '<span class="caja-acc-group-total">' + cajaFmt(total) + '</span>' +
         '</div>' +
-        '<span class="caja-acc-saldo ' + cls + '">' + cajaFmt(saldo) + '</span>' +
+        g.accs.map(cajaAccCardHtml).join("") +
       '</div>';
     }).join("");
   }
@@ -10730,6 +10799,8 @@
   }
 
   async function loadCaja() {
+    // Crear cuentas es exclusivo del superadmin.
+    if (cajaEls.addAccountBtn) cajaEls.addAccountBtn.hidden = !cajaIsSuper();
     try {
       cajaState.accounts = await api("/api/admin/caja");
       cajaRenderAccounts();
@@ -10824,6 +10895,7 @@
         await api("/api/admin/caja/movements", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
         if (cajaEls.movAmount)  cajaEls.movAmount.value = "";
         if (cajaEls.movDesc)    cajaEls.movDesc.value   = "";
+        if (cajaEls.movModal)   cajaEls.movModal.hidden = true;
         showToast("Movimiento registrado");
         await loadCaja(); // refresca saldos + tabla
       } catch (e) {
@@ -10833,6 +10905,26 @@
       }
     });
   }
+
+  // Abrir el modal de registrar movimiento, preseleccionando la caja del
+  // usuario logueado (donde es responsable); si no tiene, la primera.
+  function cajaOpenMovModal() {
+    if (!cajaEls.movModal) return;
+    // Reset a "ingreso"
+    cajaState.movType = "ingreso";
+    if (cajaEls.typeBtns) cajaEls.typeBtns.forEach((b) => b.classList.toggle("active", b.dataset.type === "ingreso"));
+    if (cajaEls.movDestWrap) cajaEls.movDestWrap.hidden = true;
+    if (cajaEls.movAmount) cajaEls.movAmount.value = "";
+    if (cajaEls.movDesc)   cajaEls.movDesc.value   = "";
+    if (cajaEls.movDate)   cajaEls.movDate.value   = cajaTodayIso();
+    // Preselección de caja según el usuario.
+    const myId = state.me && state.me.id;
+    const mine = myId ? cajaState.accounts.find((a) => Number(a.responsable_user_id) === Number(myId)) : null;
+    if (cajaEls.movAccount && mine) cajaEls.movAccount.value = String(mine.id);
+    cajaEls.movModal.hidden = false;
+    if (cajaEls.movAmount) cajaEls.movAmount.focus();
+  }
+  if (cajaEls.movOpenBtn) cajaEls.movOpenBtn.addEventListener("click", cajaOpenMovModal);
 
   // Filtrar movimientos
   if (cajaEls.filterBtn) cajaEls.filterBtn.addEventListener("click", loadCajaMovements);
@@ -10870,33 +10962,68 @@
     cajaEls.accResp.value = selectedId ? String(selectedId) : "";
   }
 
-  // Nueva cuenta
+  // Abre el modal de cuenta. acc = null → crear (solo superadmin); acc = objeto → editar.
+  async function cajaOpenAccountModal(acc) {
+    if (!cajaEls.accModal) return;
+    const isSuper = cajaIsSuper();
+    cajaState.editAccountId = acc ? acc.id : null;
+    if (cajaEls.accModalTitle) cajaEls.accModalTitle.textContent = acc ? "Editar cuenta" : "Nueva cuenta";
+    if (cajaEls.accName)   cajaEls.accName.value   = acc ? (acc.name || "") : "";
+    if (cajaEls.accType)   cajaEls.accType.value   = acc ? (acc.type || "efectivo") : "efectivo";
+    if (cajaEls.accActive) cajaEls.accActive.checked = acc ? Number(acc.active) !== 0 : true;
+    // El campo activa solo tiene sentido al editar.
+    if (cajaEls.accActiveWrap) cajaEls.accActiveWrap.style.display = acc ? "flex" : "none";
+    // El responsable solo lo ve/edita el superadmin.
+    if (cajaEls.accRespWrap) cajaEls.accRespWrap.style.display = isSuper ? "flex" : "none";
+    if (isSuper) await cajaPopulateRespSelect(acc ? acc.responsable_user_id : null);
+    cajaEls.accModal.hidden = false;
+    if (cajaEls.accName) cajaEls.accName.focus();
+  }
+
+  // Botón "+ Nueva cuenta" (solo superadmin)
   if (cajaEls.addAccountBtn) {
-    cajaEls.addAccountBtn.addEventListener("click", () => {
-      if (cajaEls.newAccountForm) cajaEls.newAccountForm.hidden = false;
-      cajaPopulateRespSelect(null);
-      if (cajaEls.accName) cajaEls.accName.focus();
+    cajaEls.addAccountBtn.addEventListener("click", () => cajaOpenAccountModal(null));
+  }
+
+  // Click en una tarjeta de caja → editar
+  if (cajaEls.accountsWrap) {
+    cajaEls.accountsWrap.addEventListener("click", (e) => {
+      const card = e.target.closest("[data-caja-edit]");
+      if (!card) return;
+      const acc = cajaState.accounts.find((a) => String(a.id) === card.dataset.cajaEdit);
+      if (acc) cajaOpenAccountModal(acc);
     });
   }
-  if (cajaEls.accCancelBtn) {
-    cajaEls.accCancelBtn.addEventListener("click", () => {
-      if (cajaEls.newAccountForm) cajaEls.newAccountForm.hidden = true;
-    });
-  }
+
+  // Guardar cuenta (crear o editar)
   if (cajaEls.accSaveBtn) {
     cajaEls.accSaveBtn.addEventListener("click", async () => {
       const name = cajaEls.accName ? cajaEls.accName.value.trim() : "";
       const type = cajaEls.accType ? cajaEls.accType.value : "efectivo";
-      const responsable_user_id = cajaEls.accResp && cajaEls.accResp.value ? Number(cajaEls.accResp.value) : null;
       if (!name) { alertModal("Ingresá un nombre para la cuenta."); return; }
+      const editId = cajaState.editAccountId;
+      const body = { name, type };
+      // El responsable solo se manda si el superadmin lo editó.
+      if (cajaIsSuper() && cajaEls.accResp) {
+        body.responsable_user_id = cajaEls.accResp.value ? Number(cajaEls.accResp.value) : null;
+      }
+      if (editId && cajaEls.accActive) body.active = cajaEls.accActive.checked;
       try {
-        await api("/api/admin/caja/accounts", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, type, responsable_user_id }) });
-        if (cajaEls.accName) cajaEls.accName.value = "";
-        if (cajaEls.newAccountForm) cajaEls.newAccountForm.hidden = true;
+        cajaEls.accSaveBtn.disabled = true;
+        if (editId) {
+          await api("/api/admin/caja/accounts/" + editId, { method:"PATCH", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+        } else {
+          await api("/api/admin/caja/accounts", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+        }
+        if (cajaEls.accModal) cajaEls.accModal.hidden = true;
         state.cajasList = null; // invalidar cache de selectores de cobro
-        showToast("Cuenta creada");
+        showToast(editId ? "Cuenta actualizada" : "Cuenta creada");
         await loadCaja();
-      } catch (e) { alertModal(e.message || "Error"); }
+      } catch (e) {
+        alertModal(e.message || "Error");
+      } finally {
+        cajaEls.accSaveBtn.disabled = false;
+      }
     });
   }
 

@@ -2858,30 +2858,84 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
   const skipStock = order.unified_parent_id != null || !!order.is_unified;
   const stockCurrentlyOut = anyLinkedBudget ? !!linkedBudgetOut : !!order.stock_discounted;
 
+  // MERGE (no DELETE+INSERT) para conservar el chequeo de armado de los items
+  // que no cambian: items sin cambios mantienen pick_checked/picked_qty; los que
+  // cambian de cantidad (o se agregan) quedan SIN chequear para re-armarlos; un
+  // cambio que solo toca el precio no invalida el armado. Se matchea por
+  // product_id (un producto aparece una sola vez por pedido).
+  const oldItems = db.prepare(
+    "SELECT id, product_id, quantity, COALESCE(pick_checked,0) AS pick_checked, product_code, product_name" +
+    "  FROM order_items WHERE order_id = ?"
+  ).all(id);
+  const oldByProduct = new Map();
+  for (const o of oldItems) if (o.product_id) oldByProduct.set(o.product_id, o);
+
+  // Si el pedido estaba en la cola de Entregas ("listo") y la edición cambia
+  // cantidades / agrega / quita items, vuelve a Armado (preparando) para preparar
+  // los cambios, y estos quedan registrados en pick_changes (mismo bloque que los
+  // cambios del armado).
+  const wasListo = order.status === "listo";
+  const changes = [];        // {product_code, product_name, old_qty, new_qty}
+  let hadQtyChange = false;  // hubo cambios de cantidad / alta / baja de items
+
   db.transaction(() => {
-    // Si el stock estaba descontado: devolver el de los items viejos antes de
-    // borrarlos, para después descontar el de los nuevos.
-    if (stockCurrentlyOut && !skipStock) {
-      const oldItems = db.prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?").all(id);
-      const incStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
-      for (const oi of oldItems) if (oi.product_id) incStock.run(oi.quantity, oi.product_id);
+    const newProductIds = new Set(lines.map((l) => l.product_id));
+    const adjStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
+    const insItem = db.prepare(
+      "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit, pick_checked, picked_qty)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)"
+    );
+    const updQtyItem = db.prepare(
+      "UPDATE order_items SET product_code=?, product_name=?, quantity=?, unit_price=?, subtotal=?, vendedor_cost_unit=?," +
+      " pick_checked=0, picked_qty=0, picked_by=NULL, picked_at=NULL WHERE id=?"
+    );
+    const updPriceItem = db.prepare(
+      "UPDATE order_items SET product_code=?, product_name=?, unit_price=?, subtotal=?, vendedor_cost_unit=? WHERE id=?"
+    );
+    const delItem = db.prepare("DELETE FROM order_items WHERE id=?");
+
+    // Items quitados (estaban en el pedido y ya no): borrar + devolver stock.
+    for (const o of oldItems) {
+      if (!o.product_id || !newProductIds.has(o.product_id)) {
+        delItem.run(o.id);
+        if (stockCurrentlyOut && !skipStock && o.product_id) adjStock.run(o.quantity, o.product_id);
+        hadQtyChange = true;
+        changes.push({ product_code: o.product_code, product_name: o.product_name, old_qty: o.quantity, new_qty: 0 });
+      }
+    }
+    // Items nuevos y modificados.
+    for (const l of lines) {
+      const old = oldByProduct.get(l.product_id);
+      if (!old) {
+        insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
+        if (stockCurrentlyOut && !skipStock) adjStock.run(-l.quantity, l.product_id);
+        hadQtyChange = true;
+        changes.push({ product_code: l.product_code, product_name: l.product_name, old_qty: 0, new_qty: l.quantity });
+      } else if (Number(old.quantity) !== Number(l.quantity)) {
+        updQtyItem.run(l.product_code, l.product_name, l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit, old.id);
+        if (stockCurrentlyOut && !skipStock) adjStock.run(Number(old.quantity) - Number(l.quantity), l.product_id);
+        hadQtyChange = true;
+        changes.push({ product_code: l.product_code, product_name: l.product_name, old_qty: old.quantity, new_qty: l.quantity });
+      } else {
+        // Misma cantidad: actualizar precio/nombre/código/costo, conservar chequeo.
+        updPriceItem.run(l.product_code, l.product_name, l.unit_price, l.subtotal, l.vendedor_cost_unit, old.id);
+      }
     }
 
-    db.prepare("DELETE FROM order_items WHERE order_id = ?").run(id);
-    const ins = db.prepare(
-      "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit)" +
-      " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    total = round2(
+      db.prepare("SELECT COALESCE(SUM(subtotal),0) AS t FROM order_items WHERE order_id = ?").get(id).t
     );
-    for (const l of lines) {
-      ins.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
-    }
-    total = round2(total);
     db.prepare("UPDATE orders SET total = ? WHERE id = ?").run(total, id);
 
-    // Descontar el stock de los items nuevos si el pedido lo tenía descontado.
-    if (stockCurrentlyOut && !skipStock) {
-      const decStock = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
-      for (const l of lines) if (l.product_id) decStock.run(l.quantity, l.product_id);
+    // Volver a Armado + registrar los cambios (solo si venía de Entregas y hubo
+    // cambios de cantidad/items; un cambio solo de precio no re-arma).
+    if (wasListo && hadQtyChange) {
+      db.prepare("UPDATE orders SET status = 'preparando' WHERE id = ?").run(id);
+      const insChange = db.prepare(
+        "INSERT INTO pick_changes (order_id, product_code, product_name, old_qty, new_qty, changed_by)" +
+        " VALUES (?, ?, ?, ?, ?, ?)"
+      );
+      for (const c of changes) insChange.run(id, c.product_code || null, c.product_name || null, c.old_qty, c.new_qty, req.session.userId);
     }
 
     // Mantener en sync el débito de cuenta corriente si ya existe (pedidos
@@ -2892,11 +2946,22 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     }
   })();
 
+  const backToArmado = wasListo && hadQtyChange;
+  if (backToArmado) {
+    logActivity(req, "pedido", "Pedido #" + id + " · editado en Entregas, vuelve a Armado (" +
+      changes.length + " cambios)");
+  }
   const updatedItems = db.prepare(
     "SELECT id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit" +
     "  FROM order_items WHERE order_id = ? ORDER BY id"
   ).all(id);
-  res.json({ ok: true, total, items: updatedItems });
+  res.json({
+    ok: true,
+    total,
+    items: updatedItems,
+    status: backToArmado ? "preparando" : order.status,
+    back_to_armado: backToArmado,
+  });
 });
 
 // ===== Panel admin =====

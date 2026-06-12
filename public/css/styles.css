@@ -4533,22 +4533,68 @@ html.in-modal .ventas-wrap {
   justify-content: space-between;
   margin-bottom: 10px;
 }
-.caja-accounts-wrap { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+.caja-accounts-wrap { display: flex; flex-direction: column; gap: 14px; margin-bottom: 14px; }
+/* Grupo de cajas por responsable */
+.caja-acc-group { display: flex; flex-direction: column; gap: 6px; }
+.caja-acc-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px 4px;
+  border-bottom: 1px solid #d7dee8;
+}
+.caja-acc-group-name {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: #1e3a5f;
+}
+.caja-acc-group-total { font-size: 13px; font-weight: 800; color: #334155; font-variant-numeric: tabular-nums; }
 .caja-acc-card {
   display: flex;
   align-items: center;
   gap: 10px;
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
   padding: 10px 14px;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, transform .05s;
+}
+.caja-acc-card:hover { border-color: #1e3a5f; box-shadow: 0 2px 8px rgba(30,58,95,.12); }
+.caja-acc-card:active { transform: scale(.99); }
+.caja-acc-inactive { opacity: .55; }
+.caja-acc-off {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #b91c1c;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  padding: 1px 6px;
+  margin-left: 4px;
 }
 .caja-acc-icon  { font-size: 20px; flex-shrink: 0; }
 .caja-acc-info  { flex: 1; display: flex; flex-direction: column; }
-.caja-acc-name  { font-weight: 600; font-size: 14px; }
-.caja-acc-saldo { font-size: 16px; font-weight: 700; flex-shrink: 0; }
+.caja-acc-name  { font-weight: 700; font-size: 14px; color: #0f172a; }
+.caja-acc-saldo { font-size: 16px; font-weight: 800; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .caja-acc-pos   { color: #15803d; }
 .caja-acc-neg   { color: #dc2626; }
+/* Botón "+ Nueva cuenta" distintivo */
+.caja-new-acc-btn { font-weight: 700; }
+/* Botón prominente para abrir el modal de registrar movimiento */
+.caja-mov-open-btn {
+  width: 100%;
+  margin-top: 4px;
+  height: 46px;
+  font-size: 15px;
+  font-weight: 800;
+  border-radius: 11px;
+  box-shadow: 0 2px 8px rgba(30,58,95,.25);
+}
 
 /* Form box */
 .caja-form-box {
