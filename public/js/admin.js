@@ -2836,8 +2836,8 @@
       if (existingDelivery) {
         const f = els.deliveryForm;
         f.querySelector('[name="delivered_to"]').value = existingDelivery.delivered_to || "";
-        f.querySelector('[name="efectivo_amount"]').value = existingDelivery.efectivo_amount || 0;
-        f.querySelector('[name="transferencia_amount"]').value = existingDelivery.transferencia_amount || 0;
+        setMoney(f.querySelector('[name="efectivo_amount"]'), existingDelivery.efectivo_amount || 0);
+        setMoney(f.querySelector('[name="transferencia_amount"]'), existingDelivery.transferencia_amount || 0);
         f.querySelector('[name="notes"]').value = existingDelivery.notes || "";
       }
       updateDeliveryTotalPreview();
@@ -2925,8 +2925,8 @@
     const f = els.deliveryForm;
     if (!f) return { ef: 0, tr: 0 };
     return {
-      ef: Math.max(0, Number(f.querySelector('[name="efectivo_amount"]').value) || 0),
-      tr: Math.max(0, Number(f.querySelector('[name="transferencia_amount"]').value) || 0),
+      ef: Math.max(0, parseMoney(f.querySelector('[name="efectivo_amount"]').value)),
+      tr: Math.max(0, parseMoney(f.querySelector('[name="transferencia_amount"]').value)),
     };
   }
 
@@ -2949,13 +2949,13 @@
     const f = els.deliveryForm;
     if (!f) return;
     const neto = deliveryNetTotal();
-    const ef = Math.max(0, Number(f.querySelector('[name="efectivo_amount"]').value) || 0);
+    const ef = Math.max(0, parseMoney(f.querySelector('[name="efectivo_amount"]').value));
     const lock = neto != null && neto > 0 && ef >= neto;
     const trInput = f.querySelector('[name="transferencia_amount"]');
     const trSel = document.getElementById("delivery-caja-transfer");
     if (trInput) {
       trInput.disabled = lock;
-      if (lock) trInput.value = 0;
+      if (lock) setMoney(trInput, 0);
     }
     if (trSel) {
       trSel.disabled = lock;
@@ -2995,6 +2995,8 @@
   }
 
   if (els.deliveryForm) {
+    attachMoneyInput(els.deliveryForm.querySelector('[name="efectivo_amount"]'));
+    attachMoneyInput(els.deliveryForm.querySelector('[name="transferencia_amount"]'));
     els.deliveryForm.addEventListener("input", (e) => {
       if (e.target.name === "efectivo_amount" || e.target.name === "transferencia_amount") {
         deliverySyncTransferLock();
@@ -3018,10 +3020,10 @@
         const neto = deliveryNetTotal();
         if (deliveryPaidChk.checked) {
           if (neto == null || neto <= 0) { deliveryPaidChk.checked = false; return; }
-          f.querySelector('[name="efectivo_amount"]').value = neto;
-          f.querySelector('[name="transferencia_amount"]').value = 0;
+          setMoney(f.querySelector('[name="efectivo_amount"]'), neto);
+          setMoney(f.querySelector('[name="transferencia_amount"]'), 0);
         } else {
-          f.querySelector('[name="efectivo_amount"]').value = 0;
+          setMoney(f.querySelector('[name="efectivo_amount"]'), 0);
         }
         deliverySyncTransferLock();
         updateDeliveryTotalPreview();
@@ -3049,8 +3051,8 @@
       const fd = new FormData(els.deliveryForm);
       const body = {
         delivered_to: fd.get("delivered_to"),
-        efectivo_amount: Number(fd.get("efectivo_amount")) || 0,
-        transferencia_amount: Number(fd.get("transferencia_amount")) || 0,
+        efectivo_amount: parseMoney(fd.get("efectivo_amount")),
+        transferencia_amount: parseMoney(fd.get("transferencia_amount")),
         caja_id: fd.get("caja_id") || null,
         caja_transfer_id: fd.get("caja_transfer_id") || null,
         notes: fd.get("notes"),
@@ -8187,12 +8189,13 @@
   }
 
   if (els.paymentCreateForm) {
+    attachMoneyInput(els.paymentCreateForm.querySelector('[name="amount"]'));
     els.paymentCreateForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(els.paymentCreateForm);
       const body = {
         user_id: Number(fd.get("user_id")),
-        amount: Number(fd.get("amount")),
+        amount: parseMoney(fd.get("amount")),
         method: fd.get("method"),
         caja_id: fd.get("caja_id") || null,
         reference: fd.get("reference"),
@@ -8360,7 +8363,7 @@
         if (els.expCreateTitle) els.expCreateTitle.textContent = "Editar gasto #" + existing.id;
         form.id.value = existing.id;
         form.expense_date.value = existing.expense_date || "";
-        form.amount.value = existing.amount;
+        setMoney(form.amount, existing.amount);
         form.expense_category_id.value = existing.expense_category_id || "";
         form.description.value = existing.description || "";
         form.payment_method.value = existing.payment_method || "efectivo";
@@ -8407,13 +8410,14 @@
   }
 
   if (els.expCreateForm) {
+    attachMoneyInput(els.expCreateForm.querySelector('[name="amount"]'));
     els.expCreateForm.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const form = els.expCreateForm;
       const id = form.id.value ? Number(form.id.value) : null;
       const body = {
         expense_date: form.expense_date.value,
-        amount: Number(form.amount.value),
+        amount: parseMoney(form.amount.value),
         expense_category_id: form.expense_category_id.value ? Number(form.expense_category_id.value) : null,
         description: form.description.value.trim(),
         payment_method: form.payment_method.value,
@@ -8696,7 +8700,8 @@
       if (els.payFormClient) els.payFormClient.value = String(userId);
       // Pre-cargar el monto adeudado si lo hay
       const amtInput = els.paymentCreateForm ? els.paymentCreateForm.querySelector('[name="amount"]') : null;
-      if (amtInput && a && Number(a.balance) < 0) amtInput.value = Math.abs(Number(a.balance));
+      attachMoneyInput(amtInput);
+      if (amtInput && a && Number(a.balance) < 0) setMoney(amtInput, Math.abs(Number(a.balance)));
     });
     fillCajaSelect(document.getElementById("pay-form-caja"), null);
     if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
@@ -9706,6 +9711,31 @@
     }
     return round2(parseFloat(str)) || 0;
   }
+  // ── Montos en pesos (enteros) con separador de miles es-AR ──
+  // Para inputs de dinero: pagos, gastos, cobros, movimientos de caja.
+  // Formatea EN VIVO mientras se tipea ("1000" → "1.000", "1000000" → "1.000.000").
+  function fmtMiles(n) { return (Math.round(Number(n) || 0)).toLocaleString("es-AR"); }
+  // Lee un input/valor formateado y devuelve el entero (descarta todo lo que no sea dígito).
+  function parseMoney(s) {
+    return Math.round(Number(String(s == null ? "" : s).replace(/[^\d]/g, "")) || 0);
+  }
+  // Setea un input de dinero con el valor ya formateado (0 → "0").
+  function setMoney(el, n) { if (el) el.value = fmtMiles(n); }
+  // Convierte un <input type="number"> en uno de texto que se formatea solo al tipear.
+  function attachMoneyInput(el) {
+    if (!el || el._moneyFmt) return;
+    el._moneyFmt = true;
+    el.type = "text";
+    el.setAttribute("inputmode", "numeric");
+    el.autocomplete = "off";
+    const reformat = () => {
+      const digits = el.value.replace(/[^\d]/g, "");
+      el.value = digits ? Number(digits).toLocaleString("es-AR") : "";
+    };
+    el.addEventListener("input", reformat);
+    reformat(); // formato inicial (por si trae value)
+  }
+
   // Attacha focus/blur a un input de precio para formatear/deformatear
   function attachPriceFmt(el) {
     if (!el) return;
@@ -11078,7 +11108,7 @@
     const acc = cajaState.accounts.find((a) => Number(a.id) === accId);
     if (!acc) { el.hidden = true; return; }
     const saldo = Number(acc.saldo) || 0;
-    const amt = Number(cajaEls.movAmount && cajaEls.movAmount.value) || 0;
+    const amt = parseMoney(cajaEls.movAmount && cajaEls.movAmount.value);
     const rest = saldo - amt;
     const verb = cajaState.movType === "transferencia" ? "transferir" : "egresar";
     el.innerHTML = '💰 Disponible en <strong>' + escapeHtml(acc.name) + '</strong>: ' + cajaFmt(saldo) +
@@ -11088,7 +11118,7 @@
     el.hidden = false;
   }
   if (cajaEls.movAccount) cajaEls.movAccount.addEventListener("change", cajaUpdateMovSaldoInfo);
-  if (cajaEls.movAmount) cajaEls.movAmount.addEventListener("input", cajaUpdateMovSaldoInfo);
+  if (cajaEls.movAmount) { attachMoneyInput(cajaEls.movAmount); cajaEls.movAmount.addEventListener("input", cajaUpdateMovSaldoInfo); }
 
   // Toggle ingreso/egreso/transferencia
   if (cajaEls.typeBtns) {
@@ -11109,7 +11139,7 @@
   // Guardar movimiento
   if (cajaEls.movSaveBtn) {
     cajaEls.movSaveBtn.addEventListener("click", async () => {
-      const amount = Number(cajaEls.movAmount ? cajaEls.movAmount.value : 0);
+      const amount = parseMoney(cajaEls.movAmount ? cajaEls.movAmount.value : 0);
       if (!amount || amount <= 0) { alertModal("Ingresá un monto mayor a 0."); return; }
       const body = {
         account_id:             cajaEls.movAccount    ? Number(cajaEls.movAccount.value)    : null,
@@ -11570,7 +11600,8 @@
     fillCajaSelect(document.getElementById("sup-pay-caja"), null);
     const a = supState.list.find((x) => x.id === supplierId);
     const amtInput = supEls.payForm ? supEls.payForm.querySelector('[name="amount"]') : null;
-    if (amtInput && a && Number(a.balance) > 0) amtInput.value = Math.round(Number(a.balance));
+    attachMoneyInput(amtInput);
+    if (amtInput && a && Number(a.balance) > 0) setMoney(amtInput, Math.round(Number(a.balance)));
     if (supEls.payModal) supEls.payModal.hidden = false;
   }
 
@@ -11580,12 +11611,13 @@
   if (supEls.onlyDebtors) supEls.onlyDebtors.addEventListener("change", renderSupplierAccounts);
 
   if (supEls.payForm) {
+    attachMoneyInput(supEls.payForm.querySelector('[name="amount"]'));
     supEls.payForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(supEls.payForm);
       const body = {
         supplier_id: Number(fd.get("supplier_id")),
-        amount: Number(fd.get("amount")),
+        amount: parseMoney(fd.get("amount")),
         method: fd.get("method"),
         caja_id: fd.get("caja_id") || null,
         reference: fd.get("reference"),
