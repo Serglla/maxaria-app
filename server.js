@@ -7360,6 +7360,23 @@ app.get("/api/admin/reports/inflation", requireAdmin, (req, res) => {
   });
 });
 
+// DELETE /api/admin/reports/inflation/:id — borra un registro de cambio de costo
+// (solo superadmin). Sirve para limpiar cargas erroneas que distorsionan el
+// reporte (ej: se cargo el costo de una caja como costo unitario). Solo afecta
+// al historial de inflacion; no toca el costo actual del producto ni el stock.
+app.delete("/api/admin/reports/inflation/:id", requireAdmin, (req, res) => {
+  const perms = getAdminPerms(req.session.userId);
+  if (!perms.isSuperadmin) {
+    return res.status(403).json({ error: "Solo el superadmin puede borrar registros de inflacion" });
+  }
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "id invalido" });
+  const row = db.prepare("SELECT id FROM cost_changes WHERE id = ?").get(id);
+  if (!row) return res.status(404).json({ error: "Registro no encontrado" });
+  db.prepare("DELETE FROM cost_changes WHERE id = ?").run(id);
+  res.json({ ok: true, deleted: id });
+});
+
 // ===== REPORTES DE VENTAS =====
 
 // GET /api/admin/reports/sales — pedidos con KPIs del período

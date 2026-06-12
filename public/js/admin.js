@@ -10765,7 +10765,7 @@
   async function loadInflacion() {
     if (!infEls.tbody) return;
     infSetDefaultRange();
-    infEls.tbody.innerHTML = '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>';
+    infEls.tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>';
     if (infEls.tfoot) infEls.tfoot.innerHTML = "";
     try {
       const qs = [
@@ -10776,7 +10776,7 @@
       infState.changes = data.changes || [];
       renderInflacion(data);
     } catch (e) {
-      infEls.tbody.innerHTML = '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">' +
+      infEls.tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;padding:24px">' +
         escapeHtml(e.message || "Error cargando el reporte") + "</td></tr>";
     }
   }
@@ -10794,7 +10794,7 @@
 
     const rows = infState.changes;
     if (!rows.length) {
-      infEls.tbody.innerHTML = '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">' +
+      infEls.tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;padding:24px">' +
         "Sin cambios de costo en el período. Los cambios se registran desde que esta función está activa.</td></tr>";
       return;
     }
@@ -10815,8 +10815,13 @@
         '<td class="num">' + (c.sold_qty == null ? '<span class="muted" title="Primer cambio registrado del producto: no hay referencia previa para medir ventas">—</span>' : c.sold_qty) + "</td>" +
         '<td class="num">' + (c.perdida == null ? '<span class="muted">—</span>' : infSigned(-c.perdida)) + "</td>" +
         '<td class="num">' + infSigned(c.neto) + "</td>" +
+        '<td><button type="button" class="btn-mini inf-del-btn" data-id="' + c.id +
+          '" title="Borrar este registro de cambio de costo (carga errónea). No toca el costo actual del producto.">🗑</button></td>' +
         "</tr>";
     }).join("");
+    infEls.tbody.querySelectorAll(".inf-del-btn").forEach((btn) => {
+      btn.addEventListener("click", () => infDeleteChange(Number(btn.dataset.id)));
+    });
     if (infEls.tfoot) {
       const tr = infState.changes;
       const sumReval = tr.reduce((a, c) => a + (c.revalorizacion || 0), 0);
@@ -10827,7 +10832,30 @@
         "<td></td>" +
         '<td class="num">' + infSigned(-sumPerd) + "</td>" +
         '<td class="num">' + infSigned(sumReval - sumPerd) + "</td>" +
+        "<td></td>" +
         "</tr>";
+    }
+  }
+
+  // Borra un registro de cambio de costo (carga errónea que distorsiona el
+  // reporte). Solo afecta al historial de inflación, no al costo del producto.
+  async function infDeleteChange(id) {
+    const c = (infState.changes || []).find((x) => x.id === id);
+    const nombre = c ? (c.name + " (" + (c.code || "—") + ")") : ("#" + id);
+    const ok = await confirmModal({
+      title: "Borrar registro de inflación",
+      message: "¿Borrar el cambio de costo de " + nombre + "?\n\n" +
+        "Esto solo limpia el historial del reporte de inflación. NO cambia el costo actual del producto ni el stock.",
+      confirmText: "Borrar",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api("/api/admin/reports/inflation/" + id, { method: "DELETE" });
+      showToast("Registro borrado");
+      loadInflacion();
+    } catch (err) {
+      alertModal("No se pudo borrar: " + err.message);
     }
   }
 
