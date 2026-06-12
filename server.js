@@ -7467,7 +7467,7 @@ function cajaSaldo(accountId) {
   return r ? r.saldo : 0;
 }
 
-// GET /api/admin/caja — cuentas con saldo
+// GET /api/admin/caja — cuentas con saldo + orden de pestañas por responsable
 app.get("/api/admin/caja", requireAdmin, (req, res) => {
   const accounts = db.prepare(
     "SELECT ca.*, " +
@@ -7478,7 +7478,20 @@ app.get("/api/admin/caja", requireAdmin, (req, res) => {
     " LEFT JOIN users resp ON resp.id = ca.responsable_user_id" +
     " ORDER BY ca.sort_order, ca.id"
   ).all();
-  res.json(accounts);
+  // Orden de las pestañas de responsables en la vista Caja (CSV de user ids).
+  const tabOrder = String(getSetting("caja_tab_order", "") || "")
+    .split(",").map((s) => Number(s.trim())).filter((n) => n > 0);
+  res.json({ accounts: accounts, tab_order: tabOrder });
+});
+
+// POST /api/admin/caja/tab-order — guardar el orden de las pestañas de
+// responsables. Body: { order: [userId, userId, ...] }.
+app.post("/api/admin/caja/tab-order", requireAdmin, (req, res) => {
+  const order = Array.isArray((req.body || {}).order) ? req.body.order : null;
+  if (!order) return res.status(400).json({ error: "Falta el orden" });
+  const ids = order.map((n) => Number(n)).filter((n) => n > 0);
+  setSetting("caja_tab_order", ids.join(","));
+  res.json({ ok: true, order: ids });
 });
 
 // GET /api/cajas — lista liviana de cajas activas para el selector de cobro
@@ -7547,10 +7560,14 @@ app.patch("/api/admin/caja/accounts/:id", requireAdmin, (req, res) => {
 
 // GET /api/admin/caja/movements — listado de movimientos
 app.get("/api/admin/caja/movements", requireAdmin, (req, res) => {
-  const { account_id, from, to, limit: lim } = req.query;
+  const { account_id, responsable_id, from, to, limit: lim } = req.query;
   const params = [];
   const where = [];
   if (account_id && account_id !== "all") { where.push("cm.account_id=?"); params.push(Number(account_id)); }
+  // Filtro por responsable de la cuenta (pestañas de la vista Caja).
+  else if (responsable_id && Number(responsable_id) > 0) {
+    where.push("ca.responsable_user_id=?"); params.push(Number(responsable_id));
+  }
   if (from) { where.push("cm.movement_date>=?"); params.push(from); }
   if (to)   { where.push("cm.movement_date<=?"); params.push(to); }
   const wStr = where.length ? (" WHERE " + where.join(" AND ")) : "";

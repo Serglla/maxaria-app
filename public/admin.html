@@ -425,53 +425,68 @@
 
     <!-- ===== TAB CAJA ===== -->
     <section class="tab-panel" id="tab-caja" hidden>
-      <div class="caja-layout">
+      <!-- Pestañas: General + una por responsable (orden editable) -->
+      <div class="caja-tabs-bar">
+        <div class="caja-tabs" id="caja-tabs"></div>
+        <span class="admin-spacer"></span>
+        <button class="btn btn-tool" id="caja-order-btn" type="button" hidden title="Cambiar el orden de las pestañas">⇅ Ordenar</button>
+        <button class="btn btn-primary caja-new-acc-btn" id="caja-add-account-btn" type="button" hidden>+ Nueva cuenta</button>
+      </div>
 
-        <!-- Panel izquierdo: cuentas -->
-        <div class="caja-left">
+      <!-- Contenido de la pestaña activa (sumas por especie / cajas del responsable) -->
+      <div id="caja-accounts-wrap" class="caja-tab-content">
+        <div class="muted">Cargando…</div>
+      </div>
 
-          <!-- Saldos por cuenta agrupados por responsable -->
-          <div class="caja-accounts-header">
-            <span class="dash-section-label" style="margin:0">Cuentas</span>
-            <button class="btn btn-primary caja-new-acc-btn" id="caja-add-account-btn" type="button" hidden>+ Nueva cuenta</button>
-          </div>
-          <div id="caja-accounts-wrap" class="caja-accounts-wrap">
-            <div class="muted">Cargando…</div>
-          </div>
-
+      <!-- Movimientos (filtrados según la pestaña activa) -->
+      <div class="caja-movs-block">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+          <span class="dash-section-label" style="margin:0">Movimientos</span>
+          <select id="caja-filter-account" class="admin-select" style="min-width:140px">
+            <option value="all">Todas las cuentas</option>
+          </select>
+          <input type="date" id="caja-filter-from" class="admin-input" style="width:130px" />
+          <input type="date" id="caja-filter-to" class="admin-input" style="width:130px" />
+          <button class="btn btn-small" id="caja-filter-btn" type="button">Filtrar</button>
+          <span class="admin-spacer"></span>
+          <span id="caja-mov-summary" class="muted small"></span>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table" id="caja-mov-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Cuenta</th>
+                <th>Descripción</th>
+                <th>Tipo</th>
+                <th class="num">Monto</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="caja-mov-tbody"><tr><td colspan="6" class="muted">Cargando…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="caja-foot-actions">
           <button class="btn btn-primary caja-mov-open-btn" id="caja-mov-open-btn" type="button">＋ Registrar movimiento</button>
         </div>
+      </div>
 
-        <!-- Panel derecho: historial de movimientos -->
-        <div class="caja-right">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-            <span class="dash-section-label" style="margin:0">Movimientos</span>
-            <select id="caja-filter-account" class="admin-select" style="min-width:140px">
-              <option value="all">Todas las cuentas</option>
-            </select>
-            <input type="date" id="caja-filter-from" class="admin-input" style="width:130px" />
-            <input type="date" id="caja-filter-to" class="admin-input" style="width:130px" />
-            <button class="btn btn-small" id="caja-filter-btn" type="button">Filtrar</button>
-            <span class="admin-spacer"></span>
-            <span id="caja-mov-summary" class="muted small"></span>
+      <!-- Modal ordenar pestañas -->
+      <div id="caja-order-modal" class="admin-modal" hidden>
+        <div class="admin-modal-box" style="max-width:380px">
+          <div class="admin-modal-head">
+            <strong>Ordenar pestañas</strong>
+            <button type="button" class="admin-modal-close" data-close>✕</button>
           </div>
-          <div class="admin-table-wrap">
-            <table class="admin-table" id="caja-mov-table">
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Cuenta</th>
-                  <th>Descripción</th>
-                  <th>Tipo</th>
-                  <th class="num">Monto</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="caja-mov-tbody"><tr><td colspan="6" class="muted">Cargando…</td></tr></tbody>
-            </table>
+          <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
+            <p class="muted small" style="margin:0">La pestaña <strong>General</strong> siempre va primera. Movés a los responsables con las flechas.</p>
+            <div id="caja-order-list" class="caja-order-list"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+              <button type="button" class="btn" data-close>Cancelar</button>
+              <button class="btn btn-primary" id="caja-order-save-btn" type="button">Guardar orden</button>
+            </div>
           </div>
         </div>
-
       </div>
 
       <!-- Modal crear / editar cuenta -->

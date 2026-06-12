@@ -4981,3 +4981,85 @@ html.in-modal .ventas-wrap {
   background: #f1f5f9;
   z-index: 1;
 }
+
+/* ── Caja: pestañas por responsable (General + cajeros) ─────────────────────── */
+.caja-tabs-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  border-bottom: 2px solid #1e3a5f;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.caja-tabs { display: flex; gap: 4px; align-items: flex-end; overflow-x: auto; }
+.caja-tab {
+  border: 1px solid #cbd5e1;
+  border-bottom: none;
+  background: #eef2f7;
+  color: #1e3a5f;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 9px 9px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.caja-tab:hover:not(.active) { background: #e0e7f0; }
+.caja-tab.active { background: #1e3a5f; color: #fff; border-color: #1e3a5f; }
+.caja-tabs-bar > .btn { margin-bottom: 6px; }
+.caja-tab-content { margin-bottom: 18px; }
+
+/* Tarjetas de suma por especie (pestaña General) */
+.caja-sum-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.caja-sum-card {
+  background: #fff;
+  border: 1px solid #d7dee8;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.caja-sum-icon { font-size: 20px; }
+.caja-sum-label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #64748b;
+}
+.caja-sum-amount { font-size: 20px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums; }
+.caja-sum-total { background: #1e3a5f; border-color: #1e3a5f; }
+.caja-sum-total .caja-sum-label { color: #cbd5e1; }
+.caja-sum-total .caja-sum-amount,
+.caja-sum-total .caja-sum-icon { color: #fff; }
+
+/* En la vista nueva (ancho completo) los grupos de cuentas van en grilla */
+.caja-tab-content .caja-acc-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 10px;
+}
+.caja-tab-content .caja-acc-group-head { grid-column: 1 / -1; }
+
+.caja-movs-block { border-top: 1px solid #e5e7eb; padding-top: 14px; }
+.caja-foot-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+
+/* Modal ordenar pestañas */
+.caja-order-list { display: flex; flex-direction: column; gap: 6px; }
+.caja-order-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.caja-order-pos { font-size: 12px; font-weight: 800; color: #64748b; width: 26px; }
+.caja-order-name { flex: 1; font-size: 13px; font-weight: 700; color: #0f172a; }

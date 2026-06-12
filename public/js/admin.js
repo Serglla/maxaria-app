@@ -10728,8 +10728,14 @@
     filterBtn:       document.getElementById("caja-filter-btn"),
     movTbody:        document.getElementById("caja-mov-tbody"),
     movSummary:      document.getElementById("caja-mov-summary"),
+    tabs:            document.getElementById("caja-tabs"),
+    orderBtn:        document.getElementById("caja-order-btn"),
+    orderModal:      document.getElementById("caja-order-modal"),
+    orderList:       document.getElementById("caja-order-list"),
+    orderSaveBtn:    document.getElementById("caja-order-save-btn"),
   };
-  const cajaState = { accounts: [], movType: "ingreso", editAccountId: null };
+  // activeTab: "general" | userId (number) del responsable
+  const cajaState = { accounts: [], movType: "ingreso", editAccountId: null, activeTab: "general", tabOrder: [] };
   function cajaIsSuper() { return !!(state.me && state.me.isSuperadmin); }
 
   function cajaFmt(n) { return "$ " + Number(n).toLocaleString("es-AR"); }
@@ -10752,49 +10758,124 @@
     '</div>';
   }
 
+  // Pestañas de responsables: [{ key: userId, label }] ordenadas según
+  // cajaState.tabOrder (los no listados van al final, por nombre).
+  function cajaPersonTabs() {
+    const byId = {};
+    for (const a of cajaState.accounts) {
+      const rid = Number(a.responsable_user_id) || 0;
+      if (!rid) continue;
+      if (!byId[rid]) byId[rid] = { key: rid, label: a.responsable_full_name || a.responsable_username || ("#" + rid) };
+    }
+    const tabs = Object.values(byId);
+    const pos = (id) => { const i = cajaState.tabOrder.indexOf(id); return i < 0 ? 9999 : i; };
+    tabs.sort((t1, t2) => pos(t1.key) - pos(t2.key) || t1.label.localeCompare(t2.label, "es"));
+    return tabs;
+  }
+
+  // Cuentas de la pestaña activa (general = todas).
+  function cajaTabAccounts() {
+    if (cajaState.activeTab === "general") return cajaState.accounts;
+    return cajaState.accounts.filter((a) => Number(a.responsable_user_id) === Number(cajaState.activeTab));
+  }
+
+  function renderCajaTabs() {
+    if (!cajaEls.tabs) return;
+    const persons = cajaPersonTabs();
+    const tabHtml = (key, icon, label) =>
+      '<button type="button" class="caja-tab' + (String(cajaState.activeTab) === String(key) ? " active" : "") + '" data-caja-tab="' + key + '">' +
+        icon + ' ' + escapeHtml(label) + '</button>';
+    cajaEls.tabs.innerHTML =
+      tabHtml("general", "🏠", "General") +
+      persons.map((t) => tabHtml(t.key, "👤", t.label)).join("");
+    if (cajaEls.orderBtn) cajaEls.orderBtn.hidden = persons.length < 2;
+  }
+
+  function cajaSwitchTab(key) {
+    cajaState.activeTab = key === "general" ? "general" : Number(key);
+    // Al cambiar de pestaña, el filtro de cuenta vuelve a "todas" (de esa pestaña).
+    if (cajaEls.filterAccount) cajaEls.filterAccount.value = "all";
+    renderCajaTabs();
+    cajaRenderAccounts();
+    cajaFillSelects();
+    loadCajaMovements();
+  }
+
+  if (cajaEls.tabs) {
+    cajaEls.tabs.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-caja-tab]");
+      if (btn) cajaSwitchTab(btn.dataset.cajaTab);
+    });
+  }
+
+  // Tarjeta-resumen por especie (pestaña General).
+  function cajaEspecieCardHtml(icon, label, amount, accent) {
+    return '<div class="caja-sum-card' + (accent ? " " + accent : "") + '">' +
+      '<span class="caja-sum-icon">' + icon + '</span>' +
+      '<span class="caja-sum-label">' + label + '</span>' +
+      '<span class="caja-sum-amount">' + cajaFmt(amount) + '</span>' +
+    '</div>';
+  }
+
   function cajaRenderAccounts() {
     if (!cajaEls.accountsWrap) return;
     const accs = cajaState.accounts;
     if (!accs.length) { cajaEls.accountsWrap.innerHTML = '<p class="muted">Sin cuentas.</p>'; return; }
-    // Agrupar por responsable: cada cajero con sus cajas, y un grupo final para
-    // las cajas generales (sin responsable).
-    const groups = [];     // [{ key, label, accs:[] }]
-    const byKey  = {};
-    for (const a of accs) {
-      const rid = a.responsable_user_id || 0;
-      const label = rid
-        ? ('👤 ' + (a.responsable_full_name || a.responsable_username || ('#' + rid)))
-        : '🏢 Cajas generales';
-      if (!byKey[rid]) { byKey[rid] = { key: rid, label: label, accs: [] }; groups.push(byKey[rid]); }
-      byKey[rid].accs.push(a);
-    }
-    // Responsables primero, "generales" al final.
-    groups.sort((g1, g2) => (g1.key === 0) - (g2.key === 0));
-    cajaEls.accountsWrap.innerHTML = groups.map((g) => {
-      const total = g.accs.reduce((s, a) => s + (Number(a.saldo) || 0), 0);
-      return '<div class="caja-acc-group">' +
-        '<div class="caja-acc-group-head">' +
-          '<span class="caja-acc-group-name">' + escapeHtml(g.label) + '</span>' +
-          '<span class="caja-acc-group-total">' + cajaFmt(total) + '</span>' +
-        '</div>' +
-        g.accs.map(cajaAccCardHtml).join("") +
+
+    if (cajaState.activeTab === "general") {
+      // Sumas por especie sobre TODAS las cuentas + total general.
+      const sumBy = (t) => accs.filter((a) => a.type === t).reduce((s, a) => s + (Number(a.saldo) || 0), 0);
+      const efectivo = sumBy("efectivo"), banco = sumBy("banco"), digital = sumBy("digital");
+      const total = efectivo + banco + digital;
+      let html = '<div class="caja-sum-row">' +
+        cajaEspecieCardHtml("💵", "Efectivo", efectivo, "") +
+        cajaEspecieCardHtml("🏦", "Banco", banco, "") +
+        cajaEspecieCardHtml("📱", "Billeteras", digital, "") +
+        cajaEspecieCardHtml("Σ", "Total", total, "caja-sum-total") +
       '</div>';
-    }).join("");
+      // Las cajas sin responsable solo se ven acá (no tienen pestaña propia).
+      const generales = accs.filter((a) => !Number(a.responsable_user_id));
+      if (generales.length) {
+        html += '<div class="caja-acc-group">' +
+          '<div class="caja-acc-group-head">' +
+            '<span class="caja-acc-group-name">🏢 Cajas generales</span>' +
+            '<span class="caja-acc-group-total">' + cajaFmt(generales.reduce((s, a) => s + (Number(a.saldo) || 0), 0)) + '</span>' +
+          '</div>' +
+          generales.map(cajaAccCardHtml).join("") +
+        '</div>';
+      }
+      cajaEls.accountsWrap.innerHTML = html;
+      return;
+    }
+
+    // Pestaña de un responsable: sus cuentas + total propio.
+    const mine = cajaTabAccounts();
+    if (!mine.length) { cajaEls.accountsWrap.innerHTML = '<p class="muted">Este responsable no tiene cajas.</p>'; return; }
+    const label = mine[0].responsable_full_name || mine[0].responsable_username || "";
+    const total = mine.reduce((s, a) => s + (Number(a.saldo) || 0), 0);
+    cajaEls.accountsWrap.innerHTML = '<div class="caja-acc-group">' +
+      '<div class="caja-acc-group-head">' +
+        '<span class="caja-acc-group-name">👤 ' + escapeHtml(label) + '</span>' +
+        '<span class="caja-acc-group-total">' + cajaFmt(total) + '</span>' +
+      '</div>' +
+      mine.map(cajaAccCardHtml).join("") +
+    '</div>';
   }
 
   function cajaFillSelects() {
     const accs = cajaState.accounts;
-    // Select movimiento
+    // Selects del modal de movimiento: siempre todas las cuentas.
     [cajaEls.movAccount, cajaEls.movCounterpart].forEach((sel) => {
       if (!sel) return;
       sel.innerHTML = accs.map((a) => '<option value="' + a.id + '">' + escapeHtml(a.name) + '</option>').join("");
     });
-    // Select filtro
+    // Select del filtro de movimientos: solo las cuentas de la pestaña activa.
     if (cajaEls.filterAccount) {
       const cur = cajaEls.filterAccount.value;
+      const tabAccs = cajaTabAccounts();
       cajaEls.filterAccount.innerHTML = '<option value="all">Todas las cuentas</option>' +
-        accs.map((a) => '<option value="' + a.id + '">' + escapeHtml(a.name) + '</option>').join("");
-      if (cur) cajaEls.filterAccount.value = cur;
+        tabAccs.map((a) => '<option value="' + a.id + '">' + escapeHtml(a.name) + '</option>').join("");
+      if (cur && tabAccs.some((a) => String(a.id) === cur)) cajaEls.filterAccount.value = cur;
     }
   }
 
@@ -10802,7 +10883,12 @@
     // Crear cuentas es exclusivo del superadmin.
     if (cajaEls.addAccountBtn) cajaEls.addAccountBtn.hidden = !cajaIsSuper();
     try {
-      cajaState.accounts = await api("/api/admin/caja");
+      const data = await api("/api/admin/caja");
+      cajaState.accounts = data.accounts || data; // tolera la forma vieja (array)
+      cajaState.tabOrder = data.tab_order || [];
+      // Si la pestaña activa quedó sin cuentas (cambio de responsable), volver a General.
+      if (cajaState.activeTab !== "general" && !cajaTabAccounts().length) cajaState.activeTab = "general";
+      renderCajaTabs();
       cajaRenderAccounts();
       cajaFillSelects();
       await loadCajaMovements();
@@ -10818,8 +10904,13 @@
       const acc  = cajaEls.filterAccount  ? cajaEls.filterAccount.value  : "all";
       const from = cajaEls.filterFrom     ? cajaEls.filterFrom.value     : "";
       const to   = cajaEls.filterTo       ? cajaEls.filterTo.value       : "";
+      // Pestaña de responsable activa + "todas las cuentas" → filtrar por
+      // responsable (si hay una cuenta puntual elegida, esa manda).
+      const resp = cajaState.activeTab !== "general" && acc === "all"
+        ? Number(cajaState.activeTab) : 0;
       const qs   = [
         acc !== "all" ? "account_id=" + acc : "",
+        resp ? "responsable_id=" + resp : "",
         from ? "from=" + from : "",
         to   ? "to="   + to   : "",
       ].filter(Boolean).join("&");
@@ -10917,14 +11008,71 @@
     if (cajaEls.movAmount) cajaEls.movAmount.value = "";
     if (cajaEls.movDesc)   cajaEls.movDesc.value   = "";
     if (cajaEls.movDate)   cajaEls.movDate.value   = cajaTodayIso();
-    // Preselección de caja según el usuario.
+    // Preselección de caja: si hay una pestaña de responsable activa, su
+    // primera cuenta; si no, la caja del usuario logueado (donde es responsable).
+    const tabAccs = cajaState.activeTab !== "general" ? cajaTabAccounts() : [];
     const myId = state.me && state.me.id;
     const mine = myId ? cajaState.accounts.find((a) => Number(a.responsable_user_id) === Number(myId)) : null;
-    if (cajaEls.movAccount && mine) cajaEls.movAccount.value = String(mine.id);
+    const pre = tabAccs[0] || mine;
+    if (cajaEls.movAccount && pre) cajaEls.movAccount.value = String(pre.id);
     cajaEls.movModal.hidden = false;
     if (cajaEls.movAmount) cajaEls.movAmount.focus();
   }
   if (cajaEls.movOpenBtn) cajaEls.movOpenBtn.addEventListener("click", cajaOpenMovModal);
+
+  // ── Ordenar pestañas de responsables ──
+  let cajaOrderDraft = []; // [{ key, label }] en el orden que se está editando
+
+  function cajaRenderOrderList() {
+    if (!cajaEls.orderList) return;
+    cajaEls.orderList.innerHTML = cajaOrderDraft.map((t, i) =>
+      '<div class="caja-order-row">' +
+        '<span class="caja-order-pos">' + (i + 2) + '°</span>' +
+        '<span class="caja-order-name">👤 ' + escapeHtml(t.label) + '</span>' +
+        '<button type="button" class="btn btn-small" data-ord-up="' + i + '"' + (i === 0 ? " disabled" : "") + '>▲</button>' +
+        '<button type="button" class="btn btn-small" data-ord-down="' + i + '"' + (i === cajaOrderDraft.length - 1 ? " disabled" : "") + '>▼</button>' +
+      '</div>'
+    ).join("");
+  }
+
+  if (cajaEls.orderBtn) {
+    cajaEls.orderBtn.addEventListener("click", () => {
+      cajaOrderDraft = cajaPersonTabs().slice();
+      cajaRenderOrderList();
+      if (cajaEls.orderModal) cajaEls.orderModal.hidden = false;
+    });
+  }
+
+  if (cajaEls.orderList) {
+    cajaEls.orderList.addEventListener("click", (e) => {
+      const up = e.target.closest("[data-ord-up]");
+      const down = e.target.closest("[data-ord-down]");
+      const i = up ? Number(up.dataset.ordUp) : down ? Number(down.dataset.ordDown) : -1;
+      if (i < 0) return;
+      const j = up ? i - 1 : i + 1;
+      if (j < 0 || j >= cajaOrderDraft.length) return;
+      const tmp = cajaOrderDraft[i]; cajaOrderDraft[i] = cajaOrderDraft[j]; cajaOrderDraft[j] = tmp;
+      cajaRenderOrderList();
+    });
+  }
+
+  if (cajaEls.orderSaveBtn) {
+    cajaEls.orderSaveBtn.addEventListener("click", async () => {
+      try {
+        cajaEls.orderSaveBtn.disabled = true;
+        const order = cajaOrderDraft.map((t) => t.key);
+        await api("/api/admin/caja/tab-order", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ order }) });
+        cajaState.tabOrder = order;
+        if (cajaEls.orderModal) cajaEls.orderModal.hidden = true;
+        renderCajaTabs();
+        showToast("Orden guardado");
+      } catch (e) {
+        alertModal(e.message || "Error al guardar el orden");
+      } finally {
+        cajaEls.orderSaveBtn.disabled = false;
+      }
+    });
+  }
 
   // Filtrar movimientos
   if (cajaEls.filterBtn) cajaEls.filterBtn.addEventListener("click", loadCajaMovements);
