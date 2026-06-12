@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260612b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260612c" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -516,7 +516,9 @@
             <label id="caja-acc-active-wrap" style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#0f172a;cursor:pointer">
               <input type="checkbox" id="caja-acc-active" checked /> Cuenta activa
             </label>
-            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+            <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+              <button class="btn btn-danger" id="caja-acc-delete-btn" type="button" hidden>🗑 Borrar caja</button>
+              <span style="flex:1"></span>
               <button type="button" class="btn" data-close>Cancelar</button>
               <button class="btn btn-primary" id="caja-acc-save-btn" type="button">Guardar</button>
             </div>
@@ -540,6 +542,7 @@
             <label class="np-label"><span id="caja-mov-account-label">Cuenta</span>
               <select id="caja-mov-account" class="admin-select"></select>
             </label>
+            <div id="caja-mov-saldo-info" class="caja-saldo-info" hidden></div>
             <div id="caja-mov-dest-wrap" hidden>
               <label class="np-label"><span>Cuenta destino</span>
                 <select id="caja-mov-counterpart" class="admin-select"></select>
@@ -3262,6 +3265,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260612b"></script>
+  <script src="/js/admin.js?v=20260612c"></script>
 </body>
 </html>

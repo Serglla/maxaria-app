@@ -7564,7 +7564,12 @@ app.post("/api/admin/caja/accounts", requireAdmin, (req, res) => {
   if (!name || !name.trim()) return res.status(400).json({ error: "Nombre requerido" });
   const validTypes = ["efectivo","banco","digital"];
   const t = validTypes.includes(type) ? type : "efectivo";
+  // Toda caja nueva DEBE tener un responsable (regla del 12 jun). Las cajas
+  // generales viejas (responsable NULL) quedan como estan.
   const respId = responsable_user_id ? Number(responsable_user_id) : null;
+  if (!respId) return res.status(400).json({ error: "Toda caja debe tener un responsable" });
+  const respUser = db.prepare("SELECT id FROM users WHERE id = ? AND active = 1").get(respId);
+  if (!respUser) return res.status(400).json({ error: "Responsable invalido o inactivo" });
   try {
     const r = db.prepare(
       "INSERT INTO cash_accounts (name, type, sort_order, responsable_user_id) VALUES (?,?,?,?)"
@@ -7606,6 +7611,35 @@ app.patch("/api/admin/caja/accounts/:id", requireAdmin, (req, res) => {
   }
 });
 
+// DELETE /api/admin/caja/accounts/:id — borrar caja (solo superadmin).
+// Bloqueado si la caja tiene movimientos o esta referenciada por cobros,
+// entregas, gastos o pagos a proveedores: en ese caso, desactivarla.
+app.delete("/api/admin/caja/accounts/:id", requireAdmin, (req, res) => {
+  if (!getAdminPerms(req.session.userId).isSuperadmin) {
+    return res.status(403).json({ error: "Solo el superadmin puede borrar cajas" });
+  }
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const acc = db.prepare("SELECT id, name FROM cash_accounts WHERE id = ?").get(id);
+  if (!acc) return res.status(404).json({ error: "No encontrada" });
+  const movs = Number(db.prepare(
+    "SELECT COUNT(*) AS n FROM cash_movements WHERE account_id = ? OR counterpart_account_id = ?"
+  ).get(id, id).n) || 0;
+  const refs =
+    Number(db.prepare("SELECT COUNT(*) AS n FROM payments WHERE caja_id = ?").get(id).n) +
+    Number(db.prepare("SELECT COUNT(*) AS n FROM deliveries WHERE caja_id = ? OR caja_transfer_id = ?").get(id, id).n) +
+    Number(db.prepare("SELECT COUNT(*) AS n FROM expenses WHERE caja_id = ?").get(id).n) +
+    Number(db.prepare("SELECT COUNT(*) AS n FROM supplier_payments WHERE caja_id = ?").get(id).n);
+  if (movs > 0 || refs > 0) {
+    return res.status(409).json({
+      error: "La caja \"" + acc.name + "\" tiene " + movs + " movimiento(s) y " + refs +
+        " cobro(s)/pago(s)/gasto(s) vinculados. No se puede borrar: desactivala en su lugar."
+    });
+  }
+  db.prepare("DELETE FROM cash_accounts WHERE id = ?").run(id);
+  res.json({ ok: true });
+});
+
 // GET /api/admin/caja/movements — listado de movimientos
 app.get("/api/admin/caja/movements", requireAdmin, (req, res) => {
   const { account_id, responsable_id, from, to, limit: lim } = req.query;
@@ -7644,6 +7678,16 @@ app.post("/api/admin/caja/movements", requireAdmin, (req, res) => {
   if (!amt || amt <= 0) return res.status(400).json({ error: "Monto inválido" });
   const acc = db.prepare("SELECT * FROM cash_accounts WHERE id=?").get(account_id);
   if (!acc) return res.status(404).json({ error: "Cuenta no encontrada" });
+  // Permisos: el superadmin opera sobre cualquier caja. Un admin comun solo
+  // puede TRANSFERIR, y solo desde una caja de la que es responsable.
+  if (!getAdminPerms(userId).isSuperadmin) {
+    if (type !== "transferencia") {
+      return res.status(403).json({ error: "Solo el superadmin registra ingresos/egresos manuales. Vos podés transferir desde tu caja." });
+    }
+    if (Number(acc.responsable_user_id) !== Number(userId)) {
+      return res.status(403).json({ error: "Solo podés transferir desde una caja de la que sos responsable" });
+    }
+  }
   const date = movement_date || new Date().toISOString().slice(0, 10);
   const ins = db.prepare(
     "INSERT INTO cash_movements (account_id, type, amount, description, source, counterpart_account_id, movement_date, registered_by)" +
@@ -7669,6 +7713,14 @@ app.post("/api/admin/caja/movements", requireAdmin, (req, res) => {
 app.delete("/api/admin/caja/movements/:id", requireAdmin, (req, res) => {
   const mov = db.prepare("SELECT * FROM cash_movements WHERE id=?").get(req.params.id);
   if (!mov) return res.status(404).json({ error: "No encontrado" });
+  // Permisos: un admin comun solo borra movimientos de SU caja (espejo de la
+  // regla del POST). El superadmin borra de cualquiera.
+  if (!getAdminPerms(req.session.userId).isSuperadmin) {
+    const movAcc = db.prepare("SELECT responsable_user_id FROM cash_accounts WHERE id=?").get(mov.account_id);
+    if (!movAcc || Number(movAcc.responsable_user_id) !== Number(req.session.userId)) {
+      return res.status(403).json({ error: "Solo el superadmin puede borrar movimientos de cajas ajenas" });
+    }
+  }
   // Los egresos de gastos se manejan desde la pestaña Gastos: borrarlos solo
   // de la caja dejaria el gasto registrado sin su salida de plata (desync).
   if (mov.source === "gasto" && mov.related_id) {

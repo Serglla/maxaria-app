@@ -10891,6 +10891,9 @@
   async function loadCaja() {
     // Crear cuentas es exclusivo del superadmin.
     if (cajaEls.addAccountBtn) cajaEls.addAccountBtn.hidden = !cajaIsSuper();
+    // Ingresos/egresos manuales son del superadmin; el admin común solo
+    // transfiere desde su caja (ve únicamente el botón de transferencia).
+    if (cajaEls.movOpenBtn) cajaEls.movOpenBtn.hidden = !cajaIsSuper();
     try {
       const data = await api("/api/admin/caja");
       cajaState.accounts = data.accounts || data; // tolera la forma vieja (array)
@@ -10961,6 +10964,28 @@
     }
   }
 
+  // Info de saldo de la caja origen en el modal de movimiento: cuánto tiene
+  // y cuánto quedaría después de transferir/egresar (se actualiza en vivo).
+  function cajaUpdateMovSaldoInfo() {
+    const el = document.getElementById("caja-mov-saldo-info");
+    if (!el) return;
+    if (cajaState.movType !== "transferencia" && cajaState.movType !== "egreso") { el.hidden = true; return; }
+    const accId = cajaEls.movAccount ? Number(cajaEls.movAccount.value) : 0;
+    const acc = cajaState.accounts.find((a) => Number(a.id) === accId);
+    if (!acc) { el.hidden = true; return; }
+    const saldo = Number(acc.saldo) || 0;
+    const amt = Number(cajaEls.movAmount && cajaEls.movAmount.value) || 0;
+    const rest = saldo - amt;
+    const verb = cajaState.movType === "transferencia" ? "transferir" : "egresar";
+    el.innerHTML = '💰 Disponible en <strong>' + escapeHtml(acc.name) + '</strong>: ' + cajaFmt(saldo) +
+      (amt > 0
+        ? ' &nbsp;·&nbsp; Después de ' + verb + ': <strong class="' + (rest < 0 ? "caja-saldo-neg" : "caja-saldo-ok") + '">' + cajaFmt(rest) + '</strong>'
+        : "");
+    el.hidden = false;
+  }
+  if (cajaEls.movAccount) cajaEls.movAccount.addEventListener("change", cajaUpdateMovSaldoInfo);
+  if (cajaEls.movAmount) cajaEls.movAmount.addEventListener("input", cajaUpdateMovSaldoInfo);
+
   // Toggle ingreso/egreso/transferencia
   if (cajaEls.typeBtns) {
     cajaEls.typeBtns.forEach((btn) => {
@@ -10969,6 +10994,7 @@
         btn.classList.add("active");
         cajaState.movType = btn.dataset.type;
         if (cajaEls.movDestWrap) cajaEls.movDestWrap.hidden = (cajaState.movType !== "transferencia");
+        cajaUpdateMovSaldoInfo();
       });
     });
   }
@@ -11010,22 +11036,41 @@
   // usuario logueado (donde es responsable); si no tiene, la primera.
   function cajaOpenMovModal(presetType) {
     if (!cajaEls.movModal) return;
+    const isSuper = cajaIsSuper();
+    const myId = state.me && state.me.id;
+    // Admin común: SOLO transferencias y SOLO desde una caja de la que es
+    // responsable (regla espejada en el server). El superadmin opera todo.
+    const ownAccounts = cajaState.accounts.filter((a) => Number(a.responsable_user_id) === Number(myId));
+    if (!isSuper && !ownAccounts.length) {
+      alertModal("No tenés ninguna caja a tu cargo. Pedile al superadmin que te asigne una.");
+      return;
+    }
     // Tipo inicial: "ingreso" por default, o el preseteado (ej: el botón
     // "Transferir entre cajas" abre directo en modo transferencia).
-    const t = (presetType === "egreso" || presetType === "transferencia") ? presetType : "ingreso";
+    let t = (presetType === "egreso" || presetType === "transferencia") ? presetType : "ingreso";
+    if (!isSuper) t = "transferencia";
     cajaState.movType = t;
+    // El toggle de tipo solo lo ve el superadmin (display, no [hidden]: la
+    // clase .caja-mov-type-toggle puede pisar el atributo).
+    const toggleWrap = cajaEls.movModal.querySelector(".caja-mov-type-toggle");
+    if (toggleWrap) toggleWrap.style.display = isSuper ? "" : "none";
     if (cajaEls.typeBtns) cajaEls.typeBtns.forEach((b) => b.classList.toggle("active", b.dataset.type === t));
     if (cajaEls.movDestWrap) cajaEls.movDestWrap.hidden = (t !== "transferencia");
     if (cajaEls.movAmount) cajaEls.movAmount.value = "";
     if (cajaEls.movDesc)   cajaEls.movDesc.value   = "";
     if (cajaEls.movDate)   cajaEls.movDate.value   = cajaTodayIso();
+    // Cuentas de ORIGEN: superadmin → todas; admin común → solo las suyas.
+    const originAccs = isSuper ? cajaState.accounts : ownAccounts;
+    if (cajaEls.movAccount) {
+      cajaEls.movAccount.innerHTML = originAccs.map((a) =>
+        '<option value="' + a.id + '">' + escapeHtml(a.name) + '</option>').join("");
+    }
     // Preselección de caja: si hay una pestaña de responsable activa, su
     // primera cuenta; si no, la caja del usuario logueado (donde es responsable).
     const tabAccs = cajaState.activeTab !== "general" ? cajaTabAccounts() : [];
-    const myId = state.me && state.me.id;
-    const mine = myId ? cajaState.accounts.find((a) => Number(a.responsable_user_id) === Number(myId)) : null;
-    const pre = tabAccs[0] || mine;
+    const pre = [tabAccs[0], ownAccounts[0]].find((a) => a && originAccs.some((o) => o.id === a.id));
     if (cajaEls.movAccount && pre) cajaEls.movAccount.value = String(pre.id);
+    cajaUpdateMovSaldoInfo();
     cajaEls.movModal.hidden = false;
     if (cajaEls.movAmount) cajaEls.movAmount.focus();
   }
@@ -11114,7 +11159,12 @@
         cajaState.cajeros = (all || []).filter((u) => (u.level === 5 || u.level === 99) && u.active);
       } catch (_) { cajaState.cajeros = []; }
     }
-    const opts = ['<option value="">— Sin responsable (caja general) —</option>'];
+    // Al crear, el responsable es OBLIGATORIO (toda caja nueva tiene dueño);
+    // al editar, las cajas generales viejas pueden seguir sin responsable.
+    const firstLabel = cajaState.editAccountId
+      ? "— Sin responsable (caja general) —"
+      : "— Elegí un responsable —";
+    const opts = ['<option value="">' + firstLabel + '</option>'];
     for (const u of cajaState.cajeros) {
       const rol = u.level === 99 ? "admin" : "vendedor";
       opts.push('<option value="' + u.id + '">' + escapeHtml(u.full_name || u.username) + ' (' + rol + ')</option>');
@@ -11137,8 +11187,40 @@
     // El responsable solo lo ve/edita el superadmin.
     if (cajaEls.accRespWrap) cajaEls.accRespWrap.style.display = isSuper ? "flex" : "none";
     if (isSuper) await cajaPopulateRespSelect(acc ? acc.responsable_user_id : null);
+    // Borrar caja: solo superadmin y solo al editar. El server igual bloquea
+    // si la caja tiene movimientos o cobros/pagos/gastos vinculados.
+    const delBtn = document.getElementById("caja-acc-delete-btn");
+    if (delBtn) delBtn.hidden = !(isSuper && acc);
     cajaEls.accModal.hidden = false;
     if (cajaEls.accName) cajaEls.accName.focus();
+  }
+
+  // Borrar caja (solo superadmin, desde el modal de edición)
+  const cajaAccDeleteBtn = document.getElementById("caja-acc-delete-btn");
+  if (cajaAccDeleteBtn) {
+    cajaAccDeleteBtn.addEventListener("click", async () => {
+      const editId = cajaState.editAccountId;
+      if (!editId) return;
+      const acc = cajaState.accounts.find((a) => Number(a.id) === Number(editId));
+      const ok = await confirmModal({
+        message: "¿Borrar la caja \"" + ((acc && acc.name) || "#" + editId) + "\"?\nSolo se puede borrar si no tiene movimientos ni cobros/pagos/gastos vinculados.",
+        confirmText: "Borrar caja",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        cajaAccDeleteBtn.disabled = true;
+        await api("/api/admin/caja/accounts/" + editId, { method: "DELETE" });
+        if (cajaEls.accModal) cajaEls.accModal.hidden = true;
+        state.cajasList = null;
+        showToast("Caja borrada");
+        await loadCaja();
+      } catch (e) {
+        alertModal(e.message || "No se pudo borrar la caja");
+      } finally {
+        cajaAccDeleteBtn.disabled = false;
+      }
+    });
   }
 
   // Botón "+ Nueva cuenta" (solo superadmin)
@@ -11167,6 +11249,11 @@
       // El responsable solo se manda si el superadmin lo editó.
       if (cajaIsSuper() && cajaEls.accResp) {
         body.responsable_user_id = cajaEls.accResp.value ? Number(cajaEls.accResp.value) : null;
+      }
+      // Toda caja NUEVA debe tener responsable (el server también lo exige).
+      if (!editId && !body.responsable_user_id) {
+        alertModal("Toda caja debe tener un responsable. Elegí uno en el selector.");
+        return;
       }
       if (editId && cajaEls.accActive) body.active = cajaEls.accActive.checked;
       try {

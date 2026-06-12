@@ -5057,6 +5057,19 @@ html.in-modal .ventas-wrap {
   color: #1e3a5f;
 }
 .caja-transfer-btn:hover { background: #eef3f9; }
+/* Info de saldo de la caja origen en el modal de movimiento/transferencia */
+.caja-saldo-info {
+  font-size: 12.5px;
+  color: #475569;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: -6px;
+}
+.caja-saldo-info[hidden] { display: none; }
+.caja-saldo-ok  { color: #15803d; }
+.caja-saldo-neg { color: #dc2626; }
 
 /* Modal ordenar pestañas */
 .caja-order-list { display: flex; flex-direction: column; gap: 6px; }
