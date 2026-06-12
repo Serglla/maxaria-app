@@ -3129,6 +3129,7 @@
         body: JSON.stringify(body),
       });
       state.users.unshift(out.user);
+      state.orderClientsLoaded = false; // que el selector "Cliente" del detalle de pedido traiga el nuevo
       renderUsers();
       els.userCreateModal.hidden = true;
       showToast("Usuario " + out.user.username + " creado");
@@ -3627,6 +3628,7 @@
           state.usersLoaded = false;
           loadUsers();
         }
+        state.orderClientsLoaded = false; // los importados también deben aparecer en el selector de pedidos
         checkDbInfo();
       } catch (err) {
         els.usersIoMsg.textContent = "Error: " + err.message;
@@ -4531,6 +4533,7 @@
         // Agregar al cache de usuarios y al selector, y dejarlo seleccionado.
         if (!state.users) state.users = [];
         state.users.unshift(out.user);
+        state.orderClientsLoaded = false; // refrescar el selector "Cliente" del detalle de pedido
         if (els.noClient) {
           var opt = document.createElement("option");
           opt.value = out.user.id;
