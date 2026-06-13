@@ -5788,7 +5788,9 @@
       String(d.getDate()).padStart(2, "0");
     const now = new Date();
     let from;
-    if (range === "week") {
+    if (range === "today") {
+      from = now;
+    } else if (range === "week") {
       const dow = (now.getDay() + 6) % 7; // lunes = 0
       from = new Date(now); from.setDate(now.getDate() - dow);
     } else { // month
