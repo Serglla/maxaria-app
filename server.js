@@ -380,6 +380,19 @@ try { db.exec("ALTER TABLE purchase_items ADD COLUMN checked_qty REAL"); } catch
 try { db.exec("ALTER TABLE purchase_items ADD COLUMN checked_by INTEGER"); } catch (_) {}
 try { db.exec("ALTER TABLE purchase_items ADD COLUMN checked_at TEXT"); } catch (_) {}
 
+// Migracion: la compra ya NO impacta el stock al cargarse. El stock entra
+// recien al CONFIRMAR la recepcion (el costo, los precios de venta y la deuda
+// del proveedor SI se actualizan al cargar la compra, como antes).
+// - purchase_orders.received: 0 = pendiente de recibir (sin stock sumado),
+//   1 = recibida (stock ya impactado).
+// Las compras existentes ya habian sumado stock con el modelo viejo, asi que
+// el UPDATE las marca recibidas una sola vez (en boots siguientes el ALTER
+// lanza y el catch evita re-ejecutar; las compras nuevas arrancan en 0).
+try {
+  db.exec("ALTER TABLE purchase_orders ADD COLUMN received INTEGER NOT NULL DEFAULT 0");
+  db.exec("UPDATE purchase_orders SET received = 1");
+} catch (_) {}
+
 // Migracion: Presupuestos / Ventas.
 // - budgets: cabecera del presupuesto (cliente, vendedor, totales, estado).
 // - budget_items: lineas del presupuesto (producto, cantidad, precio, descuento).
@@ -4841,6 +4854,7 @@ app.get("/api/admin/purchases", requireAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT po.id, po.supplier_id, s.name AS supplier_name," +
     "       po.reference, po.notes, po.total_cost, po.received_at, po.created_at," +
+    "       COALESCE(po.received, 0) AS received," +
     "       COUNT(pi.id) AS items_count" +
     "  FROM purchase_orders po" +
     "  LEFT JOIN suppliers s ON s.id = po.supplier_id" +
@@ -4949,17 +4963,15 @@ app.post("/api/admin/purchases", requireAdmin, (req, res) => {
       "INSERT INTO purchase_items (purchase_order_id, product_id, product_code, product_name, quantity, unit_cost, subtotal)" +
       " VALUES (?, ?, ?, ?, ?, ?, ?)"
     );
-    const updStock = db.prepare(
-      "UPDATE products SET stock = stock + ? WHERE id = ?"
-    );
     for (const l of lines) {
       insItem.run(purchaseId, l.product_id, l.product_code, l.product_name,
                   l.quantity, l.unit_cost, l.subtotal);
       if (l.product_id) {
-        // Costo ANTES de sumar stock: el snapshot de stock del cost_change
-        // debe ser el stock comprado al costo viejo (sin las unidades nuevas).
+        // El stock NO se suma aca: la compra queda pendiente (received=0) y el
+        // stock entra recien al confirmar la recepcion. El costo y los precios
+        // de venta SI se actualizan al cargar la compra (snapshot de stock del
+        // cost_change = stock previo, sin las unidades que todavia no llegaron).
         applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy, purchaseId);
-        updStock.run(l.quantity, l.product_id);
       }
     }
 
@@ -4998,8 +5010,12 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
 
-  const existing = db.prepare("SELECT id FROM purchase_orders WHERE id = ?").get(id);
+  const existing = db.prepare("SELECT id, received FROM purchase_orders WHERE id = ?").get(id);
   if (!existing) return res.status(404).json({ error: "Compra no encontrada" });
+  // Solo si la compra ya fue recibida su stock esta impactado: al editarla hay
+  // que revertir el stock viejo y sumar el nuevo. Si esta pendiente de recibir,
+  // editar no toca stock (todavia no entro).
+  const wasReceived = Number(existing.received) === 1;
 
   const b = req.body || {};
   const supplier_id = b.supplier_id ? Number(b.supplier_id) : null;
@@ -5034,11 +5050,13 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
   if (!lines.length) return res.status(400).json({ error: "Sin items validos" });
 
   db.transaction(() => {
-    // Revertir stock de items anteriores
-    const oldItems = db.prepare("SELECT product_id, quantity FROM purchase_items WHERE purchase_order_id = ?").all(id);
-    const decStock = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
-    for (const oi of oldItems) {
-      if (oi.product_id) decStock.run(oi.quantity, oi.product_id);
+    // Revertir stock de items anteriores SOLO si la compra ya estaba recibida.
+    if (wasReceived) {
+      const oldItems = db.prepare("SELECT product_id, quantity FROM purchase_items WHERE purchase_order_id = ?").all(id);
+      const decStock = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+      for (const oi of oldItems) {
+        if (oi.product_id) decStock.run(oi.quantity, oi.product_id);
+      }
     }
 
     // Borrar items anteriores
@@ -5059,9 +5077,11 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     for (const l of lines) {
       insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_cost, l.subtotal);
       if (l.product_id) {
-        // Mismo orden que en el POST: costo antes de sumar stock (ver comentario alla).
+        // Costo/precios se actualizan siempre (como en el POST). El stock solo
+        // se vuelve a sumar si la compra ya estaba recibida (sino entra en la
+        // recepcion).
         applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy, id);
-        incStock.run(l.quantity, l.product_id);
+        if (wasReceived) incStock.run(l.quantity, l.product_id);
       }
     }
 
@@ -5104,6 +5124,7 @@ app.get("/api/admin/reception", requireAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT po.id, po.supplier_id, s.name AS supplier_name," +
     "       po.reference, po.total_cost, po.received_at, po.created_at," +
+    "       COALESCE(po.received, 0) AS received," +
     "       COUNT(pi.id) AS items_count," +
     "       SUM(CASE WHEN pi.checked_qty IS NOT NULL THEN 1 ELSE 0 END) AS checked_count," +
     "       SUM(CASE WHEN pi.checked_qty IS NOT NULL AND pi.checked_qty != pi.quantity THEN 1 ELSE 0 END) AS diff_count" +
@@ -5121,7 +5142,8 @@ app.get("/api/admin/reception/:purchaseId", requireAdmin, (req, res) => {
   const purchaseId = Number(req.params.purchaseId);
   if (!purchaseId) return res.status(400).json({ error: "ID invalido" });
   const purchase = db.prepare(
-    "SELECT po.id, po.reference, po.received_at, s.name AS supplier_name" +
+    "SELECT po.id, po.reference, po.received_at, COALESCE(po.received, 0) AS received," +
+    "       s.name AS supplier_name" +
     "  FROM purchase_orders po LEFT JOIN suppliers s ON s.id = po.supplier_id" +
     " WHERE po.id = ?"
   ).get(purchaseId);
@@ -5195,44 +5217,57 @@ app.post("/api/admin/reception/:purchaseId", requireAdmin, (req, res) => {
   });
 });
 
-// Aplicar lo contado a la compra (boton explicito del modal). Items controlados
-// con cantidad distinta a la cargada: quantity pasa a lo contado, se recalcula
-// subtotal/total_cost y el stock se ajusta por la diferencia (la compra ya
-// habia sumado lo cargado al crearse). Mantiene en sync la deuda del proveedor
-// (el debit de esta compra), igual que PUT /api/admin/purchases/:id.
+// Confirmar la recepcion (boton explicito del modal). Aca recien IMPACTA EL
+// STOCK: se suma a cada producto lo realmente recibido (lo contado si se
+// controlo el item, lo cargado si no). Los items contados con cantidad distinta
+// a la cargada ajustan tambien quantity/subtotal/total_cost y la deuda del
+// proveedor. La compra queda marcada received=1 y no se puede volver a recibir.
 app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
   const purchaseId = Number(req.params.purchaseId);
   if (!purchaseId) return res.status(400).json({ error: "ID invalido" });
   const purchase = db.prepare(
-    "SELECT id, supplier_id FROM purchase_orders WHERE id = ?"
+    "SELECT id, supplier_id, COALESCE(received, 0) AS received FROM purchase_orders WHERE id = ?"
   ).get(purchaseId);
   if (!purchase) return res.status(404).json({ error: "Compra no encontrada" });
+  if (Number(purchase.received) === 1) {
+    return res.status(409).json({ error: "Esta compra ya fue recibida (el stock ya entro)." });
+  }
 
   const items = db.prepare(
     "SELECT id, product_id, quantity, unit_cost, checked_qty" +
     "  FROM purchase_items WHERE purchase_order_id = ?"
   ).all(purchaseId);
-  const changes = items.filter(
-    (i) => i.checked_qty != null && Number(i.checked_qty) !== Number(i.quantity)
-  );
-  if (!changes.length) return res.json({ ok: true, changed: 0 });
+  if (!items.length) return res.status(400).json({ error: "La compra no tiene items" });
+
+  // Cantidad recibida por item: lo contado si se controlo, lo cargado si no.
+  const recv = items.map((it) => ({
+    it: it,
+    rq: it.checked_qty != null ? Number(it.checked_qty) : Number(it.quantity),
+  }));
 
   let total = 0;
+  let changed = 0;
   db.transaction(() => {
-    const updItem = db.prepare("UPDATE purchase_items SET quantity = ?, subtotal = ? WHERE id = ?");
-    const adjStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
-    for (const it of changes) {
-      const newQty = Number(it.checked_qty);
-      updItem.run(newQty, round2(Number(it.unit_cost) * newQty), it.id);
-      // La compra sumo lo cargado al crearse: ajustar por la diferencia.
-      if (it.product_id) adjStock.run(newQty - Number(it.quantity), it.product_id);
+    const updItem  = db.prepare("UPDATE purchase_items SET quantity = ?, subtotal = ? WHERE id = ?");
+    const incStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
+    for (const r of recv) {
+      const it = r.it, rq = r.rq;
+      if (rq !== Number(it.quantity)) {
+        updItem.run(rq, round2(Number(it.unit_cost) * rq), it.id);
+        changed++;
+      }
+      // El stock entra AHORA: la compra no lo habia sumado al cargarse.
+      if (it.product_id && rq > 0) incStock.run(rq, it.product_id);
     }
     total = round2(
       db.prepare(
         "SELECT COALESCE(SUM(subtotal),0) AS t FROM purchase_items WHERE purchase_order_id = ?"
       ).get(purchaseId).t
     );
-    db.prepare("UPDATE purchase_orders SET total_cost = ? WHERE id = ?").run(total, purchaseId);
+    db.prepare(
+      "UPDATE purchase_orders SET total_cost = ?, received = 1," +
+      "  received_at = COALESCE(received_at, datetime('now')) WHERE id = ?"
+    ).run(total, purchaseId);
     if (purchase.supplier_id) {
       db.prepare(
         "UPDATE supplier_movements SET amount = ? WHERE purchase_order_id = ? AND type = 'debit'"
@@ -5240,9 +5275,35 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
     }
   })();
 
-  logActivity(req, "compra", "Compra #" + purchaseId + " · control de recepcion aplicado (" +
-    changes.length + " items) · nuevo total $" + total);
-  res.json({ ok: true, changed: changes.length, total: total });
+  logActivity(req, "compra", "Compra #" + purchaseId + " · recepcion confirmada · stock impactado · total $" +
+    total + (changed ? " · " + changed + " items con diferencia" : ""));
+  res.json({ ok: true, received: true, changed: changed, total: total });
+});
+
+// Cambiar el producto al que apunta una linea de la recepcion (clic derecho en
+// el checklist). Solo si la compra todavia NO fue recibida (si ya entro el
+// stock, cambiar el producto descuadraria el inventario). Re-apunta
+// product_id/code/name; el stock ira al producto nuevo al confirmar.
+app.post("/api/admin/reception/:purchaseId/item/:itemId/product", requireAdmin, (req, res) => {
+  const purchaseId = Number(req.params.purchaseId);
+  const itemId = Number(req.params.itemId);
+  const productId = Number(req.body && req.body.product_id);
+  if (!purchaseId || !itemId || !productId) return res.status(400).json({ error: "Datos invalidos" });
+  const po = db.prepare("SELECT COALESCE(received,0) AS received FROM purchase_orders WHERE id = ?").get(purchaseId);
+  if (!po) return res.status(404).json({ error: "Compra no encontrada" });
+  if (Number(po.received) === 1) {
+    return res.status(409).json({ error: "La compra ya fue recibida; no se puede cambiar el producto." });
+  }
+  const item = db.prepare(
+    "SELECT id FROM purchase_items WHERE id = ? AND purchase_order_id = ?"
+  ).get(itemId, purchaseId);
+  if (!item) return res.status(404).json({ error: "Item no encontrado en esta compra" });
+  const prod = db.prepare("SELECT id, code, name FROM products WHERE id = ?").get(productId);
+  if (!prod) return res.status(404).json({ error: "Producto no encontrado" });
+  db.prepare(
+    "UPDATE purchase_items SET product_id = ?, product_code = ?, product_name = ? WHERE id = ?"
+  ).run(prod.id, prod.code || "", prod.name || "", itemId);
+  res.json({ ok: true, item_id: itemId, product_id: prod.id, product_code: prod.code, product_name: prod.name });
 });
 
 // ===== Pedidos de cotizacion =====

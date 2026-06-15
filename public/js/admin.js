@@ -3420,7 +3420,7 @@
         m.hidden = true;
         if (m.id === "supplier-create-modal") { state.supplierCreatedFromPurchase = false; state.supplierCreatedFromCotizacion = false; m.style.zIndex = ""; }
         if (m.id === "purchase-create-modal") resetPurchaseModal();
-        if (m.id === "new-product-modal") { m.style.zIndex = ""; npForPurchase = false; npForCotizacion = false; }
+        if (m.id === "new-product-modal") { m.style.zIndex = ""; npForPurchase = false; npForCotizacion = false; npForReception = false; }
       }
     });
   });
@@ -3434,6 +3434,7 @@
     if (newProdModal) newProdModal.style.zIndex = "";
     npForPurchase = false;
     npForCotizacion = false;
+    npForReception = false;
   });
 
   // ---------- Config ----------
@@ -6168,8 +6169,15 @@
     progressText: document.getElementById("recv-progress-text"),
     syncInfo: document.getElementById("recv-sync-info"),
     applyBtn: document.getElementById("recv-apply-btn"),
+    // Picker de producto para cambiar la línea (clic derecho)
+    prodModal: document.getElementById("recv-prod-modal"),
+    prodInfo: document.getElementById("recv-prod-info"),
+    prodSearch: document.getElementById("recv-prod-search"),
+    prodTbody: document.getElementById("recv-prod-tbody"),
+    prodNew: document.getElementById("recv-prod-new"),
   };
-  const recvState = { rows: [], purchaseId: null, items: [], cat: "all", timer: null, posting: 0 };
+  const recvState = { rows: [], purchaseId: null, items: [], cat: "all", timer: null, posting: 0, received: false };
+  let recvProdTargetItem = null; // item de la recepción que se está repuntando
 
   async function loadRecepcion() {
     if (!recvEls.tbody) return;
@@ -6189,26 +6197,29 @@
     return done >= total ? "done" : "partial";
   }
 
+  // Estado de recepción (received) es lo principal; el control (checked/diffs)
+  // es el sub-paso que se ve en el chip secundario.
   function recvChipHtml(r) {
+    if (Number(r.received) === 1) {
+      const diffs = Number(r.diff_count) || 0;
+      return '<span class="recv-chip recv-chip-ok">✔ Recibida</span>' +
+        (diffs > 0 ? ' <span class="recv-chip recv-chip-diff" title="Recibida con diferencias contra lo cargado">≠ ' + diffs + "</span>" : "");
+    }
     const st = recvStatusOf(r);
-    const diffs = Number(r.diff_count) || 0;
-    if (st === "done") {
-      return diffs > 0
-        ? '<span class="recv-chip recv-chip-diff" title="Controlada con diferencias contra lo cargado">✔ con ' + diffs + (diffs === 1 ? " dif." : " difs.") + "</span>"
-        : '<span class="recv-chip recv-chip-ok">✔ Completo</span>';
-    }
-    if (st === "partial") {
-      return '<span class="recv-chip recv-chip-mid">' + (r.checked_count || 0) + "/" + (r.items_count || 0) + "</span>" +
-        (diffs > 0 ? ' <span class="recv-chip recv-chip-diff">≠ ' + diffs + "</span>" : "");
-    }
-    return '<span class="recv-chip recv-chip-none">Sin controlar</span>';
+    const done = Number(r.checked_count) || 0;
+    const total = Number(r.items_count) || 0;
+    let ctl = '<span class="recv-chip recv-chip-none">Sin controlar</span>';
+    if (st === "done") ctl = '<span class="recv-chip recv-chip-mid">✔ Controlado</span>';
+    else if (st === "partial") ctl = '<span class="recv-chip recv-chip-mid">' + done + "/" + total + "</span>";
+    return '<span class="recv-chip recv-chip-pend">⏳ Pendiente</span> ' + ctl;
   }
 
   function renderRecepcion() {
     if (!recvEls.tbody) return;
     const f = recvEls.filter ? recvEls.filter.value : "all";
     let list = recvState.rows;
-    if (f !== "all") list = list.filter((r) => recvStatusOf(r) === f);
+    if (f === "pendiente") list = list.filter((r) => Number(r.received) !== 1);
+    else if (f === "recibida") list = list.filter((r) => Number(r.received) === 1);
     if (recvEls.count) recvEls.count.textContent = list.length + (list.length === 1 ? " compra" : " compras");
     if (!list.length) {
       recvEls.tbody.innerHTML = '<tr><td colspan="8" class="muted">Sin compras para este filtro.</td></tr>';
@@ -6223,7 +6234,8 @@
         '<td class="num">' + (r.items_count || 0) + "</td>" +
         '<td class="num"><strong>' + fmtPrice(r.total_cost) + "</strong></td>" +
         "<td>" + recvChipHtml(r) + "</td>" +
-        '<td><button class="btn btn-mini recv-open-btn" data-id="' + r.id + '" type="button">📋 Controlar</button></td>' +
+        '<td><button class="btn btn-mini recv-open-btn" data-id="' + r.id + '" type="button">' +
+          (Number(r.received) === 1 ? "👁 Ver" : "📋 Controlar") + "</button></td>" +
       "</tr>"
     ).join("");
   }
@@ -6243,6 +6255,7 @@
     recvState.purchaseId = purchaseId;
     recvState.items = [];
     recvState.cat = "all";
+    recvState.received = false;
     recvEls.list.innerHTML = '<p class="muted">Cargando…</p>';
     recvEls.info.textContent = "Compra #" + purchaseId;
     if (recvEls.syncInfo) recvEls.syncInfo.textContent = "";
@@ -6273,9 +6286,13 @@
   async function recvFetch(initial) {
     const data = await api("/api/admin/reception/" + recvState.purchaseId);
     recvState.items = data.items || [];
-    recvEls.info.textContent = "Compra #" + data.purchase.id +
-      (data.purchase.supplier_name ? " · " + data.purchase.supplier_name : "") +
-      (data.purchase.reference ? " · " + data.purchase.reference : "");
+    recvState.received = Number(data.purchase.received) === 1;
+    recvEls.info.innerHTML = "Compra #" + data.purchase.id +
+      (data.purchase.supplier_name ? " · " + escapeHtml(data.purchase.supplier_name) : "") +
+      (data.purchase.reference ? " · " + escapeHtml(data.purchase.reference) : "") +
+      (recvState.received
+        ? ' <span class="recv-chip recv-chip-ok">✔ Recibida — stock impactado</span>'
+        : ' <span class="recv-chip recv-chip-pend">⏳ Pendiente de recibir</span>');
     if (initial) recvBuildCatFilter();
     recvRenderList();
     recvApplyAgg(data.done_items || 0, data.total_items || 0, data.diff_items || 0);
@@ -6295,9 +6312,12 @@
 
   function recvUpdateApplyBtn() {
     if (!recvEls.applyBtn) return;
+    if (recvState.received) { recvEls.applyBtn.hidden = true; return; }
+    recvEls.applyBtn.hidden = false;
     const n = recvPendingChanges().length;
-    recvEls.applyBtn.hidden = n === 0;
-    recvEls.applyBtn.textContent = "📦 Aplicar diferencias a la compra (" + n + ")";
+    recvEls.applyBtn.textContent = n > 0
+      ? "✅ Confirmar recepción (" + n + (n === 1 ? " diferencia)" : " diferencias)")
+      : "✅ Confirmar recepción";
   }
 
   function recvBuildCatFilter() {
@@ -6463,15 +6483,18 @@
   // proveedor pasan a reflejar lo realmente recibido (server hace todo).
   if (recvEls.applyBtn) {
     recvEls.applyBtn.addEventListener("click", async () => {
+      if (recvState.received) return;
       const changes = recvPendingChanges();
-      if (!changes.length) return;
-      const detail = changes.slice(0, 8).map(
-        (i) => "· " + (i.product_name || "") + ": " + Number(i.quantity) + " → " + Number(i.checked_qty)
-      ).join("\n") + (changes.length > 8 ? "\n· …y " + (changes.length - 8) + " más" : "");
+      const detail = changes.length
+        ? "\n\nDiferencias contra lo cargado:\n" + changes.slice(0, 8).map(
+            (i) => "· " + (i.product_name || "") + ": cargado " + Number(i.quantity) + " → recibido " + Number(i.checked_qty)
+          ).join("\n") + (changes.length > 8 ? "\n· …y " + (changes.length - 8) + " más" : "")
+        : "";
       if (!await confirmModal({
-        title: "📦 Confirmar recepción",
-        message: "Esto cambia las cantidades de la compra #" + recvState.purchaseId +
-          " a lo realmente recibido, recalcula el total y ajusta el stock:\n\n" + detail,
+        title: "✅ Confirmar recepción",
+        message: "Vas a confirmar la recepción de la compra #" + recvState.purchaseId +
+          ". Esto SUMA al stock lo recibido (lo contado, o lo cargado si no controlaste el item), " +
+          "recalcula el total y deja la compra como recibida. No se puede deshacer desde acá." + detail,
         confirmText: "Confirmar recepción",
       })) return;
       recvEls.applyBtn.disabled = true;
@@ -6481,18 +6504,182 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
         });
-        showToast("Compra #" + recvState.purchaseId + " actualizada: " + out.changed +
-          " items · nuevo total " + fmtPrice(out.total));
-        await recvFetch(false); // re-trae: las diferencias aplicadas quedan en verde
-        await loadRecepcion();  // total de la fila al día
+        showToast("Recepción confirmada · compra #" + recvState.purchaseId +
+          " · stock impactado · total " + fmtPrice(out.total) +
+          (out.changed ? " · " + out.changed + " con diferencia" : ""));
+        recvState.received = true;
+        await recvFetch(false); // re-trae con received=1 (oculta el botón)
+        await loadRecepcion();  // estado de la fila al día
         state.purchasesLoaded = false; // la pestaña Compras recarga al entrar
         state.allProductsLoaded = false;
-        refreshProductsCache(); // el stock se ajustó
+        refreshProductsCache(); // el stock entró
       } catch (err) {
         showToast("Error: " + err.message, "error");
       } finally {
         recvEls.applyBtn.disabled = false;
       }
+    });
+  }
+
+  // ----- Clic derecho sobre un item de la recepción: cambiar / clonar /
+  // editar / crear producto y asignarlo a la línea. Solo si la compra todavía
+  // NO fue recibida (después el stock ya entró y repuntar descuadraría). -----
+  let recvCtxMenu = null;
+  function hideRecvCtxMenu() { if (recvCtxMenu) recvCtxMenu.style.display = "none"; }
+  function ensureRecvCtxMenu() {
+    if (recvCtxMenu) return recvCtxMenu;
+    recvCtxMenu = document.createElement("div");
+    recvCtxMenu.style.cssText = "position:fixed;z-index:1600;background:#fff;border:1px solid #d1d5db;" +
+      "border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px;display:none;min-width:230px";
+    document.body.appendChild(recvCtxMenu);
+    document.addEventListener("click", hideRecvCtxMenu);
+    document.addEventListener("scroll", hideRecvCtxMenu, true);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideRecvCtxMenu(); });
+    return recvCtxMenu;
+  }
+
+  if (recvEls.list) {
+    recvEls.list.addEventListener("contextmenu", (e) => {
+      const row = e.target.closest(".pick-item");
+      if (!row) return;
+      e.preventDefault();
+      if (recvState.received) { showToast("La compra ya fue recibida; no se puede cambiar el producto.", "error"); return; }
+      const id = Number(row.dataset.item);
+      const it = recvState.items.find((i) => i.id === id);
+      if (!it) return;
+      const menu = ensureRecvCtxMenu();
+      menu.innerHTML = "";
+      const head = document.createElement("div");
+      head.style.cssText = "padding:6px 10px;color:#6b7280;border-bottom:1px solid #eee;" +
+        "margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;font-size:12px";
+      head.textContent = (it.product_name || "") + " · " + (it.product_code || "");
+      menu.appendChild(head);
+      const mkItem = (label, onClick) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.style.cssText = "display:block;width:100%;text-align:left;background:none;border:none;" +
+          "padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#111827";
+        b.textContent = label;
+        b.addEventListener("mouseenter", () => { b.style.background = "#f3f4f6"; });
+        b.addEventListener("mouseleave", () => { b.style.background = "none"; });
+        b.addEventListener("click", (ev) => { ev.stopPropagation(); hideRecvCtxMenu(); onClick(); });
+        menu.appendChild(b);
+      };
+      mkItem("🔄 Cambiar por otro producto", () => openRecvProdPicker(it));
+      if (it.product_id) {
+        mkItem("📋 Clonar este producto y asignarlo", () => recvCloneAssign(it));
+        mkItem("✏️ Editar este producto", () => recvEditProduct(it));
+      }
+      mkItem("➕ Crear producto nuevo y asignarlo", () => {
+        recvProdTargetItem = it;
+        npOpenModal();
+        npForReception = true;
+        if (newProdModal) newProdModal.style.zIndex = "1500";
+      });
+      menu.style.display = "block";
+      const mw = menu.offsetWidth, mh = menu.offsetHeight;
+      let x = e.clientX, y = e.clientY;
+      if (x + mw > window.innerWidth)  x = Math.max(8, window.innerWidth  - mw - 8);
+      if (y + mh > window.innerHeight) y = Math.max(8, window.innerHeight - mh - 8);
+      menu.style.left = x + "px";
+      menu.style.top  = y + "px";
+    });
+  }
+
+  // Picker de producto existente para repuntar la línea.
+  async function openRecvProdPicker(item) {
+    if (!recvEls.prodModal) return;
+    recvProdTargetItem = item;
+    if (recvEls.prodInfo) recvEls.prodInfo.textContent =
+      "Línea: " + (item.product_name || "") + " · " + (item.product_code || "");
+    if (recvEls.prodSearch) recvEls.prodSearch.value = "";
+    recvEls.prodModal.hidden = false;
+    await ensureAllProducts();
+    renderRecvProdList("");
+    setTimeout(() => { if (recvEls.prodSearch) recvEls.prodSearch.focus(); }, 60);
+  }
+
+  function renderRecvProdList(q) {
+    if (!recvEls.prodTbody) return;
+    q = (q || "").trim().toLowerCase();
+    let list = state.allProducts || [];
+    if (q) list = list.filter((p) =>
+      (p.name || "").toLowerCase().indexOf(q) !== -1 ||
+      String(p.code || "").toLowerCase().indexOf(q) !== -1);
+    list = list.slice(0, 100);
+    recvEls.prodTbody.innerHTML = list.length
+      ? list.map((p) =>
+          '<tr class="recv-prod-row" data-pid="' + p.id + '" style="cursor:pointer">' +
+            "<td><code>" + escapeHtml(p.code || "") + "</code></td>" +
+            "<td>" + escapeHtml(p.name || "") + "</td>" +
+            '<td class="num">' + (p.stock != null ? p.stock : "") + "</td>" +
+          "</tr>").join("")
+      : '<tr><td colspan="3" class="muted">Sin resultados.</td></tr>';
+  }
+
+  async function recvAssignProduct(productId) {
+    if (!recvProdTargetItem || !recvState.purchaseId) return;
+    try {
+      await api("/api/admin/reception/" + recvState.purchaseId + "/item/" + recvProdTargetItem.id + "/product", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product_id: productId }),
+      });
+      if (recvEls.prodModal) recvEls.prodModal.hidden = true;
+      showToast("Producto de la línea actualizado.");
+      await recvFetch(false);
+    } catch (err) {
+      showToast("Error: " + err.message, "error");
+    }
+  }
+
+  async function recvCloneAssign(it) {
+    if (!it.product_id) { showToast("Esta línea no tiene un producto asociado.", "error"); return; }
+    try {
+      const res = await api("/api/admin/products/" + it.product_id + "/duplicate", { method: "POST" });
+      const np = res && res.product;
+      if (!np) throw new Error("No se pudo clonar");
+      state.allProducts = state.allProducts || [];
+      state.allProducts.push(np);
+      if (Array.isArray(state.products)) state.products.unshift(np);
+      await api("/api/admin/reception/" + recvState.purchaseId + "/item/" + it.id + "/product", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product_id: np.id }),
+      });
+      showToast("Gemelo creado (código " + np.code + ") y asignado a la línea. Editá lo que necesites.");
+      await recvFetch(false);
+      openEditProdModal(np);
+      if (editProdModal) editProdModal.style.zIndex = "1500";
+    } catch (err) {
+      showToast(err.message || "Error al clonar", "error");
+    }
+  }
+
+  async function recvEditProduct(it) {
+    if (!it.product_id) { showToast("Esta línea no tiene un producto asociado.", "error"); return; }
+    await ensureAllProducts();
+    const p = (state.allProducts || []).find((x) => x.id === it.product_id);
+    if (!p) { showToast("Producto no encontrado en el cache.", "error"); return; }
+    openEditProdModal(p);
+    if (editProdModal) editProdModal.style.zIndex = "1500";
+  }
+
+  if (recvEls.prodSearch) {
+    recvEls.prodSearch.addEventListener("input", () => renderRecvProdList(recvEls.prodSearch.value));
+  }
+  if (recvEls.prodTbody) {
+    recvEls.prodTbody.addEventListener("click", (e) => {
+      const tr = e.target.closest("tr[data-pid]");
+      if (tr) recvAssignProduct(Number(tr.dataset.pid));
+    });
+  }
+  if (recvEls.prodNew) {
+    recvEls.prodNew.addEventListener("click", () => {
+      // el item objetivo ya quedó en recvProdTargetItem al abrir el picker
+      npOpenModal();
+      npForReception = true;
+      if (newProdModal) newProdModal.style.zIndex = "1500";
     });
   }
 
@@ -6883,10 +7070,13 @@
   }
 
   function purchaseRowHtml(p) {
+    const recvBadge = Number(p.received) === 1
+      ? ' <span class="recv-chip recv-chip-ok">recibida</span>'
+      : ' <span class="recv-chip recv-chip-pend">pendiente</span>';
     return '<tr class="pur-row" data-id="' + p.id + '" style="cursor:pointer">' +
       '<td class="cell-code">#' + p.id + '</td>' +
       '<td>' + escapeHtml(p.supplier_name || "—") + '</td>' +
-      '<td>' + escapeHtml(p.reference || "—") + '</td>' +
+      '<td>' + escapeHtml(p.reference || "—") + recvBadge + '</td>' +
       '<td class="muted small-cell">' + formatDate(p.received_at) + '</td>' +
       '<td class="num">' + (p.items_count || 0) + '</td>' +
       '<td class="num"><strong>' + fmtPrice(p.total_cost) + '</strong></td>' +
@@ -7288,6 +7478,7 @@
   // producto cargado en el cache + preseleccionado en el picker.
   let npForPurchase = false;
   let npForCotizacion = false;
+  let npForReception = false;
   function purNewProduct() {
     npOpenModal();
     npForPurchase = true;
@@ -10283,6 +10474,8 @@
 
   function npOpenModal() {
     npForPurchase = false;
+    npForCotizacion = false;
+    npForReception = false;
     if (newProdModal) newProdModal.style.zIndex = "";
     npFillCategories();
     const codeEl = document.getElementById("np-code");
@@ -10396,12 +10589,33 @@
             updateCotPickerCount();
           }
           showToast("Producto creado (código " + result.product.code + ") y seleccionado para la cotización.");
+        } else if (npForReception && result.product) {
+          // Creado desde el clic derecho de la recepción: sumarlo al cache y
+          // repuntar la línea objetivo al producto nuevo.
+          state.allProducts = state.allProducts || [];
+          state.allProducts.push(result.product);
+          if (Array.isArray(state.products)) state.products.unshift(result.product);
+          if (recvProdTargetItem && recvState.purchaseId) {
+            try {
+              await api("/api/admin/reception/" + recvState.purchaseId + "/item/" + recvProdTargetItem.id + "/product", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ product_id: result.product.id }),
+              });
+              if (recvEls.prodModal) recvEls.prodModal.hidden = true;
+              await recvFetch(false);
+              showToast("Producto creado (código " + result.product.code + ") y asignado a la línea.");
+            } catch (e2) {
+              showToast("Producto creado pero no se pudo asignar: " + e2.message, "error");
+            }
+          }
         } else {
           showToast("Producto creado: " + name);
         }
         if (newProdModal) { newProdModal.hidden = true; newProdModal.style.zIndex = ""; }
         npForPurchase = false;
         npForCotizacion = false;
+        npForReception = false;
       } catch (e) {
         alertModal(e.message || "Error al crear producto");
       } finally {

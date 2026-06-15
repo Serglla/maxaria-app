@@ -1206,6 +1206,7 @@ button { font: inherit; cursor: pointer; }
 .recv-chip-mid  { background: #fef3c7; color: #92400e; border-color: #d97706; }
 .recv-chip-diff { background: #fee2e2; color: #991b1b; border-color: #dc2626; }
 .recv-chip-none { background: #f3f4f6; color: #6b7280; border-color: #d1d5db; }
+.recv-chip-pend { background: #ffedd5; color: #9a3412; border-color: #f97316; }
 .order-items-edit { margin-top: 6px; }
 .order-items-edit .cell-input {
   border: 1px solid #d1d5db; border-radius: 6px; padding: 3px 6px; font-size: 13px;

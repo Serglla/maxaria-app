@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260612g" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260615a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -1493,17 +1493,16 @@
     <!-- ===== TAB RECEPCION ===== -->
     <section class="tab-panel" id="tab-recepcion" hidden>
       <div class="admin-toolbar">
-        <select id="recv-filter" class="admin-select" title="Filtrar por estado del control">
+        <select id="recv-filter" class="admin-select" title="Filtrar por estado de recepción">
           <option value="all">Todas las compras</option>
-          <option value="pending">Sin controlar</option>
-          <option value="partial">Control a medias</option>
-          <option value="done">Controladas</option>
+          <option value="pendiente">Pendientes de recibir</option>
+          <option value="recibida">Recibidas</option>
         </select>
         <span class="admin-spacer"></span>
         <span id="recv-count" class="muted">…</span>
         <button class="btn btn-ghost" id="recv-reload" type="button" title="Actualizar">↺ Actualizar</button>
       </div>
-      <p class="muted" style="margin:0 0 10px">Control de mercadería recibida: abrí una compra y contá los items contra la factura o remito del proveedor. Si el proveedor factura por bulto, cada item muestra la equivalencia (unidades por bulto). Las diferencias impactan en la compra (cantidades, total, stock y deuda) solo con el botón "Aplicar" del checklist.</p>
+      <p class="muted" style="margin:0 0 10px">Las compras entran como <strong>pendientes de recibir</strong> (todavía no suman stock). Cuando llega la mercadería, abrí la compra, contá los items contra la factura o remito (si el proveedor factura por bulto, cada item muestra la equivalencia en unidades) y apretá <strong>Confirmar recepción</strong>: ahí recién se suma todo al stock. Con clic derecho sobre un item podés cambiar el producto, clonarlo o cargar uno nuevo.</p>
       <div class="admin-table-wrap">
         <table class="admin-table" id="recv-table">
           <thead>
@@ -2120,8 +2119,27 @@
       <div class="admin-modal-foot">
         <span id="recv-sync-info" class="muted" style="margin-right:auto;font-size:11px"></span>
         <button type="button" class="btn btn-primary" id="recv-apply-btn" hidden
-          title="Cambia las cantidades de la compra a lo realmente recibido, recalcula el total y ajusta el stock">📦 Aplicar diferencias a la compra</button>
+          title="Suma al stock lo realmente recibido, recalcula el total y deja la compra como recibida">✅ Confirmar recepción</button>
         <button type="button" class="btn" data-close>Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: elegir producto para una línea de la recepción (clic derecho) -->
+  <div class="admin-modal" id="recv-prod-modal" hidden style="z-index:1400">
+    <div class="admin-modal-box" style="max-width:640px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+      <h3 style="margin-bottom:2px">🔄 Cambiar producto de la línea</h3>
+      <p id="recv-prod-info" class="muted" style="margin:0 0 8px"></p>
+      <input type="text" id="recv-prod-search" class="admin-input" placeholder="Buscar por nombre o código…" autocomplete="off" />
+      <div class="admin-table-wrap" style="flex:1;overflow:auto;margin-top:8px">
+        <table class="admin-table" id="recv-prod-table" style="min-width:0">
+          <thead><tr><th>Código</th><th>Producto</th><th class="num">Stock</th></tr></thead>
+          <tbody id="recv-prod-tbody"></tbody>
+        </table>
+      </div>
+      <div class="admin-modal-foot">
+        <button type="button" class="btn btn-ghost" id="recv-prod-new" style="margin-right:auto">➕ Crear producto nuevo</button>
+        <button type="button" class="btn" data-close>Cancelar</button>
       </div>
     </div>
   </div>
@@ -3275,6 +3293,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260612j"></script>
+  <script src="/js/admin.js?v=20260615a"></script>
 </body>
 </html>
