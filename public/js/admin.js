@@ -72,15 +72,20 @@
     ordersStatusFilter: document.getElementById("orders-status-filter"),
     ordersCount: document.getElementById("orders-count"),
     ordersList: document.getElementById("orders-list"),
-    ventasList: document.getElementById("ventas-list"),
+    ventasTbody: document.getElementById("ventas-tbody"),
     ventasSummary: document.getElementById("ventas-summary"),
     ventasCount: document.getElementById("ventas-count"),
     ventasReload: document.getElementById("ventas-reload"),
     ventasSearch: document.getElementById("ventas-search"),
+    ventasClient: document.getElementById("ventas-client"),
+    ventasPaid: document.getElementById("ventas-paid"),
     ventasRange: document.getElementById("ventas-range"),
     ventasFrom: document.getElementById("ventas-from"),
     ventasTo: document.getElementById("ventas-to"),
     ventasClearDates: document.getElementById("ventas-clear-dates"),
+    orderDetailModal: document.getElementById("order-detail-modal"),
+    orderDetailBody: document.getElementById("order-detail-body"),
+    orderDetailTitle: document.getElementById("order-detail-title"),
     armadoList: document.getElementById("armado-list"),
     armadoCount: document.getElementById("armado-count"),
     armadoReload: document.getElementById("armado-reload"),
@@ -5909,34 +5914,102 @@
     renderEntregasQueue();
     // Ventas tiene su propia fuente (endpoint dedicado); re-traerla para que un
     // pedido recién entregado aparezca sin recargar la página.
-    if (els.ventasList) loadVentasOrders();
+    if (els.ventasTbody) loadVentasOrders();
   }
 
   // Pestaña Ventas: registro de ventas concretadas = pedidos ENTREGADOS.
   // Un pedido que recorrió Pedidos → Armado → Entregas y se marcó entregado
   // "pasa a Ventas". Reusa la tarjeta del circuito (detalle, cobro, remito).
+  // Cobro de una venta: cobrado en la entrega (efectivo + transferencia) vs el
+  // total NETO (con descuento). Saldado = lo cobrado cubre el neto.
+  function ventaCobro(o) {
+    var neto = Math.max(0, (Number(o.total) || 0) - (Number(o.discount_amount) || 0));
+    var cobrado = (Number(o.efectivo_amount) || 0) + (Number(o.transferencia_amount) || 0);
+    var saldado = neto <= 0 ? true : cobrado + 0.5 >= neto;
+    return { neto: neto, cobrado: cobrado, saldado: saldado, falta: Math.max(0, neto - cobrado) };
+  }
+
+  // Llena el select "Cliente" con los clientes que tienen ventas en el período.
+  function ventasPopulateClientFilter() {
+    if (!els.ventasClient) return;
+    var prev = els.ventasClient.value;
+    var seen = {};
+    var names = [];
+    (state.ventasOrders || []).forEach(function(o) {
+      var k = o.full_name || o.username || "—";
+      if (!seen[k]) { seen[k] = 1; names.push(k); }
+    });
+    names.sort(function(a, b) { return a.localeCompare(b, "es"); });
+    els.ventasClient.innerHTML = '<option value="">Todos</option>' +
+      names.map(function(n) { return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + "</option>"; }).join("");
+    if (prev && seen[prev]) els.ventasClient.value = prev;
+  }
+
+  function ventaRowHtml(o) {
+    var client = escapeHtml(o.full_name || o.username || "—");
+    var dateLabel = o.delivered_at ? formatDate(o.delivered_at) : formatDate(o.created_at);
+    var vend = o.assigned_vendedor_id
+      ? '<span class="vt-vend-badge">' + escapeHtml(o.vendedor_full_name || o.vendedor_username || ("#" + o.assigned_vendedor_id)) + "</span>"
+      : '<span class="muted">—</span>';
+    var c = ventaCobro(o);
+    var cobroPill = c.saldado
+      ? '<span class="vt-pill vt-paid" title="Cobrado ' + fmtPrice(c.cobrado) + '">✔ Saldado</span>'
+      : '<span class="vt-pill vt-unpaid" title="Cobrado ' + fmtPrice(c.cobrado) + " de " + fmtPrice(c.neto) + '">Debe ' + fmtPrice(c.falta) + "</span>";
+    return '<tr class="ventas-row" data-id="' + o.id + '" title="Doble click para ver el detalle">' +
+      '<td class="vt-client">' + client + "</td>" +
+      '<td class="vt-num">#' + o.id + "</td>" +
+      '<td class="vt-date">' + escapeHtml(dateLabel) + "</td>" +
+      '<td class="vt-vend">' + vend + "</td>" +
+      '<td class="vt-cobro">' + cobroPill + "</td>" +
+      '<td class="vt-total num">' + fmtPrice(o.total || 0) + "</td>" +
+    "</tr>";
+  }
+
   function renderVentasOrders() {
-    if (!els.ventasList) return;
-    const q = (els.ventasSearch ? els.ventasSearch.value.trim().toLowerCase() : "");
-    let list = (state.ventasOrders || []).slice();
+    if (!els.ventasTbody) return;
+    ventasPopulateClientFilter();
+    var q = (els.ventasSearch ? els.ventasSearch.value.trim().toLowerCase() : "");
+    var clientF = els.ventasClient ? els.ventasClient.value : "";
+    var paidF = els.ventasPaid ? els.ventasPaid.value : "all";
+    var list = (state.ventasOrders || []).slice();
     if (q) {
-      list = list.filter((o) => matchWords(
-        String(o.id) + " " +
-        (o.username || "") + " " +
-        (o.full_name || "") + " " +
-        (o.vendedor_full_name || o.vendedor_username || ""), q));
+      list = list.filter(function(o) { return matchWords(
+        String(o.id) + " " + (o.username || "") + " " + (o.full_name || "") + " " +
+        (o.vendedor_full_name || o.vendedor_username || ""), q); });
     }
+    if (clientF) list = list.filter(function(o) { return (o.full_name || o.username || "—") === clientF; });
+    if (paidF !== "all") list = list.filter(function(o) { var s = ventaCobro(o).saldado; return paidF === "saldado" ? s : !s; });
     if (els.ventasSummary) {
-      const totalVendido = list.reduce((s, o) => s + (Number(o.total) || 0), 0);
+      var totalVendido = list.reduce(function(s, o) { return s + (Number(o.total) || 0); }, 0);
       els.ventasSummary.textContent = list.length + (list.length === 1 ? " venta · " : " ventas · ") + fmtPrice(totalVendido);
     }
     if (els.ventasCount) els.ventasCount.textContent = "(" + list.length + ")";
     if (!list.length) {
-      els.ventasList.innerHTML = '<p class="muted">Todavía no hay ventas (pedidos entregados).</p>';
+      els.ventasTbody.innerHTML = '<tr><td colspan="6" class="muted">No hay ventas para este filtro.</td></tr>';
       return;
     }
-    els.ventasList.innerHTML = list.map(orderCardHtml).join("");
-    wireOrderCards(els.ventasList, list, renderVentasOrders);
+    els.ventasTbody.innerHTML = list.map(ventaRowHtml).join("");
+    els.ventasTbody.querySelectorAll(".ventas-row").forEach(function(tr) {
+      tr.addEventListener("dblclick", function() { openOrderDetailModal(Number(tr.dataset.id)); });
+    });
+  }
+
+  // Modal con el detalle de un pedido (reusa el render del circuito). Lo usa la
+  // pestaña Ventas al hacer doble click en una fila, en vez de desplegar inline.
+  async function openOrderDetailModal(orderId) {
+    if (!els.orderDetailModal || !els.orderDetailBody) return;
+    if (els.orderDetailTitle) els.orderDetailTitle.textContent = "Pedido #" + orderId;
+    els.orderDetailBody.innerHTML = '<p class="muted">Cargando…</p>';
+    els.orderDetailModal.hidden = false;
+    try {
+      var fetches = [api("/api/orders/" + orderId)];
+      if (state.isAdmin) fetches.push(ensureOrderClients());
+      var order = (await Promise.all(fetches))[0];
+      renderOrderDetail(els.orderDetailBody, order);
+      wireOrderDetail(els.orderDetailBody, order);
+    } catch (err) {
+      els.orderDetailBody.innerHTML = '<p class="muted err">Error: ' + escapeHtml(err.message) + "</p>";
+    }
   }
 
   // Trae TODOS los pedidos entregados (endpoint dedicado, sin el tope de 200 de
@@ -5966,7 +6039,7 @@
   }
 
   async function loadVentasOrders() {
-    if (!els.ventasList) return;
+    if (!els.ventasTbody) return;
     // Default al abrir por primera vez: solo la semana actual.
     if (!state.ventasRangeInit) {
       state.ventasRangeInit = true;
@@ -11959,6 +12032,8 @@
 
   // ─────── Buscador de la pestaña Ventas (pedidos entregados) ───────
   if (els.ventasSearch) els.ventasSearch.addEventListener("input", debounce(renderVentasOrders, 150));
+  if (els.ventasClient) els.ventasClient.addEventListener("change", renderVentasOrders);
+  if (els.ventasPaid) els.ventasPaid.addEventListener("change", renderVentasOrders);
   if (els.ventasReload) els.ventasReload.addEventListener("click", loadVentasOrders);
   if (els.ventasRange) els.ventasRange.addEventListener("change", () => {
     state.ventasRangeInit = true; // ya no pisar con el default

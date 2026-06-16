@@ -5335,3 +5335,59 @@ html.in-modal .ventas-wrap {
 .notif-pill.np-red { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
 .notif-pill.np-amber { background: #fff7ed; color: #b45309; border-color: #fdba74; }
 .notif-pill.np-blue { background: #eff6ff; color: #1d4ed8; border-color: #93c5fd; }
+
+/* ===== Pestaña Ventas: tabla compacta ===== */
+.ventas-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 0;
+}
+.ventas-table thead th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #64748b;
+  padding: 8px 10px;
+  border-bottom: 2px solid #e2e8f0;
+  background: #f8fafc;
+  white-space: nowrap;
+}
+.ventas-table thead th.num { text-align: right; }
+.ventas-table tbody td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #eef2f6;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.ventas-table tbody tr.ventas-row { cursor: pointer; }
+.ventas-table tbody tr.ventas-row:nth-child(even) { background: #fbfcfe; }
+.ventas-table tbody tr.ventas-row:hover { background: #eff6ff; }
+.ventas-table .vt-client { font-weight: 700; color: #0f172a; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.ventas-table .vt-num { color: #64748b; font-weight: 600; }
+.ventas-table .vt-date { color: #475569; }
+.ventas-table .vt-total { text-align: right; font-weight: 800; color: #0f172a; }
+.vt-vend-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f5f3ff;
+  color: #6d28d9;
+  border: 1px solid #ddd6fe;
+}
+.vt-vend-badge::before { content: "👤 "; }
+.vt-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.vt-pill.vt-paid { background: #ecfdf5; color: #047857; border-color: #6ee7b7; }
+.vt-pill.vt-unpaid { background: #fff7ed; color: #b45309; border-color: #fdba74; }

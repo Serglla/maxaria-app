@@ -2316,7 +2316,7 @@ app.get("/api/admin/ventas", requireAdmin, (req, res) => {
   if (from) { where.push(dateExpr + " >= ?"); params.push(from); }
   if (to)   { where.push(dateExpr + " <= ?"); params.push(to); }
   const sql =
-    "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
+    "SELECT o.id, o.status, o.total, COALESCE(o.discount_amount,0) AS discount_amount, o.notes, o.created_at, o.whatsapp_sent_at," +
     "       u.username, u.full_name," +
     "       o.assigned_vendedor_id," +
     "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +

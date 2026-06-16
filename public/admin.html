@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260616a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260616b" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -1766,9 +1766,21 @@
         <button class="btn btn-small" id="ventas-reload" type="button">↺ Actualizar</button>
       </div>
       <div class="admin-toolbar">
-        <input type="search" id="ventas-search" class="admin-search" placeholder="Buscar venta (# o cliente)…" autocomplete="off" />
+        <input type="search" id="ventas-search" class="admin-search" placeholder="Buscar (# o cliente)…" autocomplete="off" />
+        <label class="admin-filter">Cliente
+          <select id="ventas-client" class="admin-input" style="width:170px">
+            <option value="">Todos</option>
+          </select>
+        </label>
+        <label class="admin-filter">Cobro
+          <select id="ventas-paid" class="admin-input" style="width:160px">
+            <option value="all">Todos</option>
+            <option value="saldado">Saldados</option>
+            <option value="pendiente">Pendientes de cobro</option>
+          </select>
+        </label>
         <label class="admin-filter">Período
-          <select id="ventas-range" class="admin-input" style="width:150px">
+          <select id="ventas-range" class="admin-input" style="width:140px">
             <option value="today">Hoy</option>
             <option value="week">Esta semana</option>
             <option value="month">Este mes</option>
@@ -1782,8 +1794,22 @@
         <span class="admin-spacer"></span>
         <span id="ventas-summary" class="muted small"></span>
       </div>
-      <p class="muted small" style="margin:0 0 10px">Ventas concretadas: pedidos ya <strong>entregados</strong> (completaron el circuito Armado → Entregas). Tocá una para ver el detalle, el cobro o imprimir el remito.</p>
-      <div id="ventas-list" class="admin-orders-list"></div>
+      <p class="muted small" style="margin:0 0 10px">Pedidos ya <strong>entregados</strong> (completaron el circuito Armado → Entregas). <strong>Doble click</strong> en una fila para ver el detalle, el cobro o imprimir el remito.</p>
+      <div class="admin-table-wrap">
+        <table class="ventas-table" id="ventas-table">
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Pedido</th>
+              <th>Entregado</th>
+              <th>Vendedor</th>
+              <th>Cobro</th>
+              <th class="num">Total</th>
+            </tr>
+          </thead>
+          <tbody id="ventas-tbody"><tr><td colspan="6" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
     </section>
 
   </main>
@@ -2108,6 +2134,17 @@
           title="Cambia las cantidades del pedido a lo realmente armado y recalcula el total">📦 Aplicar cantidades al pedido</button>
         <button type="button" class="btn" data-close>Cerrar</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal Detalle de pedido/venta (doble click en una fila de Ventas) -->
+  <div class="admin-modal" id="order-detail-modal" hidden>
+    <div class="admin-modal-box" style="max-width:720px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+      <div class="admin-modal-head">
+        <h3 id="order-detail-title" style="margin:0">Pedido</h3>
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
+      </div>
+      <div id="order-detail-body" class="order-detail" style="overflow-y:auto"><p class="muted">Cargando…</p></div>
     </div>
   </div>
 
@@ -3309,6 +3346,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260616a"></script>
+  <script src="/js/admin.js?v=20260616b"></script>
 </body>
 </html>
