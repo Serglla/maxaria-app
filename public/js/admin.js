@@ -773,6 +773,170 @@
     // Al entrar al sistema, avisar al admin cuántos pedidos hay pendientes de
     // entregar (recibidos por el catálogo/vendedores y todavía sin entregar).
     if (state.isAdmin) notifyPendingOrders();
+    if (state.isAdmin) notifInit();
+  }
+
+  // ---------- Centro de notificaciones (campana del header) ----------
+  // Agrega alertas de varias áreas (vencimientos, stock bajo, pedidos
+  // pendientes). El contador de "no leídas" se lleva en localStorage por id
+  // estable de cada alerta: al abrir el panel se marcan todas como vistas.
+  const notifEls = {
+    bell:    document.getElementById("notif-bell"),
+    badge:   document.getElementById("notif-badge"),
+    panel:   document.getElementById("notif-panel"),
+    body:    document.getElementById("notif-body"),
+    refresh: document.getElementById("notif-refresh"),
+  };
+  const notifState = { data: null, timer: null };
+  const NOTIF_SEEN_KEY = "maxaria_notif_seen";
+
+  function notifSeenSet() {
+    try { return new Set(JSON.parse(localStorage.getItem(NOTIF_SEEN_KEY) || "[]")); }
+    catch (_) { return new Set(); }
+  }
+  function notifSaveSeen(ids) {
+    try { localStorage.setItem(NOTIF_SEEN_KEY, JSON.stringify(ids.slice(-800))); } catch (_) {}
+  }
+  function notifAllIds(d) {
+    if (!d) return [];
+    return []
+      .concat((d.vencimientos || []).map((x) => x.id))
+      .concat((d.stock_bajo || []).map((x) => x.id))
+      .concat((d.pedidos || []).map((x) => x.id));
+  }
+  function notifUnreadCount(d) {
+    const seen = notifSeenSet();
+    return notifAllIds(d).filter((id) => !seen.has(id)).length;
+  }
+  function notifRenderBadge() {
+    if (!notifEls.badge) return;
+    const n = notifUnreadCount(notifState.data);
+    if (n > 0) {
+      notifEls.badge.textContent = n > 99 ? "99+" : String(n);
+      notifEls.badge.hidden = false;
+    } else {
+      notifEls.badge.hidden = true;
+    }
+  }
+
+  async function notifLoad() {
+    try {
+      notifState.data = await api("/api/admin/notifications");
+      notifRenderBadge();
+      if (notifEls.panel && !notifEls.panel.hidden) notifRenderPanel();
+    } catch (_) { /* silencioso */ }
+  }
+
+  const NOTIF_STATUS_PED = {
+    pendiente: "Por armar", enviado: "Por armar", preparando: "En armado", listo: "Para entregar",
+  };
+  function notifRenderPanel() {
+    if (!notifEls.body) return;
+    const d = notifState.data;
+    if (!d || !d.counts || d.counts.total === 0) {
+      notifEls.body.innerHTML = '<p class="muted" style="padding:16px;text-align:center">Sin alertas 🎉</p>';
+      return;
+    }
+    const seen = notifSeenSet();
+    let html = "";
+
+    if ((d.vencimientos || []).length) {
+      html += '<div class="notif-group-title">⏳ Vencimientos (' + d.vencimientos.length + ")</div>";
+      d.vencimientos.slice(0, 40).forEach((v) => {
+        const isNew = !seen.has(v.id);
+        const venc = v.status === "vencido";
+        const ml = v.months_left;
+        const sub = venc
+          ? "Vencido (" + Math.abs(ml) + " mes" + (Math.abs(ml) === 1 ? "" : "es") + ")"
+          : (ml <= 0 ? "Vence este mes" : "Vence en " + ml + " mes" + (ml === 1 ? "" : "es"));
+        html += '<button type="button" class="notif-item' + (isNew ? " notif-unread" : "") +
+          '" data-go="recepcion" data-purchase="' + v.purchase_id + '">' +
+          '<span class="notif-dot ' + (venc ? "nd-red" : "nd-amber") + '"></span>' +
+          '<span class="notif-item-main"><span class="notif-item-name">' + escapeHtml(v.product_name || "") + "</span>" +
+          '<span class="notif-item-sub">' + escapeHtml(sub + " · vence " + v.expiry_label + " · stock " + v.stock) + "</span></span>" +
+          '<span class="notif-pill ' + (venc ? "np-red" : "np-amber") + '">' + v.expiry_label + "</span>" +
+          "</button>";
+      });
+    }
+
+    if ((d.stock_bajo || []).length) {
+      html += '<div class="notif-group-title">📉 Stock bajo (' + d.stock_bajo.length + ")</div>";
+      d.stock_bajo.slice(0, 40).forEach((s) => {
+        const isNew = !seen.has(s.id);
+        const out = s.status === "sin_stock";
+        html += '<button type="button" class="notif-item' + (isNew ? " notif-unread" : "") +
+          '" data-go="productos" data-search="' + escapeHtml(s.product_code || "") + '">' +
+          '<span class="notif-dot ' + (out ? "nd-red" : "nd-amber") + '"></span>' +
+          '<span class="notif-item-main"><span class="notif-item-name">' + escapeHtml(s.product_name || "") + "</span>" +
+          '<span class="notif-item-sub">' + escapeHtml((out ? "Sin stock" : "Stock " + s.stock) + " · mínimo " + s.stock_min) + "</span></span>" +
+          '<span class="notif-pill ' + (out ? "np-red" : "np-amber") + '">' + s.stock + "/" + s.stock_min + "</span>" +
+          "</button>";
+      });
+    }
+
+    if ((d.pedidos || []).length) {
+      html += '<div class="notif-group-title">📦 Pedidos pendientes (' + d.pedidos.length + ")</div>";
+      d.pedidos.slice(0, 40).forEach((o) => {
+        const isNew = !seen.has(o.id);
+        const goTab = o.status === "listo" ? "entregas" : (o.status === "preparando" ? "armado" : "pedidos");
+        html += '<button type="button" class="notif-item' + (isNew ? " notif-unread" : "") +
+          '" data-go="' + goTab + '">' +
+          '<span class="notif-dot nd-blue"></span>' +
+          '<span class="notif-item-main"><span class="notif-item-name">Pedido #' + o.order_id + " · " + escapeHtml(o.client_name || "") + "</span>" +
+          '<span class="notif-item-sub">' + escapeHtml(NOTIF_STATUS_PED[o.status] || o.status) + "</span></span>" +
+          '<span class="notif-pill np-blue">' + escapeHtml(NOTIF_STATUS_PED[o.status] || o.status) + "</span>" +
+          "</button>";
+      });
+    }
+
+    notifEls.body.innerHTML = html;
+  }
+
+  function notifOpen() {
+    if (!notifEls.panel) return;
+    notifRenderPanel();
+    notifEls.panel.hidden = false;
+    // Marcar todo lo actual como visto → el badge baja a 0.
+    notifSaveSeen(notifAllIds(notifState.data));
+    notifRenderBadge();
+  }
+  function notifClose() { if (notifEls.panel) notifEls.panel.hidden = true; }
+
+  function notifInit() {
+    if (!notifEls.bell) return;
+    notifLoad();
+    notifEls.bell.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (notifEls.panel.hidden) notifOpen(); else notifClose();
+    });
+    if (notifEls.refresh) notifEls.refresh.addEventListener("click", (e) => { e.stopPropagation(); notifLoad(); });
+    // Navegar a la sección al clickear una alerta.
+    if (notifEls.body) notifEls.body.addEventListener("click", (e) => {
+      const item = e.target.closest(".notif-item");
+      if (!item) return;
+      const tab = item.dataset.go;
+      const btn = Array.from(els.tabBtns).find((b) => b.dataset.tab === tab);
+      notifClose();
+      if (btn && btn.style.display !== "none" && !btn.hidden) btn.click();
+      // Filtrar productos por código (stock bajo) cuando se navega a Productos.
+      if (tab === "productos" && item.dataset.search && els.prodSearch) {
+        els.prodSearch.value = item.dataset.search;
+        if (typeof applyFilters === "function") applyFilters();
+      }
+      // Abrir directo el modal de recepción de esa compra (vencimientos).
+      if (tab === "recepcion" && item.dataset.purchase && typeof openRecvModal === "function") {
+        setTimeout(() => { try { openRecvModal(Number(item.dataset.purchase)); } catch (_) {} }, 150);
+      }
+    });
+    // Cerrar al clickear afuera.
+    document.addEventListener("click", (e) => {
+      if (notifEls.panel.hidden) return;
+      if (e.target.closest(".notif-wrap")) return;
+      notifClose();
+    });
+    // Refrescar el badge cada 90s.
+    if (notifState.timer) clearInterval(notifState.timer);
+    notifState.timer = setInterval(notifLoad, 90000);
   }
 
   // ---------- Notificación de pedidos pendientes (al ingresar) ----------
@@ -6338,6 +6502,35 @@
     return String(Math.round(Number(n) * 100) / 100).replace(".", ",");
   }
 
+  // 'YYYY-MM' (como lo guarda el server) -> 'MM/AA' para el input.
+  function recvExpLabel(ym) {
+    const m = String(ym || "").match(/^(\d{4})-(\d{2})$/);
+    return m ? m[2] + "/" + m[1].slice(2) : "";
+  }
+  // Da formato MM/AA mientras se tipea: solo dígitos, la barra la pone el sistema.
+  function recvExpFormat(v) {
+    let d = String(v || "").replace(/\D/g, "").slice(0, 4);
+    return d.length >= 3 ? d.slice(0, 2) + "/" + d.slice(2) : d;
+  }
+  // Guarda el vencimiento de un item (MM/AA o "" para limpiar).
+  async function recvPostExpiry(itemId, label) {
+    recvState.posting++;
+    try {
+      const out = await api("/api/admin/reception/" + recvState.purchaseId, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_id: itemId, expiry_date: label }),
+      });
+      const it = recvState.items.find((i) => i.id === itemId);
+      if (it) it.expiry_date = out.expiry_date || null;
+    } catch (err) {
+      showToast("Error al guardar vencimiento: " + err.message, "error");
+      try { await recvFetch(false); } catch (_) {}
+    } finally {
+      recvState.posting--;
+    }
+  }
+
   function recvRowHtml(it) {
     const upb = Math.max(1, Number(it.units_per_bulto) || 1);
     const qty = Number(it.quantity);
@@ -6350,6 +6543,7 @@
     const bultosEsp = upb > 1 ? " = " + recvFmtB(qty / upb) + " bultos ×" + upb : "";
     const unitsVal = checked ? String(Number(it.checked_qty)) : "";
     const bultosVal = checked ? recvFmtB(Number(it.checked_qty) / upb).replace(",", ".") : "";
+    const expVal = recvExpLabel(it.expiry_date);
     return '<div class="pick-item' + (ok ? " pick-done" : diff ? " pick-diff" : "") +
       '" data-item="' + it.id + '">' +
       '<span class="pick-check">' + (ok ? "✔" : diff ? "≠" : "") + "</span>" +
@@ -6357,6 +6551,10 @@
         '<span class="pick-name">' + escapeHtml(it.product_name || "") + "</span>" +
         '<span class="pick-code">' + escapeHtml(it.product_code || "") +
           " · cargado: " + qty + " un." + escapeHtml(bultosEsp) + who + "</span>" +
+      "</div>" +
+      '<div class="recv-exp-box" title="Vencimiento (mes/año). La barra la agrega el sistema.">' +
+        '<span class="recv-exp-lbl">Vence</span>' +
+        '<input type="text" class="recv-exp-input" inputmode="numeric" maxlength="5" placeholder="MM/AA" value="' + expVal + '" />' +
       "</div>" +
       '<div class="pick-qtybox recv-qtybox" title="Cantidad recibida — cargá bultos o unidades; click en la fila = tildar lo cargado">' +
         (upb > 1
@@ -6443,7 +6641,7 @@
   if (recvEls.list) {
     // Click en la fila (fuera de los inputs) = tildar con lo cargado / destildar.
     recvEls.list.addEventListener("click", (e) => {
-      if (e.target.closest(".recv-qtybox")) return;
+      if (e.target.closest(".recv-qtybox") || e.target.closest(".recv-exp-box")) return;
       const row = e.target.closest(".pick-item");
       if (!row) return;
       const id = Number(row.dataset.item);
@@ -6451,9 +6649,36 @@
       if (!it) return;
       recvPost(id, it.checked_qty != null ? null : Number(it.quantity));
     });
+    // Vencimiento: la barra se agrega sola mientras se tipea (MM/AA).
+    recvEls.list.addEventListener("input", (e) => {
+      const inp = e.target.closest(".recv-exp-input");
+      if (!inp) return;
+      const start = inp.selectionStart;
+      const before = inp.value;
+      inp.value = recvExpFormat(inp.value);
+      // mantener el cursor al final si el sistema insertó la barra
+      if (inp.value.length > before.length && start === before.length) {
+        try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (_) {}
+      }
+    });
     // Cambio en los inputs: unidades guarda directo; bultos convierte con
     // units_per_bulto. Vaciar el input destilda el item.
     recvEls.list.addEventListener("change", (e) => {
+      // Vencimiento: guarda MM/AA (o limpia si quedó vacío).
+      const expInp = e.target.closest(".recv-exp-input");
+      if (expInp) {
+        const row = expInp.closest(".pick-item");
+        if (!row) return;
+        const id = Number(row.dataset.item);
+        const val = expInp.value.trim();
+        if (val && !/^\d{2}\/\d{2}$/.test(val)) {
+          showToast("Vencimiento inválido. Usá MM/AA, ej: 08/28.", "error");
+          return;
+        }
+        expInp.blur();
+        recvPostExpiry(id, val);
+        return;
+      }
       const inp = e.target.closest(".pick-qty-input");
       if (!inp) return;
       const row = inp.closest(".pick-item");
@@ -10045,6 +10270,7 @@
     set("ep-stock-min",      p.stock_min      || 0);
     set("ep-units-per-bulto", p.units_per_bulto > 1 ? p.units_per_bulto : 1);
     set("ep-pack-unit",      p.pack_unit || "bulto");
+    set("ep-expiry-alert",   p.expiry_alert_months != null ? p.expiry_alert_months : 3);
     set("ep-cost",           p.cost           || 0);
     // Precios: mostrar formateados
     const prices = {
@@ -10117,6 +10343,7 @@
         stock_min:        Number(get("ep-stock-min"))          || 0,
         units_per_bulto:  Math.max(1, Number(get("ep-units-per-bulto")) || 1),
         pack_unit:        get("ep-pack-unit") || "bulto",
+        expiry_alert_months: (function(){ const n = Math.round(Number(get("ep-expiry-alert"))); return isFinite(n) && n >= 0 ? n : 3; })(),
         cost:             Number(get("ep-cost"))               || 0,
         price_minorista:  parsePrice(get("ep-minorista")),
         price_revendedor: parsePrice(get("ep-revendedor")),

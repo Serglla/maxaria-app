@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260615a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260616a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -22,6 +22,18 @@
       </div>
       <span style="flex:1"></span>
       <div class="topbar-actions">
+        <div class="notif-wrap">
+          <button id="notif-bell" class="notif-bell" type="button" aria-label="Notificaciones" title="Notificaciones">
+            🔔<span id="notif-badge" class="notif-badge" hidden>0</span>
+          </button>
+          <div id="notif-panel" class="notif-panel" hidden>
+            <div class="notif-panel-head">
+              <strong>Notificaciones</strong>
+              <button id="notif-refresh" class="notif-link" type="button" title="Actualizar">↺</button>
+            </div>
+            <div id="notif-body" class="notif-body"><p class="muted" style="padding:14px">Cargando…</p></div>
+          </div>
+        </div>
         <a class="btn btn-ghost" href="/catalogo">Catálogo</a>
         <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
       </div>
@@ -3034,6 +3046,10 @@
             <span>Unidades por caja/bulto <span class="np-note" title="Unidades de venta que componen ese empaque (caja o bulto)">(?)</span></span>
             <input type="number" id="ep-units-per-bulto" class="admin-input" min="1" step="1" value="1" />
           </label>
+          <label class="np-label">
+            <span>Aviso de vencimiento <span class="np-note" title="Meses antes del vencimiento en que empieza a avisar la campana. Por defecto 3.">(meses antes)</span></span>
+            <input type="number" id="ep-expiry-alert" class="admin-input" min="0" step="1" value="3" />
+          </label>
           <label class="np-label np-col-full">
             <span>Costo</span>
             <input type="number" id="ep-cost" class="admin-input" min="0" step="0.01" />
@@ -3293,6 +3309,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260615a"></script>
+  <script src="/js/admin.js?v=20260616a"></script>
 </body>
 </html>

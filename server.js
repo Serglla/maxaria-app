@@ -380,6 +380,15 @@ try { db.exec("ALTER TABLE purchase_items ADD COLUMN checked_qty REAL"); } catch
 try { db.exec("ALTER TABLE purchase_items ADD COLUMN checked_by INTEGER"); } catch (_) {}
 try { db.exec("ALTER TABLE purchase_items ADD COLUMN checked_at TEXT"); } catch (_) {}
 
+// Migracion: vencimiento de mercaderia.
+// - purchase_items.expiry_date: vencimiento del lote recibido, normalizado a
+//   'YYYY-MM' (en la UI se carga/ muestra como MM/AA, ej: 08/28). NULL = sin
+//   vencimiento (productos que no vencen).
+// - products.expiry_alert_months: cuantos meses ANTES del vencimiento se empieza
+//   a avisar. Configurable por producto en su panel de edicion; default 3.
+try { db.exec("ALTER TABLE purchase_items ADD COLUMN expiry_date TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE products ADD COLUMN expiry_alert_months INTEGER NOT NULL DEFAULT 3"); } catch (_) {}
+
 // Migracion: la compra ya NO impacta el stock al cargarse. El stock entra
 // recien al CONFIRMAR la recepcion (el costo, los precios de venta y la deuda
 // del proveedor SI se actualizan al cargar la compra, como antes).
@@ -2998,7 +3007,7 @@ app.get("/api/admin/products", requireAdmin, (req, res) => {
     "SELECT p.id, p.code, p.category_id, c.name AS category_name, p.name," +
     "       p.cost, p.price_minorista, p.price_revendedor, p.price_mayorista," +
     "       p.price_vip, p.price_publico, p.stock, p.stock_min, p.active, p.image_url," +
-    "       p.units_per_bulto, p.pack_unit" +
+    "       p.units_per_bulto, p.pack_unit, COALESCE(p.expiry_alert_months, 3) AS expiry_alert_months" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  ORDER BY c.sort_order, c.name, p.name";
   res.json(db.prepare(sql).all());
@@ -3087,7 +3096,7 @@ app.post("/api/admin/products/:id/duplicate", requireAdmin, (req, res) => {
 const PRODUCT_EDITABLE = [
   "code", "name", "category_id", "cost", "price_minorista", "price_revendedor",
   "price_mayorista", "price_vip", "price_publico", "stock", "stock_min", "active",
-  "image_url", "units_per_bulto", "pack_unit",
+  "image_url", "units_per_bulto", "pack_unit", "expiry_alert_months",
 ];
 function coerceProductField(k, v) {
   if (k === "name") return String(v || "").trim().slice(0, 200);
@@ -3096,6 +3105,7 @@ function coerceProductField(k, v) {
   if (k === "active") return v ? 1 : 0;
   if (k === "pack_unit") return ["unidad", "caja", "bulto"].includes(String(v)) ? String(v) : "bulto";
   if (k === "units_per_bulto") return Math.max(1, Math.round(Number(v)) || 1);
+  if (k === "expiry_alert_months") { const n = Math.round(Number(v)); return isFinite(n) && n >= 0 ? n : 3; }
   if (k === "category_id") return (v == null || v === "" || Number(v) === 0) ? null : Math.round(Number(v));
   let n = Number(v); if (!isFinite(n)) n = 0;
   // Precios (costo + 5 niveles): 2 decimales. Stock / stock_min: enteros.
@@ -5120,6 +5130,37 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
 // del modal (apply).
 
 // Lista de compras con el estado del control (sin control / parcial / completo).
+// Normaliza un vencimiento ingresado como MM/AA (o MM/AAAA) al formato interno
+// 'YYYY-MM'. Devuelve null si esta vacio; false si es invalido (mes 1..12).
+function normalizeExpiry(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const m = s.match(/^(\d{1,2})\s*\/\s*(\d{2}|\d{4})$/);
+  if (!m) return false;
+  let mo = Number(m[1]); let yr = Number(m[2]);
+  if (mo < 1 || mo > 12) return false;
+  if (yr < 100) yr += 2000;
+  return String(yr).padStart(4, "0") + "-" + String(mo).padStart(2, "0");
+}
+// 'YYYY-MM' -> 'MM/AA' para mostrar.
+function expiryLabel(ym) {
+  if (!ym) return "";
+  const m = String(ym).match(/^(\d{4})-(\d{2})$/);
+  if (!m) return String(ym);
+  return m[2] + "/" + m[1].slice(2);
+}
+// Meses que faltan para el vencimiento (negativo = ya vencido). El producto se
+// considera bueno hasta el fin del mes indicado.
+function monthsUntilExpiry(ym, now) {
+  const m = String(ym || "").match(/^(\d{4})-(\d{2})$/);
+  if (!m) return null;
+  const cur = (now || new Date());
+  const curIdx = cur.getFullYear() * 12 + (cur.getMonth() + 1);
+  const expIdx = Number(m[1]) * 12 + Number(m[2]);
+  return expIdx - curIdx;
+}
+
 app.get("/api/admin/reception", requireAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT po.id, po.supplier_id, s.name AS supplier_name," +
@@ -5150,9 +5191,10 @@ app.get("/api/admin/reception/:purchaseId", requireAdmin, (req, res) => {
   if (!purchase) return res.status(404).json({ error: "Compra no encontrada" });
   const items = db.prepare(
     "SELECT pi.id, pi.product_id, pi.product_code, pi.product_name, pi.quantity, pi.unit_cost," +
-    "       pi.checked_qty, pi.checked_at," +
+    "       pi.checked_qty, pi.checked_at, pi.expiry_date," +
     "       cu.full_name AS checked_by_name," +
     "       COALESCE(p.units_per_bulto, 1) AS units_per_bulto," +
+    "       COALESCE(p.expiry_alert_months, 3) AS expiry_alert_months," +
     "       COALESCE(c.name, 'Sin categoría') AS category_name" +
     "  FROM purchase_items pi" +
     "  LEFT JOIN products p ON p.id = pi.product_id" +
@@ -5185,6 +5227,16 @@ app.post("/api/admin/reception/:purchaseId", requireAdmin, (req, res) => {
     "SELECT id FROM purchase_items WHERE id = ? AND purchase_order_id = ?"
   ).get(itemId, purchaseId);
   if (!item) return res.status(404).json({ error: "Item no encontrado en esta compra" });
+
+  // Guardado del vencimiento (independiente del conteo): si el body trae
+  // expiry_date, se actualiza solo esa columna y se responde. MM/AA -> YYYY-MM.
+  if (req.body && "expiry_date" in req.body) {
+    const norm = normalizeExpiry(req.body.expiry_date);
+    if (norm === false) return res.status(400).json({ error: "Vencimiento inválido (usá MM/AA)" });
+    db.prepare("UPDATE purchase_items SET expiry_date = ? WHERE id = ?").run(norm, itemId);
+    return res.json({ ok: true, item_id: itemId, expiry_date: norm, expiry_label: expiryLabel(norm) });
+  }
+
   const raw = req.body ? req.body.checked_qty : null;
   let qty = null;
   if (raw !== null && raw !== undefined && raw !== "") {
@@ -5234,7 +5286,7 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
   }
 
   const items = db.prepare(
-    "SELECT id, product_id, quantity, unit_cost, checked_qty" +
+    "SELECT id, product_id, product_name, quantity, unit_cost, checked_qty" +
     "  FROM purchase_items WHERE purchase_order_id = ?"
   ).all(purchaseId);
   if (!items.length) return res.status(400).json({ error: "La compra no tiene items" });
@@ -5247,6 +5299,7 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
 
   let total = 0;
   let changed = 0;
+  const changeNotes = []; // resumen de diferencias para dejar en las notas
   db.transaction(() => {
     const updItem  = db.prepare("UPDATE purchase_items SET quantity = ?, subtotal = ? WHERE id = ?");
     const incStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
@@ -5255,6 +5308,8 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
       if (rq !== Number(it.quantity)) {
         updItem.run(rq, round2(Number(it.unit_cost) * rq), it.id);
         changed++;
+        changeNotes.push((it.product_name || ("item #" + it.id)) +
+          ": cargado " + Number(it.quantity) + " → recibido " + rq);
       }
       // El stock entra AHORA: la compra no lo habia sumado al cargarse.
       if (it.product_id && rq > 0) incStock.run(rq, it.product_id);
@@ -5268,6 +5323,15 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
       "UPDATE purchase_orders SET total_cost = ?, received = 1," +
       "  received_at = COALESCE(received_at, datetime('now')) WHERE id = ?"
     ).run(total, purchaseId);
+    // Dejar registrado el ajuste de la recepcion en las notas de la compra.
+    if (changeNotes.length) {
+      const stamp = db.prepare("SELECT datetime('now','localtime') AS d").get().d.slice(0, 16);
+      const line = "[Recepción " + stamp + "] " + changeNotes.join("; ") +
+        " · total ajustado a $" + total;
+      const cur = (db.prepare("SELECT notes FROM purchase_orders WHERE id = ?").get(purchaseId).notes || "").trim();
+      db.prepare("UPDATE purchase_orders SET notes = ? WHERE id = ?")
+        .run((cur ? cur + "\n" : "") + line, purchaseId);
+    }
     if (purchase.supplier_id) {
       db.prepare(
         "UPDATE supplier_movements SET amount = ? WHERE purchase_order_id = ? AND type = 'debit'"
@@ -5304,6 +5368,109 @@ app.post("/api/admin/reception/:purchaseId/item/:itemId/product", requireAdmin, 
     "UPDATE purchase_items SET product_id = ?, product_code = ?, product_name = ? WHERE id = ?"
   ).run(prod.id, prod.code || "", prod.name || "", itemId);
   res.json({ ok: true, item_id: itemId, product_id: prod.id, product_code: prod.code, product_name: prod.name });
+});
+
+// Centro de notificaciones del admin: agrega alertas de varias areas en una
+// sola llamada (la campana del header). Cada alerta trae un id estable para que
+// el frontend lleve el contador de "no leidas" en localStorage. Se filtra por
+// los permisos de seccion del admin (el superadmin ve todo).
+app.get("/api/admin/notifications", requireAdmin, (req, res) => {
+  const perms = getAdminPerms(req.session.userId);
+  const can = (sec) => perms.isSuperadmin || perms.sections.has(sec);
+  const now = new Date();
+  const out = { vencimientos: [], stock_bajo: [], pedidos: [], counts: {} };
+
+  // Vencimientos: lotes recibidos cuyo vencimiento entra en la ventana de aviso
+  // del producto (meses, default 3) o ya vencidos. Solo productos con stock > 0
+  // (no tiene sentido avisar de algo que ya no esta en deposito).
+  if (can("recepcion") || can("productos")) {
+    const rows = db.prepare(
+      "SELECT pi.id AS item_id, pi.purchase_order_id, pi.expiry_date," +
+      "       pi.product_id, pi.product_code, pi.product_name," +
+      "       COALESCE(p.stock, 0) AS stock," +
+      "       COALESCE(p.expiry_alert_months, 3) AS alert_months," +
+      "       COALESCE(c.name, 'Sin categoría') AS category_name" +
+      "  FROM purchase_items pi" +
+      "  LEFT JOIN products p ON p.id = pi.product_id" +
+      "  LEFT JOIN categories c ON c.id = p.category_id" +
+      " WHERE pi.expiry_date IS NOT NULL AND COALESCE(p.stock,0) > 0"
+    ).all();
+    for (const r of rows) {
+      const ml = monthsUntilExpiry(r.expiry_date, now);
+      if (ml == null) continue;
+      const alert = Number(r.alert_months);
+      if (ml > alert) continue; // todavia lejos del vencimiento
+      out.vencimientos.push({
+        id: "venc:" + r.item_id,
+        item_id: r.item_id,
+        purchase_id: r.purchase_order_id,
+        product_id: r.product_id,
+        product_code: r.product_code,
+        product_name: r.product_name,
+        category_name: r.category_name,
+        stock: r.stock,
+        expiry_date: r.expiry_date,
+        expiry_label: expiryLabel(r.expiry_date),
+        months_left: ml,
+        alert_months: alert,
+        status: ml < 0 ? "vencido" : "por_vencer",
+      });
+    }
+    out.vencimientos.sort((a, b) => a.months_left - b.months_left);
+  }
+
+  // Stock bajo: productos activos con stock por debajo (o igual) de su minimo.
+  if (can("productos")) {
+    const rows = db.prepare(
+      "SELECT p.id, p.code, p.name, p.stock, p.stock_min," +
+      "       COALESCE(c.name, 'Sin categoría') AS category_name" +
+      "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
+      " WHERE p.active = 1 AND COALESCE(p.stock_min,0) > 0 AND p.stock <= p.stock_min" +
+      " ORDER BY (p.stock - p.stock_min), p.name LIMIT 200"
+    ).all();
+    for (const r of rows) {
+      out.stock_bajo.push({
+        id: "stock:" + r.id,
+        product_id: r.id,
+        product_code: r.code,
+        product_name: r.name,
+        category_name: r.category_name,
+        stock: r.stock,
+        stock_min: r.stock_min,
+        status: r.stock <= 0 ? "sin_stock" : "bajo",
+      });
+    }
+  }
+
+  // Pedidos pendientes de accion: por armar (pendiente/enviado/preparando) y por
+  // entregar (listo). Excluye los unificados del tercerizado.
+  if (can("pedidos") || can("armado") || can("entregas")) {
+    const rows = db.prepare(
+      "SELECT o.id, o.status, o.created_at," +
+      "       COALESCE(u.full_name, u.username, 'Cliente') AS client_name" +
+      "  FROM orders o LEFT JOIN users u ON u.id = o.user_id" +
+      " WHERE o.status IN ('pendiente','enviado','preparando','listo')" +
+      "   AND COALESCE(o.is_unified,0) = 0" +
+      " ORDER BY o.created_at DESC LIMIT 200"
+    ).all();
+    for (const r of rows) {
+      out.pedidos.push({
+        id: "ped:" + r.id + ":" + r.status,
+        order_id: r.id,
+        status: r.status,
+        client_name: r.client_name,
+        created_at: r.created_at,
+      });
+    }
+  }
+
+  out.counts = {
+    vencimientos: out.vencimientos.length,
+    stock_bajo: out.stock_bajo.length,
+    pedidos: out.pedidos.length,
+    total: out.vencimientos.length + out.stock_bajo.length + out.pedidos.length,
+  };
+  res.json(out);
 });
 
 // ===== Pedidos de cotizacion =====
