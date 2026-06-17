@@ -1093,6 +1093,14 @@ button { font: inherit; cursor: pointer; }
 
 /* Edición de items de un pedido (modo inline en el detalle) */
 .order-items-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+/* Saldo del pedido (cuenta corriente del pedido) */
+.order-balance {
+  margin-top: 10px; padding: 8px 12px; border-radius: 8px;
+  font-size: 13px; font-weight: 600; border: 1px solid transparent;
+}
+.order-balance-debt { background: #fff7ed; color: #b45309; border-color: #fdba74; }
+.order-balance-ok   { background: #ecfdf5; color: #047857; border-color: #6ee7b7; }
+.order-balance strong { font-weight: 800; }
 /* Rentabilidad del pedido (solo admin) */
 .order-profit {
   margin-top: 10px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px;

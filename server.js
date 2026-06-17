@@ -653,6 +653,10 @@ try { db.exec("ALTER TABLE payments ADD COLUMN caja_id INTEGER REFERENCES cash_a
 // transferencia a otra (caja_transfer_id, ej. billeteras del cajero).
 try { db.exec("ALTER TABLE deliveries ADD COLUMN caja_id INTEGER REFERENCES cash_accounts(id)"); } catch (_) {}
 try { db.exec("ALTER TABLE deliveries ADD COLUMN caja_transfer_id INTEGER REFERENCES cash_accounts(id)"); } catch (_) {}
+// Un pago puede imputarse a un pedido puntual (cobro de un pedido ya entregado).
+// El vínculo real para el saldo del pedido vive en account_movements.order_id;
+// esta columna es solo para mostrar en el listado de Pagos a qué pedido fue.
+try { db.exec("ALTER TABLE payments ADD COLUMN order_id INTEGER REFERENCES orders(id)"); } catch (_) {}
 // Cada gasto sale de una caja (egreso en cash_movements, source 'gasto').
 // NULL = gastos historicos anteriores a esta migracion (sin imputar).
 try { db.exec("ALTER TABLE expenses ADD COLUMN caja_id INTEGER REFERENCES cash_accounts(id)"); } catch (_) {}
@@ -2249,6 +2253,11 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "       o.assigned_vendedor_id," +
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
       "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id, d.notes AS delivery_notes," +
+      // Saldo del pedido desde la cuenta corriente (incluye cobro de entrega,
+      // descuentos y pagos imputados al pedido). debit_total > 0 => el pedido
+      // tiene cuenta corriente y es la fuente de verdad del cobro.
+      "       (SELECT COALESCE(SUM(CASE WHEN am.type='debit'  THEN am.amount ELSE 0 END),0) FROM account_movements am WHERE am.order_id = o.id) AS debit_total," +
+      "       (SELECT COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END),0) FROM account_movements am WHERE am.order_id = o.id) AS amount_paid," +
       "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS pick_total," +
       "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.pick_checked,0) = 1) AS pick_done," +
       "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.pick_checked,0) = 1) AS pick_started" +
@@ -2320,7 +2329,12 @@ app.get("/api/admin/ventas", requireAdmin, (req, res) => {
     "       u.username, u.full_name," +
     "       o.assigned_vendedor_id," +
     "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
-    "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id" +
+    "       d.id AS delivery_id, d.delivered_to, d.efectivo_amount, d.transferencia_amount, d.delivered_at, d.caja_id, d.caja_transfer_id," +
+    // Saldo del pedido desde la cuenta corriente (cobro entrega + descuentos +
+    // pagos imputados al pedido). Permite que el badge "Debe/Saldado" refleje
+    // pagos posteriores a la entrega.
+    "       (SELECT COALESCE(SUM(CASE WHEN am.type='debit'  THEN am.amount ELSE 0 END),0) FROM account_movements am WHERE am.order_id = o.id) AS debit_total," +
+    "       (SELECT COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END),0) FROM account_movements am WHERE am.order_id = o.id) AS amount_paid" +
     "  FROM orders o" +
     "  JOIN users u ON u.id = o.user_id" +
     "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
@@ -5617,7 +5631,7 @@ app.post("/api/admin/cotizacion/pdf", requireAdmin, (req, res) => {
 app.get("/api/admin/payments", requireAdmin, (req, res) => {
   const userId = req.query.user_id ? Number(req.query.user_id) : null;
   let sql =
-    "SELECT p.id, p.user_id, p.amount, p.method, p.reference, p.notes, p.created_at, p.caja_id," +
+    "SELECT p.id, p.user_id, p.amount, p.method, p.reference, p.notes, p.created_at, p.caja_id, p.order_id," +
     "       u.username AS client_username, u.full_name AS client_full_name," +
     "       ca.name AS caja_name," +
     "       rb.username AS registered_by_username, rb.full_name AS registered_by_full_name" +
@@ -5639,12 +5653,19 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
   const reference = String(b.reference || "").trim().slice(0, 200) || null;
   const notes     = String(b.notes || "").trim().slice(0, 500) || null;
   const cajaId    = b.caja_id ? Number(b.caja_id) : null;
+  const orderId   = b.order_id ? Number(b.order_id) : null;
 
   if (!user_id || !amount || amount <= 0)
     return res.status(400).json({ error: "Faltan datos: user_id y amount son requeridos" });
 
   const client = db.prepare("SELECT id, full_name, username FROM users WHERE id = ? AND active = 1").get(user_id);
   if (!client) return res.status(404).json({ error: "Cliente no encontrado" });
+
+  // Si el cobro es de un pedido puntual, validar que el pedido sea de ese cliente.
+  if (orderId) {
+    const ord = db.prepare("SELECT id FROM orders WHERE id = ? AND user_id = ?").get(orderId, user_id);
+    if (!ord) return res.status(400).json({ error: "El pedido no corresponde a ese cliente" });
+  }
 
   // Validar caja (si se imputa a una): debe existir y estar activa.
   let caja = null;
@@ -5656,15 +5677,18 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
   let paymentId;
   db.transaction(() => {
     const r = db.prepare(
-      "INSERT INTO payments (user_id, amount, method, reference, notes, caja_id, registered_by, created_at)" +
-      " VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))"
-    ).run(user_id, amount, method, reference, notes, cajaId, req.session.userId);
+      "INSERT INTO payments (user_id, amount, method, reference, notes, caja_id, order_id, registered_by, created_at)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+    ).run(user_id, amount, method, reference, notes, cajaId, orderId, req.session.userId);
     paymentId = r.lastInsertRowid;
-    const desc = "Pago " + method + (reference ? " · " + reference : "");
+    // El order_id en el movimiento es lo que hace que el pago baje el saldo del
+    // pedido (y que el badge "Debe/Saldado" lo refleje). Si no se imputó a un
+    // pedido, queda como cobro general a la cuenta corriente del cliente.
+    const desc = (orderId ? "Cobro pedido #" + orderId + " · " : "Pago ") + method + (reference ? " · " + reference : "");
     db.prepare(
-      "INSERT INTO account_movements (user_id, type, amount, description, payment_id, created_at)" +
-      " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
-    ).run(user_id, amount, desc, paymentId);
+      "INSERT INTO account_movements (user_id, type, amount, description, order_id, payment_id, created_at)" +
+      " VALUES (?, 'credit', ?, ?, ?, ?, datetime('now'))"
+    ).run(user_id, amount, desc, orderId, paymentId);
     // Ingreso en la caja elegida (saldo corriente).
     if (caja) {
       db.prepare(

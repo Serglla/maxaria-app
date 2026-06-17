@@ -4846,8 +4846,12 @@
 
     var delivBadge = "";
     if (o.delivery_id) {
-      var cobrado = fmtPrice((o.efectivo_amount || 0) + (o.transferencia_amount || 0));
-      delivBadge = ' <span class="delivery-badge">Cobrado: ' + cobrado + "</span>";
+      var cb = ventaCobro(o);
+      delivBadge = ' <span class="delivery-badge">Cobrado: ' + fmtPrice(cb.cobrado) + "</span>";
+      // Estado del cobro del pedido (refleja pagos posteriores a la entrega).
+      delivBadge += cb.saldado
+        ? ' <span class="vt-pill vt-paid">✔ Saldado</span>'
+        : ' <span class="vt-pill vt-unpaid" title="Cobrado ' + fmtPrice(cb.cobrado) + " de " + fmtPrice(cb.neto) + '">Debe ' + fmtPrice(cb.falta) + "</span>";
     }
 
     var delivBtn = "";
@@ -4968,13 +4972,26 @@
         }).join("") +
         "</tbody></table>"
       : '<p class="muted">Sin items.</p>';
-    // Acciones: editar items (solo estados pre-entrega) e imprimir remito (siempre).
+    // Saldo del pedido (cuenta corriente del pedido): adeudado / saldado.
+    // balance_due = débitos − créditos del pedido; > 0 = todavía se debe.
+    var balanceHtml = "";
+    var balanceDue = Number(order.balance_due) || 0;
+    var canCharge = state.isAdmin && balanceDue > 0.5;
+    if (state.isAdmin && (balanceDue > 0.5 || Number(order.amount_paid) > 0)) {
+      balanceHtml = balanceDue > 0.5
+        ? '<div class="order-balance order-balance-debt">💳 Saldo del pedido: <strong>Debe ' + fmtPrice(balanceDue) +
+            '</strong> · cobrado ' + fmtPrice(Number(order.amount_paid) || 0) + "</div>"
+        : '<div class="order-balance order-balance-ok">💳 Pedido saldado · cobrado ' + fmtPrice(Number(order.amount_paid) || 0) + "</div>";
+    }
+    // Acciones: editar items (solo estados pre-entrega), registrar cobro (si debe),
+    // imprimir remito y compartir.
     var actionsRow = '<div class="order-items-actions">' +
       (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar items</button>' : "") +
+      (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
       '<button type="button" class="btn btn-small order-print">🖨 Imprimir remito</button>' +
       '<button type="button" class="btn btn-small order-share">📤 Compartir</button>' +
       "</div>";
-    var itemsHtml = '<div class="order-items-box">' + itemsTable + actionsRow + "</div>";
+    var itemsHtml = '<div class="order-items-box">' + itemsTable + balanceHtml + actionsRow + "</div>";
 
     // Rentabilidad del pedido — SOLO admin. Viene calculada del server
     // (order.profitability) usando el costo actual de cada producto.
@@ -5174,6 +5191,13 @@
     if (editItemsBtn) {
       editItemsBtn.addEventListener("click", function() {
         enterOrderItemsEdit(detailEl, order);
+      });
+    }
+
+    var chargeBtn = detailEl.querySelector(".order-charge");
+    if (chargeBtn) {
+      chargeBtn.addEventListener("click", function() {
+        openPaymentForOrder(order, detailEl);
       });
     }
 
@@ -5920,9 +5944,20 @@
   // Pestaña Ventas: registro de ventas concretadas = pedidos ENTREGADOS.
   // Un pedido que recorrió Pedidos → Armado → Entregas y se marcó entregado
   // "pasa a Ventas". Reusa la tarjeta del circuito (detalle, cobro, remito).
-  // Cobro de una venta: cobrado en la entrega (efectivo + transferencia) vs el
-  // total NETO (con descuento). Saldado = lo cobrado cubre el neto.
+  // Cobro de una venta. Si el pedido tiene cuenta corriente (debit_total > 0,
+  // que es el caso de todo pedido de un cliente real), la fuente de verdad es la
+  // cuenta corriente del pedido: amount_paid (cobro de la entrega + descuentos +
+  // pagos imputados al pedido) contra el débito. Así un pago registrado después
+  // de la entrega baja la deuda y el badge pasa a "Saldado".
+  // Si no hay cuenta corriente (venta a consumidor final / sin cliente), se cae
+  // al cálculo viejo: lo cobrado en la entrega vs el total neto.
   function ventaCobro(o) {
+    var debit = Number(o.debit_total) || 0;
+    if (debit > 0) {
+      var paid = Number(o.amount_paid) || 0;
+      var falta = Math.max(0, debit - paid);
+      return { neto: debit, cobrado: paid, saldado: falta <= 0.5, falta: falta };
+    }
     var neto = Math.max(0, (Number(o.total) || 0) - (Number(o.discount_amount) || 0));
     var cobrado = (Number(o.efectivo_amount) || 0) + (Number(o.transferencia_amount) || 0);
     var saldado = neto <= 0 ? true : cobrado + 0.5 >= neto;
@@ -8668,7 +8703,7 @@
       '<td class="cell-code">#' + p.id + '</td>' +
       '<td>' + clientLabel + '</td>' +
       '<td class="num"><strong>' + fmtPrice(p.amount) + '</strong></td>' +
-      '<td>' + escapeHtml(p.method || "") + (p.caja_name ? ' <span class="muted small">→ ' + escapeHtml(p.caja_name) + '</span>' : '') + '</td>' +
+      '<td>' + escapeHtml(p.method || "") + (p.caja_name ? ' <span class="muted small">→ ' + escapeHtml(p.caja_name) + '</span>' : '') + (p.order_id ? ' <span class="muted small">· pedido #' + p.order_id + '</span>' : '') + '</td>' +
       '<td class="muted">' + escapeHtml(p.reference || "—") + '</td>' +
       '<td class="muted">' + regBy + '</td>' +
       '<td class="muted small-cell">' + formatDate(p.created_at) + '</td>' +
@@ -8707,8 +8742,10 @@
 
   if (els.payCreateBtn) {
     els.payCreateBtn.addEventListener("click", async () => {
+      state.payForOrder = null; // pago general (no imputado a un pedido)
       if (els.paymentCreateForm) els.paymentCreateForm.reset();
       if (els.paymentCreateMsg) els.paymentCreateMsg.textContent = "";
+      if (els.payFormClient) els.payFormClient.disabled = false;
       await populatePayFormClients();
       fillCajaSelect(document.getElementById("pay-form-caja"), null);
       if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
@@ -8721,13 +8758,18 @@
     els.paymentCreateForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(els.paymentCreateForm);
+      // Si el select de cliente está deshabilitado (cobro de un pedido), no viaja
+      // en el FormData: tomamos el cliente del pedido / del valor del select.
+      const payOrder = state.payForOrder;
+      const clientId = Number(fd.get("user_id")) || (els.payFormClient ? Number(els.payFormClient.value) : 0);
       const body = {
-        user_id: Number(fd.get("user_id")),
+        user_id: clientId,
         amount: parseMoney(fd.get("amount")),
         method: fd.get("method"),
         caja_id: fd.get("caja_id") || null,
         reference: fd.get("reference"),
         notes: fd.get("notes"),
+        order_id: payOrder ? payOrder.id : null,
       };
       if (!body.user_id || !body.amount) {
         if (els.paymentCreateMsg) { els.paymentCreateMsg.textContent = "Completá cliente y monto."; els.paymentCreateMsg.className = "config-msg err"; }
@@ -8743,8 +8785,28 @@
         state.payments.unshift(out.payment);
         renderPayments();
         if (els.paymentCreateModal) els.paymentCreateModal.hidden = true;
+        if (els.payFormClient) els.payFormClient.disabled = false;
         // Refrescar cuentas si estaban cargadas
         if (state.accountsLoaded) { state.accountsLoaded = false; loadAccounts(); }
+        // Si fue un cobro imputado a un pedido, refrescar el detalle del pedido y
+        // las vistas de pedidos/ventas para que el badge "Debe/Saldado" se actualice.
+        if (payOrder) {
+          state.ordersLoaded = false;
+          // Refetch /api/orders (trae amount_paid actualizado) y re-render de todas
+          // las vistas de pedidos + Ventas, para que el badge "Debe/Saldado" cambie.
+          try { await loadOrders(); } catch (_) {}
+          if (typeof refreshOrderViews === "function") refreshOrderViews();
+          const dEl = payOrder.detailEl;
+          if (dEl && !dEl.hidden) {
+            try {
+              const fresh = await api("/api/orders/" + payOrder.id);
+              dEl.dataset.loaded = "1";
+              renderOrderDetail(dEl, fresh);
+              wireOrderDetail(dEl, fresh);
+            } catch (_) {}
+          }
+          state.payForOrder = null;
+        }
         showToast("Pago registrado: " + fmtPrice(out.payment.amount));
       } catch (err) {
         if (els.paymentCreateMsg) { els.paymentCreateMsg.textContent = err.message; els.paymentCreateMsg.className = "config-msg err"; }
@@ -9221,8 +9283,10 @@
   }
 
   function openPaymentForAccount(userId) {
+    state.payForOrder = null; // pago general a la cuenta, no a un pedido puntual
     const a = state.accounts.find((x) => x.id === userId);
     if (els.paymentCreateForm) els.paymentCreateForm.reset();
+    if (els.payFormClient) els.payFormClient.disabled = false;
     if (els.paymentCreateMsg) els.paymentCreateMsg.textContent = "";
     populatePayFormClients().then(() => {
       if (els.payFormClient) els.payFormClient.value = String(userId);
@@ -9230,6 +9294,31 @@
       const amtInput = els.paymentCreateForm ? els.paymentCreateForm.querySelector('[name="amount"]') : null;
       attachMoneyInput(amtInput);
       if (amtInput && a && Number(a.balance) < 0) setMoney(amtInput, Math.abs(Number(a.balance)));
+    });
+    fillCajaSelect(document.getElementById("pay-form-caja"), null);
+    if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
+  }
+
+  // Cobro imputado a un pedido puntual. Reusa el modal de pago, precargando
+  // cliente y monto adeudado, y marca state.payForOrder para que el submit lo
+  // vincule (order_id) y refresque el detalle/las vistas de pedidos al guardar.
+  function openPaymentForOrder(order, detailEl) {
+    state.payForOrder = { id: order.id, detailEl: detailEl || null };
+    if (els.paymentCreateForm) els.paymentCreateForm.reset();
+    if (els.paymentCreateMsg) {
+      els.paymentCreateMsg.textContent = "Cobro del pedido #" + order.id +
+        " — " + (order.full_name || order.username || "");
+      els.paymentCreateMsg.className = "config-msg";
+    }
+    populatePayFormClients().then(function() {
+      if (els.payFormClient) {
+        els.payFormClient.value = String(order.user_id);
+        els.payFormClient.disabled = true; // el cobro es de este cliente
+      }
+      var amtInput = els.paymentCreateForm ? els.paymentCreateForm.querySelector('[name="amount"]') : null;
+      attachMoneyInput(amtInput);
+      var due = Number(order.balance_due) || 0;
+      if (amtInput && due > 0) setMoney(amtInput, due);
     });
     fillCajaSelect(document.getElementById("pay-form-caja"), null);
     if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
