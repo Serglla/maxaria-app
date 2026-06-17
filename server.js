@@ -5662,9 +5662,30 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
   if (!client) return res.status(404).json({ error: "Cliente no encontrado" });
 
   // Si el cobro es de un pedido puntual, validar que el pedido sea de ese cliente.
+  let ordRow = null;
   if (orderId) {
-    const ord = db.prepare("SELECT id FROM orders WHERE id = ? AND user_id = ?").get(orderId, user_id);
-    if (!ord) return res.status(400).json({ error: "El pedido no corresponde a ese cliente" });
+    ordRow = db.prepare("SELECT id, total FROM orders WHERE id = ? AND user_id = ?").get(orderId, user_id);
+    if (!ordRow) return res.status(400).json({ error: "El pedido no corresponde a ese cliente" });
+  }
+
+  // Descuento / comisión del pedido (ej. comisión del vendedor tercerizado).
+  // Solo aplica si el cobro está imputado a un pedido. discount_value es el número
+  // crudo (5 → 5% ; 5000 → $5000); discountAmount es en pesos, acotado entre 0 y
+  // el total del pedido. Se calcula SIEMPRE sobre el total del pedido. Mismo
+  // criterio que el endpoint de entrega (/api/orders/:id/deliver).
+  let discountType = null, discountValue = 0, discountAmount = 0;
+  if (orderId) {
+    const dt = b.discount_type ? String(b.discount_type) : "";
+    const dv = Math.max(0, Number(b.discount_value) || 0);
+    if ((dt === "percent" || dt === "fixed") && dv > 0) {
+      const ordTotal = Number(ordRow.total) || 0;
+      discountType = dt;
+      discountValue = dv;
+      discountAmount = dt === "percent"
+        ? Math.round(ordTotal * Math.min(dv, 100) / 100)
+        : Math.round(dv);
+      discountAmount = Math.max(0, Math.min(discountAmount, ordTotal));
+    }
   }
 
   // Validar caja (si se imputa a una): debe existir y estar activa.
@@ -5696,13 +5717,39 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
         " VALUES (?, 'ingreso', ?, ?, 'cobro', ?, ?)"
       ).run(caja.id, amount, "Cobro " + (client.full_name || client.username) + (reference ? " · " + reference : ""), paymentId, req.session.userId);
     }
+
+    // Descuento del pedido como CRÉDITO en cuenta corriente (baja la deuda).
+    // Solo si el cobro está imputado a un pedido. Se guarda en el pedido y se
+    // registra/reemplaza el movimiento "Descuento pedido #N" (no se acumula con un
+    // descuento previo de entrega: el último valor manda). Reversible al borrar.
+    if (orderId && discountType) {
+      db.prepare(
+        "UPDATE orders SET discount_type = ?, discount_value = ?, discount_amount = ? WHERE id = ?"
+      ).run(discountType, discountValue, discountAmount, orderId);
+      db.prepare(
+        "DELETE FROM account_movements WHERE order_id = ? AND type = 'credit' AND description LIKE 'Descuento pedido%'"
+      ).run(orderId);
+      if (discountAmount > 0) {
+        const dlabel = discountType === "percent"
+          ? (discountValue + "%")
+          : ("$" + Math.round(discountValue).toLocaleString("es-AR"));
+        db.prepare(
+          "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+          " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
+        ).run(user_id, discountAmount, "Descuento pedido #" + orderId + " (" + dlabel + ")", orderId);
+      }
+    }
   })();
 
   const payment = db.prepare(
     "SELECT p.*, u.username AS client_username, u.full_name AS client_full_name" +
     "  FROM payments p JOIN users u ON u.id = p.user_id WHERE p.id = ?"
   ).get(paymentId);
-  res.json({ ok: true, payment: payment });
+  res.json({
+    ok: true, payment: payment,
+    discount_type: discountType, discount_value: discountType ? discountValue : null,
+    discount_amount: discountAmount,
+  });
 });
 
 app.delete("/api/admin/payments/:id", requireAdmin, (req, res) => {

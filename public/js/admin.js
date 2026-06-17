@@ -407,6 +407,10 @@
     paymentCreateForm: document.getElementById("payment-create-form"),
     paymentCreateMsg: document.getElementById("payment-create-msg"),
     payFormClient: document.getElementById("pay-form-client"),
+    payFormDiscount: document.getElementById("pay-form-discount"),
+    payFormDiscountType: document.getElementById("pay-form-discount-type"),
+    payFormDiscountValue: document.getElementById("pay-form-discount-value"),
+    payFormDiscountHint: document.getElementById("pay-form-discount-hint"),
 
     // Cuentas corrientes
     accSearch: document.getElementById("acc-search"),
@@ -8748,6 +8752,7 @@
       if (els.payFormClient) els.payFormClient.disabled = false;
       await populatePayFormClients();
       fillCajaSelect(document.getElementById("pay-form-caja"), null);
+      setupPayDiscountUI(null); // pago general: sin descuento de pedido
       if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
       setTimeout(() => { if (els.payFormClient) els.payFormClient.focus(); }, 50);
     });
@@ -8755,8 +8760,14 @@
 
   if (els.paymentCreateForm) {
     attachMoneyInput(els.paymentCreateForm.querySelector('[name="amount"]'));
+    // Descuento: habilitar/deshabilitar el valor y refrescar el hint en vivo.
+    if (els.payFormDiscountType) els.payFormDiscountType.addEventListener("change", syncPayDiscountUI);
+    if (els.payFormDiscountValue) els.payFormDiscountValue.addEventListener("input", syncPayDiscountUI);
     els.paymentCreateForm.addEventListener("submit", async (e) => {
       e.preventDefault();
+      // Guard anti doble-clic: si ya hay un guardado en curso, ignorar.
+      const submitBtn = els.paymentCreateForm.querySelector('button[type="submit"]');
+      if (submitBtn && submitBtn.disabled) return;
       const fd = new FormData(els.paymentCreateForm);
       // Si el select de cliente está deshabilitado (cobro de un pedido), no viaja
       // en el FormData: tomamos el cliente del pedido / del valor del select.
@@ -8771,11 +8782,21 @@
         notes: fd.get("notes"),
         order_id: payOrder ? payOrder.id : null,
       };
+      // Descuento / comisión: solo cuando el cobro es de un pedido.
+      if (payOrder) {
+        const dType = fd.get("discount_type") || "";
+        const dValue = Number(fd.get("discount_value")) || 0;
+        if ((dType === "percent" || dType === "fixed") && dValue > 0) {
+          body.discount_type = dType;
+          body.discount_value = dValue;
+        }
+      }
       if (!body.user_id || !body.amount) {
         if (els.paymentCreateMsg) { els.paymentCreateMsg.textContent = "Completá cliente y monto."; els.paymentCreateMsg.className = "config-msg err"; }
         return;
       }
       if (els.paymentCreateMsg) { els.paymentCreateMsg.textContent = "Guardando…"; els.paymentCreateMsg.className = "config-msg"; }
+      if (submitBtn) submitBtn.disabled = true;
       try {
         const out = await api("/api/admin/payments", {
           method: "POST",
@@ -8810,6 +8831,8 @@
         showToast("Pago registrado: " + fmtPrice(out.payment.amount));
       } catch (err) {
         if (els.paymentCreateMsg) { els.paymentCreateMsg.textContent = err.message; els.paymentCreateMsg.className = "config-msg err"; }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
       }
     });
   }
@@ -9296,14 +9319,47 @@
       if (amtInput && a && Number(a.balance) < 0) setMoney(amtInput, Math.abs(Number(a.balance)));
     });
     fillCajaSelect(document.getElementById("pay-form-caja"), null);
+    setupPayDiscountUI(null); // cobro general a la cuenta: sin descuento de pedido
     if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
   }
 
   // Cobro imputado a un pedido puntual. Reusa el modal de pago, precargando
   // cliente y monto adeudado, y marca state.payForOrder para que el submit lo
   // vincule (order_id) y refresque el detalle/las vistas de pedidos al guardar.
+  // Muestra/oculta y resetea el bloque de descuento del modal de cobro.
+  // orderTotal: total del pedido (para calcular el hint del %); null = ocultar.
+  function setupPayDiscountUI(orderTotal) {
+    if (!els.payFormDiscount) return;
+    var show = orderTotal != null;
+    els.payFormDiscount.hidden = !show;
+    if (els.payFormDiscountType) els.payFormDiscountType.value = "";
+    if (els.payFormDiscountValue) { els.payFormDiscountValue.value = ""; els.payFormDiscountValue.disabled = true; }
+    els.payFormDiscount.dataset.orderTotal = show ? String(orderTotal) : "";
+    syncPayDiscountUI();
+  }
+
+  // Habilita el input de valor según el tipo elegido y actualiza el hint con el
+  // monto en pesos que se va a descontar (siempre sobre el total del pedido).
+  function syncPayDiscountUI() {
+    if (!els.payFormDiscountType || !els.payFormDiscountValue) return;
+    var type = els.payFormDiscountType.value;
+    els.payFormDiscountValue.disabled = !type;
+    if (!type && els.payFormDiscountHint) { els.payFormDiscountHint.textContent = ""; return; }
+    var total = Number(els.payFormDiscount && els.payFormDiscount.dataset.orderTotal) || 0;
+    var val = Math.max(0, Number(els.payFormDiscountValue.value) || 0);
+    var amount = type === "percent"
+      ? Math.round(total * Math.min(val, 100) / 100)
+      : Math.round(val);
+    amount = Math.max(0, Math.min(amount, total));
+    if (els.payFormDiscountHint) {
+      els.payFormDiscountHint.textContent = val > 0
+        ? "Se descontarán " + fmtPrice(amount) + " del saldo del pedido."
+        : "";
+    }
+  }
+
   function openPaymentForOrder(order, detailEl) {
-    state.payForOrder = { id: order.id, detailEl: detailEl || null };
+    state.payForOrder = { id: order.id, detailEl: detailEl || null, total: Number(order.total) || 0 };
     if (els.paymentCreateForm) els.paymentCreateForm.reset();
     if (els.paymentCreateMsg) {
       els.paymentCreateMsg.textContent = "Cobro del pedido #" + order.id +
@@ -9321,6 +9377,7 @@
       if (amtInput && due > 0) setMoney(amtInput, due);
     });
     fillCajaSelect(document.getElementById("pay-form-caja"), null);
+    setupPayDiscountUI(Number(order.total) || 0);
     if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
   }
 
