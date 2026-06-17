@@ -5399,3 +5399,7 @@ html.in-modal .ventas-wrap {
 }
 .vt-pill.vt-paid { background: #ecfdf5; color: #047857; border-color: #6ee7b7; }
 .vt-pill.vt-unpaid { background: #fff7ed; color: #b45309; border-color: #fdba74; }
+.vt-rent { white-space: nowrap; font-weight: 700; }
+.vt-rent-pos { color: #047857; }
+.vt-rent-neg { color: #b91c1c; }
+.vt-rent small { font-weight: 600; opacity: 0.8; }

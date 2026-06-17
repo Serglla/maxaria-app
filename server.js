@@ -2334,7 +2334,10 @@ app.get("/api/admin/ventas", requireAdmin, (req, res) => {
     // pagos imputados al pedido). Permite que el badge "Debe/Saldado" refleje
     // pagos posteriores a la entrega.
     "       (SELECT COALESCE(SUM(CASE WHEN am.type='debit'  THEN am.amount ELSE 0 END),0) FROM account_movements am WHERE am.order_id = o.id) AS debit_total," +
-    "       (SELECT COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END),0) FROM account_movements am WHERE am.order_id = o.id) AS amount_paid" +
+    "       (SELECT COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END),0) FROM account_movements am WHERE am.order_id = o.id) AS amount_paid," +
+    // Costo del pedido al costo ACTUAL de cada producto (products.cost). Permite
+    // mostrar la rentabilidad (neto - costo) directamente en la lista de Ventas.
+    "       (SELECT COALESCE(SUM(COALESCE(p.cost,0) * oi.quantity),0) FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = o.id) AS cost_total" +
     "  FROM orders o" +
     "  JOIN users u ON u.id = o.user_id" +
     "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260617a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260617c" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -1794,7 +1794,6 @@
         <span class="admin-spacer"></span>
         <span id="ventas-summary" class="muted small"></span>
       </div>
-      <p class="muted small" style="margin:0 0 10px">Pedidos ya <strong>entregados</strong> (completaron el circuito Armado → Entregas). <strong>Doble click</strong> en una fila para ver el detalle, el cobro o imprimir el remito.</p>
       <div class="admin-table-wrap">
         <table class="ventas-table" id="ventas-table">
           <thead>
@@ -1805,9 +1804,10 @@
               <th>Vendedor</th>
               <th>Cobro</th>
               <th class="num">Total</th>
+              <th class="num">Rentabilidad</th>
             </tr>
           </thead>
-          <tbody id="ventas-tbody"><tr><td colspan="6" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="ventas-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -3359,6 +3359,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260617b"></script>
+  <script src="/js/admin.js?v=20260617c"></script>
 </body>
 </html>

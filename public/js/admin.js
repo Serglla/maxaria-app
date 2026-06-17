@@ -5994,6 +5994,15 @@
     var cobroPill = c.saldado
       ? '<span class="vt-pill vt-paid" title="Cobrado ' + fmtPrice(c.cobrado) + '">✔ Saldado</span>'
       : '<span class="vt-pill vt-unpaid" title="Cobrado ' + fmtPrice(c.cobrado) + " de " + fmtPrice(c.neto) + '">Debe ' + fmtPrice(c.falta) + "</span>";
+    var r = ventaRent(o);
+    var rentCell;
+    if (r.hasCost) {
+      var cls = r.profit >= 0 ? "vt-rent-pos" : "vt-rent-neg";
+      rentCell = '<span class="' + cls + '" title="Ventas netas ' + fmtPrice(r.neto) + ' · Costo ' + fmtPrice(r.cost) + '">' +
+        fmtPrice(r.profit) + ' <small>(' + r.margin + '%)</small></span>';
+    } else {
+      rentCell = '<span class="muted" title="Falta cargar el costo de los productos">—</span>';
+    }
     return '<tr class="ventas-row" data-id="' + o.id + '" title="Doble click para ver el detalle">' +
       '<td class="vt-client">' + client + "</td>" +
       '<td class="vt-num">#' + o.id + "</td>" +
@@ -6001,7 +6010,19 @@
       '<td class="vt-vend">' + vend + "</td>" +
       '<td class="vt-cobro">' + cobroPill + "</td>" +
       '<td class="vt-total num">' + fmtPrice(o.total || 0) + "</td>" +
+      '<td class="vt-rent num">' + rentCell + "</td>" +
     "</tr>";
+  }
+
+  // Rentabilidad de una venta: neto (total - descuento) - costo actual de los
+  // productos. cost_total viene del endpoint /api/admin/ventas. hasCost=false
+  // cuando todos los productos tienen costo 0 (falta cargarlo) -> mostramos "—".
+  function ventaRent(o) {
+    var neto = Math.max(0, (Number(o.total) || 0) - (Number(o.discount_amount) || 0));
+    var cost = Number(o.cost_total) || 0;
+    var profit = neto - cost;
+    var margin = neto > 0 ? Math.round((profit / neto) * 1000) / 10 : 0;
+    return { neto: neto, cost: cost, profit: profit, margin: margin, hasCost: cost > 0 };
   }
 
   function renderVentasOrders() {
@@ -6020,11 +6041,13 @@
     if (paidF !== "all") list = list.filter(function(o) { var s = ventaCobro(o).saldado; return paidF === "saldado" ? s : !s; });
     if (els.ventasSummary) {
       var totalVendido = list.reduce(function(s, o) { return s + (Number(o.total) || 0); }, 0);
-      els.ventasSummary.textContent = list.length + (list.length === 1 ? " venta · " : " ventas · ") + fmtPrice(totalVendido);
+      var totalRent = list.reduce(function(s, o) { return s + ventaRent(o).profit; }, 0);
+      els.ventasSummary.textContent = list.length + (list.length === 1 ? " venta · " : " ventas · ") +
+        fmtPrice(totalVendido) + " · Rentabilidad " + fmtPrice(totalRent);
     }
     if (els.ventasCount) els.ventasCount.textContent = "(" + list.length + ")";
     if (!list.length) {
-      els.ventasTbody.innerHTML = '<tr><td colspan="6" class="muted">No hay ventas para este filtro.</td></tr>';
+      els.ventasTbody.innerHTML = '<tr><td colspan="7" class="muted">No hay ventas para este filtro.</td></tr>';
       return;
     }
     els.ventasTbody.innerHTML = list.map(ventaRowHtml).join("");
