@@ -411,6 +411,7 @@
     payFormDiscountType: document.getElementById("pay-form-discount-type"),
     payFormDiscountValue: document.getElementById("pay-form-discount-value"),
     payFormDiscountHint: document.getElementById("pay-form-discount-hint"),
+    payFormSplit: document.getElementById("pay-form-split"),
 
     // Cuentas corrientes
     accSearch: document.getElementById("acc-search"),
@@ -3029,10 +3030,19 @@
     // "Pagó el total", el saldo adeudado en vivo y el bloqueo de transferencia.
     api("/api/orders/" + orderId).then(function(order) {
       var pf = order.profitability || {};
+      // Comisión del vendedor (si hay) y efectivo ya cobrado por OTRAS vías
+      // (otros cobros del pedido), para repartir con "primero lo tuyo".
+      var commission = Number(pf.vendor && pf.vendor.earning) || 0;
+      var existAmt = existingDelivery
+        ? (Number(existingDelivery.efectivo_amount) || 0) + (Number(existingDelivery.transferencia_amount) || 0)
+        : 0;
       deliveryOrderInfo = {
         total: Number(order.total) || 0,
         revenue_gross: Number(pf.revenue_gross != null ? pf.revenue_gross : order.total) || 0,
         cost_total: Number(pf.cost_total) || 0,
+        commission: commission,
+        vendor_name: (pf.vendor && pf.vendor.name) || "",
+        cash_other: Math.max(0, (Number(order.cash_collected) || 0) - existAmt),
       };
       if (state.isAdmin) {
         // Pre-cargar descuento ya guardado en el pedido (si lo había).
@@ -3069,6 +3079,25 @@
     return Math.max(0, Math.min(amt, total));
   }
 
+  // Reparto del cobro actual entre vos y el vendedor ("primero lo tuyo"): la
+  // comisión recién se cubre con lo cobrado por encima de tu parte (total −
+  // comisión). Devuelve null si el pedido no tiene comisión de vendedor.
+  function deliverySplit() {
+    if (!deliveryOrderInfo || !(deliveryOrderInfo.commission > 0)) return null;
+    var C = deliveryOrderInfo.commission;
+    var total = deliveryOrderInfo.total;
+    var loTuyo = Math.max(0, total - C);
+    var other = deliveryOrderInfo.cash_other || 0;
+    var a = deliveryAmounts();
+    var thisCobro = a.ef + a.tr;
+    var clamp = function(x) { return Math.max(0, Math.min(x, C)); };
+    var commBefore = clamp(Math.round(other - loTuyo));
+    var commAfter = clamp(Math.round(other + thisCobro - loTuyo));
+    var vendorPart = commAfter - commBefore;
+    var yourPart = Math.max(0, thisCobro - vendorPart);
+    return { commission: C, vendor_name: deliveryOrderInfo.vendor_name, vendorPart: vendorPart, yourPart: yourPart, cobrado: thisCobro };
+  }
+
   // Resumen admin: total bruto, descuento, neto a cobrar, costo y rentabilidad.
   function renderDeliverySummary() {
     if (!els.deliverySummary || !deliveryOrderInfo) return;
@@ -3082,11 +3111,23 @@
     var line1 = disc > 0
       ? "Total " + fmtPrice(total) + " − Descuento " + fmtPrice(disc) + " = <strong>" + fmtPrice(neto) + "</strong> neto a cobrar"
       : "Total a cobrar: <strong>" + fmtPrice(total) + "</strong>";
-    els.deliverySummary.innerHTML =
+    var html =
       '<div class="ds-line">' + line1 + "</div>" +
       '<div class="ds-line">💰 Rentabilidad: <strong style="color:' + rentColor + '">' + fmtPrice(rent) +
         '</strong> <span class="muted">(' + margin.toLocaleString("es-AR", { maximumFractionDigits: 1 }) +
         '% margen · costo ' + fmtPrice(cost) + ')</span></div>';
+    // Reparto del cobro: lo tuyo (entra a la caja) vs la comisión del vendedor
+    // (sale como egreso). Solo si el pedido genera comisión.
+    var sp = deliverySplit();
+    if (sp) {
+      var vname = sp.vendor_name ? " (" + escapeHtml(sp.vendor_name) + ")" : "";
+      html +=
+        '<div class="ds-line ds-split">De este cobro → ' +
+          '🧑‍💼 Vendedor' + vname + ': <strong>' + fmtPrice(sp.vendorPart) + '</strong> · ' +
+          '🏦 A tu caja: <strong>' + fmtPrice(sp.yourPart) + '</strong>' +
+          ' <span class="muted">(comisión total ' + fmtPrice(sp.commission) + ')</span></div>';
+    }
+    els.deliverySummary.innerHTML = html;
   }
 
   // Total NETO a cobrar (total del pedido − descuento elegido). null si el
@@ -3177,6 +3218,7 @@
         deliverySyncTransferLock();
         deliverySyncPaidFull();
         updateDeliveryTotalPreview();
+        if (state.isAdmin) renderDeliverySummary();
       }
       if (e.target.name === "discount_value") {
         renderDeliverySummary();
@@ -3202,6 +3244,7 @@
         }
         deliverySyncTransferLock();
         updateDeliveryTotalPreview();
+        if (state.isAdmin) renderDeliverySummary();
       });
     }
     // Cambio de tipo de descuento: habilita/limpia el valor y recalcula el resumen.
@@ -5010,11 +5053,22 @@
         ? "Ventas " + fmtPrice(pf.revenue_gross || 0) + " − Desc. " + fmtPrice(discount) +
           " = " + fmtPrice(pf.revenue || 0) + " · Costo " + fmtPrice(pf.cost_total || 0)
         : "Ventas " + fmtPrice(pf.revenue || 0) + " · Costo " + fmtPrice(pf.cost_total || 0);
+      // Comisión del vendedor asignado: solo figura si hay vendedor Y ganancia > 0
+      // (cliente con lista de precios). Sin vendedor o sin comisión, no se muestra nada.
+      var vendHtml = "";
+      if (pf.vendor && Number(pf.vendor.earning) > 0) {
+        var vTipo = pf.vendor.is_tercerizado ? " (tercerizado)" : "";
+        vendHtml =
+          '<span class="op-vendor" title="Comisión del vendedor = Σ (precio − costo del vendedor) por unidad">' +
+            '👤 ' + escapeHtml(pf.vendor.name) + vTipo + ': ' +
+            '<strong>' + fmtPrice(Number(pf.vendor.earning)) + '</strong></span>';
+      }
       profitHtml =
         '<div class="order-profit" title="Rentabilidad = ventas netas (con descuento) − costo actual de los productos">' +
           '<span class="op-lbl">💰 Rentabilidad</span>' +
           '<span class="op-main" style="color:' + color + '">' + fmtPrice(profit) +
             ' <span class="op-margin">(' + margin.toLocaleString("es-AR", { maximumFractionDigits: 1 }) + '% margen)</span></span>' +
+          vendHtml +
           '<span class="op-detail">' + detailTxt + '</span>' +
         "</div>";
     }
@@ -8786,6 +8840,9 @@
     // Descuento: habilitar/deshabilitar el valor y refrescar el hint en vivo.
     if (els.payFormDiscountType) els.payFormDiscountType.addEventListener("change", syncPayDiscountUI);
     if (els.payFormDiscountValue) els.payFormDiscountValue.addEventListener("input", syncPayDiscountUI);
+    // Reparto tuyo/vendedor en vivo al tipear el monto.
+    var payAmtInput = els.paymentCreateForm.querySelector('[name="amount"]');
+    if (payAmtInput) payAmtInput.addEventListener("input", renderPaySplit);
     els.paymentCreateForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       // Guard anti doble-clic: si ya hay un guardado en curso, ignorar.
@@ -9358,6 +9415,8 @@
     if (els.payFormDiscountType) els.payFormDiscountType.value = "";
     if (els.payFormDiscountValue) { els.payFormDiscountValue.value = ""; els.payFormDiscountValue.disabled = true; }
     els.payFormDiscount.dataset.orderTotal = show ? String(orderTotal) : "";
+    // Ocultar el split por defecto; openPaymentForOrder lo vuelve a mostrar si hay comisión.
+    if (els.payFormSplit) { els.payFormSplit.hidden = true; els.payFormSplit.innerHTML = ""; }
     syncPayDiscountUI();
   }
 
@@ -9381,8 +9440,43 @@
     }
   }
 
+  // Reparto del cobro actual entre vos y el vendedor ("primero lo tuyo").
+  // Devuelve null si el pedido no tiene comisión de vendedor.
+  function paySplit() {
+    var po = state.payForOrder;
+    if (!po || !(po.commission > 0)) return null;
+    var C = po.commission;
+    var loTuyo = Math.max(0, (po.total || 0) - C);
+    var other = po.cash_other || 0;
+    var amtEl = els.paymentCreateForm ? els.paymentCreateForm.querySelector('[name="amount"]') : null;
+    var thisCobro = amtEl ? Math.max(0, parseMoney(amtEl.value)) : 0;
+    var clamp = function(x) { return Math.max(0, Math.min(x, C)); };
+    var commBefore = clamp(Math.round(other - loTuyo));
+    var commAfter = clamp(Math.round(other + thisCobro - loTuyo));
+    var vendorPart = commAfter - commBefore;
+    var yourPart = Math.max(0, thisCobro - vendorPart);
+    return { commission: C, vendor_name: po.vendor_name, vendorPart: vendorPart, yourPart: yourPart, cobrado: thisCobro };
+  }
+  function renderPaySplit() {
+    if (!els.payFormSplit) return;
+    var sp = paySplit();
+    if (!sp || sp.cobrado <= 0) { els.payFormSplit.hidden = true; els.payFormSplit.innerHTML = ""; return; }
+    var vname = sp.vendor_name ? " (" + escapeHtml(sp.vendor_name) + ")" : "";
+    els.payFormSplit.hidden = false;
+    els.payFormSplit.innerHTML =
+      'De este cobro → 🧑‍💼 Vendedor' + vname + ': <strong>' + fmtPrice(sp.vendorPart) + '</strong> · ' +
+      '🏦 A tu caja: <strong>' + fmtPrice(sp.yourPart) + '</strong>' +
+      ' <span class="muted">(comisión total ' + fmtPrice(sp.commission) + ')</span>';
+  }
+
   function openPaymentForOrder(order, detailEl) {
-    state.payForOrder = { id: order.id, detailEl: detailEl || null, total: Number(order.total) || 0 };
+    var pf = order.profitability || {};
+    state.payForOrder = {
+      id: order.id, detailEl: detailEl || null, total: Number(order.total) || 0,
+      commission: Number(pf.vendor && pf.vendor.earning) || 0,
+      vendor_name: (pf.vendor && pf.vendor.name) || "",
+      cash_other: Number(order.cash_collected) || 0,
+    };
     if (els.paymentCreateForm) els.paymentCreateForm.reset();
     if (els.paymentCreateMsg) {
       els.paymentCreateMsg.textContent = "Cobro del pedido #" + order.id +
@@ -9401,6 +9495,7 @@
     });
     fillCajaSelect(document.getElementById("pay-form-caja"), null);
     setupPayDiscountUI(Number(order.total) || 0);
+    renderPaySplit();
     if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
   }
 

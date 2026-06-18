@@ -2585,6 +2585,27 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
       profit: profit,
       margin_pct: revenue > 0 ? round2((profit / revenue) * 100) : 0,
     };
+    // Comisión del vendedor asignado (snapshot vendedor_cost_unit): lo que gana
+    // el vendedor sobre la venta = Σ (unit_price − vendedor_cost_unit)·qty sobre
+    // los items con snapshot. Items sin snapshot (cliente sin lista) aportan 0.
+    if (order.assigned_vendedor_id) {
+      const vr = db.prepare(
+        "SELECT COALESCE(SUM(CASE WHEN vendedor_cost_unit IS NOT NULL" +
+        "                        THEN (unit_price - vendedor_cost_unit) * quantity ELSE 0 END),0) AS earning" +
+        "  FROM order_items WHERE order_id = ?"
+      ).get(id);
+      const v = db.prepare(
+        "SELECT id, full_name, username, is_tercerizado FROM users WHERE id = ?"
+      ).get(order.assigned_vendedor_id);
+      if (v) {
+        profitability.vendor = {
+          id: v.id,
+          name: v.full_name || v.username || ("Vendedor #" + v.id),
+          is_tercerizado: !!v.is_tercerizado,
+          earning: Number(vr.earning) || 0,
+        };
+      }
+    }
   }
   // Cambios confirmados del chequeo de armado (visibles para todos los roles:
   // el cliente tambien tiene que enterarse si se le quito o cambio un item).
@@ -2596,6 +2617,8 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
     items: items,
     balance_due: pay.balance_due,
     amount_paid: pay.amount_paid,
+    // Efectivo real cobrado del pedido (entrega + pagos), para el split de comisión.
+    cash_collected: isAdmin ? cashCollectedForOrder(id) : undefined,
     profitability: profitability,
     pick_changes: pickChanges,
   }));
@@ -4581,6 +4604,71 @@ app.patch("/api/admin/orders/:id/assign", requireAdmin, (req, res) => {
   res.json({ ok: true, id, vendedor_id: hasVend ? vendedorId : null, user_id: hasUser ? userId : null });
 });
 
+// ----- Comisión del vendedor: egreso automático de caja -----
+// Cuando se cobra un pedido con vendedor asignado, la parte del vendedor (su
+// comisión = Σ (unit_price − vendedor_cost_unit)·qty) sale de la caja como un
+// EGRESO, así la caja neta refleja solo lo del dueño. Regla "primero lo tuyo":
+// la comisión recién se paga sobre el efectivo cobrado por encima de tu parte
+// (total − comisión). El egreso es ÚNICO por pedido (source='comision',
+// related_id=order_id) y se recalcula (DELETE + INSERT) en cada cobro/edición
+// para que el acumulado sea siempre correcto e idempotente.
+function vendorCommissionForOrder(orderId) {
+  const r = db.prepare(
+    "SELECT COALESCE(SUM(CASE WHEN vendedor_cost_unit IS NOT NULL" +
+    "                        THEN (unit_price - vendedor_cost_unit) * quantity ELSE 0 END),0) AS c" +
+    "  FROM order_items WHERE order_id = ?"
+  ).get(orderId);
+  return Math.max(0, Math.round(Number(r && r.c) || 0));
+}
+function cashCollectedForOrder(orderId) {
+  const d = db.prepare(
+    "SELECT COALESCE(SUM(COALESCE(efectivo_amount,0) + COALESCE(transferencia_amount,0)),0) AS c" +
+    "  FROM deliveries WHERE order_id = ?"
+  ).get(orderId);
+  const p = db.prepare(
+    "SELECT COALESCE(SUM(amount),0) AS c FROM payments WHERE order_id = ?"
+  ).get(orderId);
+  return (Number(d && d.c) || 0) + (Number(p && p.c) || 0);
+}
+// Recalcula el egreso de comisión del vendedor para un pedido. cajaHint es la
+// caja preferida (la del cobro que disparó el recálculo); si no se pasa, se
+// busca la caja de la entrega o del último pago con caja. Debe llamarse DENTRO
+// de la transacción del cobro, DESPUÉS de insertar la entrega/pago.
+function syncVendorCommissionEgreso(orderId, cajaHint, registeredBy) {
+  // Borrar siempre el egreso previo: se recrea abajo si corresponde.
+  db.prepare("DELETE FROM cash_movements WHERE source = 'comision' AND related_id = ?").run(orderId);
+  const order = db.prepare(
+    "SELECT id, total, assigned_vendedor_id, is_unified FROM orders WHERE id = ?"
+  ).get(orderId);
+  if (!order || order.is_unified || !order.assigned_vendedor_id) return;
+  const C = vendorCommissionForOrder(orderId);
+  if (C <= 0) return;
+  const total = Number(order.total) || 0;
+  const loTuyo = Math.max(0, total - C);           // tu parte (primero lo tuyo)
+  const cash = cashCollectedForOrder(orderId);     // efectivo real cobrado
+  const payable = Math.max(0, Math.min(Math.round(cash - loTuyo), C));
+  if (payable <= 0) return;                         // todavía no se cubrió tu parte
+  // Caja del egreso: la del cobro, o la de la entrega, o la del último pago con caja.
+  let cajaId = cajaHint ? Number(cajaHint) : null;
+  if (!cajaId) {
+    const dc = db.prepare("SELECT caja_id FROM deliveries WHERE order_id = ? AND caja_id IS NOT NULL LIMIT 1").get(orderId);
+    if (dc && dc.caja_id) cajaId = dc.caja_id;
+  }
+  if (!cajaId) {
+    const pc = db.prepare("SELECT caja_id FROM payments WHERE order_id = ? AND caja_id IS NOT NULL ORDER BY id DESC LIMIT 1").get(orderId);
+    if (pc && pc.caja_id) cajaId = pc.caja_id;
+  }
+  if (!cajaId) return;                              // sin caja no se puede representar el egreso
+  const caja = db.prepare("SELECT id FROM cash_accounts WHERE id = ?").get(cajaId);
+  if (!caja) return;
+  const v = db.prepare("SELECT full_name, username FROM users WHERE id = ?").get(order.assigned_vendedor_id);
+  const vname = (v && (v.full_name || v.username)) || ("Vendedor #" + order.assigned_vendedor_id);
+  db.prepare(
+    "INSERT INTO cash_movements (account_id, type, amount, description, source, related_id, registered_by)" +
+    " VALUES (?, 'egreso', ?, ?, 'comision', ?, ?)"
+  ).run(cajaId, payable, "Comisión vendedor pedido #" + orderId + " (" + vname + ")", orderId, registeredBy || null);
+}
+
 // Registrar entrega de un pedido (admin o vendedor asignado)
 // Body: { delivered_to, efectivo_amount, transferencia_amount, notes }
 app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdmin("entregas"), (req, res) => {
@@ -4792,6 +4880,8 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     if (cajaTransfer && transferencia > 0) {
       insCashMov.run(cajaTransfer.id, transferencia, "Cobro entrega #" + id + " (transferencia)", deliveryId, req.session.userId);
     }
+    // Egreso automático de la comisión del vendedor (la caja queda en lo tuyo).
+    syncVendorCommissionEgreso(id, cajaEfectivo ? cajaEfectivo.id : (cajaTransfer ? cajaTransfer.id : null), req.session.userId);
   })();
 
   res.json({
@@ -5742,6 +5832,8 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
         ).run(user_id, discountAmount, "Descuento pedido #" + orderId + " (" + dlabel + ")", orderId);
       }
     }
+    // Egreso automático de la comisión del vendedor (la caja queda en lo tuyo).
+    if (orderId) syncVendorCommissionEgreso(orderId, cajaId, req.session.userId);
   })();
 
   const payment = db.prepare(
@@ -5758,13 +5850,15 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
 app.delete("/api/admin/payments/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
-  const payment = db.prepare("SELECT id FROM payments WHERE id = ?").get(id);
+  const payment = db.prepare("SELECT id, order_id FROM payments WHERE id = ?").get(id);
   if (!payment) return res.status(404).json({ error: "Pago no encontrado" });
   db.transaction(() => {
     db.prepare("DELETE FROM account_movements WHERE payment_id = ?").run(id);
     // Revertir el ingreso de caja generado por este cobro (si lo hubo).
     db.prepare("DELETE FROM cash_movements WHERE source = 'cobro' AND related_id = ?").run(id);
     db.prepare("DELETE FROM payments WHERE id = ?").run(id);
+    // Recalcular la comisión del vendedor (bajó el cobrado → puede reducirse o borrarse).
+    if (payment.order_id) syncVendorCommissionEgreso(payment.order_id, null, req.session.userId);
   })();
   res.json({ ok: true });
 });
@@ -8087,6 +8181,10 @@ app.delete("/api/admin/caja/movements/:id", requireAdmin, (req, res) => {
   // de la caja dejaria el gasto registrado sin su salida de plata (desync).
   if (mov.source === "gasto" && mov.related_id) {
     return res.status(409).json({ error: "Este movimiento viene de un gasto. Eliminá el gasto desde la pestaña Gastos." });
+  }
+  // La comisión del vendedor se gestiona automáticamente con el cobro del pedido.
+  if (mov.source === "comision" && mov.related_id) {
+    return res.status(409).json({ error: "Es la comisión del vendedor: se ajusta sola al editar o borrar el cobro del pedido." });
   }
   // Si es transferencia, borrar también la contraparte
   if (mov.source === "transferencia" && mov.counterpart_account_id) {
