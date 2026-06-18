@@ -4901,8 +4901,12 @@
         : ' <span class="vt-pill vt-unpaid" title="Cobrado ' + fmtPrice(cb.cobrado) + " de " + fmtPrice(cb.neto) + '">Debe ' + fmtPrice(cb.falta) + "</span>";
     }
 
+    // "Registrar entrega" solo en la etapa de Entregas (estado `listo`) o para
+    // VER una entrega ya hecha (`entregado` o si ya hay delivery). En Pedidos
+    // (pendiente/enviado) y Armado (preparando) no se entrega: primero se arma y
+    // se avanza por el circuito (botón → Armado / → Entregas).
     var delivBtn = "";
-    if (o.status !== "cancelado") {
+    if (o.status === "listo" || o.status === "entregado" || o.delivery_id) {
       var hasDelivery = o.delivery_id ? "1" : "0";
       var delivLabel = o.delivery_id ? "Ver entrega" : "Registrar entrega";
       delivBtn = '<button class="btn btn-small btn-deliver" data-id="' + o.id +
