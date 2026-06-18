@@ -1331,6 +1331,36 @@ Decisiones (AskUserQuestion): **% y monto fijo**; efecto = **baja la deuda del c
 
 **Nota de entorno (Cowork)**: esta sesión NO fue en el entorno habitual — la carpeta conectada por defecto era `bono-app` (otro proyecto, app de rifas/sorteos en Python/FastAPI), no Maxaria. Hubo que pedir conectar `D:\Maxaria\WEB\maxaria_app` explícitamente. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
 
+### Comisión del vendedor en el cobro: chip de rentabilidad + egreso automático + snapshot en pedido admin (18 junio 2026 — `admin.js?v=20260618c`, `styles.css?v=20260618c`)
+
+Sesión sobre cómo se discrimina/gestiona la comisión del vendedor tercerizado al cobrar. Recordatorio del modelo: la comisión NO es un campo fijo en el vendedor — sale del `markup_percent` de la **lista de precios del cliente** (ese % es la ganancia limpia del vendedor sobre la venta). Se calcula como `Σ (unit_price − vendedor_cost_unit)·qty` sobre los items con snapshot. Sin lista en el cliente → `vendedor_cost_unit` NULL → comisión 0.
+
+**1. Chip de comisión + "a rendir" en el detalle del pedido (solo admin)**
+- `GET /api/orders/:id` (rama admin): a `profitability` se le agregó `vendor: { id, name, is_tercerizado, earning }` cuando el pedido tiene `assigned_vendedor_id`. `earning` = `Σ(unit_price − vendedor_cost_unit)·qty` (solo items con snapshot). También se agregó top-level `cash_collected` (efectivo real cobrado del pedido = entregas ef+tr + pagos) para alimentar el split.
+- `admin.js renderOrderDetail`: al lado de "💰 Rentabilidad" (que usa `products.cost`, es TU ganancia como dueño), se muestra el chip violeta **"👤 Nombre (tercerizado): $comisión"** solo si hay vendedor y `earning > 0`. Para tercerizados, además un chip verde-agua **"🤝 Nombre debe rendir: $X"** = `revenue (neto) − earning` (lo que el tercerizado te entrega: él le cobra al cliente y se queda con su comisión). CSS `.op-vendor`/`.op-rendir`.
+
+**2. Reparto tuyo/vendedor al cobrar — egreso automático de caja (decisiones de Sergio vía AskUserQuestion)**
+Decisiones: parte del vendedor = **egreso automático de la caja** (la caja neta queda en lo tuyo); cobro parcial = **"primero lo tuyo"** (la comisión recién sale sobre lo cobrado por encima de `total − comisión`); aplica en **Entrega y Cobro**.
+- **server.js** helpers nuevos (declarados antes del endpoint deliver, hoisteados): `vendorCommissionForOrder(orderId)` (C = Σ ganancia con snapshot, redondeado), `cashCollectedForOrder(orderId)` (entregas ef+tr + Σ payments), `syncVendorCommissionEgreso(orderId, cajaHint, registeredBy)`. Este último: borra el egreso previo (`cash_movements` source='comision', related_id=order_id) y, si el pedido tiene vendedor + comisión, recrea UN egreso por `payable = clamp(cash − (total − C), 0, C)`. Idempotente (recalcula el acumulado en cada cobro/edición/borrado). Caja del egreso = `cajaHint` (la del cobro) → caja de la entrega → último pago con caja; si no hay ninguna, no crea el egreso.
+- Se llama en: `POST /api/orders/:id/deliver` (fin de la transacción, cajaHint = caja efectivo o transfer), `POST /api/admin/payments` (si hay order_id, cajaHint = caja del pago), `DELETE /api/admin/payments/:id` (recalcula tras borrar). Guard en `DELETE /api/admin/caja/movements/:id`: 409 si `source='comision'` (se gestiona sola con el cobro).
+- **Frontend**: modal Registrar entrega — `deliveryOrderInfo` ganó `commission`, `vendor_name`, `cash_other` (= `cash_collected − monto de la entrega existente`); `deliverySplit()` calcula tuyo/vendedor con primero-lo-tuyo y `renderDeliverySummary()` muestra la línea "De este cobro → 🧑‍💼 Vendedor: $X · 🏦 A tu caja: $Y (comisión total $Z)". Se recalcula al tipear montos y al tocar el tilde "pagó el total". Modal Registrar cobro (`openPaymentForOrder`) — `state.payForOrder` ganó `commission`/`vendor_name`/`cash_other`; `paySplit()` + `renderPaySplit()` muestran el mismo reparto en `#pay-form-split` (en `admin.html`, oculto en pagos generales vía `setupPayDiscountUI`). CSS `.ds-split`/`.ds-split-box`.
+
+**3. 🔴 Bug: pedidos creados desde el panel admin no traían el snapshot de costo → comisión 0**
+- Síntoma (Sergio): el pedido #92 (Walter, con lista L1, vendedor Juan Manuel tercerizado) no mostraba comisión ni split, aun deployado.
+- Causa: `POST /api/admin/orders` insertaba `order_items` SIN `vendedor_cost_unit` (a diferencia del catálogo `POST /api/orders` y de `PUT .../items` que sí snapshotean). Sin ese dato la comisión da 0.
+- Fix: el endpoint admin ahora calcula `getEffectivePriceConfig(clientId, level)` y, si `kind==="list"`, guarda `vendedor_cost_unit = round(price_<base_level>)` por item (mismo patrón que `PUT /items`). Pedidos nuevos del admin ya traen la comisión. **Para pedidos viejos** (como #92): abrir → "Editar items" → Guardar recalcula el snapshot desde la lista del cliente.
+- **Recordatorio**: para que haya comisión, la lista del cliente (ej. L1) tiene que tener `markup_percent > 0` — ese % ES la comisión. Verificado en vivo: #92 mostró comisión $26.363 (5% de $526.891) y "a rendir" $500.528.
+
+**Distinción importante**: la comisión nueva es SEPARADA del campo "Descuento / comisión" de los modales de entrega/cobro (ese campo le baja la deuda AL CLIENTE; la comisión nueva NO toca lo que debe el cliente, solo separa la parte del vendedor de la caja). Conviene dejar de usar el "Descuento" como comisión para no duplicar.
+
+**Pendientes ofrecidos a Sergio (sin confirmar)**:
+- Restringir "Registrar cobro" en Pedidos/Armado y dejarlo solo en Entregas (o desde "listo"). Coincide en que cobrar antes de armar no tiene sentido; quedó sin hacer.
+- Modelo alternativo de comisión: **% fijo por vendedor** (aplica a todos sus clientes, con o sin lista) en vez de por lista del cliente — solo haría falta si quiere comisión sobre clientes en nivel base sin lista.
+- Modal de cobro del tercerizado: precargar "lo que rinde Juan" (total − comisión) en vez del total, ya que él cobra y rinde.
+- Caso de borde no cubierto: cancelar un pedido ya cobrado no revierte el egreso de comisión automáticamente.
+
+**Verificación**: el bash mount volvió a estar **stale** (veía server.js cortado en ~8338/8348 y admin.js en ~12444, ambos íntegros según Read — server.js termina en `app.listen` 8470, admin.js en `bootstrap(); })();` 12544). Se validó reconstruyendo el archivo completo en /tmp (head visible por bash, que incluye TODAS las ediciones porque están antes del corte, + cola real leída con Read) → PARSE OK; y los bloques nuevos aislados (split formula con 8 escenarios "primero lo tuyo" + clamp, queries del helper contra copia de la DB con Python sqlite3). Pendiente: `git add/commit/push` + deploy Railway.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.
