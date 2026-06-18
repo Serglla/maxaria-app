@@ -5057,11 +5057,20 @@
       // (cliente con lista de precios). Sin vendedor o sin comisión, no se muestra nada.
       var vendHtml = "";
       if (pf.vendor && Number(pf.vendor.earning) > 0) {
+        var vEarn = Number(pf.vendor.earning);
         var vTipo = pf.vendor.is_tercerizado ? " (tercerizado)" : "";
         vendHtml =
           '<span class="op-vendor" title="Comisión del vendedor = Σ (precio − costo del vendedor) por unidad">' +
             '👤 ' + escapeHtml(pf.vendor.name) + vTipo + ': ' +
-            '<strong>' + fmtPrice(Number(pf.vendor.earning)) + '</strong></span>';
+            '<strong>' + fmtPrice(vEarn) + '</strong></span>';
+        // Vendedor tercerizado: él le cobra al cliente y te rinde el total menos
+        // su comisión. Mostramos cuánto te debe entregar a la distribuidora.
+        if (pf.vendor.is_tercerizado) {
+          var aRendir = Math.max(0, (Number(pf.revenue) || 0) - vEarn);
+          vendHtml +=
+            '<span class="op-rendir" title="Lo que el vendedor tercerizado debe entregarte: total cobrado al cliente − su comisión">' +
+              '🤝 ' + escapeHtml(pf.vendor.name) + ' debe rendir: <strong>' + fmtPrice(aRendir) + '</strong></span>';
+        }
       }
       profitHtml =
         '<div class="order-profit" title="Rentabilidad = ventas netas (con descuento) − costo actual de los productos">' +
