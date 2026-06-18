@@ -768,6 +768,52 @@ function nextBudgetNumber() {
   }
 })();
 
+// Backfill idempotente de débitos de cuenta corriente para pedidos ENTREGADOS de
+// clientes reales (level 1..4), no unificados, que quedaron SIN débito (creados
+// por versiones que no debitaban al entregar/crear). Sin esto el saldo del pedido
+// vive solo en el respaldo (total − cobrado en la entrega) y un cobro posterior no
+// lo baja. Se reconstruye también el crédito del cobro de la entrega y el del
+// descuento, para que el saldo resultante sea EXACTAMENTE el que ya se mostraba
+// (no cambia ningún "Debe/Saldado", solo mueve la fuente de verdad a la cuenta
+// corriente). Idempotente: solo toca pedidos sin débito.
+(function backfillOrderDebits() {
+  try {
+    const orphans = db.prepare(
+      "SELECT o.id, o.user_id, o.total, COALESCE(o.discount_amount,0) AS discount_amount," +
+      "       (SELECT COALESCE(SUM(d.efectivo_amount + d.transferencia_amount),0)" +
+      "          FROM deliveries d WHERE d.order_id = o.id) AS deliv_cobro" +
+      "  FROM orders o JOIN users u ON u.id = o.user_id" +
+      "  WHERE o.status = 'entregado' AND COALESCE(o.is_unified,0) = 0" +
+      "    AND u.level BETWEEN 1 AND 4 AND o.total > 0" +
+      "    AND NOT EXISTS (SELECT 1 FROM account_movements am" +
+      "                     WHERE am.order_id = o.id AND am.type = 'debit')"
+    ).all();
+    if (!orphans.length) return;
+    const insMov = db.prepare(
+      "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+      " VALUES (?, ?, ?, ?, ?, datetime('now'))"
+    );
+    const hasCred = db.prepare(
+      "SELECT 1 FROM account_movements WHERE order_id = ? AND type = 'credit' AND description LIKE ? LIMIT 1"
+    );
+    const tx = db.transaction(() => {
+      for (const o of orphans) {
+        insMov.run(o.user_id, "debit", o.total, "Pedido #" + o.id + " (ajuste)", o.id);
+        if (o.deliv_cobro > 0 && !hasCred.get(o.id, "Cobro entrega%")) {
+          insMov.run(o.user_id, "credit", o.deliv_cobro, "Cobro entrega #" + o.id + " (ajuste)", o.id);
+        }
+        if (o.discount_amount > 0 && !hasCred.get(o.id, "Descuento pedido%")) {
+          insMov.run(o.user_id, "credit", o.discount_amount, "Descuento pedido #" + o.id + " (ajuste)", o.id);
+        }
+      }
+    });
+    tx();
+    console.log("[backfill] débitos de cuenta corriente para " + orphans.length + " pedido(s) entregado(s) sin débito");
+  } catch (e) {
+    console.error("[backfill] error creando débitos de pedidos entregados:", e.message);
+  }
+})();
+
 function getSetting(key, fallback) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   if (row && row.value != null) return row.value;
@@ -4839,6 +4885,26 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
         ).run(order.user_id, order.total, "Pedido #" + id, id);
       }
       db.prepare("UPDATE orders SET stock_discounted = 1 WHERE id = ?").run(id);
+    }
+
+    // Red de seguridad: garantizar el débito en cuenta corriente de un pedido
+    // entregado de un cliente real (level 1..4), no unificado. Cubre pedidos que
+    // llegaron con stock_discounted=1 pero sin débito (versiones viejas o caminos
+    // que no debitaron). Idempotente: solo inserta si falta. Sin esto el saldo del
+    // pedido no refleja la deuda y el cobro registrado después no la baja.
+    if (!order.is_unified) {
+      const hasDebit = db.prepare(
+        "SELECT id FROM account_movements WHERE order_id = ? AND type = 'debit' LIMIT 1"
+      ).get(id);
+      if (!hasDebit) {
+        const cli = db.prepare("SELECT level FROM users WHERE id = ?").get(order.user_id);
+        if (cli && cli.level >= 1 && cli.level <= 4) {
+          db.prepare(
+            "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+            " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
+          ).run(order.user_id, order.total, "Pedido #" + id, id);
+        }
+      }
     }
 
     // Crédito automático por el cobro registrado en la entrega.

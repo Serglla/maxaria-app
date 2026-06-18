@@ -5026,17 +5026,25 @@
     // Saldo del pedido (cuenta corriente del pedido): adeudado / saldado.
     // balance_due = débitos − créditos del pedido; > 0 = todavía se debe.
     var balanceHtml = "";
-    var balanceDue = Number(order.balance_due) || 0;
-    // "Registrar cobro" solo en la etapa de Entregas: estados `listo` (cola para
-    // entregar) o `entregado` (historial / Ventas). En Pedidos (pendiente/enviado)
-    // y Armado (preparando) no se cobra — primero se arma y se entrega.
-    var chargeableStatus = order.status === "listo" || order.status === "entregado";
+    // Saldo del pedido con la MISMA lógica que la lista de Ventas (ventaCobro):
+    // usa la cuenta corriente si el pedido tiene débito, sino cae al neto − cobrado
+    // en la entrega. Así el detalle y la lista nunca se contradicen (un pedido que
+    // figura "Debe" en Ventas muestra el saldo y el botón de cobro acá también).
+    var cobro = ventaCobro(Object.assign({}, order, {
+      debit_total: (Number(order.balance_due) || 0) + (Number(order.amount_paid) || 0)
+    }));
+    var balanceDue = cobro.falta;
+    var amountPaid = cobro.cobrado;
+    // "Registrar cobro" solo para pedidos ENTREGADOS. En la cola "Para entregar"
+    // (listo) el cobro va dentro de "Registrar entrega", así que acá no se muestra
+    // para no duplicar. En Pedidos/Armado tampoco (todavía no se cobra).
+    var chargeableStatus = order.status === "entregado";
     var canCharge = state.isAdmin && balanceDue > 0.5 && chargeableStatus;
-    if (state.isAdmin && (balanceDue > 0.5 || Number(order.amount_paid) > 0)) {
+    if (state.isAdmin && chargeableStatus && (balanceDue > 0.5 || amountPaid > 0)) {
       balanceHtml = balanceDue > 0.5
         ? '<div class="order-balance order-balance-debt">💳 Saldo del pedido: <strong>Debe ' + fmtPrice(balanceDue) +
-            '</strong> · cobrado ' + fmtPrice(Number(order.amount_paid) || 0) + "</div>"
-        : '<div class="order-balance order-balance-ok">💳 Pedido saldado · cobrado ' + fmtPrice(Number(order.amount_paid) || 0) + "</div>";
+            '</strong> · cobrado ' + fmtPrice(amountPaid) + "</div>"
+        : '<div class="order-balance order-balance-ok">💳 Pedido saldado · cobrado ' + fmtPrice(amountPaid) + "</div>";
     }
     // Acciones: editar items (solo estados pre-entrega), registrar cobro (si debe),
     // imprimir remito y compartir.
@@ -9507,7 +9515,10 @@
       }
       var amtInput = els.paymentCreateForm ? els.paymentCreateForm.querySelector('[name="amount"]') : null;
       attachMoneyInput(amtInput);
-      var due = Number(order.balance_due) || 0;
+      // Mismo saldo que muestra el detalle / la lista de Ventas (ventaCobro).
+      var due = ventaCobro(Object.assign({}, order, {
+        debit_total: (Number(order.balance_due) || 0) + (Number(order.amount_paid) || 0)
+      })).falta;
       if (amtInput && due > 0) setMoney(amtInput, due);
     });
     fillCajaSelect(document.getElementById("pay-form-caja"), null);

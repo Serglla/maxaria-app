@@ -1354,10 +1354,15 @@ Decisiones: parte del vendedor = **egreso automático de la caja** (la caja neta
 **Distinción importante**: la comisión nueva es SEPARADA del campo "Descuento / comisión" de los modales de entrega/cobro (ese campo le baja la deuda AL CLIENTE; la comisión nueva NO toca lo que debe el cliente, solo separa la parte del vendedor de la caja). Conviene dejar de usar el "Descuento" como comisión para no duplicar.
 
 **Pendientes ofrecidos a Sergio (sin confirmar)**:
-- Restringir "Registrar cobro" en Pedidos/Armado y dejarlo solo en Entregas (o desde "listo"). Coincide en que cobrar antes de armar no tiene sentido; quedó sin hacer.
 - Modelo alternativo de comisión: **% fijo por vendedor** (aplica a todos sus clientes, con o sin lista) en vez de por lista del cliente — solo haría falta si quiere comisión sobre clientes en nivel base sin lista.
 - Modal de cobro del tercerizado: precargar "lo que rinde Juan" (total − comisión) en vez del total, ya que él cobra y rinde.
 - Caso de borde no cubierto: cancelar un pedido ya cobrado no revierte el egreso de comisión automáticamente.
+
+**4. Cobro y entrega solo en la etapa de Entregas (forzar el circuito — `admin.js?v=20260618e`)**
+Sergio: cobrar/entregar desde Pedidos antes de armar no tiene sentido; que se respete el circuito Pedidos → Armado → Entregas.
+- `admin.js orderCardHtml`: el botón **"Registrar entrega"** (`.btn-deliver`) ahora solo se renderiza si `o.status === "listo" || o.status === "entregado" || o.delivery_id` (antes: cualquier estado != cancelado). En `entregado`/con delivery muestra "Ver entrega"; en `listo` muestra "Registrar entrega". En pendiente/enviado/preparando NO aparece.
+- `admin.js renderOrderDetail`: el botón **"Registrar cobro"** (`.order-charge`) ahora exige `chargeableStatus = order.status === "listo" || order.status === "entregado"` además de `balanceDue > 0.5` y `isAdmin`.
+- Resultado del circuito: Pedidos (pendiente/enviado) → solo botón **→ Armado**; Armado (preparando) → solo **→ Entregas**; Entregas cola (listo) → **Registrar entrega** + **Registrar cobro**; Entregado/Ventas → **Ver entrega** + Registrar cobro si queda saldo.
 
 **Verificación**: el bash mount volvió a estar **stale** (veía server.js cortado en ~8338/8348 y admin.js en ~12444, ambos íntegros según Read — server.js termina en `app.listen` 8470, admin.js en `bootstrap(); })();` 12544). Se validó reconstruyendo el archivo completo en /tmp (head visible por bash, que incluye TODAS las ediciones porque están antes del corte, + cola real leída con Read) → PARSE OK; y los bloques nuevos aislados (split formula con 8 escenarios "primero lo tuyo" + clamp, queries del helper contra copia de la DB con Python sqlite3). Pendiente: `git add/commit/push` + deploy Railway.
 
