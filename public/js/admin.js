@@ -5023,7 +5023,11 @@
     // balance_due = débitos − créditos del pedido; > 0 = todavía se debe.
     var balanceHtml = "";
     var balanceDue = Number(order.balance_due) || 0;
-    var canCharge = state.isAdmin && balanceDue > 0.5;
+    // "Registrar cobro" solo en la etapa de Entregas: estados `listo` (cola para
+    // entregar) o `entregado` (historial / Ventas). En Pedidos (pendiente/enviado)
+    // y Armado (preparando) no se cobra — primero se arma y se entrega.
+    var chargeableStatus = order.status === "listo" || order.status === "entregado";
+    var canCharge = state.isAdmin && balanceDue > 0.5 && chargeableStatus;
     if (state.isAdmin && (balanceDue > 0.5 || Number(order.amount_paid) > 0)) {
       balanceHtml = balanceDue > 0.5
         ? '<div class="order-balance order-balance-debt">💳 Saldo del pedido: <strong>Debe ' + fmtPrice(balanceDue) +
