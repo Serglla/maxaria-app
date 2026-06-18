@@ -2797,6 +2797,17 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
   }
   const userId = clientId || req.session.userId;
   const total = round2(items.reduce((s, it) => s + round2((it.unit_price || 0) * (it.quantity || 1)), 0));
+  // Snapshot del costo del vendedor (vendedor_cost_unit): si el cliente tiene
+  // lista personalizada, guardamos el precio base (price_<base_level>) por item,
+  // así se puede calcular la comisión del vendedor. Mismo criterio que el
+  // catálogo (POST /api/orders) y la edición de items (PUT .../items). Sin lista
+  // → NULL → sin comisión diferencial.
+  const orderCfg = clientId
+    ? getEffectivePriceConfig(clientId, (db.prepare("SELECT level FROM users WHERE id = ?").get(clientId) || {}).level || 1)
+    : { kind: "level" };
+  const getCostPrice = orderCfg.kind === "list"
+    ? db.prepare("SELECT " + orderCfg.column + " AS base_price FROM products WHERE id = ?")
+    : null;
   const result = db.transaction(() => {
     // El pedido descuenta stock al CREARSE (stock_discounted=1), no al entregar:
     // así "En armado" ya refleja la baja de stock. Como el admin puede crear
@@ -2806,14 +2817,19 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
       "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id, stock_discounted) VALUES (?,?,?,?,?,1)"
     ).run(userId, status, total, notes, assignedVendedorId).lastInsertRowid;
     const ins = db.prepare(
-      "INSERT INTO order_items (order_id,product_id,product_code,product_name,quantity,unit_price,subtotal) " +
-      "VALUES (?,?,?,?,?,?,?)"
+      "INSERT INTO order_items (order_id,product_id,product_code,product_name,quantity,unit_price,subtotal,vendedor_cost_unit) " +
+      "VALUES (?,?,?,?,?,?,?,?)"
     );
     const updStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     items.forEach((it) => {
       const qty = Math.max(1, Math.round(Number(it.quantity) || 1));
       const price = round2(Number(it.unit_price) || 0);
-      ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, round2(qty * price));
+      let costUnit = null;
+      if (getCostPrice && it.product_id) {
+        const cp = getCostPrice.get(it.product_id);
+        if (cp && cp.base_price != null) costUnit = Math.round(Number(cp.base_price));
+      }
+      ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, round2(qty * price), costUnit);
       if (it.product_id) updStock.run(qty, it.product_id);
     });
     // Si el pedido es a nombre de un cliente real, debitar su cuenta corriente
