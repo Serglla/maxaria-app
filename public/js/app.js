@@ -922,6 +922,30 @@
     });
   }
 
+  // Detecta celular/tablet. En estos casos NO sirve abrir una pestaña nueva
+  // por JS para WhatsApp: el navegador pierde el "user-gesture" y wa.me queda
+  // trabado en el interstitial ("Abrir aplicación") sin lanzar la app.
+  function isMobileDevice() {
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+        || window.matchMedia("(max-width: 820px)").matches;
+  }
+
+  // Abre WhatsApp de forma confiable en todas las plataformas.
+  //  - Celular/tablet: navega la MISMA pestaña a wa.me (único modo que dispara
+  //    la app de WhatsApp). Si había una pestaña pre-abierta, la cierra.
+  //  - Desktop: usa la pestaña nueva ya abierta dentro del gesture, o abre una.
+  // Devuelve true si pudo iniciar la apertura.
+  function openWhatsapp(waUrl, popup) {
+    if (isMobileDevice()) {
+      if (popup && !popup.closed) { try { popup.close(); } catch (_) {} }
+      window.location.href = waUrl;
+      return true;
+    }
+    if (popup && !popup.closed) { popup.location.href = waUrl; return true; }
+    const w = window.open(waUrl, "_blank");
+    return !!w;
+  }
+
   async function sendCart() {
     if (!state.cart.size) return;
     const phone = (state.me && state.me.whatsapp) || "";
@@ -944,10 +968,11 @@
 
     const message = buildWhatsappMessage();
 
-    // Abrimos la ventana YA, dentro del user-gesture del click,
-    // para que el bloqueador de popups no la mate. Despues le
-    // cambiamos la URL cuando el server confirma el pedido.
-    const popup = window.open("about:blank", "_blank");
+    // En desktop abrimos la pestaña YA, dentro del user-gesture del click,
+    // para que el bloqueador de popups no la mate; después le cambiamos la URL
+    // cuando el server confirma el pedido. En celular NO abrimos pestaña nueva:
+    // se navega la misma a wa.me (ver openWhatsapp), que es lo único confiable.
+    const popup = isMobileDevice() ? null : window.open("about:blank", "_blank");
 
     els.cartSend.disabled = true;
     const original = els.cartSend.textContent;
@@ -968,16 +993,10 @@
       }
       const out = await resp.json();
       const text = encodeURIComponent(message + "\n\n#Pedido" + out.order.id);
-      const waUrl = "https://wa.me/" + phone + "?text=" + text;
+      const waUrl = "https://wa.me/" + phone.replace(/[^\d]/g, "") + "?text=" + text;
 
-      if (popup && !popup.closed) {
-        popup.location.href = waUrl;
-      } else {
-        // Popup bloqueado: mostramos un fallback para que el cliente
-        // abra WhatsApp con un click manual y no pierda el pedido.
-        showWhatsappFallback(out.order.id, waUrl);
-      }
-
+      // Limpiamos el carrito ANTES de abrir WhatsApp: en celular la pestaña se
+      // navega a wa.me y el código que sigue no llega a ejecutarse.
       const clearedIds = Array.from(state.cart.keys());
       state.cart.clear();
       if (els.cartNotes) els.cartNotes.value = "";
@@ -985,6 +1004,15 @@
       clearedIds.forEach(refreshCardForProduct);
       closeDrawers();
       flashOrderSaved(out.order.id);
+
+      // Handoff a WhatsApp (mobile: misma pestaña; desktop: pestaña nueva).
+      const opened = openWhatsapp(waUrl, popup);
+      if (isMobileDevice()) return;   // la pestaña ya está navegando a WhatsApp
+      if (!opened) {
+        // Popup bloqueado en desktop: fallback con botón de apertura manual.
+        showWhatsappFallback(out.order.id, waUrl);
+      }
+
       // El server ya descontó el stock al enviar el pedido. Refrescamos el
       // catálogo para que los productos que quedaron en 0 desaparezcan de la
       // grilla sin tener que recargar la página.
@@ -1439,7 +1467,7 @@
         body: JSON.stringify({ order_ids: ids }),
       });
       if (res && res.whatsapp_link) {
-        window.open(res.whatsapp_link, "_blank");
+        openWhatsapp(res.whatsapp_link);
       } else {
         alertModal("Pedido unificado creado (#" + res.unified_order_id + ") pero falta configurar el numero principal de WhatsApp en /admin > Configuracion.");
       }
@@ -1695,7 +1723,7 @@
           const text = encodeURIComponent(
             buildWhatsappMessageFromOrder(order) + "\n\n#Pedido" + order.id
           );
-          window.open("https://wa.me/" + phone + "?text=" + text, "_blank");
+          openWhatsapp("https://wa.me/" + phone.replace(/[^\d]/g, "") + "?text=" + text);
         });
       }
     } catch (e) {
