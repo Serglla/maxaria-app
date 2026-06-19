@@ -4789,8 +4789,13 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
   // Si no se manda, en INSERT usa el default (datetime('now')) y en UPDATE NO se
   // toca la fecha existente (antes se forzaba a 'now', lo que pisaba la fecha
   // real cuando solo se editaba la nota — bug reportado).
+  // Acepta "YYYY-MM-DD" (entrega con fecha elegida a mano → mediodía de ese día,
+  // para que las comparaciones por día de los reportes caigan bien) o un timestamp
+  // completo "YYYY-MM-DD HH:MM:SS" en UTC (entrega nueva de hoy → hora real exacta).
   const rawDate = req.body && req.body.delivered_at ? String(req.body.delivered_at).trim() : "";
-  const deliveredAtSql = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate + " 12:00:00" : null;
+  const deliveredAtSql = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+    ? rawDate + " 12:00:00"
+    : (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(rawDate) ? rawDate : null);
 
   // Descuento del pedido — SOLO admin. El vendedor no puede descontar; si entrega,
   // se conserva el descuento que el admin haya dejado (no se toca). discount_value

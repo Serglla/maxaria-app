@@ -2987,9 +2987,17 @@
   // Info del pedido para el bloque admin (descuento + rentabilidad). Se llena
   // al abrir el modal como admin con GET /api/orders/:id.
   var deliveryOrderInfo = null;
+  // Para decidir qué fecha/hora mandar al guardar la entrega (ver el submit):
+  // si es una entrega ya existente y cuál era su fecha original.
+  var deliveryWasExisting = false;
+  var deliveryExistingDate = null;
 
   function openDeliveryModal(orderId, orderLabel, existingDelivery) {
     state.deliveryTargetOrderId = orderId;
+    deliveryWasExisting = !!(existingDelivery && existingDelivery.delivered_at);
+    deliveryExistingDate = deliveryWasExisting
+      ? String(existingDelivery.delivered_at).slice(0, 10)
+      : null;
     deliveryOrderInfo = null;
     if (els.deliveryModalOrder) els.deliveryModalOrder.textContent = orderLabel;
     if (els.deliveryFormMsg) els.deliveryFormMsg.textContent = "";
@@ -3274,8 +3282,24 @@
         caja_id: fd.get("caja_id") || null,
         caja_transfer_id: fd.get("caja_transfer_id") || null,
         notes: fd.get("notes"),
-        delivered_at: fd.get("delivered_at") || null,
       };
+      // Fecha/hora de la entrega:
+      // - Entrega NUEVA de hoy: mandamos el timestamp real (UTC) para que quede la
+      //   hora exacta en que se entregó (antes se forzaba mediodía → se veía 09:00).
+      // - Entrega NUEVA con fecha pasada elegida a mano: solo la fecha (el server le
+      //   pone el mediodía, así las comparaciones por día de los reportes caen bien).
+      // - EDICIÓN sin cambiar la fecha: se omite, para conservar la hora real original
+      //   (no pisarla al editar, por ejemplo, solo la nota).
+      // - EDICIÓN cambiando la fecha: se manda la fecha nueva (mediodía de ese día).
+      const todayLocal = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD local
+      const chosenDate = fd.get("delivered_at") || "";
+      if (deliveryWasExisting) {
+        body.delivered_at = (chosenDate && chosenDate !== deliveryExistingDate) ? chosenDate : null;
+      } else if (chosenDate === todayLocal) {
+        body.delivered_at = new Date().toISOString().slice(0, 19).replace("T", " "); // "YYYY-MM-DD HH:MM:SS" UTC
+      } else {
+        body.delivered_at = chosenDate || null;
+      }
       // Descuento (solo admin; el server lo ignora para vendedores). Si no hay
       // tipo elegido, se manda vacío → el server lo interpreta como sin descuento.
       if (state.isAdmin && els.deliveryDiscountType) {
@@ -6399,9 +6423,15 @@
       pickEls.progressFill.classList.toggle("full", total > 0 && done >= total);
     }
     const o = (state.orders || []).find((x) => x.id === pickState.orderId);
-    if (o && (Number(o.pick_done) !== done || Number(o.pick_total) !== total)) {
+    if (o && (Number(o.pick_done) !== done || Number(o.pick_total) !== total ||
+              Number(o.pick_started) !== done)) {
       o.pick_total = total;
       o.pick_done = done;
+      // En el server pick_started === pick_done (ambos = items pick_checked=1).
+      // El aviso "items sin armar" al pasar a Entregas lee pick_started, así que
+      // hay que mantenerlo en sync; sin esto, tras agregar un producto y volver a
+      // chequear, el aviso seguía saliendo (pick_started quedaba con el valor viejo).
+      o.pick_started = done;
       renderArmado();
     }
   }
