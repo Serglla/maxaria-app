@@ -1992,19 +1992,33 @@
     els.actTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
     try {
       const rows = await api("/api/admin/earnings");
-      renderActividad(rows);
+      actState.vendRows = rows || [];
+      renderActividad();
     } catch (e) {
       els.actTbody.innerHTML = '<tr><td colspan="8" class="muted">Error cargando actividad</td></tr>';
     }
   }
 
-  function renderActividad(rows) {
-    if (!rows || !rows.length) {
+  function vendSortVal(r, k) {
+    if (k === "name") return (r.full_name || r.username || "").toLowerCase();
+    if (k === "tipo") return Number(r.is_tercerizado) || 0;
+    if (k === "orders") return Number(r.total_orders) || 0;
+    if (k === "delivered") return Number(r.total_delivered) || 0;
+    if (k === "sold") return Number(r.total_sold) || 0;
+    if (k === "cost") return Number(r.total_cost) || 0;
+    if (k === "earning") return Number(r.total_earning) || 0;
+    return 0;
+  }
+  function renderActividad() {
+    let rows = actState.vendRows || [];
+    if (!rows.length) {
       els.actTbody.innerHTML = '<tr><td colspan="8" class="muted">Sin vendedores</td></tr>';
       els.actTfoot.innerHTML = "";
       if (els.actCount) els.actCount.textContent = "0 vendedores";
       return;
     }
+    rows = reportSortRows(rows, actState.sort.vend, vendSortVal);
+    updateReportSortHeaders("act-table", actState.sort.vend);
     if (els.actCount) els.actCount.textContent = rows.length + (rows.length === 1 ? " vendedor" : " vendedores");
     let tOrders = 0, tDeliv = 0, tSold = 0, tCost = 0, tEarn = 0;
     els.actTbody.innerHTML = rows.map((r) => {
@@ -2097,10 +2111,60 @@
   // Cache de las fechas elegidas y de los datasets para filtros client-side.
   const actState = {
     currentSub: "vendedores",
+    vendRows: [],
+    moRows: [],
     clientsRows: [],
     rankingRows: [],
+    catRows: [],
     deadRows: [],
+    // Estado de orden por tabla (key = data-sort del th; dir asc|desc)
+    sort: {
+      vend:  { key: null, dir: "desc" },
+      mo:    { key: null, dir: "desc" },
+      cli:   { key: null, dir: "desc" },
+      rk:    { key: "earning", dir: "desc" },
+      cat:   { key: null, dir: "desc" },
+      dead:  { key: null, dir: "desc" },
+      stLow: { key: null, dir: "desc" },
+      stOut: { key: null, dir: "desc" },
+    },
   };
+
+  // ---- Helpers genéricos de orden para las tablas de reportes ----
+  // Ordena una copia de rows según el estado st y un extractor de valor valFn.
+  function reportSortRows(rows, st, valFn) {
+    if (!st || !st.key) return rows;
+    const dir = st.dir === "asc" ? 1 : -1;
+    return rows.slice().sort(function (a, b) {
+      const va = valFn(a, st.key), vb = valFn(b, st.key);
+      if (typeof va === "number" && typeof vb === "number") return ((va || 0) - (vb || 0)) * dir;
+      return String(va == null ? "" : va).localeCompare(String(vb == null ? "" : vb), "es", { numeric: true }) * dir;
+    });
+  }
+  // Pinta la flecha ▲/▼ en el header activo.
+  function updateReportSortHeaders(tableId, st) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    table.querySelectorAll("thead th.sortable").forEach(function (th) {
+      th.classList.remove("sort-asc", "sort-desc");
+      if (st.key && th.dataset.sort === st.key) th.classList.add(st.dir === "asc" ? "sort-asc" : "sort-desc");
+    });
+  }
+  // Conecta el click en los headers .sortable de una tabla. Mismo header invierte
+  // la dirección; otro header arranca en su dirección por defecto (data-defdir o desc).
+  function wireReportSort(tableId, st, rerender) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    table.querySelectorAll("thead th.sortable").forEach(function (th) {
+      th.addEventListener("click", function () {
+        const k = th.dataset.sort;
+        if (!k) return;
+        if (st.key === k) st.dir = st.dir === "asc" ? "desc" : "asc";
+        else { st.key = k; st.dir = th.dataset.defdir || "desc"; }
+        rerender();
+      });
+    });
+  }
 
   function todayIso() { return new Date().toISOString().slice(0, 10); }
   function isoDaysAgo(n) {
@@ -2165,14 +2229,27 @@
       els.actCliTbody.innerHTML = '<tr><td colspan="9" class="muted">Error cargando datos</td></tr>';
     }
   }
+  function cliSortVal(r, k) {
+    if (k === "name") return (r.full_name || r.username || "").toLowerCase();
+    if (k === "orders") return Number(r.orders_count) || 0;
+    if (k === "delivered") return Number(r.delivered_count) || 0;
+    if (k === "sold") return Number(r.total_sold) || 0;
+    if (k === "avg") return Number(r.orders_count) > 0 ? (Number(r.total_sold) || 0) / Number(r.orders_count) : 0;
+    if (k === "cost") return Number(r.total_cost) || 0;
+    if (k === "earning") return Number(r.total_earning) || 0;
+    if (k === "last") return r.last_order_at || "";
+    return 0;
+  }
   function renderActClients() {
     if (!els.actCliTbody) return;
     const q = (els.actCliSearch && els.actCliSearch.value || "").trim().toLowerCase();
-    const rows = actState.clientsRows.filter((r) => {
+    let rows = actState.clientsRows.filter((r) => {
       if (!q) return true;
       const hay = (r.full_name || "") + " " + (r.username || "");
       return hay.toLowerCase().indexOf(q) !== -1;
     });
+    rows = reportSortRows(rows, actState.sort.cli, cliSortVal);
+    updateReportSortHeaders("act-cli-table", actState.sort.cli);
     if (els.actCliCount) {
       els.actCliCount.textContent = rows.length + (rows.length === 1 ? " cliente" : " clientes");
     }
@@ -2299,27 +2376,28 @@
       els.actRkTbody.innerHTML = '<tr><td colspan="10" class="muted">Error cargando datos</td></tr>';
     }
   }
+  function rkSortVal(r, k) {
+    if (k === "name") return (r.name || "").toLowerCase();
+    if (k === "category") return (r.category_name || "").toLowerCase();
+    if (k === "units") return Number(r.units_sold) || 0;
+    if (k === "sold") return Number(r.total_sold) || 0;
+    if (k === "cost") return Number(r.total_cost) || 0;
+    if (k === "earning") return Number(r.total_earning) || 0;
+    if (k === "margin") { const t = Number(r.total_sold) || 0; return t > 0 ? (Number(r.total_earning) || 0) / t : 0; }
+    if (k === "stock") return Number(r.stock) || 0;
+    if (k === "last") return r.last_sold_at || "";
+    return 0;
+  }
   function renderActRanking() {
     if (!els.actRkTbody) return;
     const q = (els.actRkSearch && els.actRkSearch.value || "").trim().toLowerCase();
-    const sortKey = (els.actRkSort && els.actRkSort.value) || "earning";
     let rows = actState.rankingRows.filter((r) => {
       if (!q) return true;
       const hay = (r.name || "") + " " + (r.code || "") + " " + (r.category_name || "");
       return hay.toLowerCase().indexOf(q) !== -1;
-    }).slice();
-    rows.sort((a, b) => {
-      function score(r) {
-        if (sortKey === "sold") return Number(r.total_sold) || 0;
-        if (sortKey === "units") return Number(r.units_sold) || 0;
-        if (sortKey === "margin") {
-          const t = Number(r.total_sold) || 0;
-          return t > 0 ? (Number(r.total_earning) || 0) / t : 0;
-        }
-        return Number(r.total_earning) || 0;
-      }
-      return score(b) - score(a);
     });
+    rows = reportSortRows(rows, actState.sort.rk, rkSortVal);
+    updateReportSortHeaders("act-rk-table", actState.sort.rk);
     if (els.actRkCount) {
       els.actRkCount.textContent = rows.length + (rows.length === 1 ? " producto" : " productos");
     }
@@ -2366,7 +2444,11 @@
     }
   }
   if (els.actRkApply) els.actRkApply.addEventListener("click", loadActRanking);
-  if (els.actRkSort) els.actRkSort.addEventListener("change", renderActRanking);
+  if (els.actRkSort) els.actRkSort.addEventListener("change", () => {
+    actState.sort.rk.key = els.actRkSort.value || "earning";
+    actState.sort.rk.dir = "desc";
+    renderActRanking();
+  });
   if (els.actRkSearch) {
     els.actRkSearch.addEventListener("input", () => {
       clearTimeout(els.actRkSearch._t);
@@ -2386,7 +2468,23 @@
       if (els.actStOutTbody) els.actStOutTbody.innerHTML = '<tr><td colspan="4" class="muted">Error</td></tr>';
     }
   }
+  function stLowSortVal(p, k) {
+    if (k === "code") return (p.code || "").toLowerCase();
+    if (k === "name") return (p.name || "").toLowerCase();
+    if (k === "stock") return Number(p.stock) || 0;
+    if (k === "cost") return Number(p.cost) || 0;
+    if (k === "value") return (Number(p.cost) || 0) * (Number(p.stock) || 0);
+    return 0;
+  }
+  function stOutSortVal(p, k) {
+    if (k === "code") return (p.code || "").toLowerCase();
+    if (k === "name") return (p.name || "").toLowerCase();
+    if (k === "cost") return Number(p.cost) || 0;
+    if (k === "minorista") return Number(p.price_minorista) || 0;
+    return 0;
+  }
   function renderActStock(data) {
+    actState.stockData = data;
     const t = data.totals || {};
     if (els.actStKpis) {
       els.actStKpis.querySelectorAll("[data-k]").forEach((el) => {
@@ -2403,7 +2501,8 @@
       els.actStPotVal.textContent = fmtMoney(pot);
     }
     if (els.actStLowTbody) {
-      const list = data.low_stock || [];
+      const list = reportSortRows(data.low_stock || [], actState.sort.stLow, stLowSortVal);
+      updateReportSortHeaders("act-st-low-table", actState.sort.stLow);
       if (!list.length) {
         els.actStLowTbody.innerHTML = '<tr><td colspan="5" class="muted">Nada por debajo del umbral</td></tr>';
       } else {
@@ -2420,7 +2519,8 @@
       }
     }
     if (els.actStOutTbody) {
-      const list = data.out_of_stock || [];
+      const list = reportSortRows(data.out_of_stock || [], actState.sort.stOut, stOutSortVal);
+      updateReportSortHeaders("act-st-out-table", actState.sort.stOut);
       if (!list.length) {
         els.actStOutTbody.innerHTML = '<tr><td colspan="4" class="muted">No hay productos activos sin stock</td></tr>';
       } else {
@@ -2443,13 +2543,29 @@
     els.actCatTbody.innerHTML = '<tr><td colspan="9" class="muted">Cargando…</td></tr>';
     try {
       const data = await api("/api/admin/activity/stock-by-category");
-      renderActCategories(data.rows || []);
+      actState.catRows = data.rows || [];
+      renderActCategories();
     } catch (e) {
       els.actCatTbody.innerHTML = '<tr><td colspan="9" class="muted">Error cargando datos</td></tr>';
     }
   }
-  function renderActCategories(rows) {
+  function catSortVal(c, k) {
+    if (k === "category") return (c.category_name || "").toLowerCase();
+    if (k === "products") return Number(c.total_products) || 0;
+    if (k === "instock") return Number(c.in_stock_products) || 0;
+    if (k === "outstock") return Number(c.out_of_stock_products) || 0;
+    if (k === "units") return Number(c.units_in_stock) || 0;
+    if (k === "cost") return Number(c.value_cost) || 0;
+    if (k === "minorista") return Number(c.value_minorista) || 0;
+    if (k === "mayorista") return Number(c.value_mayorista) || 0;
+    if (k === "pot") return (Number(c.value_minorista) || 0) - (Number(c.value_cost) || 0);
+    return 0;
+  }
+  function renderActCategories() {
     if (!els.actCatTbody) return;
+    let rows = actState.catRows || [];
+    rows = reportSortRows(rows, actState.sort.cat, catSortVal);
+    updateReportSortHeaders("act-cat-table", actState.sort.cat);
     if (els.actCatCount) {
       els.actCatCount.textContent = rows.length + (rows.length === 1 ? " categoría" : " categorías");
     }
@@ -2508,9 +2624,20 @@
       els.actDeadTbody.innerHTML = '<tr><td colspan="7" class="muted">Error cargando datos</td></tr>';
     }
   }
+  function deadSortVal(p, k) {
+    if (k === "code") return (p.code || "").toLowerCase();
+    if (k === "name") return (p.name || "").toLowerCase();
+    if (k === "category") return (p.category_name || "").toLowerCase();
+    if (k === "stock") return Number(p.stock) || 0;
+    if (k === "cost") return Number(p.cost) || 0;
+    if (k === "cap") return (Number(p.cost) || 0) * (Number(p.stock) || 0);
+    if (k === "last") return p.last_sold_at || "";
+    return 0;
+  }
   function renderActDead() {
     if (!els.actDeadTbody) return;
-    const rows = actState.deadRows;
+    let rows = reportSortRows(actState.deadRows || [], actState.sort.dead, deadSortVal);
+    updateReportSortHeaders("act-dead-table", actState.sort.dead);
     if (els.actDeadCount) {
       els.actDeadCount.textContent = rows.length + (rows.length === 1 ? " producto" : " productos");
     }
@@ -2566,8 +2693,24 @@
     }
   }
 
+  function moSortVal(r, k) {
+    if (k === "month") return r.month || "";
+    if (k === "orders") return Number(r.orders_count) || 0;
+    if (k === "delivered") return Number(r.delivered_count) || 0;
+    if (k === "gross") return Number(r.gross_sales) || 0;
+    if (k === "cost") return Number(r.cost_total) || 0;
+    if (k === "earning") return Number(r.net_earning) || 0;
+    if (k === "margin") { const g = Number(r.gross_sales) || 0; return g > 0 ? (Number(r.net_earning) || 0) / g : 0; }
+    if (k === "avg") return Number(r.avg_ticket) || 0;
+    if (k === "purch") return Number(r.purchases_total) || 0;
+    if (k === "exp") return Number(r.expenses_total) || 0;
+    if (k === "pays") return Number(r.payments_total) || 0;
+    return 0;
+  }
   function renderActMonthly(rows) {
     if (!els.actMoTbody) return;
+    actState.moRows = rows || [];
+    updateReportSortHeaders("act-mo-table", actState.sort.mo);
     if (els.actMoCount) {
       els.actMoCount.textContent = rows.length + (rows.length === 1 ? " mes" : " meses");
     }
@@ -2578,9 +2721,12 @@
       return;
     }
     let tOrders = 0, tDeliv = 0, tGross = 0, tCost = 0, tEarn = 0, tPurch = 0, tPays = 0, tExp = 0;
-    // Mostramos del mes mas reciente al mas viejo en la tabla.
+    // El gráfico va del mes más reciente al más viejo (cronológico inverso).
     const ordered = rows.slice().reverse();
-    els.actMoTbody.innerHTML = ordered.map((r) => {
+    // La tabla respeta el orden elegido por click en los headers; si no hay
+    // orden activo, usa el mismo orden que el gráfico (más reciente arriba).
+    const tableRows = actState.sort.mo.key ? reportSortRows(rows, actState.sort.mo, moSortVal) : ordered;
+    els.actMoTbody.innerHTML = tableRows.map((r) => {
       tOrders += Number(r.orders_count) || 0;
       tDeliv += Number(r.delivered_count) || 0;
       tGross += Number(r.gross_sales) || 0;
@@ -2676,6 +2822,16 @@
   }
 
   if (els.actMoMonths) els.actMoMonths.addEventListener("change", loadActMonthly);
+
+  // Orden por click en los headers de cada tabla de reportes.
+  wireReportSort("act-table",        actState.sort.vend,  renderActividad);
+  wireReportSort("act-mo-table",     actState.sort.mo,    () => renderActMonthly(actState.moRows));
+  wireReportSort("act-cli-table",    actState.sort.cli,   renderActClients);
+  wireReportSort("act-rk-table",     actState.sort.rk,    renderActRanking);
+  wireReportSort("act-cat-table",    actState.sort.cat,   renderActCategories);
+  wireReportSort("act-dead-table",   actState.sort.dead,  renderActDead);
+  wireReportSort("act-st-low-table", actState.sort.stLow, () => renderActStock(actState.stockData || {}));
+  wireReportSort("act-st-out-table", actState.sort.stOut, () => renderActStock(actState.stockData || {}));
 
   // -------- Listas de precios --------
   async function loadPriceLists() {
@@ -11419,7 +11575,19 @@
     tbody:      document.getElementById("rpt-tbody"),
     tfoot:      document.getElementById("rpt-tfoot"),
   };
-  const rptState = { rows: [], expanded: new Set() };
+  const rptState = { rows: [], expanded: new Set(), data: null, sort: { key: null, dir: "desc" } };
+  function rptSortVal(o, k) {
+    if (k === "id") return Number(o.id) || 0;
+    if (k === "date") return o.created_at || "";
+    if (k === "client") return (o.client_name || o.client_username || "").toLowerCase();
+    if (k === "vendedor") return (o.vendedor_name || "").toLowerCase();
+    if (k === "status") return o.status || "";
+    if (k === "items") return Number(o.items_count) || 0;
+    if (k === "total") return Number(o.total) || 0;
+    if (k === "ganancia") return Number(o.earning_total) || 0;
+    if (k === "margin") return Number(o.total) > 0 ? (Number(o.earning_total) || 0) / Number(o.total) : 0;
+    return 0;
+  }
 
   function rptFmt(n) { return "$ " + Number(n).toLocaleString("es-AR"); }
   function rptPct(num, den) { return den > 0 ? Math.round(num / den * 100) + "%" : "—"; }
@@ -11496,6 +11664,7 @@
   }
 
   function renderReportes(data) {
+    rptState.data = data;
     const { kpis, cobros, orders } = data;
     // KPIs
     const setKpi = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
@@ -11515,8 +11684,10 @@
     }
 
     // Tabla
+    const sortedOrders = reportSortRows(orders, rptState.sort, rptSortVal);
+    updateReportSortHeaders("rpt-table", rptState.sort);
     let tVentas = 0, tGanancia = 0;
-    rptEls.tbody.innerHTML = orders.map((o) => {
+    rptEls.tbody.innerHTML = sortedOrders.map((o) => {
       tVentas    += Number(o.total)         || 0;
       tGanancia  += Number(o.earning_total) || 0;
       const margen = o.total > 0 ? Math.round(o.earning_total / o.total * 100) : 0;
@@ -11598,6 +11769,9 @@
   // Botón Aplicar
   if (rptEls.applyBtn) rptEls.applyBtn.addEventListener("click", applyReportes);
 
+  // Orden por click en los headers
+  wireReportSort("rpt-table", rptState.sort, () => { if (rptState.data) renderReportes(rptState.data); });
+
   // Export CSV
   if (rptEls.exportBtn) {
     rptEls.exportBtn.addEventListener("click", () => {
@@ -11641,8 +11815,22 @@
     kpiCambios: document.getElementById("inf-kpi-cambios"),
     kpiStock:   document.getElementById("inf-kpi-stock"),
   };
-  const infState = { changes: [] };
+  const infState = { changes: [], sort: { key: null, dir: "desc" } };
   const INF_SOURCE_LABEL = { compra: "🛒 Compra", manual: "✏️ Manual", excel: "📊 Excel" };
+  function infSortVal(c, k) {
+    if (k === "date") return c.created_at || "";
+    if (k === "product") return (c.name || "").toLowerCase();
+    if (k === "source") return c.source || "";
+    if (k === "old") return Number(c.old_cost) || 0;
+    if (k === "new") return Number(c.new_cost) || 0;
+    if (k === "delta") return c.delta_pct == null ? -Infinity : Number(c.delta_pct);
+    if (k === "stock") return Number(c.stock_at_change) || 0;
+    if (k === "reval") return Number(c.revalorizacion) || 0;
+    if (k === "sold") return c.sold_qty == null ? -Infinity : Number(c.sold_qty);
+    if (k === "perdida") return c.perdida == null ? 0 : -Number(c.perdida);
+    if (k === "neto") return Number(c.neto) || 0;
+    return 0;
+  }
 
   function infFmt(n) {
     const v = Math.round(Number(n)) || 0;
@@ -11687,6 +11875,7 @@
   }
 
   function renderInflacion(data) {
+    infState.data = data;
     const t = data.totals || {};
     if (infEls.kpiReval)   infEls.kpiReval.textContent = infSignedText(t.revalorizacion);
     if (infEls.kpiPerdida) infEls.kpiPerdida.textContent = infSignedText(-(t.perdida || 0));
@@ -11697,7 +11886,8 @@
     }
     if (infEls.kpiStock) infEls.kpiStock.textContent = infFmt(data.stock_value_now);
 
-    const rows = infState.changes;
+    const rows = reportSortRows(infState.changes, infState.sort, infSortVal);
+    updateReportSortHeaders("inf-table", infState.sort);
     if (!rows.length) {
       infEls.tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;padding:24px">' +
         "Sin cambios de costo en el período. Los cambios se registran desde que esta función está activa.</td></tr>";
@@ -11765,6 +11955,7 @@
   }
 
   if (infEls.applyBtn) infEls.applyBtn.addEventListener("click", loadInflacion);
+  wireReportSort("inf-table", infState.sort, () => { if (infState.data) renderInflacion(infState.data); });
   if (infEls.exportBtn) {
     infEls.exportBtn.addEventListener("click", () => {
       if (!infState.changes.length) { alertModal("No hay datos para exportar."); return; }

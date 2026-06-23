@@ -806,15 +806,15 @@
         <table class="admin-table" id="rpt-table">
           <thead>
             <tr>
-              <th>#</th>
-              <th>Fecha</th>
-              <th>Cliente</th>
-              <th>Vendedor</th>
-              <th>Estado</th>
-              <th class="num">Items</th>
-              <th class="num">Total</th>
-              <th class="num">Ganancia</th>
-              <th class="num">Margen</th>
+              <th class="sortable" data-sort="id">#<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="date" data-defdir="desc">Fecha<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="client" data-defdir="asc">Cliente<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="vendedor" data-defdir="asc">Vendedor<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="status" data-defdir="asc">Estado<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="items">Items<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="total">Total<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="ganancia">Ganancia<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="margin">Margen<span class="sort-arrow"></span></th>
               <th></th>
             </tr>
           </thead>
@@ -871,17 +871,17 @@
         <table class="admin-table" id="inf-table">
           <thead>
             <tr>
-              <th>Fecha</th>
-              <th>Producto</th>
-              <th>Origen</th>
-              <th class="num">Costo viejo</th>
-              <th class="num">Costo nuevo</th>
-              <th class="num">Δ %</th>
-              <th class="num" title="Stock que había al momento del cambio (sin contar lo que entró con la compra)">Stock</th>
-              <th class="num" title="Stock al cambio × suba de costo">Ganado stock</th>
-              <th class="num" title="Unidades vendidas desde el cambio de costo anterior">Vendido</th>
-              <th class="num" title="Vendido × suba de costo: lo que cuesta de más reponerlo">Perdido ventas</th>
-              <th class="num">Neto</th>
+              <th class="sortable" data-sort="date" data-defdir="desc">Fecha<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="product" data-defdir="asc">Producto<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="source" data-defdir="asc">Origen<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="old">Costo viejo<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="new">Costo nuevo<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="delta">Δ %<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="stock" title="Stock que había al momento del cambio (sin contar lo que entró con la compra)">Stock<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="reval" title="Stock al cambio × suba de costo">Ganado stock<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="sold" title="Unidades vendidas desde el cambio de costo anterior">Vendido<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="perdida" title="Vendido × suba de costo: lo que cuesta de más reponerlo">Perdido ventas<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="neto">Neto<span class="sort-arrow"></span></th>
               <th title="Borrar este registro (no afecta el costo actual del producto)"></th>
             </tr>
           </thead>
@@ -917,13 +917,13 @@
           <table class="admin-table" id="act-table">
             <thead>
               <tr>
-                <th>Vendedor</th>
-                <th>Tipo</th>
-                <th class="num">Pedidos</th>
-                <th class="num">Entregados</th>
-                <th class="num">Total vendido</th>
-                <th class="num">Costo</th>
-                <th class="num">Ganancia</th>
+                <th class="sortable" data-sort="name" data-defdir="asc">Vendedor<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="tipo" data-defdir="asc">Tipo<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="orders">Pedidos<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="delivered">Entregados<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="sold">Total vendido<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="cost">Costo<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="earning">Ganancia<span class="sort-arrow"></span></th>
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -944,7 +944,6 @@
               <option value="24">24 meses</option>
             </select>
           </label>
-          <span class="muted small">Ventas (no cancelados), ganancia neta (precio − costo), gastos en compras a proveedores, cobranzas registradas.</span>
           <span class="admin-spacer"></span>
           <span id="act-mo-count" class="muted">…</span>
         </div>
@@ -970,17 +969,17 @@
           <table class="admin-table" id="act-mo-table">
             <thead>
               <tr>
-                <th>Mes</th>
-                <th class="num">Pedidos</th>
-                <th class="num">Entregados</th>
-                <th class="num">Ventas brutas</th>
-                <th class="num">Costo</th>
-                <th class="num">Ganancia</th>
-                <th class="num">Margen</th>
-                <th class="num">Ticket prom.</th>
-                <th class="num">Compras merc.</th>
-                <th class="num">Gastos grales.</th>
-                <th class="num">Cobranzas</th>
+                <th class="sortable" data-sort="month" data-defdir="asc">Mes<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="orders">Pedidos<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="delivered">Entregados<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="gross">Ventas brutas<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="cost">Costo<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="earning">Ganancia<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="margin">Margen<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="avg">Ticket prom.<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="purch">Compras merc.<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="exp">Gastos grales.<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="pays">Cobranzas<span class="sort-arrow"></span></th>
               </tr>
             </thead>
             <tbody id="act-mo-tbody"><tr><td colspan="11" class="muted">Cargando…</td></tr></tbody>
@@ -1007,14 +1006,14 @@
           <table class="admin-table" id="act-cli-table">
             <thead>
               <tr>
-                <th>Cliente</th>
-                <th class="num">Pedidos</th>
-                <th class="num">Entregados</th>
-                <th class="num">Total comprado</th>
-                <th class="num">Ticket promedio</th>
-                <th class="num">Costo</th>
-                <th class="num">Ganancia</th>
-                <th>Último pedido</th>
+                <th class="sortable" data-sort="name" data-defdir="asc">Cliente<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="orders">Pedidos<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="delivered">Entregados<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="sold">Total comprado<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="avg">Ticket promedio<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="cost">Costo<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="earning">Ganancia<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="last" data-defdir="desc">Último pedido<span class="sort-arrow"></span></th>
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -1047,15 +1046,15 @@
             <thead>
               <tr>
                 <th>#</th>
-                <th>Producto</th>
-                <th>Categoría</th>
-                <th class="num">Unidades</th>
-                <th class="num">Vendido</th>
-                <th class="num">Costo</th>
-                <th class="num">Ganancia</th>
-                <th class="num">Margen</th>
-                <th class="num">Stock</th>
-                <th>Última venta</th>
+                <th class="sortable" data-sort="name" data-defdir="asc">Producto<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="category" data-defdir="asc">Categoría<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="units">Unidades<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="sold">Vendido<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="cost">Costo<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="earning">Ganancia<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="margin">Margen<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="stock">Stock<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="last" data-defdir="desc">Última venta<span class="sort-arrow"></span></th>
               </tr>
             </thead>
             <tbody id="act-rk-tbody"><tr><td colspan="10" class="muted">Cargando…</td></tr></tbody>
@@ -1095,14 +1094,14 @@
 
         <h4 style="margin-top:24px;margin-bottom:8px">⚠️ Productos con stock bajo</h4>
         <div class="admin-table-wrap">
-          <table class="admin-table">
+          <table class="admin-table" id="act-st-low-table">
             <thead>
               <tr>
-                <th>Código</th>
-                <th>Nombre</th>
-                <th class="num">Stock</th>
-                <th class="num">Costo unit.</th>
-                <th class="num">Valor a costo</th>
+                <th class="sortable" data-sort="code" data-defdir="asc">Código<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="name" data-defdir="asc">Nombre<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="stock">Stock<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="cost">Costo unit.<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="value">Valor a costo<span class="sort-arrow"></span></th>
               </tr>
             </thead>
             <tbody id="act-st-low-tbody"><tr><td colspan="5" class="muted">—</td></tr></tbody>
@@ -1111,13 +1110,13 @@
 
         <h4 style="margin-top:24px;margin-bottom:8px">🛑 Productos sin stock (activos)</h4>
         <div class="admin-table-wrap">
-          <table class="admin-table">
+          <table class="admin-table" id="act-st-out-table">
             <thead>
               <tr>
-                <th>Código</th>
-                <th>Nombre</th>
-                <th class="num">Costo unit.</th>
-                <th class="num">Precio minorista</th>
+                <th class="sortable" data-sort="code" data-defdir="asc">Código<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="name" data-defdir="asc">Nombre<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="cost">Costo unit.<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="minorista">Precio minorista<span class="sort-arrow"></span></th>
               </tr>
             </thead>
             <tbody id="act-st-out-tbody"><tr><td colspan="4" class="muted">—</td></tr></tbody>
@@ -1136,15 +1135,15 @@
           <table class="admin-table" id="act-cat-table">
             <thead>
               <tr>
-                <th>Categoría</th>
-                <th class="num">Productos</th>
-                <th class="num">Con stock</th>
-                <th class="num">Sin stock</th>
-                <th class="num">Unidades</th>
-                <th class="num">Valor a costo</th>
-                <th class="num">Valor minorista</th>
-                <th class="num">Valor mayorista</th>
-                <th class="num">Gan. potencial</th>
+                <th class="sortable" data-sort="category" data-defdir="asc">Categoría<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="products">Productos<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="instock">Con stock<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="outstock">Sin stock<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="units">Unidades<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="cost">Valor a costo<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="minorista">Valor minorista<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="mayorista">Valor mayorista<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="pot">Gan. potencial<span class="sort-arrow"></span></th>
               </tr>
             </thead>
             <tbody id="act-cat-tbody"><tr><td colspan="9" class="muted">Cargando…</td></tr></tbody>
@@ -1168,13 +1167,13 @@
           <table class="admin-table" id="act-dead-table">
             <thead>
               <tr>
-                <th>Código</th>
-                <th>Nombre</th>
-                <th>Categoría</th>
-                <th class="num">Stock</th>
-                <th class="num">Costo unit.</th>
-                <th class="num">Capital parado</th>
-                <th>Última venta</th>
+                <th class="sortable" data-sort="code" data-defdir="asc">Código<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="name" data-defdir="asc">Nombre<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="category" data-defdir="asc">Categoría<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="stock">Stock<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="cost">Costo unit.<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="cap">Capital parado<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="last" data-defdir="desc">Última venta<span class="sort-arrow"></span></th>
               </tr>
             </thead>
             <tbody id="act-dead-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
@@ -3394,6 +3393,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260623a"></script>
+  <script src="/js/admin.js?v=20260623c"></script>
 </body>
 </html>
