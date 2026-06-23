@@ -8545,7 +8545,7 @@
           '</div>' +
         '</td>' +
         '<td style="text-align:right">' +
-          '<input type="number" min="1" value="' + qtyDisp + '" style="width:55px;text-align:right" ' +
+          '<input type="number" min="1" value="' + qtyDisp + '" style="width:78px;text-align:right;font-size:15px;padding:5px 6px" ' +
           'data-cot-idx="' + idx + '" data-qty-factor="' + qtyFactor + '" class="admin-input pcot-qty-input" ' +
           'title="' + (isComp ? "Cantidad en comprimidos" : "Cantidad en unidades (tabletas)") + '">' +
           (isComp ? '<div style="font-size:10px;color:#9ca3af;line-height:1.1">comp · = ' + fmtTabletas(it.quantity) + ' tabl</div>' : '') +
