@@ -3677,6 +3677,18 @@
     npForReception = false;
   });
 
+  // Al enfocar un campo numérico (cantidad/precio/costo en editores y pickers),
+  // seleccionar todo el contenido para poder tipear directo sin borrar el valor
+  // previo. Ej: en "Agregar productos al pedido", click en la cantidad y escribir
+  // "6" reemplaza el "1" sin tener que borrarlo primero.
+  document.addEventListener("focusin", (e) => {
+    const t = e.target;
+    if (t && t.tagName === "INPUT" && t.type === "number" &&
+        (t.classList.contains("cell-num") || t.classList.contains("pick-qty-input"))) {
+      setTimeout(() => { try { t.select(); } catch (_) {} }, 0);
+    }
+  });
+
   // ---------- Config ----------
   async function loadSettings() {
     try {
