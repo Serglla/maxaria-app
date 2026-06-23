@@ -6945,6 +6945,7 @@
 
   function recvRowHtml(it) {
     const upb = Math.max(1, Number(it.units_per_bulto) || 1);
+    const cpt = Math.max(1, parseComprimidos(it.product_name) || 1);
     const qty = Number(it.quantity);
     const checked = it.checked_qty != null;
     const ok = checked && Number(it.checked_qty) === qty;
@@ -6968,9 +6969,12 @@
         '<span class="recv-exp-lbl">Vence</span>' +
         '<input type="text" class="recv-exp-input" inputmode="numeric" maxlength="5" placeholder="MM/AA" value="' + expVal + '" />' +
       "</div>" +
-      '<div class="pick-qtybox recv-qtybox" title="Cantidad recibida — cargá bultos o unidades; click en la fila = tildar lo cargado">' +
+      '<div class="pick-qtybox recv-qtybox" title="Cantidad recibida — cargá bultos, comprimidos o unidades; click en la fila = tildar lo cargado">' +
         (upb > 1
           ? '<input type="number" class="pick-qty-input recv-bulto-input" min="0" step="any" placeholder="0" value="' + bultosVal + '" /><span class="recv-qty-sep">bultos</span>'
+          : "") +
+        (cpt > 1
+          ? '<input type="number" class="pick-qty-input recv-comp-input" min="0" step="1" placeholder="0" data-cpt="' + cpt + '" title="Comprimidos recibidos (' + cpt + ' comp = 1 tableta)" /><span class="recv-qty-sep">comp</span>'
           : "") +
         '<input type="number" class="pick-qty-input recv-unit-input" min="0" step="any" placeholder="0" value="' + unitsVal + '" />' +
         '<span class="pick-qty-req">/ ' + qty + " un.</span>" +
@@ -7099,11 +7103,14 @@
       const it = recvState.items.find((i) => i.id === id);
       if (!it) return;
       const upb = Math.max(1, Number(it.units_per_bulto) || 1);
+      const cpt = Math.max(1, Number(inp.dataset.cpt) || parseComprimidos(it.product_name) || 1);
       let qty = null;
       if (inp.value !== "") {
         let n = Number(inp.value);
         if (!isFinite(n) || n < 0) n = 0;
-        qty = inp.classList.contains("recv-bulto-input") ? Math.round(n * upb * 100) / 100 : n;
+        qty = inp.classList.contains("recv-bulto-input") ? Math.round(n * upb * 100) / 100
+            : inp.classList.contains("recv-comp-input") ? Math.round((n / cpt) * 100) / 100
+            : n;
       }
       inp.blur();
       recvPost(id, qty);
@@ -7822,17 +7829,47 @@
       recalcPurchaseTotal();
       return;
     }
-    els.purItemsTbody.innerHTML = state.purchaseItems.map((it, idx) =>
-      '<tr data-idx="' + idx + '">' +
-      '<td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
-      '<td>' + escapeHtml(it.product_name || "") + '</td>' +
-      '<td class="num"><input type="number" class="cell-input cell-num pur-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:70px" /></td>' +
-      '<td class="num"><input type="number" class="cell-input cell-num pur-cost" min="0" step="0.01" value="' + it.unit_cost + '" data-idx="' + idx + '" style="width:90px" /></td>' +
-      '<td class="num pur-subtotal">' + fmtPrice(it.subtotal) + '</td>' +
-      '<td><button type="button" class="btn btn-small pur-remove" data-idx="' + idx + '">✕</button></td>' +
-    '</tr>'
-    ).join("");
+    els.purItemsTbody.innerHTML = state.purchaseItems.map((it, idx) => {
+      const isComp  = it.pack_mode === "comprimido";
+      const cpt     = isComp ? Math.max(1, Number(it.cpt) || 1) : 1;
+      const qtyVal  = isComp ? (Number(it.comp_qty) || 0) : it.quantity;
+      const costVal = isComp ? (Number(it.comp_cost) || 0) : it.unit_cost;
+      const tabIsInt = !isComp || (Number(it.comp_qty) || 0) % cpt === 0;
+      const modeSel =
+        '<select class="admin-input pur-mode" data-idx="' + idx + '" style="font-size:10px;padding:1px 2px;width:100px;margin-bottom:3px">' +
+          '<option value="tableta"' + (!isComp ? " selected" : "") + '>por tableta</option>' +
+          '<option value="comprimido"' + (isComp ? " selected" : "") + '>por comprimido</option>' +
+        '</select>';
+      const compExtra = isComp
+        ? '<div style="display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:2px">' +
+            '<input type="number" class="cell-input cell-num pur-cpt" min="1" step="1" value="' + cpt + '" data-idx="' + idx + '" style="width:46px" title="Comprimidos por tableta (detectado del nombre, editable)" />' +
+            '<span style="font-size:10px;color:#9ca3af">c/tab</span>' +
+          '</div>' +
+          '<div style="font-size:10px;' + (tabIsInt ? "color:#9ca3af" : "color:#dc2626;font-weight:700") + '">= ' + fmtTabletas(it.quantity) + ' tabl' + (tabIsInt ? "" : " ⚠") + '</div>'
+        : "";
+      return '<tr data-idx="' + idx + '">' +
+        '<td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
+        '<td>' + escapeHtml(it.product_name || "") + '</td>' +
+        '<td class="num">' + modeSel +
+          '<input type="number" class="cell-input cell-num pur-qty" min="1" step="1" value="' + qtyVal + '" data-idx="' + idx + '" style="width:70px" title="' + (isComp ? "Cantidad en comprimidos" : "Cantidad en tabletas (unidades)") + '" />' +
+          compExtra +
+        '</td>' +
+        '<td class="num"><input type="number" class="cell-input cell-num pur-cost" min="0" step="0.01" value="' + costVal + '" data-idx="' + idx + '" style="width:90px" />' +
+          (isComp ? '<div style="font-size:10px;color:#9ca3af">$/comp</div>' : "") +
+        '</td>' +
+        '<td class="num pur-subtotal">' + fmtPrice(it.subtotal) + '</td>' +
+        '<td><button type="button" class="btn btn-small pur-remove" data-idx="' + idx + '">✕</button></td>' +
+      '</tr>';
+    }).join("");
     recalcPurchaseTotal();
+  }
+
+  // Recalcula quantity/unit_cost canónicos (en tabletas) de un item en modo comprimido.
+  function purSyncComp(it) {
+    const cpt = Math.max(1, Number(it.cpt) || 1);
+    it.quantity = (Number(it.comp_qty) || 0) / cpt;
+    it.unit_cost = Math.round((Number(it.comp_cost) || 0) * cpt);
+    it.subtotal = it.unit_cost * it.quantity;
   }
 
   function addPurchaseItem(product, qty) {
@@ -7859,19 +7896,48 @@
       const idx = e.target.dataset.idx != null ? Number(e.target.dataset.idx) : -1;
       if (idx < 0 || !state.purchaseItems[idx]) return;
       const it = state.purchaseItems[idx];
+      const isComp = it.pack_mode === "comprimido";
       if (e.target.classList.contains("pur-qty")) {
-        it.quantity = Math.max(1, Math.floor(Number(e.target.value) || 1));
-        it.subtotal = it.quantity * it.unit_cost;
+        if (isComp) { it.comp_qty = Math.max(1, Math.floor(Number(e.target.value) || 1)); purSyncComp(it); }
+        else { it.quantity = Math.max(1, Math.floor(Number(e.target.value) || 1)); it.subtotal = it.quantity * it.unit_cost; }
       } else if (e.target.classList.contains("pur-cost")) {
-        it.unit_cost = Math.max(0, Number(e.target.value) || 0);
-        it.subtotal = it.quantity * it.unit_cost;
-      }
+        if (isComp) { it.comp_cost = Math.max(0, Number(e.target.value) || 0); purSyncComp(it); }
+        else { it.unit_cost = Math.max(0, Number(e.target.value) || 0); it.subtotal = it.quantity * it.unit_cost; }
+      } else if (e.target.classList.contains("pur-cpt")) {
+        it.cpt = Math.max(1, Math.floor(Number(e.target.value) || 1)); purSyncComp(it);
+      } else return;
       const tr = e.target.closest("tr");
       if (tr) {
         const subtotalCell = tr.querySelector(".pur-subtotal");
         if (subtotalCell) subtotalCell.textContent = fmtPrice(it.subtotal);
       }
       recalcPurchaseTotal();
+    });
+
+    // Cambio de modo/cpt (select y blur de inputs) → re-render para refrescar el
+    // aviso "= N tabl ⚠" y los campos por comprimido.
+    els.purItemsTbody.addEventListener("change", (e) => {
+      const idx = e.target.dataset.idx != null ? Number(e.target.dataset.idx) : -1;
+      if (idx < 0 || !state.purchaseItems[idx]) return;
+      const it = state.purchaseItems[idx];
+      if (e.target.classList.contains("pur-mode")) {
+        if (e.target.value === "comprimido") {
+          it.pack_mode = "comprimido";
+          it.cpt = Math.max(1, parseComprimidos(it.product_name) || 1);
+          it.comp_qty = Math.max(1, Math.round((it.quantity || 1) * it.cpt));
+          it.comp_cost = Math.round((it.unit_cost || 0) / it.cpt);
+          purSyncComp(it);
+        } else {
+          it.pack_mode = "tableta";
+          it.quantity = Math.max(1, Math.round(it.quantity || 1));
+          it.subtotal = it.quantity * it.unit_cost;
+          delete it.comp_qty; delete it.comp_cost; delete it.cpt;
+        }
+        renderPurchaseItems();
+      } else if (it.pack_mode === "comprimido" &&
+                 (e.target.classList.contains("pur-qty") || e.target.classList.contains("pur-cost") || e.target.classList.contains("pur-cpt"))) {
+        renderPurchaseItems();
+      }
     });
 
     els.purItemsTbody.addEventListener("click", (e) => {
@@ -8162,6 +8228,16 @@
         if (els.purchaseCreateMsg) { els.purchaseCreateMsg.textContent = "Agregá al menos 1 producto."; els.purchaseCreateMsg.className = "config-msg err"; }
         return;
       }
+      // Validación: en modo comprimido, los comprimidos deben dar tabletas enteras.
+      const badComp = state.purchaseItems.find((it) => it.pack_mode === "comprimido" &&
+        ((Number(it.comp_qty) || 0) % Math.max(1, Number(it.cpt) || 1) !== 0));
+      if (badComp) {
+        const cpt = Math.max(1, Number(badComp.cpt) || 1);
+        await alertModal({ title: "Cantidad incompleta", message: '"' + (badComp.product_name || "Producto") +
+          '": ' + (badComp.comp_qty || 0) + " comprimidos no es múltiplo de " + cpt +
+          " (no da tabletas enteras). Ajustá la cantidad de comprimidos." });
+        return;
+      }
       const fd = new FormData(els.purchaseCreateForm);
       const received_at_raw = fd.get("received_at");
       const body = {
@@ -8354,6 +8430,29 @@
     }
   }
 
+  // Comprimidos por tableta (la tableta es la unidad del sistema). Se detecta del
+  // nombre del producto: toma el último "x N" (ej. "Amoxicilina 500 x 8" → 8,
+  // "Ibuprofeno 400 Savant x10 comp" → 10). Devuelve null si no encuentra.
+  function parseComprimidos(name) {
+    if (!name) return null;
+    const s = String(name).toLowerCase();
+    let last = null, m;
+    const re = /x\s*(\d{1,4})/g;
+    while ((m = re.exec(s))) last = Number(m[1]);
+    return last && last > 1 ? last : null;
+  }
+  // Comprimidos/tableta efectivos del item: override manual del item, o detectado.
+  function cotComprimidos(it) {
+    if (it.comprimidos_per_unit && it.comprimidos_per_unit > 1) return it.comprimidos_per_unit;
+    const c = parseComprimidos(it.product_name);
+    return c && c > 1 ? c : 1;
+  }
+  // Formatea una cantidad de tabletas (puede dar fraccionada al cotizar por comprimido).
+  function fmtTabletas(n) {
+    const v = Number(n) || 0;
+    return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0+$/, "").replace(/\.$/, "").replace(".", ",");
+  }
+
   function renderCotizacionItems() {
     if (!els.pcotItemsTbody) return;
     if (!state.cotizacionItems.length) {
@@ -8365,16 +8464,24 @@
     let totalSubtotal = 0, totalDiff = 0;
     els.pcotItemsTbody.innerHTML = state.cotizacionItems.map((it, idx) => {
       const upb      = it.units_per_bulto || 1;
+      const cpt      = cotComprimidos(it);
       const pack     = it.pack_unit || "bulto";
-      const packSing = pack === "caja" ? "caja" : "bulto";
-      const packPlur = pack === "caja" ? "cajas" : "bultos";
-      const packs    = (pack !== "unidad" && upb > 1) ? Math.ceil(it.quantity / upb) : "";
-      // El proveedor cotiza por empaque: el input de precio va por caja/bulto,
-      // pero internamente guardamos unit_price (por unidad) para subtotal/diferencia.
-      const priceMult = (pack !== "unidad" && upb > 1) ? upb : 1;
+      const isComp   = pack === "comprimido";
+      const elemSing = pack === "caja" ? "caja" : isComp ? "comprimido" : "bulto";
+      const elemPlur = pack === "caja" ? "cajas" : isComp ? "comprimidos" : "bultos";
+      const elemAbbr = pack === "caja" ? "caja" : isComp ? "comp" : "bulto";
+      const hasPack  = pack !== "unidad";
+      // priceMult: precio_empaque = unit_price × priceMult (unit_price = canónico por tableta).
+      //   bulto/caja: ×upb (empaque más grande). comprimido: ×(1/cpt) (comprimido más chico).
+      // qtyFactor: quantity(tabletas) = inputQty × qtyFactor. En comprimido el input es en
+      //   comprimidos → quantity = comprimidos / cpt. En bulto la cantidad sigue en tabletas.
+      const priceMult = pack === "unidad" ? 1 : isComp ? (1 / cpt) : upb;
+      const qtyFactor = isComp ? (1 / cpt) : 1;
       const costoAct = it.current_cost || 0;
-      const precio   = it.unit_price || 0;
+      const precio   = it.unit_price || 0;                 // canónico: por tableta (unidad del sistema)
       const packPriceVal = precio ? Math.round(precio * priceMult) : "";
+      const qtyDisp  = qtyFactor !== 1 ? Math.round(it.quantity / qtyFactor) : it.quantity;
+      const packs    = (pack === "bulto" || pack === "caja") && upb > 1 ? Math.ceil(it.quantity / upb) : "";
       const subtotal = precio * it.quantity;
       const diffUnit = precio - costoAct;
       const diffTotal = diffUnit * it.quantity;
@@ -8386,24 +8493,38 @@
         (diffPct !== null ? ' <span style="font-size:10px">(' + (diffUnit >= 0 ? "+" : "") + diffPct + '%)</span>' : "");
       const packSelect =
         '<select data-cot-idx="' + idx + '" class="admin-input pcot-pack-input" ' +
-        'style="font-size:11px;padding:2px 4px;width:86px" title="Cómo lo cotiza el proveedor">' +
-          '<option value="unidad"' + (pack === "unidad" ? " selected" : "") + '>por unidad</option>' +
-          '<option value="caja"'   + (pack === "caja"   ? " selected" : "") + '>por caja</option>' +
-          '<option value="bulto"'  + (pack === "bulto"  ? " selected" : "") + '>por bulto</option>' +
+        'style="font-size:11px;padding:2px 4px;width:104px" title="Cómo lo cotiza el proveedor">' +
+          '<option value="unidad"'     + (pack === "unidad" ? " selected" : "") + '>por unidad</option>' +
+          '<option value="caja"'       + (pack === "caja"   ? " selected" : "") + '>por caja</option>' +
+          '<option value="bulto"'      + (pack === "bulto"  ? " selected" : "") + '>por bulto</option>' +
+          '<option value="comprimido"' + (isComp            ? " selected" : "") + '>por comprimido</option>' +
         '</select>';
-      const packBody = pack === "unidad"
-        ? '<div style="font-size:11px;color:#d1d5db">por unidad</div>'
-        : '<div style="display:flex;align-items:center;gap:4px">' +
-              '<input type="number" min="1" step="1" value="' + upb + '" ' +
-              'style="width:52px;text-align:center;font-size:13px;padding:3px 4px" ' +
-              'data-cot-idx="' + idx + '" class="admin-input pcot-upb-input" title="Unidades por ' + packSing + '">' +
-              '<span style="font-size:11px;color:#9ca3af;font-weight:500">u/' + packSing + '</span>' +
-            '</div>' +
-            (upb > 1
-              ? '<div style="font-size:12px;color:#f59e0b;font-weight:700">= ' + packs + ' ' + (packs === 1 ? packSing : packPlur) + '</div>'
-              : '<div style="font-size:11px;color:#d1d5db">—</div>');
+      let packBody;
+      if (pack === "unidad") {
+        packBody = '<div style="font-size:11px;color:#d1d5db">por unidad</div>';
+      } else if (isComp) {
+        packBody =
+          '<div style="display:flex;align-items:center;gap:4px">' +
+            '<input type="number" min="1" step="1" value="' + cpt + '" ' +
+            'style="width:52px;text-align:center;font-size:13px;padding:3px 4px" ' +
+            'data-cot-idx="' + idx + '" class="admin-input pcot-cpt-input" title="Comprimidos por tableta (detectado del nombre; editable si no coincide)">' +
+            '<span style="font-size:11px;color:#9ca3af;font-weight:500">comp/tabl</span>' +
+          '</div>' +
+          '<div style="font-size:12px;color:#f59e0b;font-weight:700">= ' + fmtTabletas(it.quantity) + ' tabl.</div>';
+      } else {
+        packBody =
+          '<div style="display:flex;align-items:center;gap:4px">' +
+            '<input type="number" min="1" step="1" value="' + upb + '" ' +
+            'style="width:52px;text-align:center;font-size:13px;padding:3px 4px" ' +
+            'data-cot-idx="' + idx + '" class="admin-input pcot-upb-input" title="Unidades por ' + elemSing + '">' +
+            '<span style="font-size:11px;color:#9ca3af;font-weight:500">u/' + elemSing + '</span>' +
+          '</div>' +
+          (upb > 1
+            ? '<div style="font-size:12px;color:#f59e0b;font-weight:700">= ' + packs + ' ' + (packs === 1 ? elemSing : elemPlur) + '</div>'
+            : '<div style="font-size:11px;color:#d1d5db">—</div>');
+      }
       const bultoCell =
-        '<td style="text-align:center;white-space:nowrap;min-width:110px">' +
+        '<td style="text-align:center;white-space:nowrap;min-width:120px">' +
           '<div style="display:flex;flex-direction:column;align-items:center;gap:3px">' +
             packSelect + packBody +
           '</div>' +
@@ -8415,17 +8536,19 @@
         '<td style="text-align:right">' +
           '<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:1px">' +
             '<input type="number" min="0" step="1" value="' + packPriceVal + '" placeholder="0" ' +
-            'title="Precio por ' + (priceMult > 1 ? packSing : "unidad") + ' que te cotiza el proveedor" ' +
+            'title="Precio por ' + (hasPack ? elemSing : "unidad") + ' que te cotiza el proveedor" ' +
             'data-cot-idx="' + idx + '" data-price-mult="' + priceMult + '" ' +
             'style="width:84px;text-align:right" class="admin-input pcot-price-input">' +
-            (priceMult > 1
-              ? '<div style="font-size:10px;color:#9ca3af;line-height:1.1">$/' + packSing + (precio ? ' · ' + fmtPrice(precio) + '/u' : '') + '</div>'
+            (hasPack
+              ? '<div style="font-size:10px;color:#9ca3af;line-height:1.1">$/' + elemAbbr + (precio ? ' · ' + fmtPrice(precio) + '/u' : '') + '</div>'
               : '') +
           '</div>' +
         '</td>' +
         '<td style="text-align:right">' +
-          '<input type="number" min="1" value="' + it.quantity + '" style="width:55px;text-align:right" ' +
-          'data-cot-idx="' + idx + '" class="admin-input pcot-qty-input">' +
+          '<input type="number" min="1" value="' + qtyDisp + '" style="width:55px;text-align:right" ' +
+          'data-cot-idx="' + idx + '" data-qty-factor="' + qtyFactor + '" class="admin-input pcot-qty-input" ' +
+          'title="' + (isComp ? "Cantidad en comprimidos" : "Cantidad en unidades (tabletas)") + '">' +
+          (isComp ? '<div style="font-size:10px;color:#9ca3af;line-height:1.1">comp · = ' + fmtTabletas(it.quantity) + ' tabl</div>' : '') +
         '</td>' +
         '<td style="text-align:right;font-weight:600">' + (precio ? fmtPrice(subtotal) : '—') + '</td>' +
         '<td style="text-align:right;font-weight:600;color:' + diffColor + '">' + (precio && costoAct ? diffLabel : '—') + '</td>' +
@@ -8466,11 +8589,22 @@
         rerenderCotizacionPreservingFocus();
       });
     });
-    // qty change → re-render para actualizar el badge de bultos
+    // qty change → re-render para actualizar el badge de bultos/tabletas.
+    // En modo comprimido el input es en comprimidos: quantity(tabletas) = comp × (1/cpt).
     els.pcotItemsTbody.querySelectorAll(".pcot-qty-input").forEach((inp) => {
       inp.addEventListener("change", () => {
         const i = Number(inp.dataset.cotIdx);
-        state.cotizacionItems[i].quantity = Math.max(1, Number(inp.value) || 1);
+        const f = Number(inp.dataset.qtyFactor) || 1;
+        const raw = Math.max(1, Number(inp.value) || 1);
+        state.cotizacionItems[i].quantity = f !== 1 ? raw * f : raw;
+        rerenderCotizacionPreservingFocus();
+      });
+    });
+    // comprimidos/tableta change (modo por comprimido) → solo en el item (no toca el producto)
+    els.pcotItemsTbody.querySelectorAll(".pcot-cpt-input").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        const i = Number(inp.dataset.cotIdx);
+        state.cotizacionItems[i].comprimidos_per_unit = Math.max(1, Number(inp.value) || 1);
         rerenderCotizacionPreservingFocus();
       });
     });
@@ -8497,14 +8631,16 @@
         rerenderCotizacionPreservingFocus();
       });
     });
-    // empaque (unidad/caja/bulto) change → guarda en item + producto + re-render
+    // empaque change → guarda en el item. "comprimido" es un modo de cotización a
+    // nivel del item (no se persiste como pack del producto: un producto puede ser
+    // por bulto Y cotizarse por comprimido). unidad/caja/bulto sí se persisten.
     els.pcotItemsTbody.querySelectorAll(".pcot-pack-input").forEach((sel) => {
       sel.addEventListener("change", () => {
         const i = Number(sel.dataset.cotIdx);
-        const pack = ["unidad", "caja", "bulto"].includes(sel.value) ? sel.value : "bulto";
+        const pack = ["unidad", "caja", "bulto", "comprimido"].includes(sel.value) ? sel.value : "bulto";
         state.cotizacionItems[i].pack_unit = pack;
         const pid = state.cotizacionItems[i].product_id;
-        if (pid) {
+        if (pid && pack !== "comprimido") {
           const ap = (state.allProducts || []).find((p) => p.id === pid);
           if (ap) ap.pack_unit = pack;
           const sp = (state.products || []).find((p) => p.id === pid);
