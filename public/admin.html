@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260618u" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260623a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -1187,6 +1187,7 @@
     <!-- Modal detalle de actividad de un vendedor -->
     <div class="admin-modal" id="act-detail-modal" hidden>
       <div class="admin-modal-box" style="max-width:920px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
         <h3 id="act-detail-title">Detalle</h3>
         <div class="admin-table-wrap" style="max-height:65vh;overflow:auto">
           <table class="admin-table">
@@ -1214,6 +1215,7 @@
     <!-- Modal de actividad / logueos de un usuario -->
     <div class="admin-modal" id="activity-modal" hidden>
       <div class="admin-modal-box" style="max-width:880px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
         <h3 id="activity-title">Actividad</h3>
         <div id="activity-summary" class="act-kpi-grid"></div>
         <div class="admin-table-wrap" style="max-height:60vh;overflow:auto">
@@ -1238,6 +1240,7 @@
     <!-- Modal detalle de actividad de un cliente -->
     <div class="admin-modal" id="act-cli-detail-modal" hidden>
       <div class="admin-modal-box" style="max-width:960px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
         <h3 id="act-cli-detail-title">Detalle</h3>
         <div class="muted small" id="act-cli-detail-sub" style="margin-bottom:8px"></div>
         <div class="admin-table-wrap" style="max-height:65vh;overflow:auto">
@@ -1300,6 +1303,7 @@
     <!-- Modal crear lista de precios -->
     <div class="admin-modal" id="pl-create-modal" hidden>
       <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
         <h3>Nueva lista de precios</h3>
         <form id="pl-create-form" class="user-form">
           <label>Nombre <span class="muted">(ej: "Vendedor Norte 15%")</span>
@@ -1580,6 +1584,7 @@
     <!-- Modal crear/editar gasto -->
     <div class="admin-modal" id="exp-create-modal" hidden>
       <div class="admin-modal-box" style="max-width:640px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
         <h3 id="exp-create-title">Registrar gasto</h3>
         <form id="exp-create-form" class="user-form">
           <input type="hidden" name="id" value="" />
@@ -1638,6 +1643,7 @@
     <!-- Modal gestionar categorías -->
     <div class="admin-modal" id="exp-cats-modal" hidden>
       <div class="admin-modal-box" style="max-width:600px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
         <h3>Categorías de gasto</h3>
         <p class="muted small">Activá/desactivá categorías o creá nuevas. Las categorías con gastos asociados no se pueden borrar — desactivalas para ocultarlas del formulario.</p>
         <form id="exp-cat-create-form" class="user-form" style="display:flex;gap:8px;align-items:flex-end;margin:8px 0 12px">
@@ -1819,6 +1825,7 @@
   <!-- Modal imagen de producto -->
   <div class="admin-modal" id="img-modal" hidden>
     <div class="admin-modal-box img-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3 id="img-modal-title">Imagen del producto</h3>
       <div class="img-preview-wrap">
         <img id="img-modal-preview" alt="" />
@@ -1848,6 +1855,7 @@
   <!-- Modal de feedback de import -->
   <div class="admin-modal" id="import-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3 id="import-title">Importando Excel…</h3>
       <div id="import-body" class="admin-modal-body"></div>
       <div class="admin-modal-foot">
@@ -1859,6 +1867,7 @@
   <!-- Modal crear usuario -->
   <div class="admin-modal" id="user-create-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Crear nuevo usuario</h3>
       <form id="user-create-form" class="user-form">
         <label>Usuario (login) <span class="muted">3-32 caracteres, letras/números/_-.</span>
@@ -1900,6 +1909,7 @@
   <!-- Modal editar cliente (doble click en la fila de Usuarios) -->
   <div class="admin-modal" id="user-edit-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3 id="user-edit-title">Editar cliente</h3>
       <form id="user-edit-form" class="user-form">
         <div class="ue-grid">
@@ -1952,6 +1962,7 @@
   <!-- Modal categorías por usuario -->
   <div class="admin-modal" id="user-cats-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Categorías visibles</h3>
       <p id="user-cats-target" class="muted"></p>
       <p class="muted small">
@@ -1976,6 +1987,7 @@
   <!-- Modal crear administrador (solo superadmin) -->
   <div class="admin-modal" id="admin-create-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Crear administrador</h3>
       <form id="admin-create-form" class="user-form">
         <label>Usuario <input name="username" required autocomplete="off" /></label>
@@ -2001,6 +2013,7 @@
   <!-- Modal editar permisos de un administrador -->
   <div class="admin-modal" id="admin-sections-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Permisos de secciones</h3>
       <p id="admin-sections-target" class="muted"></p>
       <div id="admin-sections-list" class="cats-check-list"></div>
@@ -2019,6 +2032,7 @@
   <!-- Modal resetear contraseña de un administrador -->
   <div class="admin-modal" id="admin-reset-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Resetear contraseña</h3>
       <p id="admin-reset-target" class="muted"></p>
       <form id="admin-reset-form" class="user-form">
@@ -2037,6 +2051,7 @@
   <!-- Modal reset password -->
   <div class="admin-modal" id="user-reset-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Resetear contraseña</h3>
       <p id="user-reset-target" class="muted"></p>
       <form id="user-reset-form" class="user-form">
@@ -2055,6 +2070,7 @@
   <!-- Modal registrar entrega -->
   <div class="admin-modal" id="delivery-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Registrar entrega</h3>
       <p id="delivery-modal-order" class="muted"></p>
       <form id="delivery-form" class="user-form">
@@ -2114,6 +2130,7 @@
   <!-- Modal Chequeo de armado (checklist de picking, sync multi-dispositivo) -->
   <div class="admin-modal" id="pick-modal" hidden>
     <div class="admin-modal-box" style="max-width:680px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3 style="margin-bottom:2px">✅ Chequeo de armado</h3>
       <p id="pick-modal-order" class="muted" style="margin:0 0 8px"></p>
       <div class="pick-toolbar">
@@ -2151,6 +2168,7 @@
   <!-- Modal Control de recepción (checklist contra la factura del proveedor) -->
   <div class="admin-modal" id="recv-modal" hidden>
     <div class="admin-modal-box" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3 style="margin-bottom:2px">📦 Control de recepción</h3>
       <p id="recv-modal-info" class="muted" style="margin:0 0 8px"></p>
       <div class="pick-toolbar">
@@ -2177,6 +2195,7 @@
   <!-- Modal: elegir producto para una línea de la recepción (clic derecho) -->
   <div class="admin-modal" id="recv-prod-modal" hidden style="z-index:1400">
     <div class="admin-modal-box" style="max-width:640px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3 style="margin-bottom:2px">🔄 Cambiar producto de la línea</h3>
       <p id="recv-prod-info" class="muted" style="margin:0 0 8px"></p>
       <input type="text" id="recv-prod-search" class="admin-input" placeholder="Buscar por nombre o código…" autocomplete="off" />
@@ -2196,6 +2215,7 @@
   <!-- Modal crear vendedor -->
   <div class="admin-modal" id="vend-create-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Crear vendedor</h3>
       <form id="vend-create-form" class="user-form">
         <label>Usuario (login) <span class="muted">3-32 caracteres, letras/números/_-.</span>
@@ -2236,6 +2256,7 @@
   <!-- Modal reset password vendedor -->
   <div class="admin-modal" id="vend-reset-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Resetear contraseña</h3>
       <p id="vend-reset-target" class="muted"></p>
       <form id="vend-reset-form" class="user-form">
@@ -2254,6 +2275,7 @@
   <!-- Modal crear proveedor -->
   <div class="admin-modal" id="supplier-create-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Nuevo proveedor</h3>
       <form id="supplier-create-form" class="user-form">
         <label>Nombre <span class="muted">(requerido)</span>
@@ -2283,6 +2305,7 @@
   <!-- Modal crear compra -->
   <div class="admin-modal" id="purchase-create-modal" hidden>
     <div class="admin-modal-box purchase-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3 id="purchase-modal-title">Nueva compra</h3>
       <form id="purchase-create-form" class="user-form">
         <div class="purchase-form-top">
@@ -2354,6 +2377,7 @@
   <!-- Modal: selección múltiple de productos para compra -->
   <div class="admin-modal" id="pur-picker-modal" hidden style="z-index:1300">
     <div class="admin-modal-box" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Agregar productos</h3>
       <input type="search" id="pur-picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="margin-bottom:10px" />
       <div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;min-height:200px">
@@ -2385,6 +2409,7 @@
   <!-- Modal: Crear pedido desde admin -->
   <div class="admin-modal" id="new-order-modal" hidden style="z-index:1300">
     <div class="admin-modal-box" style="max-width:680px;max-height:calc(100dvh - 32px);overflow-y:auto">
+        <button type="button" class="admin-modal-close" data-close="new-order-modal" aria-label="Cerrar">✕</button>
       <h3 style="margin:0 0 16px">Nuevo pedido</h3>
       <div class="admin-modal-body" style="display:flex;flex-direction:column;gap:14px">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -2443,6 +2468,7 @@
   <!-- Modal: crear cliente rápido desde "Nuevo pedido" -->
   <div class="admin-modal" id="no-client-create-modal" hidden style="z-index:1400">
     <div class="admin-modal-box" style="max-width:440px">
+        <button type="button" class="admin-modal-close" data-close="no-client-create-modal" aria-label="Cerrar">✕</button>
       <h3 style="margin:0 0 14px">Nuevo cliente</h3>
       <form id="no-client-create-form" class="user-form" style="display:flex;flex-direction:column;gap:12px">
         <label>Nombre completo *
@@ -2482,6 +2508,7 @@
        armador de presupuestos: buscar, tildar, cantidad, "Agregar seleccionados") -->
   <div class="admin-modal" id="oie-picker-modal" hidden style="z-index:1500">
     <div class="admin-modal-box" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Agregar productos al pedido</h3>
       <input type="search" id="oie-picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="margin-bottom:8px" />
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:10px;cursor:pointer;color:#374151;font-size:13px">
@@ -2515,6 +2542,7 @@
   <!-- Modal registrar pago -->
   <div class="admin-modal" id="payment-create-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Registrar pago de cliente</h3>
       <form id="payment-create-form" class="user-form">
         <label>Cliente <span class="muted">(requerido)</span>
@@ -2569,6 +2597,7 @@
   <!-- Modal: registrar pago a proveedor -->
   <div class="admin-modal" id="sup-payment-modal" hidden>
     <div class="admin-modal-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Registrar pago a proveedor</h3>
       <form id="sup-payment-form" class="user-form">
         <label>Proveedor <span class="muted">(requerido)</span>
@@ -2609,6 +2638,7 @@
   <!-- Modal: picker de productos para cotización -->
   <div class="admin-modal" id="pcot-picker-modal" hidden style="z-index:1300">
     <div class="admin-modal-box" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(100dvh - 32px)">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Agregar productos a cotizar</h3>
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <input type="search" id="pcot-picker-search" class="admin-search" placeholder="Buscar por nombre o código…" autocomplete="off" style="flex:1;margin:0" />
@@ -2645,6 +2675,7 @@
   <!-- Modal: crear pedido de cotización -->
   <div class="admin-modal" id="pcot-create-modal" hidden style="z-index:1200">
     <div class="admin-modal-box" style="max-width:940px;max-height:calc(100dvh - 32px);overflow-y:auto">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3 id="pcot-modal-title">Nueva cotización</h3>
       <div class="admin-modal-body" style="display:flex;flex-direction:column;gap:14px">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -2706,6 +2737,7 @@
   <!-- Modal: exportar cotización -->
   <div class="admin-modal" id="pcot-export-modal" hidden style="z-index:1400">
     <div class="admin-modal-box" style="max-width:380px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>Exportar cotización (PDF)</h3>
       <p style="margin:0 0 16px;color:#374151">¿Cómo querés expresar las cantidades?</p>
       <div style="display:flex;flex-direction:column;gap:10px">
@@ -2721,6 +2753,7 @@
   <!-- Modal catálogo PDF -->
   <div class="admin-modal" id="catalog-modal" hidden>
     <div class="admin-modal-box" style="max-width:540px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3>📄 Generar catálogo PDF</h3>
       <form id="catalog-form" class="user-form">
 
@@ -2952,6 +2985,7 @@
   <!-- Modal: cambios en lote sobre productos seleccionados -->
   <div id="prod-bulk-modal" class="admin-modal" hidden>
     <div class="admin-modal-box" style="max-width:560px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
       <h3 style="margin-top:0">Editar <span id="pbm-count">0</span> productos seleccionados</h3>
       <p class="muted" style="margin:0 0 12px;font-size:12px">Tildá solo las secciones que quieras aplicar. El resto queda sin tocar.</p>
 
