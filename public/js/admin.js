@@ -8529,10 +8529,12 @@
             packSelect + packBody +
           '</div>' +
         '</td>';
+      const stockVal = it.stock != null ? Number(it.stock) || 0 : null;
       return '<tr>' +
-        '<td class="cell-code">' + escapeHtml(it.product_code || "—") + '</td>' +
+        '<td class="cell-code" style="font-size:11px">' + escapeHtml(it.product_code || "—") + '</td>' +
         '<td>' + escapeHtml(it.product_name) + '</td>' +
         '<td style="text-align:right;color:#6b7280">' + (costoAct ? fmtPrice(costoAct) : '—') + '</td>' +
+        '<td style="text-align:right">' + (stockVal != null ? '<span style="font-weight:600;color:' + (stockVal > 0 ? "#059669" : "#9ca3af") + '">' + stockVal + '</span>' : '<span class="muted">—</span>') + '</td>' +
         '<td style="text-align:right">' +
           '<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:1px">' +
             '<input type="number" min="0" step="1" value="' + packPriceVal + '" placeholder="0" ' +
@@ -8563,7 +8565,7 @@
       const totalDiffColor = totalDiff > 0 ? "#ef4444" : totalDiff < 0 ? "#16a34a" : "#9ca3af";
       els.pcotItemsTfoot.innerHTML =
         '<tr style="background:#f8fafc;font-weight:700">' +
-        '<td colspan="5" style="text-align:right;padding:6px 8px">Total</td>' +
+        '<td colspan="6" style="text-align:right;padding:6px 8px">Total</td>' +
         '<td style="text-align:right;padding:6px 8px">' + fmtPrice(totalSubtotal) + '</td>' +
         '<td style="text-align:right;padding:6px 8px;color:' + totalDiffColor + '">' +
           (totalDiff !== 0 ? (totalDiff > 0 ? "+" : "") + fmtPrice(totalDiff) : "—") +
@@ -8761,6 +8763,7 @@
           current_cost: prod ? (prod.cost || 0) : 0,
           units_per_bulto: prod ? (prod.units_per_bulto || 1) : 1,
           pack_unit: savedMode || (prod ? (prod.pack_unit || "bulto") : "bulto"),
+          stock: prod && prod.stock != null ? prod.stock : null,
         };
         if (it.comprimidos_per_unit && it.comprimidos_per_unit > 1) obj.comprimidos_per_unit = Number(it.comprimidos_per_unit);
         return obj;
@@ -8942,6 +8945,7 @@
             pack_unit: product.pack_unit || "bulto",
             unit_price: existingPrice != null ? existingPrice : (product.cost || null),
             current_cost: product.cost || 0,
+            stock: product.stock != null ? product.stock : null,
           });
         }
       });

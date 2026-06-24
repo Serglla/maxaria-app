@@ -2707,8 +2707,9 @@
           <div style="overflow-x:auto">
           <table class="admin-table" style="min-width:0;width:100%">
             <thead><tr>
-              <th>Código</th><th>Producto</th>
+              <th style="width:42px">Cód.</th><th>Producto</th>
               <th style="text-align:right;width:90px">Costo act.</th>
+              <th style="text-align:right;width:58px" title="Stock actual del producto">Stock</th>
               <th style="text-align:right;width:100px" title="Precio que te cotiza el proveedor, en el empaque de cada producto (por caja/bulto/unidad)">Precio cotiz.</th>
               <th style="text-align:right;width:65px">Cant.</th>
               <th style="text-align:right;width:95px">Subtotal</th>
@@ -2716,14 +2717,14 @@
               <th style="text-align:center;width:120px" title="Cómo lo pide el proveedor (unidad/caja/bulto) y empaques resultantes">Empaque</th>
               <th style="width:28px"></th>
             </tr></thead>
-            <tbody id="pcot-items-tbody"><tr><td colspan="9" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr></tbody>
+            <tbody id="pcot-items-tbody"><tr><td colspan="10" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr></tbody>
             <tfoot id="pcot-items-tfoot"></tfoot>
           </table>
           </div>
         </div>
       </div>
       <div class="admin-modal-foot" style="position:sticky;bottom:0;background:#fff;padding-top:12px">
-        <span id="pcot-total-disp" style="font-weight:700;white-space:nowrap"></span>
+        <span id="pcot-total-disp" style="font-weight:800;white-space:nowrap;background:#fef3c7;border:1.5px solid #f59e0b;color:#92400e;padding:6px 12px;border-radius:8px;font-size:14px"></span>
         <p id="pcot-create-msg" class="config-msg" style="min-height:16px;margin:0 auto 0 0"></p>
         <button type="button" class="btn" id="pcot-cancel-btn">Cancelar</button>
         <button type="button" class="btn" id="pcot-export-btn" title="Exportar lista de productos">📋 Exportar</button>
@@ -3393,6 +3394,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260623g"></script>
+  <script src="/js/admin.js?v=20260623h"></script>
 </body>
 </html>
