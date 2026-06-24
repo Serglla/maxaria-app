@@ -8751,14 +8751,19 @@
       state.editingCotizacionId = id;
       state.cotizacionItems = (data.items || []).map((it) => {
         const prod = (state.allProducts || []).find((p) => p.id === it.product_id);
-        return {
+        // El modo de empaque guardado en la cotización (pack_mode) tiene prioridad
+        // sobre el del producto, para recordar lo que el usuario eligió (ej: comprimido).
+        const savedMode = ["unidad", "caja", "bulto", "comprimido"].includes(it.pack_mode) ? it.pack_mode : null;
+        const obj = {
           product_id: it.product_id, product_code: it.product_code,
           product_name: it.product_name, quantity: it.quantity,
           unit_price: it.unit_price || (prod ? prod.cost : null) || null,
           current_cost: prod ? (prod.cost || 0) : 0,
           units_per_bulto: prod ? (prod.units_per_bulto || 1) : 1,
-          pack_unit: prod ? (prod.pack_unit || "bulto") : "bulto",
+          pack_unit: savedMode || (prod ? (prod.pack_unit || "bulto") : "bulto"),
         };
+        if (it.comprimidos_per_unit && it.comprimidos_per_unit > 1) obj.comprimidos_per_unit = Number(it.comprimidos_per_unit);
+        return obj;
       });
       state.cotPickerSelected = new Map();
       if (els.pcotModalTitle) els.pcotModalTitle.textContent = "Editar cotización #" + id;
@@ -8962,6 +8967,8 @@
         product_id: it.product_id, product_code: it.product_code,
         product_name: it.product_name, quantity: it.quantity,
         unit_price: it.unit_price || null,
+        pack_mode: it.pack_unit || null,
+        comprimidos_per_unit: it.pack_unit === "comprimido" ? cotComprimidos(it) : null,
       }));
       const isEdit   = !!state.editingCotizacionId;
       const url      = isEdit ? "/api/admin/purchase-requests/" + state.editingCotizacionId : "/api/admin/purchase-requests";
@@ -8999,14 +9006,25 @@
         // Cerrar modal cotización y abrir modal de compra pre-rellenado
         if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
         // Esperar a que el modal de compra esté listo
-        state.purchaseItems = state.cotizacionItems.map((it) => ({
-          product_id:   it.product_id,
-          product_code: it.product_code,
-          product_name: it.product_name,
-          quantity:     it.quantity,
-          unit_cost:    it.unit_price || 0,
-          subtotal:     (it.unit_price || 0) * it.quantity,
-        }));
+        state.purchaseItems = state.cotizacionItems.map((it) => {
+          const base = {
+            product_id:   it.product_id,
+            product_code: it.product_code,
+            product_name: it.product_name,
+            quantity:     it.quantity,
+            unit_cost:    it.unit_price || 0,
+            subtotal:     (it.unit_price || 0) * it.quantity,
+          };
+          // Si la cotización estaba en "por comprimido", arrancar la compra igual.
+          if (it.pack_unit === "comprimido") {
+            const cpt = cotComprimidos(it);
+            base.pack_mode = "comprimido";
+            base.cpt = cpt;
+            base.comp_qty = Math.max(1, Math.round(it.quantity * cpt));
+            base.comp_cost = Math.round((it.unit_price || 0) / cpt);
+          }
+          return base;
+        });
         if (!state.suppliersLoaded) {
           try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
         }
@@ -9048,6 +9066,7 @@
         quantity: it.quantity,
         units_per_bulto: it.units_per_bulto || 1,
         pack_unit: it.pack_unit || "bulto",
+        comprimidos_per_unit: it.pack_unit === "comprimido" ? cotComprimidos(it) : null,
       }));
       showToast("Generando PDF…");
       try {

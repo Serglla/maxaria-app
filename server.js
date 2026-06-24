@@ -464,6 +464,11 @@ try { db.exec("ALTER TABLE products ADD COLUMN units_per_bulto INTEGER NOT NULL 
 try { db.exec("ALTER TABLE products ADD COLUMN pack_unit TEXT NOT NULL DEFAULT 'bulto'"); } catch (_) {}
 // Precio cotizado en pedidos de cotizacion (lo que responde el proveedor)
 try { db.exec("ALTER TABLE purchase_request_items ADD COLUMN unit_price INTEGER"); } catch (_) {}
+// Modo de empaque elegido en la cotizacion (por item, no se persiste en el producto):
+// 'unidad' | 'caja' | 'bulto' | 'comprimido'. NULL = legacy (cae al pack del producto).
+try { db.exec("ALTER TABLE purchase_request_items ADD COLUMN pack_mode TEXT"); } catch (_) {}
+// Comprimidos por tableta usados cuando pack_mode='comprimido' (override del nombre).
+try { db.exec("ALTER TABLE purchase_request_items ADD COLUMN comprimidos_per_unit INTEGER"); } catch (_) {}
 // Visibilidad GLOBAL de la categoria en el catalogo (se maneja desde
 // Configuracion). 0 = nadie la ve (clientes ni vendedores) hasta reactivarla.
 // Es independiente de user_category_access: activar una categoria global NO
@@ -5691,8 +5696,8 @@ app.post("/api/admin/purchase-requests", requireAdmin, (req, res) => {
     "INSERT INTO purchase_requests (supplier_id, notes, status, created_by) VALUES (?, ?, 'borrador', ?)"
   );
   const insItem = db.prepare(
-    "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity, unit_price)" +
-    " VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity, unit_price, pack_mode, comprimidos_per_unit)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   );
   let newId;
   db.transaction(() => {
@@ -5704,8 +5709,10 @@ app.post("/api/admin/purchase-requests", requireAdmin, (req, res) => {
       const name  = String(it.product_name || "").trim();
       const qty   = Math.max(1, Number(it.quantity) || 1);
       const price = Number(it.unit_price) || null;
+      const pmode = ["unidad", "caja", "bulto", "comprimido"].includes(it.pack_mode) ? it.pack_mode : null;
+      const cpu   = Number(it.comprimidos_per_unit) > 1 ? Math.floor(Number(it.comprimidos_per_unit)) : null;
       if (!name && !pid) continue;
-      insItem.run(newId, pid, code, name, qty, price);
+      insItem.run(newId, pid, code, name, qty, price, pmode, cpu);
     }
   })();
 
@@ -5759,8 +5766,8 @@ app.put("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
 
   const delItems = db.prepare("DELETE FROM purchase_request_items WHERE request_id = ?");
   const insItem  = db.prepare(
-    "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity, unit_price)" +
-    " VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity, unit_price, pack_mode, comprimidos_per_unit)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   );
   db.transaction(() => {
     db.prepare("UPDATE purchase_requests SET supplier_id=?, notes=?, status=? WHERE id=?").run(supplier_id, notes, status, id);
@@ -5771,8 +5778,10 @@ app.put("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
       const name  = String(it.product_name || "").trim();
       const qty   = Math.max(1, Number(it.quantity) || 1);
       const price = Number(it.unit_price) || null;
+      const pmode = ["unidad", "caja", "bulto", "comprimido"].includes(it.pack_mode) ? it.pack_mode : null;
+      const cpu   = Number(it.comprimidos_per_unit) > 1 ? Math.floor(Number(it.comprimidos_per_unit)) : null;
       if (!name && !pid) continue;
-      insItem.run(id, pid, code, name, qty, price);
+      insItem.run(id, pid, code, name, qty, price, pmode, cpu);
     }
   })();
   const updated = db.prepare(
@@ -6887,7 +6896,12 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
     const upb = Number(it.units_per_bulto) || 1;
     const q = Number(it.quantity) || 0;
     const pack = it.pack_unit || "bulto";
-    if (porBultos && pack !== "unidad" && upb > 1) {
+    if (pack === "comprimido") {
+      // Cotizado por comprimido: se muestra en comprimidos y su equivalente en tabletas.
+      const cpt = Math.max(1, Number(it.comprimidos_per_unit) || 1);
+      const comp = Math.round(q * cpt);
+      qty = comp + " comp (" + cpt + " comp/tabl) = " + q + (q === 1 ? " tableta" : " tabletas");
+    } else if (porBultos && pack !== "unidad" && upb > 1) {
       const b = Math.ceil(q / upb);
       const sing = pack === "caja" ? "caja" : "bulto";
       const plur = pack === "caja" ? "cajas" : "bultos";
