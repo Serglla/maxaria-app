@@ -6849,11 +6849,11 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
   let cy = 72;
   doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(2).strokeColor(BLU).stroke();
 
-  // ── Meta row (Fecha / Proveedor) ──
+  // ── Meta row (solo Fecha; el proveedor no se imprime: la misma cotización
+  //    suele pedirse a varios proveedores) ──
   cy += 6;
   const metaCells = [
     { label: "Fecha", value: date },
-    { label: "Proveedor", value: supplierName || "—" },
   ];
   const cellW = MW / metaCells.length;
   metaCells.forEach((cell, i) => {
@@ -6870,19 +6870,17 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
   doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(1).strokeColor("#d1d5db").stroke();
   cy += 6;
 
-  // ── Encabezado tabla ──
-  const COL = { num: 26, cod: 52, cant: 160 };
-  COL.prod = MW - COL.num - COL.cod - COL.cant;
+  // ── Encabezado tabla (sin columna Código: es interno) ──
+  const COL = { num: 26, cant: 170 };
+  COL.prod = MW - COL.num - COL.cant;
   const colX = {
     num: MX,
-    cod: MX + COL.num,
-    prod: MX + COL.num + COL.cod,
-    cant: MX + COL.num + COL.cod + COL.prod,
+    prod: MX + COL.num,
+    cant: MX + COL.num + COL.prod,
   };
   doc.rect(MX, cy, MW, 20).fill(BLU);
   doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff");
   doc.text("N°", colX.num, cy + 6, { width: COL.num - 4 });
-  doc.text("CÓD.", colX.cod, cy + 6);
   doc.text("PRODUCTO", colX.prod, cy + 6);
   doc.text("CANTIDAD", colX.cant, cy + 6, { width: COL.cant, align: "right" });
   cy += 20;
@@ -6896,25 +6894,22 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
     const upb = Number(it.units_per_bulto) || 1;
     const q = Number(it.quantity) || 0;
     const pack = it.pack_unit || "bulto";
+    // Mostrar SOLO lo que se cargó, sin aclaraciones ni equivalencias.
     if (pack === "comprimido") {
-      // Cotizado por comprimido: se muestra en comprimidos y su equivalente en tabletas.
       const cpt = Math.max(1, Number(it.comprimidos_per_unit) || 1);
-      const comp = Math.round(q * cpt);
-      qty = comp + " comp (" + cpt + " comp/tabl) = " + q + (q === 1 ? " tableta" : " tabletas");
+      qty = Math.round(q * cpt) + " comp";
     } else if (porBultos && pack !== "unidad" && upb > 1) {
       const b = Math.ceil(q / upb);
       const sing = pack === "caja" ? "caja" : "bulto";
       const plur = pack === "caja" ? "cajas" : "bultos";
-      const abbr = pack === "caja" ? "u/c" : "u/b";
-      qty = b + " " + (b === 1 ? sing : plur) + " (" + upb + " " + abbr + ") = " + (b * upb) + " und";
+      qty = b + " " + (b === 1 ? sing : plur);
     } else {
       qty = q + " und";
     }
     doc.font("Helvetica").fontSize(9).fillColor(GREY).text(String(idx + 1), colX.num, cy + 6, { width: COL.num - 4 });
-    doc.fillColor(GREY).text(String(it.product_code || ""), colX.cod, cy + 6, { width: COL.cod });
     doc.fillColor(BLACK).font("Helvetica-Bold").text(String(it.product_name || ""), colX.prod, cy + 6, { width: COL.prod - 6, ellipsis: true });
     doc.font("Helvetica-Bold").fillColor(BLACK).text(qty, colX.cant, cy + 6, { width: COL.cant, align: "right" });
-    [colX.cod, colX.prod, colX.cant].forEach((x) => {
+    [colX.prod, colX.cant].forEach((x) => {
       doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
     });
     // separador horizontal azul (marca el renglón)
