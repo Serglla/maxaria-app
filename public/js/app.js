@@ -1622,15 +1622,22 @@
       const o = await api("/api/orders/" + id);
       const isAdmin = state.me && state.me.level === 99;
 
-      const rows = o.items.map((it) =>
-        '<tr>' +
+      const anyDisc = o.items.some((it) => Number(it.discount_percent) > 0);
+      const discTotal = Number(o.items_discount_total) || 0;
+      const rows = o.items.map((it) => {
+        const dp = Number(it.discount_percent) || 0;
+        const discCell = anyDisc
+          ? '<td class="num">' + (dp > 0 ? '−' + (Math.round(dp * 100) / 100) + '%' : '—') + '</td>'
+          : "";
+        return '<tr>' +
           '<td>' + escapeHtml(it.product_code || "") + '</td>' +
           '<td>' + escapeHtml(it.product_name) + '</td>' +
           '<td class="num">' + it.quantity + '</td>' +
           '<td class="num">' + fmtPrice(it.unit_price) + '</td>' +
+          discCell +
           '<td class="num">' + fmtPrice(it.subtotal) + '</td>' +
-        '</tr>'
-      ).join("");
+        '</tr>';
+      }).join("");
 
       const statusOptions = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
       const statusOptHtml = statusOptions.map((s) =>
@@ -1672,10 +1679,13 @@
         '<table>' +
           '<thead><tr>' +
             '<th>Cod.</th><th>Producto</th>' +
-            '<th class="num">Cant.</th><th class="num">Unit.</th><th class="num">Subtotal</th>' +
+            '<th class="num">Cant.</th><th class="num">Unit.</th>' +
+            (anyDisc ? '<th class="num">Desc.</th>' : "") +
+            '<th class="num">Subtotal</th>' +
           '</tr></thead>' +
           '<tbody>' + rows + '</tbody>' +
         '</table>' +
+        (discTotal > 0 ? '<div class="order-disc-total" style="text-align:right;margin-top:4px;font-size:12px;color:#b45309;font-weight:700">Descuento aplicado: ' + fmtPrice(discTotal) + '</div>' : "") +
         pickChgHtml +
         (o.notes ? '<div class="order-notes">Nota: ' + escapeHtml(o.notes) + '</div>' : "") +
         (!isAdmin ? paymentDetailHtml(o) : "") +

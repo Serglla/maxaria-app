@@ -393,6 +393,7 @@
     noStatus:       document.getElementById("no-status"),
     noAddBtn:       document.getElementById("no-add-btn"),
     noItemsTbody:   document.getElementById("no-items-tbody"),
+    noDiscBar:      document.getElementById("no-disc-bar"),
     noTotalDisp:    document.getElementById("no-total-disp"),
     noNotes:        document.getElementById("no-notes"),
     noSaveBtn:      document.getElementById("no-save-btn"),
@@ -4734,18 +4735,114 @@
     } catch (_) { state.priceLists = state.priceLists || []; }
   }
 
+  // ---------- Descuentos por línea (compartido por Nuevo pedido y Editar items) ----------
+  // Modelo: cada item lleva discount_percent (0..100). unit_price = precio de
+  // lista (bruto); el subtotal neto = unit_price·qty·(1−d/100). El descuento
+  // "general" se reparte como un % uniforme. El toggle %/$ solo cambia cómo se
+  // ingresa/muestra el descuento; internamente siempre es un %.
+  function clampDiscPct(p) { p = Number(p); if (!isFinite(p)) p = 0; return Math.max(0, Math.min(100, p)); }
+  function lineGross(it) { return (Number(it.unit_price) || 0) * Math.max(1, Number(it.quantity) || 1); }
+  function lineNetSub(it) { return round2(lineGross(it) * (1 - clampDiscPct(it.discount_percent) / 100)); }
+  function lineDiscAmount(it) { return round2(lineGross(it) * clampDiscPct(it.discount_percent) / 100); }
+  function discAmountToPct(it, amount) { var g = lineGross(it); if (g <= 0) return 0; return clampDiscPct((Number(amount) || 0) / g * 100); }
+  function itemsGross(list) { return (list || []).reduce(function(s, it) { return s + lineGross(it); }, 0); }
+  function itemsDiscTotal(list) { return round2((list || []).reduce(function(s, it) { return s + lineDiscAmount(it); }, 0)); }
+  function itemsNetTotal(list) { return round2((list || []).reduce(function(s, it) { return s + lineNetSub(it); }, 0)); }
+
+  // Celda de descuento de una línea (input en la unidad activa). idxAttr opcional.
+  function discCellHtml(it, idx, unit) {
+    var val = unit === "amount" ? lineDiscAmount(it) : round2(clampDiscPct(it.discount_percent));
+    return '<input type="number" class="cell-input cell-num line-disc" min="0" step="0.01" value="' +
+      (val || 0) + '" data-idx="' + idx + '" style="width:74px" ' +
+      'title="Descuento de esta línea (en ' + (unit === "amount" ? "$" : "%") + ')">';
+  }
+  // Aplica el valor escrito en una celda de descuento al item (según la unidad).
+  function applyDiscCell(it, rawValue, unit) {
+    if (unit === "amount") it.discount_percent = discAmountToPct(it, rawValue);
+    else it.discount_percent = clampDiscPct(rawValue);
+  }
+  // Barra de descuento general (toggle %/$ + campo general + aplicar/quitar + total).
+  function discountBarHtml(unit) {
+    return '<div class="oie-disc-bar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;' +
+      'margin-top:8px;padding:8px 10px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px">' +
+      '<strong style="font-size:12px;color:#374151">Descuento</strong>' +
+      '<span class="oie-disc-unit" style="display:inline-flex;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden">' +
+        '<button type="button" class="oie-unit-btn" data-unit="percent" style="border:none;padding:4px 10px;cursor:pointer;font-weight:700;' +
+          (unit !== "amount" ? "background:#1e3a5f;color:#fff" : "background:#fff;color:#374151") + '">%</button>' +
+        '<button type="button" class="oie-unit-btn" data-unit="amount" style="border:none;padding:4px 10px;cursor:pointer;font-weight:700;' +
+          (unit === "amount" ? "background:#1e3a5f;color:#fff" : "background:#fff;color:#374151") + '">$</button>' +
+      '</span>' +
+      '<input type="number" class="oie-disc-gen cell-input cell-num" min="0" step="0.01" placeholder="General" ' +
+        'style="width:90px" title="Descuento general para todo el pedido">' +
+      '<button type="button" class="btn btn-small oie-disc-apply">Aplicar a todos</button>' +
+      '<button type="button" class="btn btn-small oie-disc-clear">Quitar</button>' +
+      '<span style="flex:1"></span>' +
+      '<span class="oie-disc-total" style="font-size:13px;color:#b45309;font-weight:700"></span>' +
+    '</div>';
+  }
+  // Cablea la barra de descuento. ctx = { getItems, getUnit, setUnit, rerender }.
+  function wireDiscountBar(barEl, ctx) {
+    if (!barEl) return;
+    function refreshTotal() {
+      var t = barEl.querySelector(".oie-disc-total");
+      var d = itemsDiscTotal(ctx.getItems());
+      if (t) t.textContent = d > 0 ? "Descuento total: " + fmtPrice(d) : "";
+    }
+    barEl.querySelectorAll(".oie-unit-btn").forEach(function(b) {
+      b.addEventListener("click", function() {
+        var u = b.dataset.unit === "amount" ? "amount" : "percent";
+        ctx.setUnit(u);
+        barEl.querySelectorAll(".oie-unit-btn").forEach(function(x) {
+          var on = x.dataset.unit === u;
+          x.style.background = on ? "#1e3a5f" : "#fff";
+          x.style.color = on ? "#fff" : "#374151";
+        });
+        ctx.rerender();
+        refreshTotal();
+      });
+    });
+    var apply = barEl.querySelector(".oie-disc-apply");
+    if (apply) apply.addEventListener("click", function() {
+      var inp = barEl.querySelector(".oie-disc-gen");
+      var raw = Number(inp && inp.value) || 0;
+      var items = ctx.getItems();
+      if (ctx.getUnit() === "amount") {
+        // Repartir el monto general proporcional al bruto → % uniforme.
+        var g = itemsGross(items);
+        var pct = g > 0 ? clampDiscPct(raw / g * 100) : 0;
+        items.forEach(function(it) { it.discount_percent = pct; });
+      } else {
+        var p = clampDiscPct(raw);
+        items.forEach(function(it) { it.discount_percent = p; });
+      }
+      ctx.rerender();
+      refreshTotal();
+    });
+    var clear = barEl.querySelector(".oie-disc-clear");
+    if (clear) clear.addEventListener("click", function() {
+      ctx.getItems().forEach(function(it) { it.discount_percent = 0; });
+      var inp = barEl.querySelector(".oie-disc-gen");
+      if (inp) inp.value = "";
+      ctx.rerender();
+      refreshTotal();
+    });
+    barEl._refreshDiscTotal = refreshTotal;
+    refreshTotal();
+  }
+
   // ---------- Crear pedido desde admin ----------
   var noItems = [];   // items del nuevo pedido en construcción
+  var noDiscUnit = "percent";   // unidad activa del descuento (percent|amount)
   var noPriceCfg = orderCfgFromSel("level:1");   // config de precio activa del nuevo pedido
 
   function noRecalc() {
-    return noItems.reduce(function(s, it) { return s + it.unit_price * it.quantity; }, 0);
+    return itemsNetTotal(noItems);
   }
 
   function noRenderItems() {
     if (!els.noItemsTbody) return;
     if (!noItems.length) {
-      els.noItemsTbody.innerHTML = '<tr><td colspan="6" class="muted" style="padding:12px;text-align:center">Sin artículos. Usá "+ Agregar productos".</td></tr>';
+      els.noItemsTbody.innerHTML = '<tr><td colspan="7" class="muted" style="padding:12px;text-align:center">Sin artículos. Usá "+ Agregar productos".</td></tr>';
     } else {
       els.noItemsTbody.innerHTML = noItems.map(function(it, idx) {
         return '<tr>' +
@@ -4753,7 +4850,8 @@
           '<td>' + escapeHtml(it.product_name) + '</td>' +
           '<td style="text-align:right"><input type="number" class="cell-input cell-num no-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:60px"></td>' +
           '<td style="text-align:right">' + fmtPrice(it.unit_price) + '</td>' +
-          '<td style="text-align:right;font-weight:600">' + fmtPrice(it.unit_price * it.quantity) + '</td>' +
+          '<td style="text-align:right">' + discCellHtml(it, idx, noDiscUnit) + '</td>' +
+          '<td style="text-align:right;font-weight:600" class="no-sub">' + fmtPrice(lineNetSub(it)) + '</td>' +
           '<td><button type="button" class="btn btn-small no-rm" data-idx="' + idx + '">✕</button></td>' +
           '</tr>';
       }).join("");
@@ -4762,6 +4860,17 @@
         inp.addEventListener("input", function() {
           var idx = Number(this.dataset.idx);
           noItems[idx].quantity = Math.max(1, Math.floor(Number(this.value) || 1));
+          noRenderItems();
+        });
+      });
+      // descuento por línea
+      els.noItemsTbody.querySelectorAll(".line-disc").forEach(function(inp) {
+        inp.addEventListener("input", function() {
+          var idx = Number(this.dataset.idx);
+          applyDiscCell(noItems[idx], this.value, noDiscUnit);
+          var tr = this.closest("tr");
+          var sub = tr ? tr.querySelector(".no-sub") : null;
+          if (sub) sub.textContent = fmtPrice(lineNetSub(noItems[idx]));
           noUpdateTotal();
         });
       });
@@ -4777,13 +4886,29 @@
   }
 
   function noUpdateTotal() {
-    if (els.noTotalDisp) els.noTotalDisp.textContent = "Total: " + fmtPrice(noRecalc());
+    if (els.noTotalDisp) {
+      var d = itemsDiscTotal(noItems);
+      els.noTotalDisp.textContent = (d > 0 ? "Descuento: " + fmtPrice(d) + "  ·  " : "") + "Total: " + fmtPrice(noRecalc());
+    }
+    var bar = els.newOrderModal ? els.newOrderModal.querySelector(".oie-disc-bar .oie-disc-total") : null;
+    if (bar) { var dt = itemsDiscTotal(noItems); bar.textContent = dt > 0 ? "Descuento total: " + fmtPrice(dt) : ""; }
   }
 
   async function noOpenModal() {
     noItems = [];
+    noDiscUnit = "percent";
     if (els.noNotes) els.noNotes.value = "";
     if (els.noStatus) els.noStatus.value = "pendiente";
+    // Barra de descuento general (toggle %/$ + aplicar a todos).
+    if (els.noDiscBar) {
+      els.noDiscBar.innerHTML = discountBarHtml(noDiscUnit);
+      wireDiscountBar(els.noDiscBar.querySelector(".oie-disc-bar"), {
+        getItems: function() { return noItems; },
+        getUnit: function() { return noDiscUnit; },
+        setUnit: function(u) { noDiscUnit = u; },
+        rerender: noRenderItems,
+      });
+    }
     noRenderItems();
     // Necesitamos las listas de precios para el selector y para calcular precios.
     await ensurePriceListsLoaded();
@@ -4848,7 +4973,8 @@
           notes: els.noNotes ? els.noNotes.value.trim() : "",
           items: noItems.map(function(it) {
             return { product_id: it.product_id, product_code: it.product_code,
-                     product_name: it.product_name, quantity: it.quantity, unit_price: it.unit_price };
+                     product_name: it.product_name, quantity: it.quantity, unit_price: it.unit_price,
+                     discount_percent: clampDiscPct(it.discount_percent) };
           }),
         }),
       });
@@ -5199,21 +5325,34 @@
 
   function renderOrderDetail(detailEl, order) {
     var items = order.items || [];
+    // ¿Algún item tiene descuento por línea? Si no, se omite la columna Desc.
+    var anyDisc = items.some(function(it) { return Number(it.discount_percent) > 0; });
+    var discTotal = Number(order.items_discount_total) || 0;
     var itemsTable = items.length
       ? "<table><thead><tr>" +
           "<th>Código</th><th>Producto</th><th>Cant.</th>" +
-          '<th class="num">P. Unit.</th><th class="num">Subtotal</th>' +
+          '<th class="num">P. Unit.</th>' +
+          (anyDisc ? '<th class="num">Desc.</th>' : "") +
+          '<th class="num">Subtotal</th>' +
         "</tr></thead><tbody>" +
         items.map(function(it) {
+          var dp = Number(it.discount_percent) || 0;
+          var discCell = anyDisc
+            ? '<td class="num">' + (dp > 0
+                ? '<span style="color:#b45309;font-weight:600" title="−' + fmtPrice((Number(it.unit_price)||0)*(Number(it.quantity)||0)*dp/100) + '">−' + round2(dp) + "%</span>"
+                : "—") + "</td>"
+            : "";
           return "<tr>" +
             "<td><code>" + escapeHtml(it.product_code || "") + "</code></td>" +
             "<td>" + escapeHtml(it.product_name || "") + "</td>" +
             "<td>" + it.quantity + "</td>" +
             '<td class="num">' + fmtPrice(it.unit_price) + "</td>" +
+            discCell +
             '<td class="num">' + fmtPrice(it.subtotal) + "</td>" +
           "</tr>";
         }).join("") +
-        "</tbody></table>"
+        "</tbody></table>" +
+        (discTotal > 0 ? '<div class="order-disc-total" style="text-align:right;margin-top:4px;font-size:12.5px;color:#b45309;font-weight:700">Descuento aplicado: ' + fmtPrice(discTotal) + "</div>" : "")
       : '<p class="muted">Sin items.</p>';
     // Saldo del pedido (cuenta corriente del pedido): adeudado / saldado.
     // balance_due = débitos − créditos del pedido; > 0 = todavía se debe.
@@ -5509,19 +5648,26 @@
     var vendText = order.vendedor_full_name || order.vendedor_username || "";
     var date = new Date().toLocaleDateString("es-AR");
     var items = order.items || [];
+    var anyDisc = items.some(function(it) { return Number(it.discount_percent) > 0; });
     var total = 0;
+    var discTotalRem = 0;
     var rows = items.map(function(it) {
       var sub = Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)) || 0;
+      var dp = Number(it.discount_percent) || 0;
+      var gross = (Number(it.unit_price) || 0) * (Number(it.quantity) || 0);
+      discTotalRem += Math.max(0, gross - sub);
       total += sub;
       return "<tr>" +
         "<td class='col-cod'>" + escapeHtml(it.product_code || "") + "</td>" +
         "<td class='col-prod'>" + escapeHtml(it.product_name || "") + "</td>" +
         "<td class='col-cant'>" + escapeHtml(String(it.quantity)) + "</td>" +
         "<td class='col-price'>$" + Number(it.unit_price || 0).toLocaleString("es-AR") + "</td>" +
+        (anyDisc ? "<td class='col-disc'>" + (dp > 0 ? "−" + (Math.round(dp * 100) / 100) + "%" : "—") + "</td>" : "") +
         "<td class='col-sub'>$" + sub.toLocaleString("es-AR") + "</td>" +
         "</tr>";
     }).join("");
     var totalUnidades = items.reduce(function(s, it) { return s + (Number(it.quantity) || 0); }, 0);
+    var colCount = anyDisc ? 6 : 5;
     var budgetRef = order.budget_number ? "<p class='ref'>Facturado desde presupuesto " + escapeHtml(order.budget_number) + "</p>" : "";
     var html = "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
       "<title>Remito pedido #" + order.id + "</title>" +
@@ -5552,6 +5698,7 @@
       ".col-prod{font-weight:600}" +
       ".col-cant{text-align:center;font-weight:700;width:56px}" +
       ".col-price{text-align:right;width:90px;color:#374151}" +
+      ".col-disc{text-align:right;width:64px;color:#b45309;font-weight:600}" +
       ".col-sub{text-align:right;width:90px;font-weight:700}" +
       ".summary-row{display:flex;justify-content:flex-end;align-items:baseline;gap:32px;border-top:2px solid #1e3a5f;padding:10px 8px 0}" +
       ".summary-meta{font-size:12px;color:#6b7280}" +
@@ -5580,12 +5727,14 @@
         "<th>Cód.</th><th>Producto</th>" +
         "<th style='text-align:center'>Cant.</th>" +
         "<th style='text-align:right'>P. Unit.</th>" +
+        (anyDisc ? "<th style='text-align:right'>Desc.</th>" : "") +
         "<th style='text-align:right'>Subtotal</th>" +
       "</tr></thead>" +
-      "<tbody>" + (rows || "<tr><td colspan='5' style='padding:10px;color:#6b7280'>Sin items</td></tr>") + "</tbody>" +
+      "<tbody>" + (rows || "<tr><td colspan='" + colCount + "' style='padding:10px;color:#6b7280'>Sin items</td></tr>") + "</tbody>" +
       "</table>" +
       "<div class='summary-row'>" +
-        "<span class='summary-meta'>" + items.length + " ítems &nbsp;·&nbsp; " + totalUnidades + " unidades</span>" +
+        "<span class='summary-meta'>" + items.length + " ítems &nbsp;·&nbsp; " + totalUnidades + " unidades" +
+          (discTotalRem > 0 ? " &nbsp;·&nbsp; Descuento: $" + Math.round(discTotalRem).toLocaleString("es-AR") : "") + "</span>" +
         "<span class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</span>" +
       "</div>" +
       (order.notes ? "<p class='notes'>" + escapeHtml(order.notes) + "</p>" : "") +
@@ -5646,7 +5795,8 @@
     await ensurePriceListsLoaded();
     // Config de precio activa: arranca en la lista por defecto del cliente.
     var editCfg = orderCfgFromSel(orderDefaultSel(order.client_level, order.client_price_list_id));
-    // Copia editable de los items actuales.
+    var editDiscUnit = "percent";   // unidad activa del descuento (percent|amount)
+    // Copia editable de los items actuales (incluye el descuento por línea).
     var editItems = (order.items || []).map(function(it) {
       return {
         product_id: it.product_id,
@@ -5654,6 +5804,7 @@
         product_name: it.product_name || "",
         quantity: Math.max(1, Number(it.quantity) || 1),
         unit_price: Math.max(0, Number(it.unit_price) || 0),
+        discount_percent: clampDiscPct(it.discount_percent),
       };
     });
 
@@ -5667,7 +5818,7 @@
     }
 
     function recalc() {
-      return editItems.reduce(function(s, it) { return s + it.unit_price * it.quantity; }, 0);
+      return itemsNetTotal(editItems);
     }
     // Stock actual por producto (para resaltar items sin stock). state.allProducts
     // ya está cargado por el await ensureAllProducts() de arriba.
@@ -5676,7 +5827,7 @@
       return p ? (Number(p.stock) || 0) : null;
     }
     function rowsHtml() {
-      if (!editItems.length) return '<tr><td colspan="6" class="muted" style="padding:10px">Agregá al menos un producto.</td></tr>';
+      if (!editItems.length) return '<tr><td colspan="7" class="muted" style="padding:10px">Agregá al menos un producto.</td></tr>';
       return editItems.map(function(it, idx) {
         var st = stockFor(it.product_id);
         var noStock = st !== null && st <= 0;
@@ -5687,7 +5838,8 @@
           "<td>" + escapeHtml(it.product_name) + "</td>" +
           '<td><input type="number" class="cell-input cell-num oie-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:64px"></td>' +
           '<td class="num"><input type="number" class="cell-input cell-num oie-price" min="0" step="0.01" value="' + it.unit_price + '" data-idx="' + idx + '" style="width:90px"></td>' +
-          '<td class="num oie-sub">' + fmtPrice(it.unit_price * it.quantity) + "</td>" +
+          '<td class="num">' + discCellHtml(it, idx, editDiscUnit) + "</td>" +
+          '<td class="num oie-sub">' + fmtPrice(lineNetSub(it)) + "</td>" +
           '<td><button type="button" class="btn btn-small oie-rm" data-idx="' + idx + '">✕</button></td>' +
         "</tr>";
       }).join("");
@@ -5701,8 +5853,9 @@
               '<select class="cell-input oie-pricelist" style="min-width:170px"></select></label>' +
             '<button type="button" class="btn btn-small btn-primary oie-add-btn">+ Agregar productos</button></div>' +
           "<table><thead><tr><th>Código</th><th>Producto</th><th>Cant.</th>" +
-          '<th class="num">P. Unit.</th><th class="num">Subtotal</th><th></th></tr></thead>' +
+          '<th class="num">P. Unit.</th><th class="num">Desc.</th><th class="num">Subtotal</th><th></th></tr></thead>' +
           "<tbody class=\"oie-tbody\">" + rowsHtml() + "</tbody></table>" +
+          '<div class="oie-disc-wrap">' + discountBarHtml(editDiscUnit) + "</div>" +
           '<div class="oie-foot">' +
             '<span class="oie-total-lbl">Total: <strong class="oie-total">' + fmtPrice(recalc()) + "</strong></span>" +
             '<span style="flex:1"></span>' +
@@ -5715,6 +5868,8 @@
     function updateTotal() {
       var t = box.querySelector(".oie-total");
       if (t) t.textContent = fmtPrice(recalc());
+      var dt = box.querySelector(".oie-disc-total");
+      if (dt) { var d = itemsDiscTotal(editItems); dt.textContent = d > 0 ? "Descuento total: " + fmtPrice(d) : ""; }
     }
     function wire() {
       var tbody = box.querySelector(".oie-tbody");
@@ -5722,14 +5877,22 @@
         tbody.addEventListener("input", function(e) {
           var idx = e.target.dataset.idx != null ? Number(e.target.dataset.idx) : -1;
           if (idx < 0 || !editItems[idx]) return;
+          var it = editItems[idx];
           if (e.target.classList.contains("oie-qty")) {
-            editItems[idx].quantity = Math.max(1, Math.floor(Number(e.target.value) || 1));
+            it.quantity = Math.max(1, Math.floor(Number(e.target.value) || 1));
           } else if (e.target.classList.contains("oie-price")) {
-            editItems[idx].unit_price = Math.max(0, round2(Number(e.target.value) || 0));
+            it.unit_price = Math.max(0, round2(Number(e.target.value) || 0));
+          } else if (e.target.classList.contains("line-disc")) {
+            applyDiscCell(it, e.target.value, editDiscUnit);
           }
           var tr = e.target.closest("tr");
           var sub = tr ? tr.querySelector(".oie-sub") : null;
-          if (sub) sub.textContent = fmtPrice(editItems[idx].unit_price * editItems[idx].quantity);
+          if (sub) sub.textContent = fmtPrice(lineNetSub(it));
+          // En modo $ el descuento mostrado depende de qty/precio: refrescar la celda.
+          if (editDiscUnit === "amount" && tr && !e.target.classList.contains("line-disc")) {
+            var dInp = tr.querySelector(".line-disc");
+            if (dInp) dInp.value = lineDiscAmount(it);
+          }
           updateTotal();
         });
         tbody.addEventListener("click", function(e) {
@@ -5782,6 +5945,13 @@
           repriceEdit();
         });
       }
+      var discBar = box.querySelector(".oie-disc-bar");
+      if (discBar) wireDiscountBar(discBar, {
+        getItems: function() { return editItems; },
+        getUnit: function() { return editDiscUnit; },
+        setUnit: function(u) { editDiscUnit = u; },
+        rerender: render,
+      });
       var addBtn = box.querySelector(".oie-add-btn");
       if (addBtn) addBtn.addEventListener("click", function() {
         openOrderItemPicker(editItems, editCfg, render);
@@ -5833,7 +6003,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items: editItems.map(function(it) {
           return { product_id: it.product_id, product_code: it.product_code, product_name: it.product_name,
-                   quantity: it.quantity, unit_price: it.unit_price };
+                   quantity: it.quantity, unit_price: it.unit_price, discount_percent: clampDiscPct(it.discount_percent) };
         }) }),
       });
       // Stock pudo cambiar: invalidar cache de productos del picker de Compras.

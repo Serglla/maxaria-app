@@ -352,6 +352,12 @@ try {
   db.exec("ALTER TABLE order_items ADD COLUMN pick_checked INTEGER NOT NULL DEFAULT 0");
   db.exec("UPDATE order_items SET pick_checked = 1 WHERE COALESCE(picked_qty,0) > 0");
 } catch (_) {}
+// - order_items.discount_percent: descuento por linea (0..100). unit_price queda
+//   como el precio de lista (bruto) y subtotal = round2(unit_price*qty*(1-d/100)).
+//   El descuento "general" del pedido se reparte como un % uniforme en cada linea
+//   (se guarda igual por linea). El descuento TOTAL del pedido = Σ unit_price*qty − Σ subtotal.
+//   Es independiente del descuento de entrega/cobro (orders.discount_*).
+try { db.exec("ALTER TABLE order_items ADD COLUMN discount_percent REAL NOT NULL DEFAULT 0"); } catch (_) {}
 // Registro de los cambios confirmados del chequeo de armado: cada vez que el
 // armador confirma el chequeo y hay diferencias (cantidad distinta a la pedida
 // o item quitado por falta de stock), queda una fila por item. Se muestran en
@@ -2600,9 +2606,16 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
   }
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
   const items = db.prepare(
-    "SELECT id, product_id, product_code, product_name, quantity, unit_price, subtotal" +
+    "SELECT id, product_id, product_code, product_name, quantity, unit_price, COALESCE(discount_percent,0) AS discount_percent, subtotal" +
     "  FROM order_items WHERE order_id = ? ORDER BY id"
   ).all(id);
+  // Descuento total del pedido por los descuentos por linea (= Σ bruto − Σ subtotal).
+  // Visible para todos los roles (el cliente tambien ve cuanto se le desconto).
+  let itemsDiscountTotal = 0;
+  items.forEach((it) => {
+    itemsDiscountTotal += Math.max(0, round2((Number(it.unit_price) || 0) * (Number(it.quantity) || 0) - (Number(it.subtotal) || 0)));
+  });
+  itemsDiscountTotal = round2(itemsDiscountTotal);
   // Saldo del pedido desde la cuenta corriente: balance_due = débitos − créditos,
   // amount_paid = créditos (cobro de la entrega + pagos asociados al pedido).
   const pay = db.prepare(
@@ -2618,18 +2631,23 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
   let profitability = null;
   if (isAdmin) {
     const pr = db.prepare(
-      "SELECT COALESCE(SUM(oi.unit_price * oi.quantity),0) AS revenue," +
+      "SELECT COALESCE(SUM(oi.unit_price * oi.quantity),0) AS gross," +
+      "       COALESCE(SUM(oi.subtotal),0) AS net_items," +
       "       COALESCE(SUM(COALESCE(p.cost,0) * oi.quantity),0) AS cost_total" +
       "  FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id" +
       "  WHERE oi.order_id = ?"
     ).get(id);
-    const revenueGross = Number(pr.revenue) || 0;
-    const discount = Number(order.discount_amount) || 0;
-    const revenue = Math.max(0, revenueGross - discount);   // ventas netas (con descuento)
+    const grossItems = Number(pr.gross) || 0;       // Σ precio de lista · qty
+    const netItems = Number(pr.net_items) || 0;     // Σ subtotal (con descuento por linea)
+    const itemsDiscount = Math.max(0, round2(grossItems - netItems));
+    const discount = Number(order.discount_amount) || 0;   // descuento de entrega/cobro (aparte)
+    const revenue = Math.max(0, netItems - discount);      // ventas netas finales
     const costTotal = Number(pr.cost_total) || 0;
     const profit = revenue - costTotal;
     profitability = {
-      revenue_gross: revenueGross,
+      revenue_gross: grossItems,
+      items_discount: itemsDiscount,
+      revenue_items: netItems,
       discount: discount,
       revenue: revenue,
       cost_total: costTotal,
@@ -2666,6 +2684,7 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
   ).all(id);
   res.json(Object.assign({}, order, {
     items: items,
+    items_discount_total: itemsDiscountTotal,
     balance_due: pay.balance_due,
     amount_paid: pay.amount_paid,
     // Efectivo real cobrado del pedido (entrega + pagos), para el split de comisión.
@@ -2847,7 +2866,13 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
     if (client && client.assigned_vendedor_id) assignedVendedorId = client.assigned_vendedor_id;
   }
   const userId = clientId || req.session.userId;
-  const total = round2(items.reduce((s, it) => s + round2((it.unit_price || 0) * (it.quantity || 1)), 0));
+  // Descuento por linea (0..100). subtotal = round2(unit_price*qty*(1-d/100)).
+  const clampPct = (p) => Math.max(0, Math.min(100, Number(p) || 0));
+  const total = round2(items.reduce((s, it) => {
+    const q = Math.max(1, Math.round(Number(it.quantity) || 1));
+    const pr = round2(Number(it.unit_price) || 0);
+    return s + round2(pr * q * (1 - clampPct(it.discount_percent) / 100));
+  }, 0));
   // Snapshot del costo del vendedor (vendedor_cost_unit): si el cliente tiene
   // lista personalizada, guardamos el precio base (price_<base_level>) por item,
   // así se puede calcular la comisión del vendedor. Mismo criterio que el
@@ -2868,19 +2893,21 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
       "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id, stock_discounted) VALUES (?,?,?,?,?,1)"
     ).run(userId, status, total, notes, assignedVendedorId).lastInsertRowid;
     const ins = db.prepare(
-      "INSERT INTO order_items (order_id,product_id,product_code,product_name,quantity,unit_price,subtotal,vendedor_cost_unit) " +
-      "VALUES (?,?,?,?,?,?,?,?)"
+      "INSERT INTO order_items (order_id,product_id,product_code,product_name,quantity,unit_price,discount_percent,subtotal,vendedor_cost_unit) " +
+      "VALUES (?,?,?,?,?,?,?,?,?)"
     );
     const updStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     items.forEach((it) => {
       const qty = Math.max(1, Math.round(Number(it.quantity) || 1));
       const price = round2(Number(it.unit_price) || 0);
+      const disc = clampPct(it.discount_percent);
+      const sub = round2(price * qty * (1 - disc / 100));
       let costUnit = null;
       if (getCostPrice && it.product_id) {
         const cp = getCostPrice.get(it.product_id);
         if (cp && cp.base_price != null) costUnit = Math.round(Number(cp.base_price));
       }
-      ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, round2(qty * price), costUnit);
+      ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, disc, sub, costUnit);
       if (it.product_id) updStock.run(qty, it.product_id);
     });
     // Si el pedido es a nombre de un cliente real, debitar su cuenta corriente
@@ -2954,18 +2981,20 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     ? db.prepare("SELECT " + cfg.column + " AS base_price FROM products WHERE id = ?")
     : null;
 
+  const clampPct = (p) => Math.max(0, Math.min(100, Number(p) || 0));
   const lines = [];
   let total = 0;
   for (const it of rawItems) {
     const productId = Number(it.product_id);
     const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
     const unitPrice = round2(Math.max(0, Number(it.unit_price) || 0));
+    const discPct = clampPct(it.discount_percent);
     if (!productId) continue;
     const prod = db.prepare("SELECT id, code, name FROM products WHERE id = ?").get(productId);
     if (!prod) continue;
     const productName = String(it.product_name || prod.name || "").trim().slice(0, 200);
     const productCode = String(it.product_code || prod.code || "").trim().slice(0, 50);
-    const subtotal = round2(unitPrice * qty);
+    const subtotal = round2(unitPrice * qty * (1 - discPct / 100));
     let costUnit = null;
     if (getCostPrice) {
       const cp = getCostPrice.get(productId);
@@ -2973,7 +3002,7 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     }
     total += subtotal;
     lines.push({ product_id: productId, product_code: productCode, product_name: productName,
-                 quantity: qty, unit_price: unitPrice, subtotal, vendedor_cost_unit: costUnit });
+                 quantity: qty, unit_price: unitPrice, discount_percent: discPct, subtotal, vendedor_cost_unit: costUnit });
   }
   if (!lines.length) return res.status(400).json({ error: "Ningún item válido" });
 
@@ -3014,15 +3043,15 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     const newProductIds = new Set(lines.map((l) => l.product_id));
     const adjStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
     const insItem = db.prepare(
-      "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit, pick_checked, picked_qty)" +
-      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)"
+      "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal, vendedor_cost_unit, pick_checked, picked_qty)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)"
     );
     const updQtyItem = db.prepare(
-      "UPDATE order_items SET product_code=?, product_name=?, quantity=?, unit_price=?, subtotal=?, vendedor_cost_unit=?," +
+      "UPDATE order_items SET product_code=?, product_name=?, quantity=?, unit_price=?, discount_percent=?, subtotal=?, vendedor_cost_unit=?," +
       " pick_checked=0, picked_qty=0, picked_by=NULL, picked_at=NULL WHERE id=?"
     );
     const updPriceItem = db.prepare(
-      "UPDATE order_items SET product_code=?, product_name=?, unit_price=?, subtotal=?, vendedor_cost_unit=? WHERE id=?"
+      "UPDATE order_items SET product_code=?, product_name=?, unit_price=?, discount_percent=?, subtotal=?, vendedor_cost_unit=? WHERE id=?"
     );
     const delItem = db.prepare("DELETE FROM order_items WHERE id=?");
 
@@ -3039,18 +3068,18 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     for (const l of lines) {
       const old = oldByProduct.get(l.product_id);
       if (!old) {
-        insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
+        insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.discount_percent, l.subtotal, l.vendedor_cost_unit);
         if (stockCurrentlyOut && !skipStock) adjStock.run(-l.quantity, l.product_id);
         hadQtyChange = true;
         changes.push({ product_code: l.product_code, product_name: l.product_name, old_qty: 0, new_qty: l.quantity });
       } else if (Number(old.quantity) !== Number(l.quantity)) {
-        updQtyItem.run(l.product_code, l.product_name, l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit, old.id);
+        updQtyItem.run(l.product_code, l.product_name, l.quantity, l.unit_price, l.discount_percent, l.subtotal, l.vendedor_cost_unit, old.id);
         if (stockCurrentlyOut && !skipStock) adjStock.run(Number(old.quantity) - Number(l.quantity), l.product_id);
         hadQtyChange = true;
         changes.push({ product_code: l.product_code, product_name: l.product_name, old_qty: old.quantity, new_qty: l.quantity });
       } else {
-        // Misma cantidad: actualizar precio/nombre/código/costo, conservar chequeo.
-        updPriceItem.run(l.product_code, l.product_name, l.unit_price, l.subtotal, l.vendedor_cost_unit, old.id);
+        // Misma cantidad: actualizar precio/descuento/nombre/código/costo, conservar chequeo.
+        updPriceItem.run(l.product_code, l.product_name, l.unit_price, l.discount_percent, l.subtotal, l.vendedor_cost_unit, old.id);
       }
     }
 
@@ -3084,7 +3113,7 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
       changes.length + " cambios)");
   }
   const updatedItems = db.prepare(
-    "SELECT id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit" +
+    "SELECT id, product_id, product_code, product_name, quantity, unit_price, COALESCE(discount_percent,0) AS discount_percent, subtotal, vendedor_cost_unit" +
     "  FROM order_items WHERE order_id = ? ORDER BY id"
   ).all(id);
   res.json({
@@ -7678,7 +7707,7 @@ app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, requireSectionForAd
     return res.status(409).json({ error: "Este presupuesto ya fue facturado" });
   }
   const items = db.prepare(
-    "SELECT product_id, product_code, product_name, quantity, unit_price, subtotal" +
+    "SELECT product_id, product_code, product_name, quantity, unit_price, COALESCE(discount_percent,0) AS discount_percent, subtotal" +
     "  FROM budget_items WHERE budget_id = ?"
   ).all(budget.id);
   if (!items.length) return res.status(400).json({ error: "El presupuesto no tiene items" });
@@ -7709,12 +7738,12 @@ app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, requireSectionForAd
       orderId = r.lastInsertRowid;
 
       const insItem = db.prepare(
-        "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal)" +
-        " VALUES (?,?,?,?,?,?,?)"
+        "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +
+        " VALUES (?,?,?,?,?,?,?,?)"
       );
       for (const it of items) {
         insItem.run(orderId, it.product_id || null, it.product_code, it.product_name,
-                    it.quantity, it.unit_price, it.subtotal);
+                    it.quantity, it.unit_price, it.discount_percent || 0, it.subtotal);
         // Stock YA fue descontado al crear el presupuesto (stock_discounted=1).
         // No se vuelve a descontar aqui para evitar doble descuento.
       }
