@@ -569,7 +569,9 @@
   };
 
   // ---------- helpers ----------
-  function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  // OJO: fmtPrice vive UNA sola vez, en los helpers de formato de los modales
+  // de producto (buscar "HELPERS DE FORMATO DE PRECIO"). Acá había una segunda
+  // declaración que el hoisting dejaba muerta y confundía los formatos.
   function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
   // Búsqueda por inicio de palabra: cada término del query tiene que ser
   // prefijo de alguna palabra del texto (ignora mayúsculas y acentos).
@@ -11066,9 +11068,17 @@
   // ─────────────────────────────────────────────────────────────────
   // HELPERS DE FORMATO DE PRECIO (compartidos por ambos modales)
   // ─────────────────────────────────────────────────────────────────
-  // Formatea un entero como "$1.000" (sin decimales, con separador de miles)
+  // Formatea un precio: entero → "$ 1.000"; con centavos → "$ 1.000,50".
+  // ÚNICA definición del archivo (había una segunda en los helpers de arriba
+  // que el hoisting dejaba muerta). Antes redondeaba SIEMPRE a entero: abrir
+  // el modal de un producto con precio 3.649,50 mostraba "$ 3.650" y guardar
+  // persistía 3650 (pérdida silenciosa de centavos).
   function fmtPrice(n) {
-    n = Math.round(Number(n)) || 0;
+    n = Number(n) || 0;
+    if (Math.abs(n - Math.round(n)) >= 0.005) {
+      return "$ " + n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    n = Math.round(n) || 0;
     return "$ " + n.toLocaleString("es-AR");
   }
   // Parsea "$1.000,00" o "1000" → entero
@@ -11159,7 +11169,8 @@
     { pctId: "ep-publico-pct",    priceId: "ep-publico"    },
   ];
 
-  function epGetCost() { return Math.round(Number(epCostInp ? epCostInp.value : 0)) || 0; }
+  // round2 (no Math.round): el costo admite centavos, igual que en el server.
+  function epGetCost() { return round2(Number(epCostInp ? epCostInp.value : 0)) || 0; }
   function epPctToPrice(cost, pct)   { return cost > 0 ? round2(cost * (1 + pct / 100)) : 0; }
   function epPriceToPct(cost, price) { return cost > 0 ? Math.round((price / cost - 1) * 100) : 0; }
 
@@ -11272,12 +11283,12 @@
         code,
         name,
         category_id:      epCatSelect && epCatSelect.value ? Number(epCatSelect.value) : null,
-        stock:            Number(get("ep-stock"))              || 0,
-        stock_min:        Number(get("ep-stock-min"))          || 0,
+        stock:            Math.max(0, Math.round(Number(get("ep-stock"))     || 0)),
+        stock_min:        Math.max(0, Math.round(Number(get("ep-stock-min")) || 0)),
         units_per_bulto:  Math.max(1, Number(get("ep-units-per-bulto")) || 1),
         pack_unit:        get("ep-pack-unit") || "bulto",
         expiry_alert_months: (function(){ const n = Math.round(Number(get("ep-expiry-alert"))); return isFinite(n) && n >= 0 ? n : 3; })(),
-        cost:             Number(get("ep-cost"))               || 0,
+        cost:             round2(Number(get("ep-cost")))       || 0,
         price_minorista:  parsePrice(get("ep-minorista")),
         price_revendedor: parsePrice(get("ep-revendedor")),
         price_mayorista:  parsePrice(get("ep-mayorista")),
@@ -11581,7 +11592,8 @@
   ];
   const NP_LS_KEY = "maxaria_np_pcts2";
 
-  function npGetCost() { return Math.round(Number(npCostInp ? npCostInp.value : 0)) || 0; }
+  // round2 (no Math.round): el costo admite centavos, igual que en el server.
+  function npGetCost() { return round2(Number(npCostInp ? npCostInp.value : 0)) || 0; }
 
   // costo + % → precio
   function npPctToPrice(cost, pct) { return cost > 0 ? round2(cost * (1 + pct / 100)) : 0; }
@@ -11770,6 +11782,12 @@
             }
           }
         } else {
+          // Alta simple (desde la pestaña Productos): mantener también el
+          // cache del picker de Compras/Cotizaciones, que solo se sumaba en
+          // los flujos npFor* y dejaba el producto nuevo invisible al picker.
+          if (state.allProductsLoaded && Array.isArray(state.allProducts)) {
+            state.allProducts.push(result.product);
+          }
           showToast("Producto creado: " + name);
         }
         if (newProdModal) { newProdModal.hidden = true; newProdModal.style.zIndex = ""; }
@@ -11836,10 +11854,13 @@
       const typeEl  = document.getElementById("stock-adj-type");
       const reasonEl= document.getElementById("stock-adj-reason");
       const mode    = modeEl  ? modeEl.value  : "set";
-      const qty     = Number(qtyInp  ? qtyInp.value  : 0);
+      const rawQty  = qtyInp ? String(qtyInp.value).trim() : "";
+      const qty     = Number(rawQty);
       const type    = typeEl  ? typeEl.value  : "ajuste";
       const reason  = reasonEl? reasonEl.value.trim() : "";
-      if (isNaN(qty)) { alertModal("Ingresá una cantidad válida."); return; }
+      // Campo vacío NO es 0: Number("") da 0 y en modo "fijar" aniquilaba el
+      // stock si se borraba el input y se guardaba sin querer.
+      if (rawQty === "" || isNaN(qty)) { alertModal("Ingresá una cantidad válida."); return; }
       try {
         adjSaveBtn.disabled = true;
         const result = await api("/api/admin/stock-adjustments", {
@@ -11847,18 +11868,15 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ product_id: adjState.productId, mode, qty, type, reason }),
         });
-        // Actualizar estado local del producto
+        // Actualizar estado local del producto (tabla + cache del picker de
+        // Compras/Cotizaciones, que antes quedaba con el stock viejo).
         const p = state.products.find((x) => x.id === adjState.productId);
         if (p) {
           p.stock = result.qty_after;
-          // Actualizar también el input en la tabla si está visible
-          const tr = els.prodTbody.querySelector('tr[data-id="' + adjState.productId + '"]');
-          if (tr) {
-            const inp = tr.querySelector('[data-field="stock"]');
-            if (inp) inp.value = result.qty_after;
-          }
           applyFilters(); // re-render para reflejar cambio de color OOS
         }
+        const ap = (state.allProducts || []).find((x) => x.id === adjState.productId);
+        if (ap) ap.stock = result.qty_after;
         showToast("Stock ajustado: " + result.qty_before + " → " + result.qty_after);
         if (adjModal) adjModal.hidden = true;
       } catch (e) {

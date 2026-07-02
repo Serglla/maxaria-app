@@ -45,9 +45,15 @@ function importPrices(items, db, opts) {
     db.prepare("SELECT id, name FROM categories").all().map((c) => [c.name, c.id])
   );
 
+  // Migracion defensiva (idempotente): columnas de publico en price_changes.
+  // Cubre correr `npm run import-prices` / `npm run seed` sobre una base que
+  // nunca booteo el server nuevo (la migracion principal vive en server.js).
+  try { db.exec("ALTER TABLE price_changes ADD COLUMN old_publico REAL"); } catch (_) {}
+  try { db.exec("ALTER TABLE price_changes ADD COLUMN new_publico REAL"); } catch (_) {}
+
   // Trae los precios actuales y stock de un producto por code, para snapshot.
   const findFullByCode = db.prepare(
-    "SELECT id, price_minorista, price_revendedor, price_mayorista, price_vip, stock" +
+    "SELECT id, price_minorista, price_revendedor, price_mayorista, price_vip, price_publico, stock" +
     "  FROM products WHERE code = ?"
   );
   const updateExisting = db.prepare(`
@@ -74,8 +80,8 @@ function importPrices(items, db, opts) {
     "INSERT INTO price_changes" +
     " (update_id, product_id, code, name, is_new, is_reingreso," +
     "  old_minorista, new_minorista, old_revendedor, new_revendedor," +
-    "  old_mayorista, new_mayorista, old_vip, new_vip)" +
-    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "  old_mayorista, new_mayorista, old_vip, new_vip, old_publico, new_publico)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   const updateUpdateCounters = db.prepare(
     "UPDATE price_updates SET products_changed = ?, products_new = ?, products_reingreso = ? WHERE id = ?"
@@ -104,7 +110,8 @@ function importPrices(items, db, opts) {
           Number(existing.price_minorista)  !== Number(p.price_minorista) ||
           Number(existing.price_revendedor) !== Number(p.price_revendedor) ||
           Number(existing.price_mayorista)  !== Number(p.price_mayorista) ||
-          Number(existing.price_vip)        !== Number(p.price_vip);
+          Number(existing.price_vip)        !== Number(p.price_vip) ||
+          Number(existing.price_publico)    !== Number(p.price_publico);
         // Reingreso: estaba sin stock y vuelve con stock
         const isReingreso = Number(existing.stock) <= 0 && Number(p.stock) > 0;
         if (priceChanged || isReingreso) {
@@ -122,6 +129,8 @@ function importPrices(items, db, opts) {
             new_mayorista:  p.price_mayorista,
             old_vip:        existing.price_vip,
             new_vip:        p.price_vip,
+            old_publico:    existing.price_publico,
+            new_publico:    p.price_publico,
           });
         }
         updateExisting.run(
@@ -146,6 +155,7 @@ function importPrices(items, db, opts) {
           old_revendedor: null, new_revendedor: p.price_revendedor,
           old_mayorista: null, new_mayorista: p.price_mayorista,
           old_vip: null, new_vip: p.price_vip,
+          old_publico: null, new_publico: p.price_publico,
         });
         stats.nuevos++;
       }
@@ -172,7 +182,9 @@ function importPrices(items, db, opts) {
           c.old_minorista,  c.new_minorista,
           c.old_revendedor, c.new_revendedor,
           c.old_mayorista,  c.new_mayorista,
-          c.old_vip,        c.new_vip
+          c.old_vip,        c.new_vip,
+          c.old_publico != null ? c.old_publico : null,
+          c.new_publico != null ? c.new_publico : null
         );
         if (c.is_new) newCount++;
         else if (c.is_reingreso) reingresoCount++;

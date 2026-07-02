@@ -120,7 +120,9 @@ CREATE TABLE IF NOT EXISTS price_changes (
   old_mayorista     INTEGER,
   new_mayorista     INTEGER,
   old_vip           INTEGER,
-  new_vip           INTEGER
+  new_vip           INTEGER,
+  old_publico       REAL,
+  new_publico       REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_price_changes_update ON price_changes(update_id);

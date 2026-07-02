@@ -119,6 +119,13 @@ db.exec(
 try { db.exec("ALTER TABLE price_changes ADD COLUMN is_reingreso INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 try { db.exec("ALTER TABLE price_updates ADD COLUMN products_reingreso INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 
+// Migracion: snapshot del precio PUBLICO en el historial de cambios. Antes
+// publico no se historizaba y las listas con base "publico" mostraban los
+// numeros de minorista en "Ver cambios". Las filas anteriores a esta migracion
+// quedan en NULL (el drawer las muestra sin precio viejo).
+try { db.exec("ALTER TABLE price_changes ADD COLUMN old_publico REAL"); } catch (_) {}
+try { db.exec("ALTER TABLE price_changes ADD COLUMN new_publico REAL"); } catch (_) {}
+
 // Migracion: tabla para permisos de categorias por usuario.
 // Si un usuario no tiene filas en esta tabla, ve TODAS las categorias.
 // Si tiene filas, solo ve las categorias permitidas.
@@ -895,14 +902,14 @@ function userCanSeePriceChanges(level) {
 
 // Mapea el nivel a las columnas old_X / new_X de la tabla price_changes.
 // Devuelve las columnas (old/new) de price_changes para un base_level dado.
-// "publico" cae a minorista porque no hay snapshot de publico en price_changes.
+// "publico" tiene columnas propias desde jul 2026 (filas viejas: NULL).
 function priceChangeColsForBaseLevel(baseLevel) {
   switch (String(baseLevel || "").toLowerCase()) {
     case "revendedor": return { old: "old_revendedor", new: "new_revendedor" };
     case "mayorista":  return { old: "old_mayorista",  new: "new_mayorista"  };
     case "vip":        return { old: "old_vip",        new: "new_vip"        };
+    case "publico":    return { old: "old_publico",    new: "new_publico"    };
     case "minorista":
-    case "publico":
     default:           return { old: "old_minorista",  new: "new_minorista"  };
   }
 }
@@ -920,8 +927,8 @@ function priceChangeCols(level) {
   }
 }
 
-// Columnas de precio que se historizan en price_changes (publico cae a minorista).
-const TRACKED_PRICE_COLS = ["price_minorista", "price_revendedor", "price_mayorista", "price_vip"];
+// Columnas de precio que se historizan en price_changes (los 5 niveles).
+const TRACKED_PRICE_COLS = ["price_minorista", "price_revendedor", "price_mayorista", "price_vip", "price_publico"];
 
 // Campos monetarios del producto: admiten 2 decimales (centavos). El stock y
 // stock_min quedan SIEMPRE enteros. round2 redondea a centavos.
@@ -936,7 +943,9 @@ function round2(v) { const n = Number(v); return isFinite(n) ? Math.round(n * 10
 // del día. before/after deben traer las 4 columnas TRACKED_PRICE_COLS.
 const recordManualPriceChange = db.transaction((productId, before, after) => {
   if (!before || !after) return;
-  const changed = TRACKED_PRICE_COLS.some((c) => Number(before[c]) !== Number(after[c]));
+  // (Number()||0 evita falsos positivos si algun caller no trae una columna:
+  // NaN !== NaN daria "changed" siempre true.)
+  const changed = TRACKED_PRICE_COLS.some((c) => (Number(before[c]) || 0) !== (Number(after[c]) || 0));
   if (!changed) return;
 
   // Bucket diario: el update manual de HOY (hora local) o uno nuevo.
@@ -966,11 +975,12 @@ const recordManualPriceChange = db.transaction((productId, before, after) => {
     // del día) y solo actualizamos new_* al precio más reciente.
     db.prepare(
       "UPDATE price_changes SET name = ?," +
-      "  new_minorista = ?, new_revendedor = ?, new_mayorista = ?, new_vip = ?" +
+      "  new_minorista = ?, new_revendedor = ?, new_mayorista = ?, new_vip = ?, new_publico = ?" +
       " WHERE id = ?"
     ).run(
       prod.name || null,
       after.price_minorista, after.price_revendedor, after.price_mayorista, after.price_vip,
+      after.price_publico != null ? after.price_publico : null,
       existing.id
     );
   } else {
@@ -978,14 +988,16 @@ const recordManualPriceChange = db.transaction((productId, before, after) => {
       "INSERT INTO price_changes" +
       " (update_id, product_id, code, name, is_new, is_reingreso," +
       "  old_minorista, new_minorista, old_revendedor, new_revendedor," +
-      "  old_mayorista, new_mayorista, old_vip, new_vip)" +
-      " VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "  old_mayorista, new_mayorista, old_vip, new_vip, old_publico, new_publico)" +
+      " VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ).run(
       updateId, productId, prod.code || null, prod.name || null,
       before.price_minorista, after.price_minorista,
       before.price_revendedor, after.price_revendedor,
       before.price_mayorista, after.price_mayorista,
-      before.price_vip, after.price_vip
+      before.price_vip, after.price_vip,
+      before.price_publico != null ? before.price_publico : null,
+      after.price_publico != null ? after.price_publico : null
     );
   }
 
@@ -3191,8 +3203,16 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
           price_mayorista, price_vip, price_publico, stock, stock_min } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: "Nombre requerido" });
   if (!code || !String(code).trim()) return res.status(400).json({ error: "Código requerido" });
-  const existing = db.prepare("SELECT id FROM products WHERE code=?").get(String(code).trim());
+  // Mismo recorte que coerceProductField (el PATCH ya recortaba, el POST no).
+  const codeClean = String(code).trim().slice(0, 50);
+  const existing = db.prepare("SELECT id FROM products WHERE code=?").get(codeClean);
   if (existing) return res.status(409).json({ error: "Ya existe un producto con ese código" });
+  // Validar la categoría si viene (igual que el PATCH): sin esto, una categoría
+  // inexistente reventaba por FK con un 500 en vez de un 400 claro.
+  const catId = category_id ? Number(category_id) : null;
+  if (catId != null && !db.prepare("SELECT id FROM categories WHERE id = ?").get(catId)) {
+    return res.status(400).json({ error: "Categoría inexistente" });
+  }
   // Precios (costo + 5 niveles) admiten 2 decimales; stock / stock_min enteros.
   const numInt = (v) => { const n = Math.round(Number(v)); return isFinite(n) ? Math.max(0, n) : 0; };
   const numPrice = (v) => Math.max(0, round2(v));
@@ -3202,9 +3222,9 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
       " price_mayorista, price_vip, price_publico, stock, stock_min, active)" +
       " VALUES (?,?,?,?,?,?,?,?,?,?,?,1)"
     ).run(
-      String(code).trim(),
+      codeClean,
       String(name).trim(),
-      category_id ? Number(category_id) : null,
+      catId,
       numPrice(cost), numPrice(price_minorista), numPrice(price_revendedor),
       numPrice(price_mayorista), numPrice(price_vip), numPrice(price_publico),
       numInt(stock), numInt(stock_min)
@@ -3249,13 +3269,17 @@ app.post("/api/admin/products/:id/duplicate", requireAdmin, (req, res) => {
   const r = db.prepare(
     "INSERT INTO products (code, category_id, name, description, image_url, cost," +
     " price_minorista, price_revendedor, price_mayorista, price_vip, price_publico," +
-    " stock, stock_min, active)" +
-    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    " stock, stock_min, active, units_per_bulto, pack_unit, expiry_alert_months)" +
+    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
   ).run(
     newCode, src.category_id, src.name, src.description || null, src.image_url || null,
     src.cost, src.price_minorista, src.price_revendedor, src.price_mayorista,
     src.price_vip, src.price_publico, 0, src.stock_min || 0,
-    src.active != null ? src.active : 1
+    src.active != null ? src.active : 1,
+    // Sin estos 3, el gemelo quedaba con units_per_bulto=1 y rompia la
+    // conversion bultos<->unidades en Cotizaciones/Recepcion.
+    src.units_per_bulto || 1, src.pack_unit || "bulto",
+    src.expiry_alert_months != null ? src.expiry_alert_months : 3
   );
   const created = db.prepare(
     "SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE p.id=?"
@@ -3280,9 +3304,10 @@ function coerceProductField(k, v) {
   if (k === "expiry_alert_months") { const n = Math.round(Number(v)); return isFinite(n) && n >= 0 ? n : 3; }
   if (k === "category_id") return (v == null || v === "" || Number(v) === 0) ? null : Math.round(Number(v));
   let n = Number(v); if (!isFinite(n)) n = 0;
-  // Precios (costo + 5 niveles): 2 decimales. Stock / stock_min: enteros.
+  // Precios (costo + 5 niveles): 2 decimales. Stock / stock_min: enteros >= 0
+  // (sin el clamp, el PATCH aceptaba stock negativo; el POST ya clampeaba).
   if (PRICE_FIELDS.includes(k)) return Math.max(0, round2(n));
-  return Math.round(n);
+  return Math.max(0, Math.round(n));
 }
 // Arma { cols, vals } desde un body con campos editables (no valida unicidad de código).
 function buildProductUpdate(body) {
@@ -3442,14 +3467,19 @@ app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
         const r = db.prepare("UPDATE products SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
         if (r.changes) {
           updated++;
-          if (touchesPrice && before) {
-            const after = db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id);
-            recordManualPriceChange(id, before, after);
-          }
-          if (touchesCost && costBefore) {
-            const costAfter = db.prepare("SELECT cost FROM products WHERE id = ?").get(id);
-            logCostChange(id, costBefore.cost, costAfter.cost, "manual", null, costBefore.stock);
-          }
+          // Logging con try propio: si historizar falla, el UPDATE ya quedo
+          // aplicado — antes el catch de abajo sumaba failed++ ADEMAS del
+          // updated++ y el resumen contaba el patch dos veces.
+          try {
+            if (touchesPrice && before) {
+              const after = db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id);
+              recordManualPriceChange(id, before, after);
+            }
+            if (touchesCost && costBefore) {
+              const costAfter = db.prepare("SELECT cost FROM products WHERE id = ?").get(id);
+              logCostChange(id, costBefore.cost, costAfter.cost, "manual", null, costBefore.stock);
+            }
+          } catch (_) {}
         } else failed++;
       } catch (_) { failed++; }
     }
@@ -5177,10 +5207,11 @@ function applyPurchaseCostUpdate(productId, newCostRaw, policy, purchaseId) {
   if (oldCost > 0 && newCost > 0) {
     // Mantener margen: cada precio de venta se mueve en la misma proporción.
     const ratio = newCost / oldCost;
-    // Snapshot ANTES (prod ya trae los 4 niveles) para historizar el ajuste.
+    // Snapshot ANTES (los 5 niveles, publico incluido) para historizar el ajuste.
     const before = {
       price_minorista: prod.price_minorista, price_revendedor: prod.price_revendedor,
       price_mayorista: prod.price_mayorista, price_vip: prod.price_vip,
+      price_publico: prod.price_publico,
     };
     db.prepare(
       "UPDATE products SET cost = ?," +
@@ -5192,7 +5223,7 @@ function applyPurchaseCostUpdate(productId, newCostRaw, policy, purchaseId) {
       "  WHERE id = ?"
     ).run(newCost, ratio, ratio, ratio, ratio, ratio, productId);
     const after = db.prepare(
-      "SELECT price_minorista, price_revendedor, price_mayorista, price_vip FROM products WHERE id = ?"
+      "SELECT price_minorista, price_revendedor, price_mayorista, price_vip, price_publico FROM products WHERE id = ?"
     ).get(productId);
     try { recordManualPriceChange(productId, before, after); } catch (_) {}
   } else {
@@ -8111,15 +8142,21 @@ app.post("/api/admin/stock-adjustments", requireAdmin, (req, res) => {
 
   const validTypes = ["ajuste","inventario","merma","devolucion"];
   const adjType = validTypes.includes(type) ? type : "ajuste";
+  // qty tiene que ser un numero real: sin este guard, en modo "set" un body
+  // sin qty daba Math.round(NaN) = NaN directo al UPDATE de stock.
+  const qtyNum = Number(qty);
+  if (qty == null || qty === "" || !isFinite(qtyNum)) {
+    return res.status(400).json({ error: "Cantidad invalida" });
+  }
   const qtyBefore = product.stock || 0;
   let qtyAfter, qtyChange;
 
   if (mode === "set") {
-    qtyAfter  = Math.max(0, Math.round(Number(qty)));
+    qtyAfter  = Math.max(0, Math.round(qtyNum));
     qtyChange = qtyAfter - qtyBefore;
   } else {
     // delta
-    qtyChange = Math.round(Number(qty)) || 0;
+    qtyChange = Math.round(qtyNum) || 0;
     qtyAfter  = Math.max(0, qtyBefore + qtyChange);
     qtyChange = qtyAfter - qtyBefore; // recalcular por si fue clampeado a 0
   }
