@@ -1512,7 +1512,7 @@
   // Etiqueta legible del estado del pedido. STATUS_LABELS es la vista interna
   // (admin) con los 6 estados distintos del circuito.
   const STATUS_LABELS = {
-    pendiente: "Pendiente", enviado: "Enviado", preparando: "En preparación",
+    pendiente: "Pendiente", enviado: "Enviado", preparando: "En armado",
     listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado",
   };
   function statusLabel(s) {
@@ -1639,7 +1639,12 @@
         '</tr>';
       }).join("");
 
-      const statusOptions = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
+      // Espejo de la whitelist del server: entregado solo puede cancelarse,
+      // cancelado solo puede reactivarse a pendiente.
+      let statusOptions;
+      if (o.status === "entregado") statusOptions = ["entregado", "cancelado"];
+      else if (o.status === "cancelado") statusOptions = ["cancelado", "pendiente"];
+      else statusOptions = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
       const statusOptHtml = statusOptions.map((s) =>
         '<option value="' + s + '"' + (s === o.status ? " selected" : "") + '>' +
           statusLabel(s) +
@@ -1709,13 +1714,13 @@
             const badge = card.querySelector(".order-status");
             if (badge) {
               badge.className = "order-status " + sel.value;
-              badge.textContent = sel.value;
+              badge.textContent = statusLabel(sel.value); // label legible, no el estado crudo
             }
             msg.textContent = "Estado actualizado";
-            msg.style.color = "#10b981";
+            msg.style.color = "var(--ok)";
           } catch (err) {
             msg.textContent = "Error al actualizar";
-            msg.style.color = "#dc2626";
+            msg.style.color = "var(--danger)";
           } finally {
             sel.disabled = false;
             setTimeout(() => { msg.textContent = ""; }, 3000);
@@ -2035,7 +2040,7 @@
       return '<article class="order-card">' +
         '<header class="order-head">' +
           '<div>' +
-            '<h4>Pedido #' + o.id + ' <span class="order-status ' + escapeHtml(o.status) + '">' + escapeHtml(o.status) + '</span></h4>' +
+            '<h4>Pedido #' + o.id + ' <span class="order-status ' + escapeHtml(o.status) + '">' + escapeHtml(statusLabel(o.status)) + '</span></h4>' +
             '<div class="meta">' + date + ' &middot; ' + escapeHtml(cliente) + '</div>' +
           '</div>' +
           '<div class="order-total">' +

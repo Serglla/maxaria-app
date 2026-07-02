@@ -2726,6 +2726,17 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
 
   const prevStatus = order.status;
+
+  // Transiciones bloqueadas (rompen contabilidad/stock):
+  // - "entregado" solo puede pasar a cancelado: volverlo a pendiente dejaria el
+  //   debito vivo y el stock descontado en un pedido "sin entregar".
+  // - "cancelado" solo puede reactivarse a pendiente: re-entra al circuito y el
+  //   stock/debito se re-aplican al entregarlo (mismo camino que pedidos legacy).
+  if (prevStatus === "entregado" && status !== "entregado" && status !== "cancelado")
+    return res.status(409).json({ error: "Un pedido entregado solo puede cancelarse" });
+  if (prevStatus === "cancelado" && status !== "cancelado" && status !== "pendiente")
+    return res.status(409).json({ error: "Un pedido cancelado solo puede reactivarse a Pendiente" });
+
   // Los pedidos individuales que ya fueron absorbidos por un unificado NO
   // descuentan stock por su cuenta: el descuento se hace una sola vez cuando
   // el admin entrega el pedido unificado padre.
@@ -2805,6 +2816,24 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
       ).run(id);
       db.prepare("UPDATE orders SET stock_discounted = 0 WHERE id = ?").run(id);
     }
+
+    // Al cancelar un pedido que tenia entrega registrada: revertir la plata de
+    // caja (ingresos de la entrega + egreso de comision del vendedor) y borrar
+    // la entrega. Sin esto la caja quedaba sobreestimada y la tarjeta seguia
+    // mostrando "Ver entrega". Los pagos (payments) NO se tocan: si el cliente
+    // pago de verdad, ese registro se gestiona desde Pagos.
+    if (status === "cancelado" && prevStatus !== "cancelado") {
+      const dlv = db.prepare("SELECT id FROM deliveries WHERE order_id = ?").get(id);
+      if (dlv) {
+        db.prepare(
+          "DELETE FROM cash_movements WHERE source = 'entrega' AND related_id = ?"
+        ).run(dlv.id);
+        db.prepare("DELETE FROM deliveries WHERE id = ?").run(dlv.id);
+      }
+      db.prepare(
+        "DELETE FROM cash_movements WHERE source = 'comision' AND related_id = ?"
+      ).run(id);
+    }
   })();
 
   res.json({ ok: true, id: id, status: status });
@@ -2859,18 +2888,25 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
   const status = ["pendiente","enviado","preparando"].includes(b.status) ? b.status : "pendiente";
   const notes = String(b.notes || "").trim() || null;
   const clientId = b.client_id ? Number(b.client_id) : null;
-  // Resolver vendedor asignado del cliente si tiene uno.
+  // Validar el cliente: tiene que existir, estar activo y ser un cliente real
+  // (level 1-4). Sin esto se aceptaba cualquier id: uno inexistente reventaba
+  // por FK (500) y uno de vendedor/admin generaba un debito en su cuenta.
   let assignedVendedorId = null;
   if (clientId) {
-    const client = db.prepare("SELECT assigned_vendedor_id FROM users WHERE id = ?").get(clientId);
-    if (client && client.assigned_vendedor_id) assignedVendedorId = client.assigned_vendedor_id;
+    const client = db.prepare("SELECT id, level, active, assigned_vendedor_id FROM users WHERE id = ?").get(clientId);
+    if (!client) return res.status(400).json({ error: "El cliente no existe" });
+    if (!client.active) return res.status(400).json({ error: "El cliente esta inactivo" });
+    if (Number(client.level) < 1 || Number(client.level) > 4)
+      return res.status(400).json({ error: "El usuario elegido no es un cliente (nivel 1-4)" });
+    if (client.assigned_vendedor_id) assignedVendedorId = client.assigned_vendedor_id;
   }
   const userId = clientId || req.session.userId;
   // Descuento por linea (0..100). subtotal = round2(unit_price*qty*(1-d/100)).
   const clampPct = (p) => Math.max(0, Math.min(100, Number(p) || 0));
+  // unit_price clampeado a >= 0: un negativo generaba total y debito negativos.
   const total = round2(items.reduce((s, it) => {
     const q = Math.max(1, Math.round(Number(it.quantity) || 1));
-    const pr = round2(Number(it.unit_price) || 0);
+    const pr = Math.max(0, round2(Number(it.unit_price) || 0));
     return s + round2(pr * q * (1 - clampPct(it.discount_percent) / 100));
   }, 0));
   // Snapshot del costo del vendedor (vendedor_cost_unit): si el cliente tiene
@@ -2899,7 +2935,7 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
     const updStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     items.forEach((it) => {
       const qty = Math.max(1, Math.round(Number(it.quantity) || 1));
-      const price = round2(Number(it.unit_price) || 0);
+      const price = Math.max(0, round2(Number(it.unit_price) || 0));
       const disc = clampPct(it.discount_percent);
       const sub = round2(price * qty * (1 - disc / 100));
       let costUnit = null;
@@ -4787,6 +4823,13 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
       ).get(id, req.session.userId, req.session.userId);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado o no asignado a vos" });
 
+  // Un pedido cancelado no se entrega: sin este guard, guardar el modal de una
+  // entrega vieja (p. ej. para mirar la nota) lo "resucitaba" a entregado,
+  // re-descontando stock y re-debitando la cuenta corriente.
+  if (order.status === "cancelado") {
+    return res.status(409).json({ error: "El pedido esta cancelado. Reactivalo antes de registrar una entrega." });
+  }
+
   const { delivered_to, efectivo_amount, transferencia_amount, notes, caja_id, caja_transfer_id } = req.body || {};
   const deliveredTo = String(delivered_to || "").trim().slice(0, 200);
   if (!deliveredTo) return res.status(400).json({ error: "Falta indicar quien recibio el pedido" });
@@ -4830,6 +4873,13 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
   const deliveredAtSql = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
     ? rawDate + " 12:00:00"
     : (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(rawDate) ? rawDate : null);
+  // Entregas con fecha futura no entran (contaminan reportes y Ventas). Margen
+  // de 1 dia por la diferencia entre el dia local del cliente y el UTC del server.
+  if (deliveredAtSql) {
+    const maxDay = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
+    if (deliveredAtSql.slice(0, 10) > maxDay)
+      return res.status(400).json({ error: "La fecha de entrega no puede ser futura" });
+  }
 
   // Descuento del pedido — SOLO admin. El vendedor no puede descontar; si entrega,
   // se conserva el descuento que el admin haya dejado (no se toca). discount_value

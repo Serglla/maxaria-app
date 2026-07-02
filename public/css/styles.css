@@ -28,6 +28,12 @@
   --warn:   #b45309;  --warn-bg:   #fef6e7;  --warn-line:   #f3d9a4;
   --danger: #b91c1c;  --danger-bg: #fef2f2;  --danger-line: #fbc9c9;
 
+  /* Estados del circuito de pedidos que no mapean a los semánticos de arriba.
+     Completan la paleta de 6: pendiente=warn, enviado=brand, entregado=ok,
+     cancelado=danger, preparando=prep (índigo), listo=ready (magenta). */
+  --prep:  #4c51bf;  --prep-bg:  #eef0fa;  --prep-line:  #c8cdef;
+  --ready: #9d4480;  --ready-bg: #fbeef6;  --ready-line: #f0c4df;
+
   /* Forma */
   --radius:      14px;
   --radius-sm:   9px;
@@ -766,7 +772,7 @@ button { font: inherit; cursor: pointer; }
   margin: 0;
   font-size: 14px;
   font-weight: 700;
-  color: #1e3a5f;
+  color: var(--brand);
 }
 .order-head h4.order-client {
   font-size: 20px;
@@ -794,8 +800,8 @@ button { font: inherit; cursor: pointer; }
 }
 .order-status.pendiente   { background: var(--warn-bg);   color: var(--warn);   border-color: var(--warn-line); }
 .order-status.enviado     { background: var(--brand-soft); color: var(--brand);  border-color: var(--brand-line); }
-.order-status.preparando  { background: #eef0fa;          color: #4c51bf;        border-color: #c8cdef; }
-.order-status.listo       { background: #fbeef6;          color: #9d4480;        border-color: #f0c4df; }
+.order-status.preparando  { background: var(--prep-bg);   color: var(--prep);   border-color: var(--prep-line); }
+.order-status.listo       { background: var(--ready-bg);  color: var(--ready);  border-color: var(--ready-line); }
 .order-status.entregado   { background: var(--ok-bg);     color: var(--ok);     border-color: var(--ok-line); }
 .order-status.cancelado   { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); }
 .order-tag {
@@ -810,7 +816,9 @@ button { font: inherit; cursor: pointer; }
   border: 1.5px solid transparent;
 }
 .order-tag.tag-unified    { background: #ede9fe; color: #5b21b6; border-color: #a78bfa; }
-.order-tag.tag-grouped    { background: #fef08a; color: #854d0e; border-color: #eab308; }
+/* "agrupado en #X": neutro/gris. Antes era un amarillo casi igual al de
+   tag-pendiente y se confundían dos significados distintos. */
+.order-tag.tag-grouped    { background: var(--surface-2); color: var(--ink-2); border-color: var(--line); }
 /* Estado de pago del pedido entregado (vista cliente) */
 .order-pay { margin-top: 4px; }
 .pay-chip {
@@ -821,8 +829,8 @@ button { font: inherit; cursor: pointer; }
   border-radius: 999px;
   border: 1.5px solid transparent;
 }
-.pay-chip.pay-ok  { background: #a7f3d0; color: #065f46; border-color: #10b981; }
-.pay-chip.pay-due { background: #fed7aa; color: #9a3412; border-color: #f97316; }
+.pay-chip.pay-ok  { background: var(--ok-bg);   color: var(--ok);   border-color: var(--ok-line); }
+.pay-chip.pay-due { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-line); }
 .order-pay-detail {
   margin-top: 10px;
   padding: 8px 12px;
@@ -840,12 +848,25 @@ button { font: inherit; cursor: pointer; }
 }
 .order-pay-detail .pay-row.pay-ok  strong { color: #047857; }
 .order-pay-detail .pay-row.pay-due strong { color: #c2410c; }
-.order-tag.tag-pendiente  { background: #fde68a; color: #854d0e; border-color: #f59e0b; }
-.order-tag.tag-enviado    { background: #bfdbfe; color: #1e3a8a; border-color: #3b82f6; }
-.order-tag.tag-preparando { background: #c7d2fe; color: #312e81; border-color: #6366f1; }
-.order-tag.tag-listo      { background: #f5d0fe; color: #701a75; border-color: #d946ef; }
-.order-tag.tag-entregado  { background: #a7f3d0; color: #065f46; border-color: #10b981; }
-.order-tag.tag-cancelado  { background: #fecaca; color: #991b1b; border-color: #ef4444; }
+/* Misma paleta que .order-status.<estado>: antes esta variante usaba colores
+   Tailwind saturados y el mismo estado se veía distinto en dashboard vs tarjetas. */
+.order-tag.tag-pendiente  { background: var(--warn-bg);   color: var(--warn);   border-color: var(--warn-line); }
+.order-tag.tag-enviado    { background: var(--brand-soft); color: var(--brand);  border-color: var(--brand-line); }
+.order-tag.tag-preparando { background: var(--prep-bg);   color: var(--prep);   border-color: var(--prep-line); }
+.order-tag.tag-listo      { background: var(--ready-bg);  color: var(--ready);  border-color: var(--ready-line); }
+.order-tag.tag-entregado  { background: var(--ok-bg);     color: var(--ok);     border-color: var(--ok-line); }
+.order-tag.tag-cancelado  { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); }
+
+/* Chip genérico de estado para tablas (hoy: cotizaciones). Antes el chip de
+   cotización "Enviado" reusaba .tag-unified con verde inline y no existía
+   una base .tag en el CSS. */
+.tag {
+  display: inline-block; font-size: 11px; font-weight: 800; padding: 2px 9px;
+  border-radius: var(--radius-pill); text-transform: uppercase;
+  letter-spacing: .3px; border: 1.5px solid transparent;
+}
+.tag.tag-sent  { background: var(--ok-bg);    color: var(--ok);    border-color: var(--ok-line); }
+.tag.tag-draft { background: var(--surface-2); color: var(--ink-2); border-color: var(--line); }
 
 /* Encabezado de las colas del circuito (Armado / Para entregar) */
 .armado-queue-head {
@@ -921,7 +942,7 @@ button { font: inherit; cursor: pointer; }
 #tab-ventas .admin-filter {
   font-size: 13px;
   font-weight: 800;
-  color: #1e3a5f;
+  color: var(--brand);
 }
 
 /* Pedido unificado: barra superior del drawer "Mis pedidos" para el vendedor tercerizado */
@@ -1034,7 +1055,7 @@ button { font: inherit; cursor: pointer; }
 }
 /* Tabla de items dentro del detalle expandido */
 .order-detail table { width: 100%; border-collapse: collapse; border-radius: 6px; overflow: hidden; }
-.order-detail thead tr { background: #1e3a5f; }
+.order-detail thead tr { background: var(--brand); }
 .order-detail thead th {
   text-align: left;
   padding: 8px 10px;
@@ -1046,14 +1067,14 @@ button { font: inherit; cursor: pointer; }
   border-right: 2px solid rgba(255,255,255,.35);
 }
 .order-detail thead th:last-child { border-right: none; }
-.order-detail tbody tr { border-bottom: 2px solid #1e3a5f; }
+.order-detail tbody tr { border-bottom: 2px solid var(--brand); }
 .order-detail tbody tr:nth-child(odd)  { background: #fff; }
 .order-detail tbody tr:nth-child(even) { background: #dde5f5; }
 .order-detail tbody tr:hover { background: #c7d7f0; }
 .order-detail tbody td {
   padding: 8px 10px;
   vertical-align: middle;
-  border-right: 2px solid #1e3a5f;
+  border-right: 2px solid var(--brand);
   font-size: 14.5px;
   font-weight: 700;
 }
@@ -1171,7 +1192,7 @@ button { font: inherit; cursor: pointer; }
 }
 .pick-cat-head {
   position: sticky; top: 0; z-index: 1;
-  background: #1e3a5f; color: #fff; font-size: 11.5px; font-weight: 800;
+  background: var(--brand); color: #fff; font-size: 11.5px; font-weight: 800;
   text-transform: uppercase; letter-spacing: .4px; padding: 5px 10px;
 }
 .pick-item {
@@ -1205,7 +1226,7 @@ button { font: inherit; cursor: pointer; }
 /* Badge en la tarjeta del pedido cuando el checklist está completo */
 .pick-badge-ok {
   display: inline-block; font-size: 11px; font-weight: 800; padding: 2px 8px;
-  border-radius: 999px; background: #dcfce7; color: #166534; border: 1px solid #16a34a;
+  border-radius: 999px; background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok-line);
   white-space: nowrap; vertical-align: middle;
 }
 /* Cambios confirmados del chequeo de armado, en el detalle del pedido
@@ -1258,7 +1279,7 @@ button { font: inherit; cursor: pointer; }
   margin-top: 10px; padding-top: 8px; border-top: 1px dashed #e5e7eb;
 }
 .oie-total-lbl { font-size: 13px; }
-.oie-total { font-size: 15px; color: #1e3a5f; }
+.oie-total { font-size: 15px; color: var(--brand); }
 .drawer-head {
   display: flex;
   align-items: center;
@@ -1406,7 +1427,7 @@ button { font: inherit; cursor: pointer; }
 
 /* ---- Edición de items de pedido ---- */
 .order-items-edit-table { width: 100%; border-collapse: collapse; }
-.order-items-edit-table thead tr { background: #1e3a5f; }
+.order-items-edit-table thead tr { background: var(--brand); }
 .order-items-edit-table thead th {
   font-weight: 700; color: #fff; font-size: 11px;
   padding: 7px 10px; text-align: left;
@@ -1425,8 +1446,8 @@ button { font: inherit; cursor: pointer; }
 .order-items-edit-table .col-del { width: 36px; text-align: center; }
 .order-items-edit-table .item-qty,
 .order-items-edit-table .item-price { width: 72px; text-align: right; padding: 3px 5px; font-size: 13px; }
-.order-total-row td { font-weight: 700; color: #1e3a5f; padding: 8px 10px; border-top: 2px solid #1e3a5f; font-size: 14px; }
-.pur-total-row td { font-weight: 800; color: #1e3a5f; padding: 10px 12px; border-top: 2px solid #1e3a5f; background: #f1f5fb; font-size: 14px; }
+.order-total-row td { font-weight: 700; color: var(--brand); padding: 8px 10px; border-top: 2px solid var(--brand); font-size: 14px; }
+.pur-total-row td { font-weight: 800; color: var(--brand); padding: 10px 12px; border-top: 2px solid var(--brand); background: #f1f5fb; font-size: 14px; }
 .order-total-label { text-align: right; color: #374151; }
 .order-total-cell { font-variant-numeric: tabular-nums; }
 .btn-del-item { background: #fee2e2; color: #dc2626; border: 0; border-radius: 4px;
@@ -3028,7 +3049,7 @@ button { font: inherit; cursor: pointer; }
 .admin-orders-list { display: flex; flex-direction: column; gap: 12px; }
 .admin-orders-list .order-card { margin-bottom: 0; }
 .admin-orders-list .order-items-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 0; }
-.admin-orders-list .order-items-table thead tr { background: #1e3a5f; }
+.admin-orders-list .order-items-table thead tr { background: var(--brand); }
 .admin-orders-list .order-items-table thead th {
   text-align: left; font-weight: 700; color: #fff;
   font-size: 11px; text-transform: uppercase; letter-spacing: .04em;

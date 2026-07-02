@@ -9,6 +9,20 @@
   const PAGE_SIZE = 50;
   const LS_KEY = "maxaria.admin.products.prefs";
 
+  // ── Estados del circuito de pedidos: ÚNICA fuente de labels y clases ──
+  // Antes había 5 mapas locales duplicados con nombres divergentes
+  // ("Listo" vs "Listo para entregar", "Preparando" vs "En armado").
+  // Canónico: mismo texto que el remito del server y la pestaña Armado.
+  const ORDER_STATUS_LABELS = {
+    pendiente: "Pendiente", enviado: "Enviado", preparando: "En armado",
+    listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado",
+  };
+  const ORDER_STATUS_TAGCLS = {
+    pendiente: "tag-pendiente", enviado: "tag-enviado", preparando: "tag-preparando",
+    listo: "tag-listo", entregado: "tag-entregado", cancelado: "tag-cancelado",
+  };
+  function orderStatusLabel(s) { return ORDER_STATUS_LABELS[s] || s || ""; }
+
   // Tipos por columna para el comparador.
   // "text"   -> compare con localeCompare
   // "number" -> compare numerico
@@ -581,6 +595,14 @@
       hour: "2-digit", minute: "2-digit",
     });
   }
+  // Solo el día (dd/mm/aaaa), en horario LOCAL. Para tablas compactas.
+  // No usar slice(0,10) sobre el timestamp: es el día UTC, no el local.
+  function formatDateDay(s) {
+    if (!s) return "";
+    const d = new Date(s.replace(" ", "T") + "Z");
+    if (isNaN(d.getTime())) return s;
+    return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  }
   // ---------- preferencias persistentes (filtros + orden) ----------
   function loadPrefs() {
     try {
@@ -1120,9 +1142,7 @@
       setV("dash-stock-bajo", d.stockBajo || 0);
       setV("dash-stock-ok",   d.stockOk   || 0);
 
-      // Últimos pedidos
-      const STATUS_LABEL = { pendiente:"Pendiente", enviado:"Enviado", preparando:"Preparando", listo:"Listo", entregado:"Entregado", cancelado:"Cancelado" };
-      const STATUS_CLS   = { pendiente:"tag-pendiente", enviado:"tag-enviado", preparando:"tag-preparando", listo:"tag-listo", entregado:"tag-entregado", cancelado:"tag-cancelado" };
+      // Últimos pedidos (labels/clases: fuente única ORDER_STATUS_*)
       const tbody = document.getElementById("dash-recent-tbody");
       if (tbody) {
         if (!d.recentOrders || !d.recentOrders.length) {
@@ -1130,9 +1150,11 @@
         } else {
           tbody.innerHTML = d.recentOrders.map((o) => {
             const name = escapeHtml(o.full_name || o.username);
-            const lbl  = STATUS_LABEL[o.status] || o.status;
-            const cls  = STATUS_CLS[o.status]   || "";
-            const date = (o.created_at || "").slice(0,10).split("-").reverse().join("/");
+            const lbl  = orderStatusLabel(o.status);
+            const cls  = ORDER_STATUS_TAGCLS[o.status] || "";
+            // Día local, no slice UTC: un pedido de las 22:00 figuraba con el
+            // día siguiente en el dashboard vs la pestaña Pedidos.
+            const date = formatDateDay(o.created_at);
             return "<tr>" +
               "<td class=\"muted\">#" + o.id + "</td>" +
               "<td>" + name + "</td>" +
@@ -3173,6 +3195,8 @@
           dval = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD local
         }
         dateInput.value = dval;
+        // Sin fechas futuras: contaminan reportes/Ventas (el server también valida).
+        dateInput.max = new Date().toLocaleDateString("en-CA");
       }
       if (existingDelivery) {
         const f = els.deliveryForm;
@@ -5189,11 +5213,7 @@
   }
 
   function orderCardHtml(o) {
-    var statusLabels = {
-      pendiente: "Pendiente", preparando: "Preparando", listo: "Listo para entregar",
-      enviado: "Enviado", entregado: "Entregado", cancelado: "Cancelado"
-    };
-    var statusLabel = statusLabels[o.status] || o.status || "";
+    var statusLabel = orderStatusLabel(o.status);
     var clientLabel = escapeHtml(o.full_name || o.username || "—");
     // En pedidos entregados mostramos la fecha de ENTREGA (es la que define la
     // venta y por la que filtra la pestaña Ventas), no la de creación, para que
@@ -5223,8 +5243,10 @@
     // VER una entrega ya hecha (`entregado` o si ya hay delivery). En Pedidos
     // (pendiente/enviado) y Armado (preparando) no se entrega: primero se arma y
     // se avanza por el circuito (botón → Armado / → Entregas).
+    // Cancelado NUNCA muestra el botón: re-guardar la entrega de un pedido
+    // cancelado lo resucitaba a entregado (el server ahora también lo rechaza).
     var delivBtn = "";
-    if (o.status === "listo" || o.status === "entregado" || o.delivery_id) {
+    if (o.status !== "cancelado" && (o.status === "listo" || o.status === "entregado" || o.delivery_id)) {
       var hasDelivery = o.delivery_id ? "1" : "0";
       var delivLabel = o.delivery_id ? "Ver entrega" : "Registrar entrega";
       delivBtn = '<button class="btn btn-small btn-deliver" data-id="' + o.id +
@@ -5429,10 +5451,22 @@
         "</div>";
     }
 
-    var statuses = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
-    var statusNames = { pendiente: "Pendiente", enviado: "Enviado", preparando: "Preparando", listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado" };
+    // Opciones del select según rol y estado (espejo de la whitelist del server):
+    // - Vendedor: solo puede marcar "entregado" (antes veía las 6 y recibía 403).
+    // - Entregado: solo se puede cancelar (volverlo a pendiente rompía contabilidad).
+    // - Cancelado: solo se puede reactivar a Pendiente.
+    var statuses;
+    if (!state.isAdmin) {
+      statuses = order.status === "entregado" ? ["entregado"] : [order.status, "entregado"];
+    } else if (order.status === "entregado") {
+      statuses = ["entregado", "cancelado"];
+    } else if (order.status === "cancelado") {
+      statuses = ["cancelado", "pendiente"];
+    } else {
+      statuses = ["pendiente", "enviado", "preparando", "listo", "entregado", "cancelado"];
+    }
     var statusOpts = statuses.map(function(s) {
-      return '<option value="' + s + '"' + (order.status === s ? " selected" : "") + ">" + statusNames[s] + "</option>";
+      return '<option value="' + s + '"' + (order.status === s ? " selected" : "") + ">" + orderStatusLabel(s) + "</option>";
     }).join("");
     var statusRow = '<label>Estado<br>' +
       '<select class="order-status-select cell-select" data-order-id="' + order.id + '">' + statusOpts + "</select></label>";
@@ -5540,8 +5574,7 @@
           if (card) {
             var badge = card.querySelector(".order-status");
             if (badge) {
-              var labels = { pendiente: "Pendiente", preparando: "Preparando", listo: "Listo para entregar", enviado: "Enviado", entregado: "Entregado", cancelado: "Cancelado" };
-              badge.textContent = labels[newStatus] || newStatus;
+              badge.textContent = orderStatusLabel(newStatus);
               badge.className = "order-status " + newStatus;
             }
           }
@@ -5641,8 +5674,7 @@
   // Imprime un remito del pedido (lo que se preparó para entregar): productos,
   // cantidades, precios y total + espacio para firma. Abre ventana e imprime.
   function printOrderRemito(order) {
-    var statusNames = { pendiente: "Pendiente", enviado: "Enviado", preparando: "En armado",
-      listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado" };
+    var statusNames = ORDER_STATUS_LABELS; // fuente única
     var appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
     var clientText = order.full_name || order.username || "—";
     var vendText = order.vendedor_full_name || order.vendedor_username || "";
@@ -8519,9 +8551,11 @@
   }
 
   function cotizacionRowHtml(c) {
+    // Clases propias con tokens: antes se reusaba .tag-unified (que es el chip
+    // violeta de "pedido unificado") pisándola con un verde inline.
     const statusChip = c.status === "enviado"
-      ? '<span class="tag tag-unified" style="background:#22c55e;color:#fff">Enviado</span>'
-      : '<span class="tag" style="background:#f3f4f6;color:#6b7280">Borrador</span>';
+      ? '<span class="tag tag-sent">Enviado</span>'
+      : '<span class="tag tag-draft">Borrador</span>';
     return '<tr class="pcot-row pur-row" data-id="' + c.id + '" style="cursor:pointer">' +
       '<td class="cell-code">#' + c.id + '</td>' +
       '<td>' + escapeHtml(c.supplier_name || "—") + '</td>' +
@@ -11063,8 +11097,15 @@
   // Formatea EN VIVO mientras se tipea ("1000" → "1.000", "1000000" → "1.000.000").
   function fmtMiles(n) { return (Math.round(Number(n) || 0)).toLocaleString("es-AR"); }
   // Lee un input/valor formateado y devuelve el entero (descarta todo lo que no sea dígito).
+  // Los precios son enteros: si el valor trae decimales ("1.500,50" pegado, o
+  // "1500.50"), se descartan. Antes se limpiaba TODO junto y "1.500,50" se
+  // convertía en 150050 (×100 silencioso). Regla: un grupo final de 1-2 dígitos
+  // tras coma o punto es decimal (el punto de miles es-AR siempre agrupa de a 3).
   function parseMoney(s) {
-    return Math.round(Number(String(s == null ? "" : s).replace(/[^\d]/g, "")) || 0);
+    var str = String(s == null ? "" : s).trim();
+    var m = str.match(/^(.*?)[.,](\d{1,2})$/);
+    if (m) str = m[1];
+    return Math.round(Number(str.replace(/[^\d]/g, "")) || 0);
   }
   // Setea un input de dinero con el valor ya formateado (0 → "0").
   function setMoney(el, n) { if (el) el.value = fmtMiles(n); }
@@ -11922,15 +11963,16 @@
   function rptPct(num, den) { return den > 0 ? Math.round(num / den * 100) + "%" : "—"; }
   function rptDate(s) { return (s || "").slice(0, 10).split("-").reverse().join("/"); }
 
-  const STATUS_LABEL = { pendiente:"Pendiente", enviado:"Enviado", preparando:"Preparando", listo:"Listo", entregado:"Entregado", cancelado:"Cancelado" };
-  const STATUS_CLS   = { pendiente:"tag-pendiente", enviado:"tag-enviado", preparando:"tag-preparando", listo:"tag-listo", entregado:"tag-entregado", cancelado:"tag-cancelado" };
+  // Labels/clases de estado: fuente única ORDER_STATUS_* (arriba del archivo).
 
   // Setea el rango "este mes" por default
   function rptSetDefaultRange() {
     if (!rptEls.from || rptEls.from.value) return;
     const now = new Date();
     rptEls.from.value = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2,"0") + "-01";
-    rptEls.to.value   = now.toISOString().slice(0, 10);
+    // Fecha LOCAL (en-CA = YYYY-MM-DD): toISOString es UTC y de 21:00 a 00:00
+    // (AR) devolvía el día siguiente, mezclando criterios con el "desde".
+    rptEls.to.value   = now.toLocaleDateString("en-CA");
   }
 
   // Llena los selects de cliente y vendedor al abrir el tab (usa state existente)
@@ -12030,7 +12072,7 @@
         '<td class="muted small">' + rptDate(o.created_at) + '</td>' +
         '<td>' + client + '</td>' +
         '<td class="muted small">' + vendedor + '</td>' +
-        '<td><span class="order-tag ' + (STATUS_CLS[o.status] || "") + '">' + (STATUS_LABEL[o.status] || o.status) + '</span></td>' +
+        '<td><span class="order-tag ' + (ORDER_STATUS_TAGCLS[o.status] || "") + '">' + orderStatusLabel(o.status) + '</span></td>' +
         '<td class="num muted">' + (o.items_count || 0) + '</td>' +
         '<td class="num"><strong>' + rptFmt(o.total) + '</strong></td>' +
         '<td class="num">' + ganHtml + '</td>' +
