@@ -8172,6 +8172,70 @@ app.get("/api/admin/reports/monthly-history", requireAdmin, (req, res) => {
   res.json({ months: list.map((ym) => byYm[ym]) });
 });
 
+// Arma el WHERE compartido de los reportes por categoría (mismos filtros que /reports/sales)
+function rptCategoryWhere(query) {
+  const { from, to, client_id, vendedor_id, status } = query;
+  const where = ["COALESCE(o.is_unified,0) = 0"];
+  const params = [];
+  if (from)        { where.push("date(o.created_at) >= ?"); params.push(from); }
+  if (to)          { where.push("date(o.created_at) <= ?"); params.push(to); }
+  if (client_id)   { where.push("o.user_id = ?");           params.push(Number(client_id)); }
+  if (vendedor_id) { where.push("(o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"); params.push(Number(vendedor_id), Number(vendedor_id)); }
+  if (status === "entregado") {
+    where.push("o.status = 'entregado'");
+  } else if (status === "activo") {
+    where.push("o.status NOT IN ('cancelado','entregado')");
+  } else {
+    where.push("o.status != 'cancelado'");
+  }
+  return { where, params };
+}
+
+// GET /api/admin/reports/by-category — ventas agrupadas por categoría de producto
+// Mismos filtros que /reports/sales. Ventas = SUM(oi.subtotal); ganancia = mismo criterio del reporte.
+app.get("/api/admin/reports/by-category", requireAdmin, (req, res) => {
+  const { where, params } = rptCategoryWhere(req.query);
+  const rows = db.prepare(
+    "SELECT COALESCE(c.id, 0) AS category_id," +
+    "       COALESCE(c.name, 'Sin categoría') AS category_name," +
+    "       COALESCE(SUM(oi.quantity),0) AS unidades," +
+    "       COUNT(DISTINCT o.id) AS pedidos," +
+    "       COALESCE(SUM(oi.subtotal),0) AS ventas," +
+    "       COALESCE(SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity),0) AS ganancia" +
+    " FROM order_items oi" +
+    " JOIN orders o ON o.id = oi.order_id" +
+    " JOIN users u ON u.id = o.user_id" +
+    " LEFT JOIN products p ON p.id = oi.product_id" +
+    " LEFT JOIN categories c ON c.id = p.category_id" +
+    " WHERE " + where.join(" AND ") +
+    " GROUP BY category_id ORDER BY ventas DESC"
+  ).all(...params);
+  res.json({ categories: rows });
+});
+
+// GET /api/admin/reports/by-category/:categoryId/products — top productos vendidos de una categoría
+// categoryId 0 = productos sin categoría o borrados. Mismos filtros de query que /reports/sales.
+app.get("/api/admin/reports/by-category/:categoryId/products", requireAdmin, (req, res) => {
+  const catId = Number(req.params.categoryId) || 0;
+  const { where, params } = rptCategoryWhere(req.query);
+  if (catId > 0) { where.push("p.category_id = ?"); params.push(catId); }
+  else           { where.push("(p.id IS NULL OR p.category_id IS NULL)"); }
+  const rows = db.prepare(
+    "SELECT COALESCE(oi.product_code,'') AS code," +
+    "       MAX(oi.product_name) AS name," +
+    "       COALESCE(SUM(oi.quantity),0) AS unidades," +
+    "       COALESCE(SUM(oi.subtotal),0) AS ventas," +
+    "       COALESCE(SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity),0) AS ganancia" +
+    " FROM order_items oi" +
+    " JOIN orders o ON o.id = oi.order_id" +
+    " JOIN users u ON u.id = o.user_id" +
+    " LEFT JOIN products p ON p.id = oi.product_id" +
+    " WHERE " + where.join(" AND ") +
+    " GROUP BY oi.product_code ORDER BY ventas DESC LIMIT 50"
+  ).all(...params);
+  res.json({ products: rows });
+});
+
 // GET /api/admin/reports/sales/:orderId/items — ítems de un pedido
 app.get("/api/admin/reports/sales/:orderId/items", requireAdmin, (req, res) => {
   const items = db.prepare(

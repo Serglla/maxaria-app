@@ -11953,7 +11953,9 @@
   // REPORTES DE VENTAS
   // ─────────────────────────────────────────────────────────────────
   const rptEls = {
-    period:     document.getElementById("rpt-period"),
+    month:      document.getElementById("rpt-month"),
+    year:       document.getElementById("rpt-year"),
+    yearWrap:   document.getElementById("rpt-year-wrap"),
     fromWrap:   document.getElementById("rpt-from-wrap"),
     toWrap:     document.getElementById("rpt-to-wrap"),
     from:       document.getElementById("rpt-from"),
@@ -11963,20 +11965,17 @@
     vendedor:   document.getElementById("rpt-vendedor"),
     applyBtn:   document.getElementById("rpt-apply-btn"),
     exportBtn:  document.getElementById("rpt-export-btn"),
-    tbody:      document.getElementById("rpt-tbody"),
-    tfoot:      document.getElementById("rpt-tfoot"),
+    catTbody:   document.getElementById("rpt-cat-tbody"),
+    catTfoot:   document.getElementById("rpt-cat-tfoot"),
   };
-  const rptState = { rows: [], expanded: new Set(), data: null, sort: { key: null, dir: "desc" } };
-  function rptSortVal(o, k) {
-    if (k === "id") return Number(o.id) || 0;
-    if (k === "date") return o.created_at || "";
-    if (k === "client") return (o.client_name || o.client_username || "").toLowerCase();
-    if (k === "vendedor") return (o.vendedor_name || "").toLowerCase();
-    if (k === "status") return o.status || "";
-    if (k === "items") return Number(o.items_count) || 0;
-    if (k === "total") return Number(o.total) || 0;
-    if (k === "ganancia") return Number(o.earning_total) || 0;
-    if (k === "margin") return Number(o.total) > 0 ? (Number(o.earning_total) || 0) / Number(o.total) : 0;
+  const rptState = { cats: [], lastQs: "", data: null, sort: { key: "ventas", dir: "desc" } };
+  function rptSortVal(c, k) {
+    if (k === "name") return (c.category_name || "").toLowerCase();
+    if (k === "unidades") return Number(c.unidades) || 0;
+    if (k === "pedidos") return Number(c.pedidos) || 0;
+    if (k === "ventas") return Number(c.ventas) || 0;
+    if (k === "ganancia") return Number(c.ganancia) || 0;
+    if (k === "margen") return Number(c.ventas) > 0 ? (Number(c.ganancia) || 0) / Number(c.ventas) : 0;
     return 0;
   }
 
@@ -11989,35 +11988,43 @@
   // ── Selector de período Mes/Año (default: mes corriente) + opción Personalizado
   const RPT_MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
-  // Llena el select con los últimos 24 meses + "Personalizado" (una sola vez)
+  // Llena los selects de Mes (12 + Personalizado) y Año (una sola vez). Default: mes/año corriente.
   function rptFillPeriodSelect() {
-    if (!rptEls.period || rptEls.period.options.length) return;
+    if (!rptEls.month || rptEls.month.options.length) return;
     const now = new Date();
-    let html = "";
-    for (let i = 0; i < 24; i++) {
-      const d  = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const ym = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
-      html += '<option value="' + ym + '">' + RPT_MESES[d.getMonth()] + " " + d.getFullYear() + '</option>';
+    let mHtml = "";
+    for (let i = 0; i < 12; i++) mHtml += '<option value="' + (i + 1) + '">' + RPT_MESES[i] + '</option>';
+    mHtml += '<option value="custom">Personalizado…</option>';
+    rptEls.month.innerHTML = mHtml;
+    rptEls.month.value = String(now.getMonth() + 1);
+    if (rptEls.year) {
+      let yHtml = "";
+      for (let y = now.getFullYear(); y >= now.getFullYear() - 5; y--) yHtml += '<option value="' + y + '">' + y + '</option>';
+      rptEls.year.innerHTML = yHtml;
+      rptEls.year.value = String(now.getFullYear());
     }
-    html += '<option value="custom">Personalizado…</option>';
-    rptEls.period.innerHTML = html;
-    // Default: mes corriente (primera opción)
-    rptEls.period.selectedIndex = 0;
   }
 
-  // Aplica el período elegido a los inputs desde/hasta y muestra/oculta el rango manual.
+  // YYYY-MM del período elegido (null si es Personalizado) — lo usa el resalte del gráfico
+  function rptSelYm() {
+    if (!rptEls.month || rptEls.month.value === "custom") return null;
+    const y = Number(rptEls.year && rptEls.year.value) || new Date().getFullYear();
+    return y + "-" + String(rptEls.month.value).padStart(2, "0");
+  }
+
+  // Aplica Mes/Año a los inputs desde/hasta y muestra/oculta el rango manual.
   // Ojo: toggle con style.display (no [hidden]) porque .rpt-filter-label es display:flex.
   function rptApplyPeriod() {
-    const v = rptEls.period ? rptEls.period.value : "custom";
-    const custom = v === "custom";
+    const custom = !rptEls.month || rptEls.month.value === "custom";
+    if (rptEls.yearWrap) rptEls.yearWrap.style.display = custom ? "none" : "";
     if (rptEls.fromWrap) rptEls.fromWrap.style.display = custom ? "" : "none";
     if (rptEls.toWrap)   rptEls.toWrap.style.display   = custom ? "" : "none";
     if (!custom && rptEls.from && rptEls.to) {
-      const parts = v.split("-");
-      const y = Number(parts[0]), m = Number(parts[1]);
-      const lastDay = new Date(y, m, 0).getDate(); // día 0 del mes siguiente = último del mes
-      rptEls.from.value = v + "-01";
-      rptEls.to.value   = v + "-" + String(lastDay).padStart(2, "0");
+      const ym = rptSelYm();
+      const parts = ym.split("-");
+      const lastDay = new Date(Number(parts[0]), Number(parts[1]), 0).getDate(); // día 0 del mes siguiente = último del mes
+      rptEls.from.value = ym + "-01";
+      rptEls.to.value   = ym + "-" + String(lastDay).padStart(2, "0");
     } else if (custom && rptEls.from && !rptEls.from.value) {
       // Primera vez en personalizado: precarga este mes (fecha LOCAL, no toISOString/UTC)
       const now = new Date();
@@ -12046,8 +12053,8 @@
       const p = m.ym.split("-");
       return RPT_MESES[Number(p[1]) - 1].slice(0, 3) + " '" + p[0].slice(2);
     });
-    // Resalta el mes seleccionado en el selector de período
-    const selYm = rptEls.period && rptEls.period.value !== "custom" ? rptEls.period.value : null;
+    // Resalta el mes seleccionado en los selectores de período
+    const selYm = rptSelYm();
     const ventasBg = months.map((m) => (m.ym === selYm ? "#1e3a5f" : "#2563eb"));
     if (rptChartInstance) { rptChartInstance.destroy(); rptChartInstance = null; }
     rptChartInstance = new Chart(canvas, {

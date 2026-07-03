@@ -745,8 +745,11 @@
     <section class="tab-panel" id="tab-reportes" hidden>
       <!-- Filtros -->
       <div class="rpt-toolbar">
-        <label class="rpt-filter-label">Período
-          <select id="rpt-period" class="admin-select"></select>
+        <label class="rpt-filter-label">Mes
+          <select id="rpt-month" class="admin-select"></select>
+        </label>
+        <label class="rpt-filter-label" id="rpt-year-wrap">Año
+          <select id="rpt-year" class="admin-select"></select>
         </label>
         <label class="rpt-filter-label" id="rpt-from-wrap">Desde
           <input type="date" id="rpt-from" class="admin-input" />
@@ -815,27 +818,24 @@
         <div style="position:relative;height:260px"><canvas id="rpt-chart"></canvas></div>
       </div>
 
-      <!-- Tabla de pedidos -->
+      <!-- Ventas por categoría (desplegable: top productos de cada una) -->
       <div class="admin-table-wrap" style="margin:0 24px">
-        <table class="admin-table" id="rpt-table">
+        <table class="admin-table" id="rpt-cat-table">
           <thead>
             <tr>
-              <th class="sortable" data-sort="id">#<span class="sort-arrow"></span></th>
-              <th class="sortable" data-sort="date" data-defdir="desc">Fecha<span class="sort-arrow"></span></th>
-              <th class="sortable" data-sort="client" data-defdir="asc">Cliente<span class="sort-arrow"></span></th>
-              <th class="sortable" data-sort="vendedor" data-defdir="asc">Vendedor<span class="sort-arrow"></span></th>
-              <th class="sortable" data-sort="status" data-defdir="asc">Estado<span class="sort-arrow"></span></th>
-              <th class="num sortable" data-sort="items">Items<span class="sort-arrow"></span></th>
-              <th class="num sortable" data-sort="total">Total<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="name" data-defdir="asc">Categoría<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="unidades">Unidades<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="pedidos">Pedidos<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="ventas">Ventas<span class="sort-arrow"></span></th>
               <th class="num sortable" data-sort="ganancia">Ganancia<span class="sort-arrow"></span></th>
-              <th class="num sortable" data-sort="margin">Margen<span class="sort-arrow"></span></th>
+              <th class="num sortable" data-sort="margen">Margen<span class="sort-arrow"></span></th>
               <th></th>
             </tr>
           </thead>
-          <tbody id="rpt-tbody">
-            <tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Aplicá los filtros para ver el reporte.</td></tr>
+          <tbody id="rpt-cat-tbody">
+            <tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Aplicá los filtros para ver el reporte.</td></tr>
           </tbody>
-          <tfoot id="rpt-tfoot"></tfoot>
+          <tfoot id="rpt-cat-tfoot"></tfoot>
         </table>
       </div>
     </section>
