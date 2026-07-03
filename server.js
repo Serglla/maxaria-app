@@ -8075,6 +8075,17 @@ app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
     return db.prepare(q).get(...cp);
   })();
 
+  // Compras del período (órdenes de compra a proveedores)
+  const compras = (() => {
+    const cp = [];
+    const cw = [];
+    if (from) { cw.push("date(created_at) >= ?"); cp.push(from); }
+    if (to)   { cw.push("date(created_at) <= ?"); cp.push(to); }
+    const q = "SELECT COALESCE(SUM(total_cost),0) AS total, COUNT(*) AS cnt FROM purchase_orders" +
+              (cw.length ? " WHERE " + cw.join(" AND ") : "");
+    return db.prepare(q).get(...cp);
+  })();
+
   // Lista de pedidos
   const orders = db.prepare(
     "SELECT o.id, o.status, o.total, o.created_at, o.notes," +
@@ -8097,7 +8108,68 @@ app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
     " ORDER BY o.id DESC LIMIT 500"
   ).all(...params);
 
-  res.json({ kpis, cobros, orders });
+  res.json({ kpis, cobros, compras, orders });
+});
+
+// GET /api/admin/reports/monthly-history — agregados por mes calendario (para el gráfico comparativo)
+// Params: months (default 13, max 36). Devuelve { months: [{ ym, orders, entregados, ventas, ganancia, cobros, cobros_cnt, compras, compras_cnt }] } del más viejo al actual.
+app.get("/api/admin/reports/monthly-history", requireAdmin, (req, res) => {
+  let months = parseInt(req.query.months, 10);
+  if (!isFinite(months) || months < 1) months = 13;
+  if (months > 36) months = 36;
+
+  // Lista de meses YYYY-MM, del más viejo al corriente (rellena meses sin datos con 0)
+  const now = new Date();
+  const list = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    list.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"));
+  }
+  const fromYm = list[0] + "-01";
+  const byYm = {};
+  list.forEach((ym) => {
+    byYm[ym] = { ym: ym, orders: 0, entregados: 0, ventas: 0, ganancia: 0, cobros: 0, cobros_cnt: 0, compras: 0, compras_cnt: 0 };
+  });
+
+  // Pedidos + ganancia por mes (mismo criterio que /reports/sales default: sin cancelados ni unificados)
+  db.prepare(
+    "SELECT strftime('%Y-%m', o.created_at) AS ym," +
+    "       COUNT(DISTINCT o.id) AS orders," +
+    "       SUM(CASE WHEN o.status='entregado' THEN 1 ELSE 0 END) AS entregados," +
+    "       COALESCE(SUM(o.total),0) AS ventas," +
+    "       COALESCE(SUM(oi_agg.earning_total),0) AS ganancia" +
+    " FROM orders o" +
+    " LEFT JOIN (" +
+    "   SELECT oi.order_id," +
+    "     SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS earning_total" +
+    "   FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id GROUP BY oi.order_id" +
+    " ) oi_agg ON oi_agg.order_id = o.id" +
+    " WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0 AND date(o.created_at) >= ?" +
+    " GROUP BY ym"
+  ).all(fromYm).forEach((r) => {
+    const t = byYm[r.ym];
+    if (t) { t.orders = r.orders; t.entregados = r.entregados; t.ventas = r.ventas; t.ganancia = Math.round(r.ganancia); }
+  });
+
+  // Cobros por mes
+  db.prepare(
+    "SELECT strftime('%Y-%m', created_at) AS ym, COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt" +
+    " FROM payments WHERE date(created_at) >= ? GROUP BY ym"
+  ).all(fromYm).forEach((r) => {
+    const t = byYm[r.ym];
+    if (t) { t.cobros = r.total; t.cobros_cnt = r.cnt; }
+  });
+
+  // Compras por mes
+  db.prepare(
+    "SELECT strftime('%Y-%m', created_at) AS ym, COALESCE(SUM(total_cost),0) AS total, COUNT(*) AS cnt" +
+    " FROM purchase_orders WHERE date(created_at) >= ? GROUP BY ym"
+  ).all(fromYm).forEach((r) => {
+    const t = byYm[r.ym];
+    if (t) { t.compras = r.total; t.compras_cnt = r.cnt; }
+  });
+
+  res.json({ months: list.map((ym) => byYm[ym]) });
 });
 
 // GET /api/admin/reports/sales/:orderId/items — ítems de un pedido

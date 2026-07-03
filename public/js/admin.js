@@ -11953,6 +11953,9 @@
   // REPORTES DE VENTAS
   // ─────────────────────────────────────────────────────────────────
   const rptEls = {
+    period:     document.getElementById("rpt-period"),
+    fromWrap:   document.getElementById("rpt-from-wrap"),
+    toWrap:     document.getElementById("rpt-to-wrap"),
     from:       document.getElementById("rpt-from"),
     to:         document.getElementById("rpt-to"),
     status:     document.getElementById("rpt-status"),
@@ -11983,14 +11986,101 @@
 
   // Labels/clases de estado: fuente única ORDER_STATUS_* (arriba del archivo).
 
-  // Setea el rango "este mes" por default
-  function rptSetDefaultRange() {
-    if (!rptEls.from || rptEls.from.value) return;
+  // ── Selector de período Mes/Año (default: mes corriente) + opción Personalizado
+  const RPT_MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+  // Llena el select con los últimos 24 meses + "Personalizado" (una sola vez)
+  function rptFillPeriodSelect() {
+    if (!rptEls.period || rptEls.period.options.length) return;
     const now = new Date();
-    rptEls.from.value = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2,"0") + "-01";
-    // Fecha LOCAL (en-CA = YYYY-MM-DD): toISOString es UTC y de 21:00 a 00:00
-    // (AR) devolvía el día siguiente, mezclando criterios con el "desde".
-    rptEls.to.value   = now.toLocaleDateString("en-CA");
+    let html = "";
+    for (let i = 0; i < 24; i++) {
+      const d  = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const ym = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+      html += '<option value="' + ym + '">' + RPT_MESES[d.getMonth()] + " " + d.getFullYear() + '</option>';
+    }
+    html += '<option value="custom">Personalizado…</option>';
+    rptEls.period.innerHTML = html;
+    // Default: mes corriente (primera opción)
+    rptEls.period.selectedIndex = 0;
+  }
+
+  // Aplica el período elegido a los inputs desde/hasta y muestra/oculta el rango manual.
+  // Ojo: toggle con style.display (no [hidden]) porque .rpt-filter-label es display:flex.
+  function rptApplyPeriod() {
+    const v = rptEls.period ? rptEls.period.value : "custom";
+    const custom = v === "custom";
+    if (rptEls.fromWrap) rptEls.fromWrap.style.display = custom ? "" : "none";
+    if (rptEls.toWrap)   rptEls.toWrap.style.display   = custom ? "" : "none";
+    if (!custom && rptEls.from && rptEls.to) {
+      const parts = v.split("-");
+      const y = Number(parts[0]), m = Number(parts[1]);
+      const lastDay = new Date(y, m, 0).getDate(); // día 0 del mes siguiente = último del mes
+      rptEls.from.value = v + "-01";
+      rptEls.to.value   = v + "-" + String(lastDay).padStart(2, "0");
+    } else if (custom && rptEls.from && !rptEls.from.value) {
+      // Primera vez en personalizado: precarga este mes (fecha LOCAL, no toISOString/UTC)
+      const now = new Date();
+      rptEls.from.value = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-01";
+      rptEls.to.value   = now.toLocaleDateString("en-CA");
+    }
+  }
+
+  // ── Gráfico comparativo mensual (Chart.js, barras ventas/compras + línea ganancia)
+  let rptChartInstance = null;
+  async function loadRptHistory() {
+    const card = document.getElementById("rpt-chart-card");
+    if (!card) return;
+    if (typeof Chart === "undefined") { card.style.display = "none"; return; }
+    try {
+      const data = await api("/api/admin/reports/monthly-history?months=13");
+      card.style.display = "";
+      renderRptChart(data.months || []);
+    } catch (_) { card.style.display = "none"; }
+  }
+
+  function renderRptChart(months) {
+    const canvas = document.getElementById("rpt-chart");
+    if (!canvas) return;
+    const labels = months.map((m) => {
+      const p = m.ym.split("-");
+      return RPT_MESES[Number(p[1]) - 1].slice(0, 3) + " '" + p[0].slice(2);
+    });
+    // Resalta el mes seleccionado en el selector de período
+    const selYm = rptEls.period && rptEls.period.value !== "custom" ? rptEls.period.value : null;
+    const ventasBg = months.map((m) => (m.ym === selYm ? "#1e3a5f" : "#2563eb"));
+    if (rptChartInstance) { rptChartInstance.destroy(); rptChartInstance = null; }
+    rptChartInstance = new Chart(canvas, {
+      data: {
+        labels: labels,
+        datasets: [
+          { type: "bar",  label: "Ventas",   data: months.map((m) => m.ventas),   backgroundColor: ventasBg, borderRadius: 3, order: 2 },
+          { type: "bar",  label: "Compras",  data: months.map((m) => m.compras),  backgroundColor: "#f59e0b", borderRadius: 3, order: 3 },
+          { type: "line", label: "Ganancia", data: months.map((m) => m.ganancia), borderColor: "#15803d", backgroundColor: "#15803d", tension: 0.3, pointRadius: 3, order: 1 },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: (c) => c.dataset.label + ": " + rptFmt(c.parsed.y),
+              afterBody: (items) => {
+                const m = months[items[0].dataIndex];
+                return m ? [m.orders + " pedido(s) · Cobros: " + rptFmt(m.cobros)] : [];
+              },
+            },
+          },
+        },
+        scales: {
+          y: { ticks: { callback: (v) => "$ " + Number(v).toLocaleString("es-AR") } },
+          x: { grid: { display: false } },
+        },
+      },
+    });
   }
 
   // Llena los selects de cliente y vendedor al abrir el tab (usa state existente)
@@ -12012,7 +12102,9 @@
   }
 
   async function loadReportes() {
-    rptSetDefaultRange();
+    rptFillPeriodSelect();
+    rptApplyPeriod();
+    loadRptHistory(); // gráfico en paralelo, no bloquea la tabla
     // Cargar usuarios y vendedores si no están en caché
     if (!state.usersLoaded) {
       try {
@@ -12066,6 +12158,10 @@
     setKpi("rpt-kpi-margen",     rptPct(kpis.ganancia_total, kpis.ventas_brutas) + " del total");
     setKpi("rpt-kpi-cobros",     rptFmt(cobros.total));
     setKpi("rpt-kpi-cobros-cnt", cobros.cnt + " pago(s)");
+    if (data.compras) {
+      setKpi("rpt-kpi-compras",     rptFmt(data.compras.total));
+      setKpi("rpt-kpi-compras-cnt", data.compras.cnt + " compra(s)");
+    }
 
     if (!orders.length) {
       rptEls.tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Sin pedidos en el período seleccionado.</td></tr>';
@@ -12157,6 +12253,15 @@
 
   // Botón Aplicar
   if (rptEls.applyBtn) rptEls.applyBtn.addEventListener("click", applyReportes);
+
+  // Cambio de período: setea fechas y aplica solo (el gráfico se re-renderiza para resaltar el mes)
+  if (rptEls.period) {
+    rptEls.period.addEventListener("change", () => {
+      rptApplyPeriod();
+      if (rptEls.period.value !== "custom") applyReportes();
+      loadRptHistory();
+    });
+  }
 
   // Orden por click en los headers
   wireReportSort("rpt-table", rptState.sort, () => { if (rptState.data) renderReportes(rptState.data); });
