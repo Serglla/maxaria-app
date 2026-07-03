@@ -12129,9 +12129,9 @@
   }
 
   async function applyReportes() {
-    if (!rptEls.tbody) return;
-    rptEls.tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>';
-    if (rptEls.tfoot) rptEls.tfoot.innerHTML = "";
+    if (!rptEls.catTbody) return;
+    rptEls.catTbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Cargando…</td></tr>';
+    if (rptEls.catTfoot) rptEls.catTfoot.innerHTML = "";
 
     const qs = [
       rptEls.from    && rptEls.from.value    ? "from="      + rptEls.from.value    : "",
@@ -12140,20 +12140,23 @@
       rptEls.client  && rptEls.client.value  ? "client_id=" + rptEls.client.value  : "",
       rptEls.vendedor&& rptEls.vendedor.value? "vendedor_id="+ rptEls.vendedor.value: "",
     ].filter(Boolean).join("&");
+    rptState.lastQs = qs;
 
     try {
-      const data = await api("/api/admin/reports/sales" + (qs ? "?" + qs : ""));
-      rptState.rows = data.orders || [];
-      rptState.expanded.clear();
+      const [data, catsData] = await Promise.all([
+        api("/api/admin/reports/sales" + (qs ? "?" + qs : "")),
+        api("/api/admin/reports/by-category" + (qs ? "?" + qs : "")),
+      ]);
+      rptState.cats = (catsData && catsData.categories) || [];
       renderReportes(data);
     } catch (e) {
-      rptEls.tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Error cargando reporte.</td></tr>';
+      rptEls.catTbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Error cargando reporte.</td></tr>';
     }
   }
 
   function renderReportes(data) {
     rptState.data = data;
-    const { kpis, cobros, orders } = data;
+    const { kpis, cobros } = data;
     // KPIs
     const setKpi = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
     setKpi("rpt-kpi-orders",     kpis.total_orders);
@@ -12170,90 +12173,96 @@
       setKpi("rpt-kpi-compras-cnt", data.compras.cnt + " compra(s)");
     }
 
-    if (!orders.length) {
-      rptEls.tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Sin pedidos en el período seleccionado.</td></tr>';
+    renderRptCats();
+  }
+
+  // Tabla de ventas por categoría (con fila de detalle desplegable por categoría)
+  function renderRptCats() {
+    if (!rptEls.catTbody) return;
+    const cats = rptState.cats || [];
+    if (!cats.length) {
+      rptEls.catTbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Sin ventas en el período seleccionado.</td></tr>';
+      if (rptEls.catTfoot) rptEls.catTfoot.innerHTML = "";
       return;
     }
-
-    // Tabla
-    const sortedOrders = reportSortRows(orders, rptState.sort, rptSortVal);
-    updateReportSortHeaders("rpt-table", rptState.sort);
-    let tVentas = 0, tGanancia = 0;
-    rptEls.tbody.innerHTML = sortedOrders.map((o) => {
-      tVentas    += Number(o.total)         || 0;
-      tGanancia  += Number(o.earning_total) || 0;
-      const margen = o.total > 0 ? Math.round(o.earning_total / o.total * 100) : 0;
-      const client   = escapeHtml(o.client_name || o.client_username);
-      const vendedor = o.vendedor_name ? escapeHtml(o.vendedor_name) : '<span class="muted">—</span>';
-      const ganHtml  = o.earning_total > 0
-        ? '<span style="color:#15803d">' + rptFmt(o.earning_total) + '</span>'
+    const sorted = reportSortRows(cats, rptState.sort, rptSortVal);
+    updateReportSortHeaders("rpt-cat-table", rptState.sort);
+    let tU = 0, tV = 0, tG = 0;
+    rptEls.catTbody.innerHTML = sorted.map((c) => {
+      tU += Number(c.unidades) || 0;
+      tV += Number(c.ventas)   || 0;
+      tG += Number(c.ganancia) || 0;
+      const margen  = c.ventas > 0 ? Math.round(c.ganancia / c.ventas * 100) : 0;
+      const ganHtml = c.ganancia > 0
+        ? '<span style="color:#15803d">' + rptFmt(Math.round(c.ganancia)) + '</span>'
         : '<span class="muted">—</span>';
-      return '<tr class="rpt-order-row" data-order-id="' + o.id + '">' +
-        '<td class="muted">#' + o.id + '</td>' +
-        '<td class="muted small">' + rptDate(o.created_at) + '</td>' +
-        '<td>' + client + '</td>' +
-        '<td class="muted small">' + vendedor + '</td>' +
-        '<td><span class="order-tag ' + (ORDER_STATUS_TAGCLS[o.status] || "") + '">' + orderStatusLabel(o.status) + '</span></td>' +
-        '<td class="num muted">' + (o.items_count || 0) + '</td>' +
-        '<td class="num"><strong>' + rptFmt(o.total) + '</strong></td>' +
+      return '<tr class="rpt-cat-row" data-cat-id="' + c.category_id + '">' +
+        '<td><strong>' + escapeHtml(c.category_name) + '</strong></td>' +
+        '<td class="num muted">' + (c.unidades || 0) + '</td>' +
+        '<td class="num muted">' + (c.pedidos || 0) + '</td>' +
+        '<td class="num"><strong>' + rptFmt(c.ventas) + '</strong></td>' +
         '<td class="num">' + ganHtml + '</td>' +
         '<td class="num muted">' + (margen > 0 ? margen + "%" : "—") + '</td>' +
-        '<td><button class="btn btn-small rpt-detail-btn" type="button" data-id="' + o.id + '">▼</button></td>' +
+        '<td><button class="btn btn-small rpt-cat-btn" type="button" data-id="' + c.category_id + '" title="Ver productos más vendidos">▼</button></td>' +
         '</tr>' +
-        '<tr class="rpt-detail-row" id="rpt-detail-' + o.id + '" hidden>' +
-        '<td colspan="10" style="padding:0;background:#f8fafc"></td>' +
+        '<tr class="rpt-cat-detail-row" id="rpt-cat-detail-' + c.category_id + '" hidden>' +
+        '<td colspan="7" style="padding:0;background:#f8fafc"></td>' +
         '</tr>';
     }).join("");
 
-    // Totales
-    const tMargen = tVentas > 0 ? Math.round(tGanancia / tVentas * 100) : 0;
-    rptEls.tfoot.innerHTML =
+    // Totales (pedidos: total del período, no la suma por categoría — un pedido puede tocar varias)
+    const tMargen = tV > 0 ? Math.round(tG / tV * 100) : 0;
+    const tOrders = rptState.data && rptState.data.kpis ? rptState.data.kpis.total_orders : "—";
+    if (rptEls.catTfoot) rptEls.catTfoot.innerHTML =
       '<tr style="font-weight:700;background:#f1f5f9">' +
-      '<td colspan="6" style="padding:8px 12px">Totales (' + orders.length + ' pedidos)</td>' +
-      '<td class="num">' + rptFmt(tVentas) + '</td>' +
-      '<td class="num" style="color:#15803d">' + rptFmt(tGanancia) + '</td>' +
+      '<td style="padding:8px 12px">Totales</td>' +
+      '<td class="num">' + tU + '</td>' +
+      '<td class="num">' + tOrders + '</td>' +
+      '<td class="num">' + rptFmt(tV) + '</td>' +
+      '<td class="num" style="color:#15803d">' + rptFmt(Math.round(tG)) + '</td>' +
       '<td class="num">' + (tMargen > 0 ? tMargen + "%" : "—") + '</td>' +
       '<td></td></tr>';
   }
 
-  // Expandir detalle de un pedido
-  if (rptEls.tbody) {
-    rptEls.tbody.addEventListener("click", async (e) => {
-      const btn = e.target.closest(".rpt-detail-btn");
+  // Expandir detalle de una categoría (top productos vendidos)
+  if (rptEls.catTbody) {
+    rptEls.catTbody.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".rpt-cat-btn");
       if (!btn) return;
       const id = btn.dataset.id;
-      const detailRow = document.getElementById("rpt-detail-" + id);
+      const detailRow = document.getElementById("rpt-cat-detail-" + id);
       if (!detailRow) return;
       if (!detailRow.hidden) {
         detailRow.hidden = true;
         btn.textContent = "▼";
         return;
       }
-      // Cargar items si no están en caché
       btn.disabled = true;
       try {
-        const items = await api("/api/admin/reports/sales/" + id + "/items");
+        const qs = rptState.lastQs;
+        const out = await api("/api/admin/reports/by-category/" + id + "/products" + (qs ? "?" + qs : ""));
+        const prods = (out && out.products) || [];
         const td = detailRow.querySelector("td");
         if (td) {
           td.innerHTML = '<div style="padding:8px 16px 12px">' +
             '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
             '<thead><tr style="color:#6b7280">' +
             '<th style="text-align:left;padding:4px 8px">Producto</th>' +
-            '<th style="text-align:right;padding:4px 8px">Cant.</th>' +
-            '<th style="text-align:right;padding:4px 8px">Precio unit.</th>' +
-            '<th style="text-align:right;padding:4px 8px">Subtotal</th>' +
+            '<th style="text-align:right;padding:4px 8px">Unidades</th>' +
+            '<th style="text-align:right;padding:4px 8px">Ventas</th>' +
+            '<th style="text-align:right;padding:4px 8px">Ganancia</th>' +
             '</tr></thead><tbody>' +
-            (items.map((it) =>
-              '<tr><td style="padding:3px 8px">' + escapeHtml(it.product_name) + ' <span style="color:#9ca3af">' + escapeHtml(it.product_code || "") + '</span></td>' +
-              '<td style="text-align:right;padding:3px 8px">' + it.quantity + '</td>' +
-              '<td style="text-align:right;padding:3px 8px">' + rptFmt(it.unit_price) + '</td>' +
-              '<td style="text-align:right;padding:3px 8px"><strong>' + rptFmt(it.subtotal) + '</strong></td></tr>'
-            ).join("") || '<tr><td colspan="4" style="padding:8px;color:#9ca3af">Sin items</td></tr>') +
+            (prods.map((it) =>
+              '<tr><td style="padding:3px 8px">' + escapeHtml(it.name || "") + ' <span style="color:#9ca3af">' + escapeHtml(it.code || "") + '</span></td>' +
+              '<td style="text-align:right;padding:3px 8px">' + (it.unidades || 0) + '</td>' +
+              '<td style="text-align:right;padding:3px 8px"><strong>' + rptFmt(it.ventas) + '</strong></td>' +
+              '<td style="text-align:right;padding:3px 8px;color:#15803d">' + rptFmt(Math.round(it.ganancia)) + '</td></tr>'
+            ).join("") || '<tr><td colspan="4" style="padding:8px;color:#9ca3af">Sin productos</td></tr>') +
             '</tbody></table></div>';
         }
         detailRow.hidden = false;
         btn.textContent = "▲";
-      } catch (_) { showToast("Error cargando items", "err"); }
+      } catch (_) { showToast("Error cargando productos", "err"); }
       finally { btn.disabled = false; }
     });
   }
@@ -12261,40 +12270,37 @@
   // Botón Aplicar
   if (rptEls.applyBtn) rptEls.applyBtn.addEventListener("click", applyReportes);
 
-  // Cambio de período: setea fechas y aplica solo (el gráfico se re-renderiza para resaltar el mes)
-  if (rptEls.period) {
-    rptEls.period.addEventListener("change", () => {
-      rptApplyPeriod();
-      if (rptEls.period.value !== "custom") applyReportes();
-      loadRptHistory();
-    });
+  // Cambio de Mes/Año: setea fechas y aplica solo (el gráfico se re-renderiza para resaltar el mes)
+  function onRptPeriodChange() {
+    rptApplyPeriod();
+    if (rptEls.month && rptEls.month.value !== "custom") applyReportes();
+    loadRptHistory();
   }
+  if (rptEls.month) rptEls.month.addEventListener("change", onRptPeriodChange);
+  if (rptEls.year)  rptEls.year.addEventListener("change", onRptPeriodChange);
 
   // Orden por click en los headers
-  wireReportSort("rpt-table", rptState.sort, () => { if (rptState.data) renderReportes(rptState.data); });
+  wireReportSort("rpt-cat-table", rptState.sort, renderRptCats);
 
   // Export CSV
   if (rptEls.exportBtn) {
     rptEls.exportBtn.addEventListener("click", () => {
-      if (!rptState.rows.length) { alertModal("No hay datos para exportar."); return; }
-      const header = ["#","Fecha","Cliente","Vendedor","Estado","Items","Total","Ganancia","Margen %"];
-      const rows = rptState.rows.map((o) => [
-        o.id,
-        rptDate(o.created_at),
-        '"' + (o.client_name || o.client_username).replace(/"/g,'""') + '"',
-        '"' + (o.vendedor_name || "—").replace(/"/g,'""') + '"',
-        o.status,
-        o.items_count || 0,
-        o.total,
-        Math.round(o.earning_total) || 0,
-        o.total > 0 ? Math.round(o.earning_total / o.total * 100) : 0,
+      if (!rptState.cats.length) { alertModal("No hay datos para exportar."); return; }
+      const header = ["Categoría","Unidades","Pedidos","Ventas","Ganancia","Margen %"];
+      const rows = rptState.cats.map((c) => [
+        '"' + (c.category_name || "").replace(/"/g,'""') + '"',
+        c.unidades || 0,
+        c.pedidos || 0,
+        c.ventas || 0,
+        Math.round(c.ganancia) || 0,
+        c.ventas > 0 ? Math.round(c.ganancia / c.ventas * 100) : 0,
       ]);
       const csv = [header, ...rows].map((r) => r.join(",")).join("\n");
       const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement("a");
       a.href     = url;
-      a.download = "reporte-ventas-" + (rptEls.from ? rptEls.from.value : "hoy") + ".csv";
+      a.download = "reporte-categorias-" + (rptEls.from && rptEls.from.value ? rptEls.from.value : "hoy") + ".csv";
       a.click();
       URL.revokeObjectURL(url);
     });
