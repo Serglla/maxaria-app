@@ -1366,6 +1366,45 @@ Sergio: cobrar/entregar desde Pedidos antes de armar no tiene sentido; que se re
 
 **Verificación**: el bash mount volvió a estar **stale** (veía server.js cortado en ~8338/8348 y admin.js en ~12444, ambos íntegros según Read — server.js termina en `app.listen` 8470, admin.js en `bootstrap(); })();` 12544). Se validó reconstruyendo el archivo completo en /tmp (head visible por bash, que incluye TODAS las ediciones porque están antes del corte, + cola real leída con Read) → PARSE OK; y los bloques nuevos aislados (split formula con 8 escenarios "primero lo tuyo" + clamp, queries del helper contra copia de la DB con Python sqlite3). Pendiente: `git add/commit/push` + deploy Railway.
 
+### Fix Reportes rotos: rediseño por categoría quedó a medias en admin.js (3 julio 2026 — `admin.js?v=20260703b`)
+
+Sergio reportó que Reportes "no carga y los filtros no funcionan" (KPIs en "—", tabla en "Aplicá los filtros", botón Aplicar muerto; el gráfico mensual sí andaba).
+
+**Causa raíz:** el commit `37ff303` ("informes update", 3 jul) rediseñó la pestaña Reportes — la tabla de pedidos (`rpt-tbody`/`rpt-table`) se reemplazó en `admin.html` por una tabla de **ventas por categoría** (`rpt-cat-tbody`/`rpt-cat-table`), y `server.js` sumó `GET /api/admin/reports/by-category` + `/by-category/:categoryId/products` — pero en `admin.js` solo entró la **cabecera** del módulo (rptEls con `catTbody`, rptState con `cats`, `rptSortVal` por categoría, selectores Mes/Año, `rptSelYm`). El **cuerpo** quedó con el código viejo: `applyReportes()` arrancaba con `if (!rptEls.tbody) return;` → como `rpt-tbody` ya no existe, salía sin fetchear (por eso KPIs "—"); el listener de período usaba `rptEls.period` (elemento `rpt-period` que ya no existe) → cambiar Mes no hacía nada. Edición parcial/truncada commiteada igual (patrón conocido del proyecto).
+
+**Fix (todo en `public/js/admin.js`, cuerpo del módulo REPORTES DE VENTAS):**
+- `applyReportes()`: guard sobre `catTbody`; fetch en paralelo de `/reports/sales` (KPIs) + `/reports/by-category` con el mismo query string; guarda `rptState.lastQs` (lo usa el detalle).
+- `renderRptCats()` nueva: tabla por categoría con orden por columnas (`wireReportSort("rpt-cat-table", ...)`), totales en tfoot (Pedidos del pie = `kpis.total_orders`, NO la suma por categoría — un pedido puede tocar varias) y fila desplegable ▼ por categoría que carga los top productos (`/by-category/:id/products` + lastQs).
+- Listeners de `rptEls.month` y `rptEls.year` (helper `onRptPeriodChange`): setean fechas, aplican y re-renderizan el gráfico para resaltar el mes.
+- Export CSV pasó a exportar las categorías (Categoría/Unidades/Pedidos/Ventas/Ganancia/Margen %), archivo `reporte-categorias-<from>.csv`.
+- Se eliminó todo el render/listener viejo de la tabla de pedidos (`rptState.rows`, `rptState.expanded`, `rpt-detail-btn` en reportes).
+- Cache busting: `admin.js?v=20260703b` en `admin.html`.
+
+**Verificación:** Grep sin referencias huérfanas (`rptEls.tbody/tfoot/period`, `rptState.rows/expanded`, `"rpt-table"`). El bash mount volvió a estar **stale** (veía admin.js cortado a mitad de línea 13292; Read confirma íntegro hasta `bootstrap(); })();` en 13303). Parse validado reconstruyendo en /tmp (head visible por bash, que incluía todas las ediciones, + cola real de Read) → PARSE OK. **NO se commiteó desde el sandbox** justamente por el mount stale (riesgo de commitear la versión cortada). Pendiente: `git add/commit/push` desde Windows + deploy Railway + Ctrl+F5.
+
+**Nota:** `git status` mostraba server.js/admin.html/otros como modificados pero `git diff --ignore-cr-at-eol` vacío → solo cambios de line-endings (CRLF), el contenido era el de HEAD. Truco útil para distinguir cambios reales.
+
+### Fix recepción (Next quedó en 0) + modos "por unidad"/"por caja" en compras (6 julio 2026 — `admin.js?v=20260706a`)
+
+Sergio reportó (con capturas) que controlando la recepción de la compra #24 (Vitto), el item "Next Gripe x 20 Comp" quedó tildado en rojo con cantidad 0 tras tipear unidades. Todo en `public/js/admin.js` (+ cache busting en `admin.html`).
+
+**1. Inputs de cantidad del modal de recepción blindados (causa más probable del 0)**
+- Los 3 inputs (bultos/comp/unidades) eran `type="number"`: la **rueda del mouse** o las **flechas del teclado** sobre un input enfocado cambian el valor en silencio (min=0 clampea en 0 → el "0" del Next), y un punto de miles ("1.200") se lee como 1,2.
+- Ahora son `type="text" inputmode="decimal"` (sin wheel/flechas) con parser es-AR nuevo `recvParseNum`: "1.200" = 1200 (miles), "2,5" = 2.5, "1.200,5" = 1200.5, "59.75" = 59.75; vacío = destildar; inválido = **toast de error y NO guarda** (antes guardaba 0 en silencio).
+- Mismo guard por wheel agregado a los inputs numéricos de la tabla de items de la compra (`purItemsTbody`, listener `wheel` que hace blur).
+- **Dato pendiente en producción**: el Next de la compra #24 sigue con `checked_qty = 0` guardado — hay que re-tildarlo (click en la fila o tipear 60) antes de confirmar la recepción.
+
+**2. Fix `parseComprimidos` — falso positivo con medidas**
+- "Solucion Fisiologica **x 100ml**" mostraba campo "comp" (detectaba 100 como comprimidos). El regex ahora captura el sufijo tras el número y descarta unidades de medida (ml, cc, gr, kg, mg, lt, u, un, vol, etc.). "x 20 Comp" sigue detectando 20; "x 10" pelado sigue valiendo 10 (comportamiento previo). Afecta recepción y defaults de cotizaciones (`cotComprimidos` tiene override manual igual).
+
+**3. Selector de la compra: "por unidad" y "por caja" (pedido de Sergio vía AskUserQuestion)**
+- El selector por item de Nueva/Editar compra pasa de 2 a 4 modos: **por tableta** (default, canónico), **por unidad** (alias del canónico, solo etiqueta), **por caja** (nuevo) y **por comprimido**.
+- **Modo caja**: cantidad en cajas (acepta fraccionado, ej 2.5) + costo **por caja**; input editable "u/caja" (default = `units_per_bulto` del producto, buscado en `state.allProducts` al cambiar de modo). Helper `purSyncCaja(it)`: `quantity = caja_qty × upb`, `unit_cost = round(caja_cost / upb)`, línea "= N un" con ⚠ roja si no da entero. Validación al guardar (como la de comprimidos): cajas × u/caja debe dar unidades enteras ≥ 1, sino `alertModal` y no envía.
+- `addPurchaseItem` respeta el modo del item existente al re-agregar desde el picker (suma comp_qty o caja_qty según modo; antes rompía el sync).
+- Cotización → Compra: si la cotización estaba por caja/bulto y la cantidad da cajas exactas (`quantity % upb === 0`), la compra arranca en modo caja prellenado.
+
+**Verificación**: `node --check` OK (mount NO stale, coincide con Read: 13409 líneas → `bootstrap(); })();`). Helpers testeados aislados en /tmp (18 casos OK: parser es-AR, medidas excluidas, purSyncCaja con upb 12/10/11). Pendiente: `git add/commit/push` + deploy Railway + Ctrl+F5.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

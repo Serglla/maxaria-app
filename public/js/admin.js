@@ -7118,6 +7118,18 @@
     return String(Math.round(Number(n) * 100) / 100).replace(".", ",");
   }
 
+  // Parsea cantidades tipeadas estilo es-AR: "1.200" (punto de miles) = 1200,
+  // "2,5" (coma decimal) = 2.5, "1.200,5" = 1200.5, "59.75" = 59.75.
+  // Devuelve null si está vacío, NaN si no es un número.
+  function recvParseNum(v) {
+    let s = String(v == null ? "" : v).trim().replace(/\s+/g, "");
+    if (!s) return null;
+    if (s.indexOf(",") !== -1) s = s.replace(/\./g, "").replace(",", ".");
+    else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");
+    const n = Number(s);
+    return isFinite(n) ? n : NaN;
+  }
+
   // 'YYYY-MM' (como lo guarda el server) -> 'MM/AA' para el input.
   function recvExpLabel(ym) {
     const m = String(ym || "").match(/^(\d{4})-(\d{2})$/);
@@ -7159,7 +7171,7 @@
       : "";
     const bultosEsp = upb > 1 ? " = " + recvFmtB(qty / upb) + " bultos ×" + upb : "";
     const unitsVal = checked ? String(Number(it.checked_qty)) : "";
-    const bultosVal = checked ? recvFmtB(Number(it.checked_qty) / upb).replace(",", ".") : "";
+    const bultosVal = checked ? recvFmtB(Number(it.checked_qty) / upb) : "";
     const expVal = recvExpLabel(it.expiry_date);
     return '<div class="pick-item' + (ok ? " pick-done" : diff ? " pick-diff" : "") +
       '" data-item="' + it.id + '">' +
@@ -7175,12 +7187,12 @@
       "</div>" +
       '<div class="pick-qtybox recv-qtybox" title="Cantidad recibida — cargá bultos, comprimidos o unidades; click en la fila = tildar lo cargado">' +
         (upb > 1
-          ? '<input type="number" class="pick-qty-input recv-bulto-input" min="0" step="any" placeholder="0" value="' + bultosVal + '" /><span class="recv-qty-sep">bultos</span>'
+          ? '<input type="text" inputmode="decimal" autocomplete="off" class="pick-qty-input recv-bulto-input" placeholder="0" value="' + bultosVal + '" /><span class="recv-qty-sep">bultos</span>'
           : "") +
         (cpt > 1
-          ? '<input type="number" class="pick-qty-input recv-comp-input" min="0" step="1" placeholder="0" data-cpt="' + cpt + '" title="Comprimidos recibidos (' + cpt + ' comp = 1 tableta)" /><span class="recv-qty-sep">comp</span>'
+          ? '<input type="text" inputmode="decimal" autocomplete="off" class="pick-qty-input recv-comp-input" placeholder="0" data-cpt="' + cpt + '" title="Comprimidos recibidos (' + cpt + ' comp = 1 tableta)" /><span class="recv-qty-sep">comp</span>'
           : "") +
-        '<input type="number" class="pick-qty-input recv-unit-input" min="0" step="any" placeholder="0" value="' + unitsVal + '" />' +
+        '<input type="text" inputmode="decimal" autocomplete="off" class="pick-qty-input recv-unit-input" placeholder="0" value="' + unitsVal + '" />' +
         '<span class="pick-qty-req">/ ' + qty + " un.</span>" +
       "</div>" +
     "</div>";
@@ -7308,10 +7320,15 @@
       if (!it) return;
       const upb = Math.max(1, Number(it.units_per_bulto) || 1);
       const cpt = Math.max(1, Number(inp.dataset.cpt) || parseComprimidos(it.product_name) || 1);
+      const n = recvParseNum(inp.value);
       let qty = null;
-      if (inp.value !== "") {
-        let n = Number(inp.value);
-        if (!isFinite(n) || n < 0) n = 0;
+      if (n !== null) {
+        // Número inválido: avisar y NO guardar (antes se guardaba 0 en silencio).
+        if (isNaN(n) || n < 0) {
+          showToast('Cantidad inválida: "' + inp.value + '"', "error");
+          recvRenderList();
+          return;
+        }
         qty = inp.classList.contains("recv-bulto-input") ? Math.round(n * upb * 100) / 100
             : inp.classList.contains("recv-comp-input") ? Math.round((n / cpt) * 100) / 100
             : n;
@@ -8034,14 +8051,25 @@
       return;
     }
     els.purItemsTbody.innerHTML = state.purchaseItems.map((it, idx) => {
-      const isComp  = it.pack_mode === "comprimido";
+      const mode    = it.pack_mode === "comprimido" ? "comprimido"
+                    : it.pack_mode === "caja"       ? "caja"
+                    : it.pack_mode === "unidad"     ? "unidad" : "tableta";
+      const isComp  = mode === "comprimido";
+      const isCaja  = mode === "caja";
       const cpt     = isComp ? Math.max(1, Number(it.cpt) || 1) : 1;
-      const qtyVal  = isComp ? (Number(it.comp_qty) || 0) : it.quantity;
-      const costVal = isComp ? (Number(it.comp_cost) || 0) : it.unit_cost;
+      const upb     = isCaja ? Math.max(1, Number(it.upb) || 1) : 1;
+      const qtyVal  = isComp ? (Number(it.comp_qty) || 0) : isCaja ? (Number(it.caja_qty) || 0) : it.quantity;
+      const costVal = isComp ? (Number(it.comp_cost) || 0) : isCaja ? (Number(it.caja_cost) || 0) : it.unit_cost;
       const tabIsInt = !isComp || (Number(it.comp_qty) || 0) % cpt === 0;
+      const cajaIsInt = !isCaja || Number.isInteger(Number(it.quantity));
+      const qtyTitle = isComp ? "Cantidad en comprimidos"
+                     : isCaja ? "Cantidad en cajas/bultos (acepta 2.5)"
+                     : "Cantidad en " + (mode === "unidad" ? "unidades" : "tabletas (unidades)");
       const modeSel =
         '<select class="admin-input pur-mode" data-idx="' + idx + '" style="font-size:10px;padding:1px 2px;width:100px;margin-bottom:3px">' +
-          '<option value="tableta"' + (!isComp ? " selected" : "") + '>por tableta</option>' +
+          '<option value="tableta"' + (mode === "tableta" ? " selected" : "") + '>por tableta</option>' +
+          '<option value="unidad"' + (mode === "unidad" ? " selected" : "") + '>por unidad</option>' +
+          '<option value="caja"' + (isCaja ? " selected" : "") + '>por caja</option>' +
           '<option value="comprimido"' + (isComp ? " selected" : "") + '>por comprimido</option>' +
         '</select>';
       const compExtra = isComp
@@ -8051,15 +8079,22 @@
           '</div>' +
           '<div style="font-size:10px;' + (tabIsInt ? "color:#9ca3af" : "color:#dc2626;font-weight:700") + '">= ' + fmtTabletas(it.quantity) + ' tabl' + (tabIsInt ? "" : " ⚠") + '</div>'
         : "";
+      const cajaExtra = isCaja
+        ? '<div style="display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:2px">' +
+            '<input type="number" class="cell-input cell-num pur-upb" min="1" step="1" value="' + upb + '" data-idx="' + idx + '" style="width:46px" title="Unidades por caja (und/bulto del producto, editable)" />' +
+            '<span style="font-size:10px;color:#9ca3af">u/caja</span>' +
+          '</div>' +
+          '<div style="font-size:10px;' + (cajaIsInt ? "color:#9ca3af" : "color:#dc2626;font-weight:700") + '">= ' + fmtTabletas(it.quantity) + ' un' + (cajaIsInt ? "" : " ⚠") + '</div>'
+        : "";
       return '<tr data-idx="' + idx + '">' +
         '<td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
         '<td>' + escapeHtml(it.product_name || "") + '</td>' +
         '<td class="num">' + modeSel +
-          '<input type="number" class="cell-input cell-num pur-qty" min="1" step="1" value="' + qtyVal + '" data-idx="' + idx + '" style="width:70px" title="' + (isComp ? "Cantidad en comprimidos" : "Cantidad en tabletas (unidades)") + '" />' +
-          compExtra +
+          '<input type="number" class="cell-input cell-num pur-qty" ' + (isCaja ? 'min="0" step="any"' : 'min="1" step="1"') + ' value="' + qtyVal + '" data-idx="' + idx + '" style="width:70px" title="' + qtyTitle + '" />' +
+          compExtra + cajaExtra +
         '</td>' +
         '<td class="num"><input type="number" class="cell-input cell-num pur-cost" min="0" step="0.01" value="' + costVal + '" data-idx="' + idx + '" style="width:90px" />' +
-          (isComp ? '<div style="font-size:10px;color:#9ca3af">$/comp</div>' : "") +
+          (isComp ? '<div style="font-size:10px;color:#9ca3af">$/comp</div>' : isCaja ? '<div style="font-size:10px;color:#9ca3af">$/caja</div>' : "") +
         '</td>' +
         '<td class="num pur-subtotal">' + fmtPrice(it.subtotal) + '</td>' +
         '<td><button type="button" class="btn btn-small pur-remove" data-idx="' + idx + '">✕</button></td>' +
@@ -8076,12 +8111,32 @@
     it.subtotal = it.unit_cost * it.quantity;
   }
 
+  // Recalcula quantity/unit_cost canónicos de un item en modo caja (cantidad en
+  // cajas × u/caja; costo por caja ÷ u/caja).
+  function purSyncCaja(it) {
+    const upb = Math.max(1, Number(it.upb) || 1);
+    it.quantity = Math.round((Number(it.caja_qty) || 0) * upb * 100) / 100;
+    it.unit_cost = Math.round((Number(it.caja_cost) || 0) / upb);
+    it.subtotal = it.unit_cost * it.quantity;
+  }
+
   function addPurchaseItem(product, qty) {
     const addQty = Math.max(1, Math.floor(Number(qty) || 1));
     const existing = state.purchaseItems.find((it) => it.product_id === product.id);
     if (existing) {
-      existing.quantity += addQty;
-      existing.subtotal = existing.quantity * existing.unit_cost;
+      // Respetar el modo del item si ya estaba en comprimido/caja.
+      if (existing.pack_mode === "comprimido") {
+        const cpt = Math.max(1, Number(existing.cpt) || 1);
+        existing.comp_qty = (Number(existing.comp_qty) || 0) + addQty * cpt;
+        purSyncComp(existing);
+      } else if (existing.pack_mode === "caja") {
+        const upb = Math.max(1, Number(existing.upb) || 1);
+        existing.caja_qty = Math.round(((Number(existing.caja_qty) || 0) + addQty / upb) * 100) / 100;
+        purSyncCaja(existing);
+      } else {
+        existing.quantity += addQty;
+        existing.subtotal = existing.quantity * existing.unit_cost;
+      }
     } else {
       state.purchaseItems.push({
         product_id: product.id,
@@ -8101,14 +8156,19 @@
       if (idx < 0 || !state.purchaseItems[idx]) return;
       const it = state.purchaseItems[idx];
       const isComp = it.pack_mode === "comprimido";
+      const isCaja = it.pack_mode === "caja";
       if (e.target.classList.contains("pur-qty")) {
         if (isComp) { it.comp_qty = Math.max(1, Math.floor(Number(e.target.value) || 1)); purSyncComp(it); }
+        else if (isCaja) { it.caja_qty = Math.max(0, Number(e.target.value) || 0); purSyncCaja(it); }
         else { it.quantity = Math.max(1, Math.floor(Number(e.target.value) || 1)); it.subtotal = it.quantity * it.unit_cost; }
       } else if (e.target.classList.contains("pur-cost")) {
         if (isComp) { it.comp_cost = Math.max(0, Number(e.target.value) || 0); purSyncComp(it); }
+        else if (isCaja) { it.caja_cost = Math.max(0, Number(e.target.value) || 0); purSyncCaja(it); }
         else { it.unit_cost = Math.max(0, Number(e.target.value) || 0); it.subtotal = it.quantity * it.unit_cost; }
       } else if (e.target.classList.contains("pur-cpt")) {
         it.cpt = Math.max(1, Math.floor(Number(e.target.value) || 1)); purSyncComp(it);
+      } else if (e.target.classList.contains("pur-upb")) {
+        it.upb = Math.max(1, Math.floor(Number(e.target.value) || 1)); purSyncCaja(it);
       } else return;
       const tr = e.target.closest("tr");
       if (tr) {
@@ -8130,16 +8190,28 @@
           it.cpt = Math.max(1, parseComprimidos(it.product_name) || 1);
           it.comp_qty = Math.max(1, Math.round((it.quantity || 1) * it.cpt));
           it.comp_cost = Math.round((it.unit_cost || 0) / it.cpt);
+          delete it.caja_qty; delete it.caja_cost; delete it.upb;
           purSyncComp(it);
+        } else if (e.target.value === "caja") {
+          it.pack_mode = "caja";
+          // u/caja default = und/bulto del producto (editable en la fila)
+          const prod = (state.allProducts || []).find((p) => p.id === it.product_id);
+          it.upb = Math.max(1, Number(it.upb) || Number(prod && prod.units_per_bulto) || 1);
+          it.caja_qty = Math.max(0, Math.round(((it.quantity || 1) / it.upb) * 100) / 100);
+          it.caja_cost = Math.round((it.unit_cost || 0) * it.upb);
+          delete it.comp_qty; delete it.comp_cost; delete it.cpt;
+          purSyncCaja(it);
         } else {
-          it.pack_mode = "tableta";
+          it.pack_mode = e.target.value === "unidad" ? "unidad" : "tableta";
           it.quantity = Math.max(1, Math.round(it.quantity || 1));
           it.subtotal = it.quantity * it.unit_cost;
           delete it.comp_qty; delete it.comp_cost; delete it.cpt;
+          delete it.caja_qty; delete it.caja_cost; delete it.upb;
         }
         renderPurchaseItems();
-      } else if (it.pack_mode === "comprimido" &&
-                 (e.target.classList.contains("pur-qty") || e.target.classList.contains("pur-cost") || e.target.classList.contains("pur-cpt"))) {
+      } else if ((it.pack_mode === "comprimido" || it.pack_mode === "caja") &&
+                 (e.target.classList.contains("pur-qty") || e.target.classList.contains("pur-cost") ||
+                  e.target.classList.contains("pur-cpt") || e.target.classList.contains("pur-upb"))) {
         renderPurchaseItems();
       }
     });
@@ -8151,6 +8223,14 @@
       state.purchaseItems.splice(idx, 1);
       renderPurchaseItems();
     });
+
+    // La rueda del mouse sobre un input numérico enfocado le cambia el valor
+    // sin querer (así se "bugean" cantidades al scrollear). Blur antes de que
+    // el navegador aplique el cambio.
+    els.purItemsTbody.addEventListener("wheel", (e) => {
+      const t = e.target;
+      if (t && t.matches && t.matches('input[type="number"]') && document.activeElement === t) t.blur();
+    }, { passive: true });
   }
 
   // ---- Picker de selección múltiple de productos (compra) ----
@@ -8442,6 +8522,16 @@
           " (no da tabletas enteras). Ajustá la cantidad de comprimidos." });
         return;
       }
+      // Validación: en modo caja, cajas × u/caja deben dar unidades enteras (≥ 1).
+      const badCaja = state.purchaseItems.find((it) => it.pack_mode === "caja" &&
+        (!(Number(it.quantity) >= 1) || !Number.isInteger(Number(it.quantity))));
+      if (badCaja) {
+        await alertModal({ title: "Cantidad incompleta", message: '"' + (badCaja.product_name || "Producto") +
+          '": ' + (badCaja.caja_qty || 0) + " cajas × " + Math.max(1, Number(badCaja.upb) || 1) +
+          " u/caja = " + fmtTabletas(badCaja.quantity) +
+          " unidades — no da unidades enteras. Ajustá la cantidad de cajas o el u/caja." });
+        return;
+      }
       const fd = new FormData(els.purchaseCreateForm);
       const received_at_raw = fd.get("received_at");
       const body = {
@@ -8643,9 +8733,15 @@
     if (!name) return null;
     const s = String(name).toLowerCase();
     let last = null, m;
-    const re = /x\s*(\d{1,4})/g;
-    while ((m = re.exec(s))) last = Number(m[1]);
-    return last && last > 1 ? last : null;
+    // "x 20", "x20 Comp" cuentan; medidas NO: "x 100ml", "x 500 gr", "x 1u."
+    const re = /x\s*(\d{1,4})\s*([a-záéíóúü]*)/g;
+    const measure = /^(ml|mls|cc|cm|mm|cm3|l|lt|lts|litros?|g|gr|grs|kg|kgs|mg|mgs|u|un|unid|unidades?|vol|v|w)$/;
+    while ((m = re.exec(s))) {
+      if (m[2] && measure.test(m[2])) continue;
+      const n = Number(m[1]);
+      if (n > 1) last = n;
+    }
+    return last;
   }
   // Comprimidos/tableta efectivos del item: override manual del item, o detectado.
   function cotComprimidos(it) {
@@ -9232,6 +9328,16 @@
             base.cpt = cpt;
             base.comp_qty = Math.max(1, Math.round(it.quantity * cpt));
             base.comp_cost = Math.round((it.unit_price || 0) / cpt);
+          } else if ((it.pack_unit === "caja" || it.pack_unit === "bulto")) {
+            // Cotizada por caja/bulto: arrancar la compra en modo caja (solo si
+            // la cantidad da cajas exactas, para no ensuciar los números).
+            const upb = Math.max(1, Number(it.units_per_bulto) || 1);
+            if (upb > 1 && it.quantity > 0 && it.quantity % upb === 0) {
+              base.pack_mode = "caja";
+              base.upb = upb;
+              base.caja_qty = it.quantity / upb;
+              base.caja_cost = Math.round((it.unit_price || 0) * upb);
+            }
           }
           return base;
         });
