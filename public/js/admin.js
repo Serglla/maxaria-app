@@ -4881,13 +4881,19 @@
           '<td class="no-cell-rm"><button type="button" class="btn btn-small no-rm" data-idx="' + idx + '">✕</button></td>' +
           '</tr>';
       }).join("");
-      // qty change
+      // qty change: actualizar en el lugar mientras se tipea. NO re-renderizar
+      // acá, porque eso destruye el <input> y en mobile se cierra el teclado
+      // (solo se puede ingresar un dígito). Se normaliza recién al salir (change).
       els.noItemsTbody.querySelectorAll(".no-qty").forEach(function(inp) {
         inp.addEventListener("input", function() {
           var idx = Number(this.dataset.idx);
           noItems[idx].quantity = Math.max(1, Math.floor(Number(this.value) || 1));
-          noRenderItems();
+          var tr = this.closest("tr");
+          var sub = tr ? tr.querySelector(".no-sub") : null;
+          if (sub) sub.textContent = fmtPrice(lineNetSub(noItems[idx]));
+          noUpdateTotal();
         });
+        inp.addEventListener("change", function() { noRenderItems(); });
       });
       // descuento por línea
       els.noItemsTbody.querySelectorAll(".line-disc").forEach(function(inp) {

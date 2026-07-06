@@ -2878,6 +2878,96 @@ button { font: inherit; cursor: pointer; }
     font-size: 15px;
   }
 }
+
+/* ── Pickers de productos: compactar tabla en mobile/tablet ──
+   Aplica a los pickers de 5 columnas (checkbox · producto · cant · precio/costo ·
+   stock): Agregar productos al pedido (#oie), Compras (#pur) y Cotizaciones
+   (#pcot). Se mantiene la tabla (son muchos productos para elegir) pero se
+   ajustan las columnas para que entren sin scroll horizontal: Cant. angosto
+   (3 cifras), Stock angosto, Producto más ancho y el código chico. */
+@media (max-width: 640px) {
+  #oie-picker-modal .admin-modal-box,
+  #pur-picker-modal .admin-modal-box,
+  #pcot-picker-modal .admin-modal-box {
+    max-width: none !important;
+    width: 100%;
+    padding: 16px 12px;
+  }
+  #oie-picker-table,
+  #pur-picker-table,
+  #pcot-picker-table {
+    width: 100%;
+    table-layout: fixed;
+    font-size: 12px;
+  }
+  #oie-picker-table thead th, #oie-picker-table tbody td,
+  #pur-picker-table thead th, #pur-picker-table tbody td,
+  #pcot-picker-table thead th, #pcot-picker-table tbody td { padding: 6px 3px !important; }
+  #oie-picker-table thead th,
+  #pur-picker-table thead th,
+  #pcot-picker-table thead th { font-size: 10px; letter-spacing: .02em; }
+  /* anchos de columna (checkbox · producto · cant · precio/costo · stock) */
+  #oie-picker-table th:nth-child(1), #oie-picker-table td:nth-child(1),
+  #pur-picker-table th:nth-child(1), #pur-picker-table td:nth-child(1),
+  #pcot-picker-table th:nth-child(1), #pcot-picker-table td:nth-child(1) { width: 26px !important; text-align: center; }
+  #oie-picker-table th:nth-child(2), #oie-picker-table td:nth-child(2),
+  #pur-picker-table th:nth-child(2), #pur-picker-table td:nth-child(2),
+  #pcot-picker-table th:nth-child(2), #pcot-picker-table td:nth-child(2) { width: auto !important; white-space: normal; }
+  #oie-picker-table th:nth-child(3), #oie-picker-table td:nth-child(3),
+  #pur-picker-table th:nth-child(3), #pur-picker-table td:nth-child(3),
+  #pcot-picker-table th:nth-child(3), #pcot-picker-table td:nth-child(3) { width: 48px !important; }
+  #oie-picker-table th:nth-child(4), #oie-picker-table td:nth-child(4),
+  #pur-picker-table th:nth-child(4), #pur-picker-table td:nth-child(4),
+  #pcot-picker-table th:nth-child(4), #pcot-picker-table td:nth-child(4) { width: 58px !important; white-space: nowrap; font-size: 11.5px; }
+  /* el valor del precio/costo va en una línea, pero el encabezado (ej "Costo
+     actual") puede partirse en dos para no cortarse */
+  #oie-picker-table thead th:nth-child(4),
+  #pur-picker-table thead th:nth-child(4),
+  #pcot-picker-table thead th:nth-child(4) { white-space: normal !important; }
+  #oie-picker-table th:nth-child(5), #oie-picker-table td:nth-child(5),
+  #pur-picker-table th:nth-child(5), #pur-picker-table td:nth-child(5),
+  #pcot-picker-table th:nth-child(5), #pcot-picker-table td:nth-child(5) { width: 44px !important; white-space: nowrap; }
+  /* nombre del producto un poco más grande; código chico */
+  #oie-picker-tbody td:nth-child(2) > div,
+  #pur-picker-tbody td:nth-child(2) > div,
+  #pcot-picker-tbody td:nth-child(2) > div { font-size: 12.5px; font-weight: 600; line-height: 1.2; }
+  #oie-picker-tbody td:nth-child(2) code,
+  #pur-picker-tbody td:nth-child(2) code,
+  #pcot-picker-tbody td:nth-child(2) code { font-size: 9.5px; letter-spacing: 0; }
+  /* input de cantidad: angosto para 3 cifras y con recuadro sutil */
+  #oie-picker-tbody .oie-pick-qty,
+  #pur-picker-tbody .pur-pick-qty,
+  #pcot-picker-tbody .pcot-pick-qty {
+    width: 100% !important;
+    max-width: 46px;
+    min-height: 38px;
+    padding: 4px 2px !important;
+    text-align: center;
+    font-size: 15px;
+    font-weight: 700;
+    border: 1.5px solid #cbd5e1 !important;
+    background: #f8fafc !important;
+    border-radius: 7px !important;
+    box-shadow: inset 0 1px 2px rgba(15,23,42,.05);
+  }
+  #oie-picker-tbody .oie-pick-qty:focus,
+  #pur-picker-tbody .pur-pick-qty:focus,
+  #pcot-picker-tbody .pcot-pick-qty:focus {
+    border-color: #2563eb !important;
+    background: #fff !important;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+  }
+
+  /* Recepción: picker de productos (3 columnas: código · producto · stock).
+     Código chico, producto ancho y prominente, stock angosto. */
+  #recv-prod-table { width: 100%; table-layout: fixed; font-size: 12px; }
+  #recv-prod-table thead th, #recv-prod-table tbody td { padding: 6px 4px !important; }
+  #recv-prod-table thead th { font-size: 10px; letter-spacing: .02em; }
+  #recv-prod-table th:nth-child(1), #recv-prod-table td:nth-child(1) { width: 56px !important; font-size: 10.5px; color: #6b7280; }
+  #recv-prod-table th:nth-child(2), #recv-prod-table td:nth-child(2) { width: auto !important; white-space: normal; font-weight: 600; }
+  #recv-prod-table th:nth-child(3), #recv-prod-table td:nth-child(3) { width: 48px !important; white-space: nowrap; }
+}
 .import-stats { margin: 8px 0 12px; padding-left: 18px; }
 .import-stats li { margin-bottom: 4px; }
 
