@@ -2967,6 +2967,35 @@ button { font: inherit; cursor: pointer; }
   #recv-prod-table th:nth-child(1), #recv-prod-table td:nth-child(1) { width: 56px !important; font-size: 10.5px; color: #6b7280; }
   #recv-prod-table th:nth-child(2), #recv-prod-table td:nth-child(2) { width: auto !important; white-space: normal; font-weight: 600; }
   #recv-prod-table th:nth-child(3), #recv-prod-table td:nth-child(3) { width: 48px !important; white-space: nowrap; }
+
+  /* Control de recepción (checklist): cada fila mete demasiado en horizontal
+     (check + nombre + "Vence" + bultos/comp/unidades). En mobile se apila en
+     dos filas: arriba check + producto, abajo Vence + cantidades. Scopeado a
+     #recv-modal para no tocar el chequeo de armado. */
+  #recv-modal .admin-modal-box { max-width: none !important; width: 100%; padding: 16px 12px; }
+  #recv-modal .pick-item {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px 10px;
+    padding: 10px;
+  }
+  #recv-modal .pick-check { margin-top: 2px; }
+  /* fila 1: check + producto (info ocupa el resto → empuja lo demás abajo) */
+  #recv-modal .pick-info { flex: 1 1 calc(100% - 40px); }
+  #recv-modal .pick-name { font-size: 14.5px; }
+  /* fila 2: Vence (a la izquierda, ancho fijo, no se estira) */
+  #recv-modal .recv-exp-box { order: 2; flex: 0 0 auto; margin: 0; }
+  #recv-modal .recv-exp-input { width: 72px !important; flex: 0 0 72px; min-height: 40px; }
+  /* fila 3: cantidades, a la derecha, en su propia línea */
+  #recv-modal .recv-qtybox {
+    order: 3;
+    flex: 0 0 100%;
+    max-width: none;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px 6px;
+  }
+  #recv-modal .pick-qty-input { width: 54px; min-height: 40px; font-size: 15px; }
 }
 .import-stats { margin: 8px 0 12px; padding-left: 18px; }
 .import-stats li { margin-bottom: 4px; }
