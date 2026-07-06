@@ -4872,13 +4872,13 @@
     } else {
       els.noItemsTbody.innerHTML = noItems.map(function(it, idx) {
         return '<tr>' +
-          '<td><code>' + escapeHtml(it.product_code) + '</code></td>' +
-          '<td>' + escapeHtml(it.product_name) + '</td>' +
-          '<td style="text-align:right"><input type="number" class="cell-input cell-num no-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:60px"></td>' +
-          '<td style="text-align:right">' + fmtPrice(it.unit_price) + '</td>' +
-          '<td style="text-align:right">' + discCellHtml(it, idx, noDiscUnit) + '</td>' +
-          '<td style="text-align:right;font-weight:600" class="no-sub">' + fmtPrice(lineNetSub(it)) + '</td>' +
-          '<td><button type="button" class="btn btn-small no-rm" data-idx="' + idx + '">✕</button></td>' +
+          '<td data-label="Código"><code>' + escapeHtml(it.product_code) + '</code></td>' +
+          '<td class="no-cell-name" data-label="Producto">' + escapeHtml(it.product_name) + '</td>' +
+          '<td data-label="Cant." style="text-align:right"><input type="number" class="cell-input cell-num no-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:60px"></td>' +
+          '<td data-label="P. Unit." style="text-align:right">' + fmtPrice(it.unit_price) + '</td>' +
+          '<td data-label="Desc." style="text-align:right">' + discCellHtml(it, idx, noDiscUnit) + '</td>' +
+          '<td data-label="Subtotal" style="text-align:right;font-weight:600" class="no-sub">' + fmtPrice(lineNetSub(it)) + '</td>' +
+          '<td class="no-cell-rm"><button type="button" class="btn btn-small no-rm" data-idx="' + idx + '">✕</button></td>' +
           '</tr>';
       }).join("");
       // qty change
