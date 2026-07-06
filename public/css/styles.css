@@ -2797,27 +2797,66 @@ button { font: inherit; cursor: pointer; }
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     width: auto !important;
     text-align: right !important;
-    padding: 5px 0 !important;
+    padding: 4px 0 !important;
     border: none !important;
+    font-size: 13px;
   }
+  /* etiqueta: chica, alineada en columna fija para que los valores queden a la par */
   #no-items-tbody td::before {
     content: attr(data-label);
-    flex: 0 0 auto;
+    flex: 0 0 76px;
     text-align: left;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: .04em;
-    color: #6b7280;
+    letter-spacing: .03em;
+    color: #9199a6;
   }
-  #no-items-tbody td.no-cell-name { font-weight: 600; }
-  #no-items-tbody td.no-cell-rm { justify-content: flex-end; }
+  /* nombre del producto: destacado y más grande */
+  #no-items-tbody td.no-cell-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.25;
+  }
+  /* cantidad: input más grande y prominente */
+  #no-items-tbody .no-qty {
+    width: 72px !important;
+    min-height: 42px;
+    font-size: 17px !important;
+    font-weight: 700;
+    text-align: center;
+  }
+  /* campos editables (cantidad y descuento): recuadro sutil para que se note
+     que se pueden modificar */
+  #no-items-tbody .no-qty,
+  #no-items-tbody .line-disc {
+    border: 1.5px solid #cbd5e1 !important;
+    background: #f8fafc !important;
+    border-radius: 8px !important;
+    box-shadow: inset 0 1px 2px rgba(15,23,42,.05);
+    transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+  #no-items-tbody .line-disc {
+    min-height: 40px;
+    width: 76px !important;
+    text-align: center;
+    font-size: 14px;
+    padding: 4px 8px;
+  }
+  #no-items-tbody .no-qty:focus,
+  #no-items-tbody .line-disc:focus {
+    border-color: #2563eb !important;
+    background: #fff !important;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+  }
+  #no-items-tbody td.no-cell-rm { justify-content: flex-end; padding-top: 6px !important; }
   #no-items-tbody td.no-cell-rm::before { content: none; }
   #no-items-tbody td.no-cell-rm .no-rm { min-height: 36px; padding: 6px 14px; }
-  #no-items-tbody .no-qty { width: 80px !important; min-height: 40px; }
   /* fila vacía (colspan) sin label ni flex */
   #no-items-tbody td[colspan] { display: table-cell; text-align: center !important; }
   #no-items-tbody td[colspan]::before { content: none; }
