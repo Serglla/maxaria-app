@@ -7975,9 +7975,38 @@
           ).join("") +
           '</tbody></table>'
         : '<p class="muted">Sin items.</p>';
-      const editBtn = '<div class="pur-detail-actions"><button type="button" class="btn btn-small pur-edit-btn" data-id="' + id + '">Editar compra</button></div>';
+      const editBtn = '<div class="pur-detail-actions">' +
+        '<button type="button" class="btn btn-small pur-edit-btn" data-id="' + id + '">Editar compra</button> ' +
+        '<button type="button" class="btn btn-small btn-danger pur-del-btn" data-id="' + id + '">🗑 Eliminar compra</button>' +
+        '</div>';
       cell.innerHTML = notesHtml + tableHtml + editBtn;
       cell.querySelector(".pur-edit-btn").addEventListener("click", () => openPurchaseEdit(id));
+      cell.querySelector(".pur-del-btn").addEventListener("click", async () => {
+        const isRecv = Number(data.received) === 1;
+        const units = (data.items || []).reduce((s, it) => s + (it.product_id ? Number(it.quantity) || 0 : 0), 0);
+        const ok = await confirmModal({
+          title: "🗑 Eliminar compra #" + id,
+          message: "Vas a eliminar la compra #" + id + (data.supplier_name ? " de " + data.supplier_name : "") + "." +
+            (isRecv
+              ? "\n\n⚠ Esta compra YA fue recibida: se va a revertir el stock que sumó (" + units + " unidades en total)."
+              : "\n\nEsta compra está pendiente de recibir: nunca sumó stock, el inventario no se toca.") +
+            "\n\nTambién se elimina la deuda que generó en la cuenta corriente del proveedor (los pagos al proveedor quedan). " +
+            "Los cambios de costo/precios que se aplicaron al cargarla NO se revierten.\n\nNo se puede deshacer.",
+          confirmText: "Eliminar compra",
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          const out = await api("/api/admin/purchases/" + id, { method: "DELETE" });
+          showToast("Compra #" + id + " eliminada" +
+            (out.was_received ? " · stock revertido (" + out.stock_reverted + " un.)" : " · sin impacto en stock"));
+          state.purchasesLoaded = false;
+          await loadPurchases();
+          if (out.was_received) { state.allProductsLoaded = false; refreshProductsCache(); }
+        } catch (err) {
+          showToast("Error: " + err.message, "error");
+        }
+      });
     } catch (err) {
       cell.innerHTML = '<span class="muted err">Error: ' + escapeHtml(err.message) + '</span>';
     }

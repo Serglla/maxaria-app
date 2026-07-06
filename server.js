@@ -5428,6 +5428,42 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
   res.json({ ok: true, purchase: Object.assign({}, purchase, { items: items }) });
 });
 
+// Eliminar una compra (ej: pedido al proveedor que nunca llego y se cancelo).
+// El sistema detecta si el stock ya habia entrado (received = 1, via confirmar
+// recepcion o compras viejas pre-recepcion) y solo en ese caso lo revierte.
+// Tambien elimina el debit de cuenta corriente del proveedor (los pagos quedan,
+// son del proveedor, no de la compra). Los cambios de costo/precios que se
+// aplicaron al CARGAR la compra (applyPurchaseCostUpdate) NO se revierten:
+// pudieron pisarse con compras posteriores y revertirlos descuadraria.
+app.delete("/api/admin/purchases/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const purchase = db.prepare(
+    "SELECT id, supplier_id, reference, COALESCE(received, 0) AS received FROM purchase_orders WHERE id = ?"
+  ).get(id);
+  if (!purchase) return res.status(404).json({ error: "Compra no encontrada" });
+  const wasReceived = Number(purchase.received) === 1;
+  let stockReverted = 0;
+  db.transaction(() => {
+    if (wasReceived) {
+      const items = db.prepare(
+        "SELECT product_id, quantity FROM purchase_items WHERE purchase_order_id = ?"
+      ).all(id);
+      const decStock = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+      for (const it of items) {
+        if (it.product_id) {
+          decStock.run(it.quantity, it.product_id);
+          stockReverted += Number(it.quantity) || 0;
+        }
+      }
+    }
+    db.prepare("DELETE FROM supplier_movements WHERE purchase_order_id = ? AND type = 'debit'").run(id);
+    db.prepare("DELETE FROM purchase_items WHERE purchase_order_id = ?").run(id);
+    db.prepare("DELETE FROM purchase_orders WHERE id = ?").run(id);
+  })();
+  res.json({ ok: true, deleted: id, was_received: wasReceived, stock_reverted: stockReverted });
+});
+
 // ===== Control de recepcion de mercaderia (pestaña Recepcion) =====
 //
 // El encargado controla lo que llego de cada compra contra lo cargado, item por
