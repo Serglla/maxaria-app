@@ -258,6 +258,8 @@
     actRkCount: document.getElementById("act-rk-count"),
     actRkTbody: document.getElementById("act-rk-tbody"),
     actRkTfoot: document.getElementById("act-rk-tfoot"),
+    actRkPeriodInfo: document.getElementById("act-rk-periodinfo"),
+    actRkPeriods: document.querySelector(".act-rk-periods"),
     // Stock
     actStLow: document.getElementById("act-st-low"),
     actStApply: document.getElementById("act-st-apply"),
@@ -2140,6 +2142,7 @@
     moRows: [],
     clientsRows: [],
     rankingRows: [],
+    rkPeriod: "month",
     catRows: [],
     deadRows: [],
     // Estado de orden por tabla (key = data-sort del th; dir asc|desc)
@@ -2392,14 +2395,68 @@
   async function loadActRanking() {
     if (!els.actRkTbody) return;
     fillDefaultRange(els.actRkFrom, els.actRkTo);
-    els.actRkTbody.innerHTML = '<tr><td colspan="10" class="muted">Cargando…</td></tr>';
+    rkUpdatePeriodButtons();
+    els.actRkTbody.innerHTML = '<tr><td colspan="12" class="muted">Cargando…</td></tr>';
     try {
       const data = await api("/api/admin/activity/products-ranking" + rangeQs(els.actRkFrom, els.actRkTo));
       actState.rankingRows = data.rows || [];
+      if (els.actRkPeriodInfo) {
+        const pf = fmtDateShort((data.prev_from || "").slice(0, 10));
+        const pt = fmtDateShort((data.prev_to || "").slice(0, 10));
+        els.actRkPeriodInfo.textContent =
+          "Δ = variación de ventas vs el período anterior (" + pf + " a " + pt + ").";
+      }
       renderActRanking();
     } catch (e) {
-      els.actRkTbody.innerHTML = '<tr><td colspan="10" class="muted">Error cargando datos</td></tr>';
+      els.actRkTbody.innerHTML = '<tr><td colspan="12" class="muted">Error cargando datos</td></tr>';
     }
+  }
+  // Presets de período (ventanas móviles): Semana=7d, Mes=30d, Trimestre=90d,
+  // terminando hoy. Así la comparación con el "período anterior" del backend
+  // (misma cantidad de días justo antes) es limpia.
+  function rkSetPeriod(period) {
+    const days = period === "week" ? 7 : period === "quarter" ? 90 : 30;
+    if (els.actRkFrom) els.actRkFrom.value = isoDaysAgo(days - 1);
+    if (els.actRkTo) els.actRkTo.value = todayIso();
+    actState.rkPeriod = period;
+    rkUpdatePeriodButtons();
+    loadActRanking();
+  }
+  function rkUpdatePeriodButtons() {
+    if (!els.actRkPeriods) return;
+    els.actRkPeriods.querySelectorAll(".btn-period").forEach((b) => {
+      b.classList.toggle("active", b.dataset.period === actState.rkPeriod);
+    });
+  }
+  // Variación % de un valor actual vs el del período anterior.
+  // Devuelve { pct, kind }: kind = "new" (no había antes y ahora sí),
+  // "gone" (había antes y ahora 0), "flat" (sin cambio o sin datos), "num".
+  function rkVar(cur, prev) {
+    cur = Number(cur) || 0;
+    prev = Number(prev) || 0;
+    if (prev === 0 && cur === 0) return { pct: 0, kind: "flat" };
+    if (prev === 0 && cur > 0) return { pct: null, kind: "new" };
+    if (prev > 0 && cur === 0) return { pct: -100, kind: "gone" };
+    return { pct: (cur - prev) / prev * 100, kind: "num" };
+  }
+  // Valor numérico para ordenar por variación (nuevos arriba de todo).
+  function rkVarSortVal(cur, prev) {
+    const v = rkVar(cur, prev);
+    if (v.kind === "new") return 1e9;
+    return v.pct == null ? 0 : v.pct;
+  }
+  // Celda HTML de variación con flecha y color. 'label' se usa como data-label
+  // para el modo tarjeta en mobile.
+  function rkVarCell(cur, prev, label) {
+    const dl = label ? ' data-label="' + label + '"' : '';
+    const v = rkVar(cur, prev);
+    if (v.kind === "new") return '<td class="num rk-var rk-up"' + dl + ' title="Sin ventas en el período anterior">▲ nuevo</td>';
+    if (v.kind === "flat") return '<td class="num rk-var muted"' + dl + '>—</td>';
+    var pct = v.pct;
+    var cls = pct > 0 ? "rk-up" : pct < 0 ? "rk-down" : "muted";
+    var arrow = pct > 0 ? "▲ " : pct < 0 ? "▼ " : "";
+    var txt = (pct > 0 ? "+" : "") + pct.toFixed(0) + "%";
+    return '<td class="num rk-var ' + cls + '"' + dl + '>' + arrow + txt + '</td>';
   }
   function rkSortVal(r, k) {
     if (k === "name") return (r.name || "").toLowerCase();
@@ -2411,6 +2468,8 @@
     if (k === "margin") { const t = Number(r.total_sold) || 0; return t > 0 ? (Number(r.total_earning) || 0) / t : 0; }
     if (k === "stock") return Number(r.stock) || 0;
     if (k === "last") return r.last_sold_at || "";
+    if (k === "var_units") return rkVarSortVal(r.units_sold, r.prev_units_sold);
+    if (k === "var_sold") return rkVarSortVal(r.total_sold, r.prev_total_sold);
     return 0;
   }
   function renderActRanking() {
@@ -2427,16 +2486,18 @@
       els.actRkCount.textContent = rows.length + (rows.length === 1 ? " producto" : " productos");
     }
     if (!rows.length) {
-      els.actRkTbody.innerHTML = '<tr><td colspan="10" class="muted">Sin ventas en el período</td></tr>';
+      els.actRkTbody.innerHTML = '<tr><td colspan="12" class="muted">Sin ventas en el período</td></tr>';
       if (els.actRkTfoot) els.actRkTfoot.innerHTML = "";
       return;
     }
-    let tUnits = 0, tSold = 0, tCost = 0, tEarn = 0;
+    let tUnits = 0, tSold = 0, tCost = 0, tEarn = 0, tPrevUnits = 0, tPrevSold = 0;
     els.actRkTbody.innerHTML = rows.map((r, idx) => {
       tUnits += Number(r.units_sold) || 0;
       tSold += Number(r.total_sold) || 0;
       tCost += Number(r.total_cost) || 0;
       tEarn += Number(r.total_earning) || 0;
+      tPrevUnits += Number(r.prev_units_sold) || 0;
+      tPrevSold += Number(r.prev_total_sold) || 0;
       const margin = (Number(r.total_sold) || 0) > 0
         ? ((Number(r.total_earning) || 0) / Number(r.total_sold) * 100)
         : 0;
@@ -2444,16 +2505,18 @@
       const prod = '<strong>' + escapeHtml(r.name || "") + '</strong>' +
         ' <span class="muted small">' + escapeHtml(r.code || "") + '</span>';
       return '<tr>' +
-        '<td class="num muted">' + (idx + 1) + '</td>' +
-        '<td>' + prod + '</td>' +
-        '<td class="muted small">' + escapeHtml(r.category_name || "—") + '</td>' +
-        '<td class="num">' + (Number(r.units_sold) || 0) + '</td>' +
-        '<td class="num">' + fmtMoney(r.total_sold) + '</td>' +
-        '<td class="num muted">' + fmtMoney(r.total_cost) + '</td>' +
-        '<td class="num"><strong>' + fmtMoney(r.total_earning) + '</strong></td>' +
-        '<td class="num"' + marginCls + '>' + margin.toFixed(1) + '%</td>' +
-        '<td class="num muted">' + (Number(r.stock) || 0) + '</td>' +
-        '<td class="muted small">' + escapeHtml(fmtDateShort(r.last_sold_at)) + '</td>' +
+        '<td class="num muted rk-c-rank" data-label="#">' + (idx + 1) + '</td>' +
+        '<td class="rk-c-name">' + prod + '</td>' +
+        '<td class="muted small rk-c-cat" data-label="Categoría">' + escapeHtml(r.category_name || "—") + '</td>' +
+        '<td class="num" data-label="Unidades">' + (Number(r.units_sold) || 0) + '</td>' +
+        rkVarCell(r.units_sold, r.prev_units_sold, "Δ Unid.") +
+        '<td class="num" data-label="Vendido">' + fmtMoney(r.total_sold) + '</td>' +
+        rkVarCell(r.total_sold, r.prev_total_sold, "Δ $") +
+        '<td class="num muted" data-label="Costo">' + fmtMoney(r.total_cost) + '</td>' +
+        '<td class="num" data-label="Ganancia"><strong>' + fmtMoney(r.total_earning) + '</strong></td>' +
+        '<td class="num" data-label="Margen"' + marginCls + '>' + margin.toFixed(1) + '%</td>' +
+        '<td class="num muted" data-label="Stock">' + (Number(r.stock) || 0) + '</td>' +
+        '<td class="muted small" data-label="Última venta">' + escapeHtml(fmtDateShort(r.last_sold_at)) + '</td>' +
       '</tr>';
     }).join("");
     if (els.actRkTfoot) {
@@ -2461,14 +2524,26 @@
       els.actRkTfoot.innerHTML =
         '<tr><th colspan="3">Totales</th>' +
         '<th class="num">' + tUnits + '</th>' +
+        rkVarCell(tUnits, tPrevUnits).replace("<td", "<th").replace("</td>", "</th>") +
         '<th class="num">' + fmtMoney(tSold) + '</th>' +
+        rkVarCell(tSold, tPrevSold).replace("<td", "<th").replace("</td>", "</th>") +
         '<th class="num muted">' + fmtMoney(tCost) + '</th>' +
         '<th class="num"><strong>' + fmtMoney(tEarn) + '</strong></th>' +
         '<th class="num">' + totMargin.toFixed(1) + '%</th>' +
         '<th></th><th></th></tr>';
     }
   }
-  if (els.actRkApply) els.actRkApply.addEventListener("click", loadActRanking);
+  if (els.actRkApply) els.actRkApply.addEventListener("click", () => {
+    actState.rkPeriod = null; // rango manual → ningún preset activo
+    rkUpdatePeriodButtons();
+    loadActRanking();
+  });
+  if (els.actRkPeriods) {
+    els.actRkPeriods.addEventListener("click", (e) => {
+      const b = e.target.closest(".btn-period");
+      if (b) rkSetPeriod(b.dataset.period);
+    });
+  }
   if (els.actRkSort) els.actRkSort.addEventListener("change", () => {
     actState.sort.rk.key = els.actRkSort.value || "earning";
     actState.sort.rk.dir = "desc";

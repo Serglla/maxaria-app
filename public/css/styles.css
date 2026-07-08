@@ -2249,6 +2249,85 @@ button { font: inherit; cursor: pointer; }
 .act-subtab:focus { outline: none; }
 .act-subtab:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
 
+/* ── Productos: botones de período rápido (Semana/Mes/Trimestre) ── */
+.act-rk-periods { display: inline-flex; gap: 4px; }
+.btn-period {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background: #eef2f7;
+  color: #334155;
+  border: 1.5px solid #cbd5e1;
+}
+.btn-period:hover { background: #e2e8f0; }
+.btn-period.active {
+  background: #1e3a5f;
+  color: #fff;
+  border-color: #1e3a5f;
+}
+/* Celdas de variación (Δ) en la tabla de Productos */
+.rk-var { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rk-var.rk-up { color: #16a34a; }
+.rk-var.rk-down { color: #dc2626; }
+
+/* ── Productos: en mobile la tabla (12 columnas) pasa a tarjetas ──
+   Título = producto; las métricas en grilla de 2 columnas con su label. */
+@media (max-width: 640px) {
+  #act-rk-table { min-width: 0; display: block; }
+  #act-rk-table thead { display: none; }
+  #act-rk-table tbody, #act-rk-table tfoot { display: block; }
+  #act-rk-tbody tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px 12px;
+    border: 1px solid #d7dee8;
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background: #fff !important;
+  }
+  #act-rk-tbody td {
+    display: block;
+    padding: 0 !important;
+    border: none !important;
+    text-align: left !important;
+    font-size: 14px;
+  }
+  #act-rk-tbody td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: #9199a6;
+    margin-bottom: 1px;
+  }
+  /* # oculto (el orden ya lo da la lista) */
+  #act-rk-tbody td.rk-c-rank { display: none; }
+  /* producto: título full-width, sin label */
+  #act-rk-tbody td.rk-c-name {
+    grid-column: 1 / -1;
+    font-size: 15px;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.25;
+  }
+  #act-rk-tbody td.rk-c-name::before { content: none; }
+  /* categoría: full-width, chica, sin label */
+  #act-rk-tbody td.rk-c-cat {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    margin-top: -3px;
+  }
+  #act-rk-tbody td.rk-c-cat::before { content: none; }
+  /* totales: se ocultan en mobile (el foco son los productos) */
+  #act-rk-table tfoot { display: none; }
+  /* toolbar: que envuelva bien y el buscador ocupe el ancho */
+  .act-subpanel .admin-toolbar { flex-wrap: wrap; gap: 8px; row-gap: 8px; }
+  .act-subpanel .admin-toolbar .admin-search { flex: 1 1 100%; }
+}
+
 /* El panel de contenido tiene el borde azul que "da toda la vuelta" */
 .act-subpanel {
   border: 3px solid #1e3a5f;

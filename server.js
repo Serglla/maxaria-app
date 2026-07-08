@@ -4366,6 +4366,25 @@ function parseActivityRange(req) {
   return { from: from, to: to };
 }
 
+// Ventana anterior equivalente: misma cantidad de días que [from, to], pero
+// terminando el día ANTES de 'from'. Ej: si el rango es una semana, devuelve
+// la semana previa; sirve para calcular variaciones de ventas. from/to vienen
+// como 'YYYY-MM-DD HH:MM:SS'.
+function previousActivityWindow(from, to) {
+  const fromDate = new Date(from.slice(0, 10) + "T00:00:00Z");
+  const toDate = new Date(to.slice(0, 10) + "T00:00:00Z");
+  let days = Math.round((toDate - fromDate) / 86400000) + 1; // inclusivo
+  if (!(days > 0)) days = 1;
+  const prevTo = new Date(fromDate);
+  prevTo.setUTCDate(prevTo.getUTCDate() - 1);
+  const prevFrom = new Date(fromDate);
+  prevFrom.setUTCDate(prevFrom.getUTCDate() - days);
+  return {
+    from: prevFrom.toISOString().slice(0, 10) + " 00:00:00",
+    to: prevTo.toISOString().slice(0, 10) + " 23:59:59",
+  };
+}
+
 // ----- Historial agregado por cliente -----
 // Suma pedidos no cancelados (excluye unificados del tercerizado) en el
 // rango. Devuelve por cliente: cantidad de pedidos, entregados, total
@@ -4476,7 +4495,34 @@ app.get("/api/admin/activity/products-ranking", requireAdmin, (req, res) => {
     " GROUP BY oi.product_id" +
     " ORDER BY total_earning DESC, units_sold DESC"
   ).all(range.from, range.to);
-  res.json({ from: range.from, to: range.to, rows: rows });
+
+  // Período anterior equivalente (misma cantidad de días, terminando el día
+  // antes de 'from') para calcular la variación de ventas por producto.
+  const prev = previousActivityWindow(range.from, range.to);
+  const prevRows = db.prepare(
+    "SELECT oi.product_id AS product_id," +
+    "       SUM(oi.quantity) AS units_sold," +
+    "       SUM(oi.unit_price * oi.quantity) AS total_sold" +
+    "  FROM order_items oi" +
+    "  JOIN orders o ON o.id = oi.order_id" +
+    " WHERE o.status != 'cancelado'" +
+    "   AND COALESCE(o.is_unified,0) = 0" +
+    "   AND o.created_at BETWEEN ? AND ?" +
+    "   AND oi.product_id IS NOT NULL" +
+    " GROUP BY oi.product_id"
+  ).all(prev.from, prev.to);
+  const prevMap = new Map();
+  for (const r of prevRows) prevMap.set(r.product_id, r);
+  for (const r of rows) {
+    const p = prevMap.get(r.product_id);
+    r.prev_units_sold = p ? (Number(p.units_sold) || 0) : 0;
+    r.prev_total_sold = p ? (Number(p.total_sold) || 0) : 0;
+  }
+  res.json({
+    from: range.from, to: range.to,
+    prev_from: prev.from, prev_to: prev.to,
+    rows: rows,
+  });
 });
 
 // ----- Valorizacion del stock -----

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260706j" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260706l" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -914,7 +914,7 @@
         <button type="button" class="act-subtab active" data-subtab="vendedores">Por vendedor</button>
         <button type="button" class="act-subtab" data-subtab="mensual">Ventas</button>
         <button type="button" class="act-subtab" data-subtab="clientes">Por cliente</button>
-        <button type="button" class="act-subtab" data-subtab="ranking">Ranking productos</button>
+        <button type="button" class="act-subtab" data-subtab="ranking">Productos</button>
         <button type="button" class="act-subtab" data-subtab="stock">Stock</button>
         <button type="button" class="act-subtab" data-subtab="categorias">Por categoría</button>
         <button type="button" class="act-subtab" data-subtab="muerto">Sin movimiento</button>
@@ -1040,6 +1040,11 @@
       <!-- ===== Sub-vista: Ranking productos ===== -->
       <div class="act-subpanel" data-subpanel="ranking" hidden>
         <div class="admin-toolbar">
+          <div class="act-rk-periods" role="group" aria-label="Período rápido">
+            <button class="btn btn-period" data-period="week" type="button">Semana</button>
+            <button class="btn btn-period" data-period="month" type="button">Mes</button>
+            <button class="btn btn-period" data-period="quarter" type="button">Trimestre</button>
+          </div>
           <label class="admin-filter">Desde <input type="date" id="act-rk-from" class="admin-input" /></label>
           <label class="admin-filter">Hasta <input type="date" id="act-rk-to" class="admin-input" /></label>
           <button class="btn" id="act-rk-apply" type="button">Aplicar</button>
@@ -1050,11 +1055,14 @@
               <option value="sold">Total vendido</option>
               <option value="units">Unidades</option>
               <option value="margin">Margen %</option>
+              <option value="var_units">Variación unidades</option>
+              <option value="var_sold">Variación $</option>
             </select>
           </label>
           <span class="admin-spacer"></span>
           <span id="act-rk-count" class="muted">…</span>
         </div>
+        <p class="muted small act-rk-hint" id="act-rk-periodinfo" style="margin:0 0 8px"></p>
         <div class="admin-table-wrap">
           <table class="admin-table" id="act-rk-table">
             <thead>
@@ -1063,7 +1071,9 @@
                 <th class="sortable" data-sort="name" data-defdir="asc">Producto<span class="sort-arrow"></span></th>
                 <th class="sortable" data-sort="category" data-defdir="asc">Categoría<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="units">Unidades<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="var_units" title="Variación de unidades vs período anterior">Δ Unid.<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="sold">Vendido<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="var_sold" title="Variación de $ vendido vs período anterior">Δ $<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="cost">Costo<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="earning">Ganancia<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="margin">Margen<span class="sort-arrow"></span></th>
@@ -1071,7 +1081,7 @@
                 <th class="sortable" data-sort="last" data-defdir="desc">Última venta<span class="sort-arrow"></span></th>
               </tr>
             </thead>
-            <tbody id="act-rk-tbody"><tr><td colspan="10" class="muted">Cargando…</td></tr></tbody>
+            <tbody id="act-rk-tbody"><tr><td colspan="12" class="muted">Cargando…</td></tr></tbody>
             <tfoot id="act-rk-tfoot"></tfoot>
           </table>
         </div>
@@ -3410,6 +3420,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260706g"></script>
+  <script src="/js/admin.js?v=20260706l"></script>
 </body>
 </html>
