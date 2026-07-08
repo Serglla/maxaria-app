@@ -4,7 +4,8 @@
  * - NO borra nada. Sincroniza por "code" (Codigo Interno).
  * - Si el codigo existe -> actualiza precios, stock, nombre, costo, categoria.
  * - Si el codigo NO existe -> lo da de alta.
- * - Productos en la base que NO esten en el Excel -> stock = 0 (se ocultan).
+ * - Productos en la base que NO esten en el Excel -> NO se tocan (se preserva
+ *   su stock, precios y datos). Solo se cuentan para informar.
  *
  * Uso CLI:
  *   npm run import-prices
@@ -88,7 +89,7 @@ function importPrices(items, db, opts) {
   );
 
   const stats = {
-    actualizados: 0, nuevos: 0, sinStock: 0, visibles: 0,
+    actualizados: 0, nuevos: 0, sinStock: 0, preservados: 0, visibles: 0,
     updateId: null, cambiosPrecio: 0, reingresos: 0,
   };
 
@@ -160,12 +161,19 @@ function importPrices(items, db, opts) {
         stats.nuevos++;
       }
     }
+    // Productos que están en el sistema pero NO en este Excel: NO se tocan.
+    // Antes se les forzaba stock = 0, lo que borraba inventario real mantenido
+    // dentro de la app (compras, recepción, ajustes de stock). Ahora se preserva
+    // su stock, precios y datos; solo se cuentan para informar en el resumen.
     const codes = Array.from(seen);
     if (codes.length) {
       const ph = codes.map(() => "?").join(",");
-      const r = db.prepare(`UPDATE products SET stock = 0 WHERE code NOT IN (${ph}) AND stock > 0`).run(...codes);
-      stats.sinStock = r.changes;
+      const r = db.prepare(`SELECT COUNT(*) AS n FROM products WHERE code NOT IN (${ph})`).get(...codes);
+      stats.preservados = r.n;
+    } else {
+      stats.preservados = db.prepare("SELECT COUNT(*) AS n FROM products").get().n;
     }
+    stats.sinStock = 0;
 
     // Si hubo cambios de precio o productos nuevos, dejamos registro.
     // No registramos updates "vacios" para no ensuciar el historial cuando
@@ -225,10 +233,10 @@ function main() {
   const stats = importPrices(items, db);
 
   console.log("\nResumen:");
-  console.log(`  Actualizados:        ${stats.actualizados}`);
-  console.log(`  Nuevos:              ${stats.nuevos}`);
-  console.log(`  Marcados sin stock:  ${stats.sinStock}`);
-  console.log(`  Visibles ahora:      ${stats.visibles}`);
+  console.log(`  Actualizados:            ${stats.actualizados}`);
+  console.log(`  Nuevos:                  ${stats.nuevos}`);
+  console.log(`  Fuera del Excel (intactos): ${stats.preservados}`);
+  console.log(`  Visibles ahora:          ${stats.visibles}`);
   db.close();
 }
 

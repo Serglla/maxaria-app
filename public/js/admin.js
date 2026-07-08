@@ -4725,7 +4725,7 @@
         '<ul class="import-stats">' +
           '<li>Productos actualizados: <strong>' + (s.actualizados || 0) + '</strong></li>' +
           '<li>Productos nuevos: <strong>' + (s.nuevos || 0) + '</strong></li>' +
-          '<li>Marcados sin stock (no estaban en el Excel): <strong>' + (s.sinStock || 0) + '</strong></li>' +
+          '<li>Fuera del Excel (stock preservado): <strong>' + (s.preservados || 0) + '</strong></li>' +
           '<li>Visibles ahora en el catálogo: <strong>' + (s.visibles || 0) + '</strong></li>' +
         '</ul>' +
         '<p class="muted">Se preservaron usuarios y pedidos.</p>';
