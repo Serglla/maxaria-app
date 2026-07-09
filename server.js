@@ -2298,7 +2298,7 @@ app.post("/api/orders", requireLogin, (req, res) => {
       "INSERT INTO budget_items (budget_id, product_id, product_code, product_name," +
       "  quantity, unit_price, discount_percent, subtotal) VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
     );
-    const updStockOrder = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+    const updStockOrder = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     for (const l of lines) {
       insBI.run(budgetId, l.product_id, l.product_code, l.product_name,
                 l.quantity, l.unit_price, l.subtotal);
@@ -2537,7 +2537,7 @@ app.post("/api/admin/picks/:orderId/apply", requireAdmin, (req, res) => {
   db.transaction(() => {
     const updItem = db.prepare("UPDATE order_items SET quantity = ?, subtotal = ? WHERE id = ?");
     const delItem = db.prepare("DELETE FROM order_items WHERE id = ?");
-    const adjStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
+    const adjStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
     const insChange = db.prepare(
       "INSERT INTO pick_changes (order_id, product_code, product_name, old_qty, new_qty, changed_by)" +
       " VALUES (?, ?, ?, ?, ?, ?)"
@@ -2779,7 +2779,7 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
           "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
         ).all(id);
         const updStock = db.prepare(
-          "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?"
+          "UPDATE products SET stock = stock - ? WHERE id = ?"
         );
         for (const it of items) {
           if (it.product_id) updStock.run(it.quantity, it.product_id);
@@ -3089,7 +3089,7 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
 
   db.transaction(() => {
     const newProductIds = new Set(lines.map((l) => l.product_id));
-    const adjStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
+    const adjStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
     const insItem = db.prepare(
       "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal, vendedor_cost_unit, pick_checked, picked_qty)" +
       " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)"
@@ -5035,7 +5035,7 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
           "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
         ).all(id);
         const updStock = db.prepare(
-          "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?"
+          "UPDATE products SET stock = stock - ? WHERE id = ?"
         );
         for (const it of items) {
           if (it.product_id) updStock.run(it.quantity, it.product_id);
@@ -5418,7 +5418,7 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     // Revertir stock de items anteriores SOLO si la compra ya estaba recibida.
     if (wasReceived) {
       const oldItems = db.prepare("SELECT product_id, quantity FROM purchase_items WHERE purchase_order_id = ?").all(id);
-      const decStock = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+      const decStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
       for (const oi of oldItems) {
         if (oi.product_id) decStock.run(oi.quantity, oi.product_id);
       }
@@ -5495,7 +5495,7 @@ app.delete("/api/admin/purchases/:id", requireAdmin, (req, res) => {
       const items = db.prepare(
         "SELECT product_id, quantity FROM purchase_items WHERE purchase_order_id = ?"
       ).all(id);
-      const decStock = db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+      const decStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
       for (const it of items) {
         if (it.product_id) {
           decStock.run(it.quantity, it.product_id);
@@ -5693,7 +5693,7 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
   const changeNotes = []; // resumen de diferencias para dejar en las notas
   db.transaction(() => {
     const updItem  = db.prepare("UPDATE purchase_items SET quantity = ?, subtotal = ? WHERE id = ?");
-    const incStock = db.prepare("UPDATE products SET stock = MAX(0, stock + ?) WHERE id = ?");
+    const incStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
     for (const r of recv) {
       const it = r.it, rq = r.rq;
       if (rq !== Number(it.quantity)) {
@@ -7709,11 +7709,10 @@ app.post("/api/budgets", requireVendedorOrAdmin, requireSectionForAdmin("ventas"
       "INSERT INTO budget_items (budget_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +
       "  VALUES (?,?,?,?,?,?,?,?)"
     );
-    // El admin puede facturar productos sin stock (se reponen y entregan luego):
-    // ahí el stock queda en negativo. Vendedores/clientes mantienen el clamp en 0.
-    const updStockBudget = Number(u.level) === 99
-      ? db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?")
-      : db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+    // El stock puede quedar negativo (sobreventa / productos a reponer). Sin clamp
+    // en 0 para todos los actores: así el descuento y la devolución al cancelar son
+    // simétricos y el número refleja la realidad (ej: -3 si se vendieron 3 de más).
+    const updStockBudget = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     for (const it of computedItems) {
       insItem.run(bid, it.product_id || null, it.product_code || "", it.product_name || "",
                   it.quantity, it.unit_price, it.discount_percent, it.subtotal);
@@ -7793,11 +7792,9 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
       "INSERT INTO budget_items (budget_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +
       "  VALUES (?,?,?,?,?,?,?,?)"
     );
-    // Mismo criterio que al crear: el admin puede dejar stock negativo
-    // (productos a reponer), vendedores mantienen el clamp en 0.
-    const decStock = Number(u.level) === 99
-      ? db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?")
-      : db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?");
+    // Mismo criterio que al crear: el stock puede quedar negativo (sin clamp en 0
+    // para ningún actor), así el descuento es simétrico con la devolución.
+    const decStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     for (const it of computedItems) {
       insItem.run(budget.id, it.product_id || null, it.product_code || "", it.product_name || "",
                   it.quantity, it.unit_price, it.discount_percent, it.subtotal);
