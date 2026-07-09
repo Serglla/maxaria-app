@@ -2845,6 +2845,23 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
       db.prepare(
         "DELETE FROM cash_movements WHERE source = 'comision' AND related_id = ?"
       ).run(id);
+      // Anular los créditos automáticos de la entrega/descuento de este pedido.
+      // Al cancelar, la plata cobrada se revierte (la caja ya se revirtió arriba),
+      // así el pedido cancelado no deja saldo a favor fantasma en la cuenta
+      // corriente. El "Cobro entrega" es un auto-crédito de la entrega (sin
+      // payment_id); el "Descuento pedido" es una rebaja del pedido que se anula
+      // venga de una entrega (sin payment_id) o de un cobro (con payment_id). Los
+      // pagos reales de la pestaña Pagos ("Cobro pedido"/"Pago", con payment_id)
+      // NO se tocan: esos se gestionan aparte.
+      db.prepare(
+        "DELETE FROM account_movements WHERE order_id = ? AND type = 'credit'" +
+        "   AND ( (payment_id IS NULL AND description LIKE 'Cobro entrega%')" +
+        "         OR description LIKE 'Descuento pedido%' )"
+      ).run(id);
+      // El descuento guardado en el pedido queda sin efecto al cancelar.
+      db.prepare(
+        "UPDATE orders SET discount_type = NULL, discount_value = NULL, discount_amount = 0 WHERE id = ?"
+      ).run(id);
     }
   })();
 
@@ -5669,7 +5686,7 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
   const purchaseId = Number(req.params.purchaseId);
   if (!purchaseId) return res.status(400).json({ error: "ID invalido" });
   const purchase = db.prepare(
-    "SELECT id, supplier_id, COALESCE(received, 0) AS received FROM purchase_orders WHERE id = ?"
+    "SELECT id, supplier_id, reference, COALESCE(received, 0) AS received FROM purchase_orders WHERE id = ?"
   ).get(purchaseId);
   if (!purchase) return res.status(404).json({ error: "Compra no encontrada" });
   if (Number(purchase.received) === 1) {
@@ -5724,9 +5741,19 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
         .run((cur ? cur + "\n" : "") + line, purchaseId);
     }
     if (purchase.supplier_id) {
-      db.prepare(
+      const upd = db.prepare(
         "UPDATE supplier_movements SET amount = ? WHERE purchase_order_id = ? AND type = 'debit'"
       ).run(total, purchaseId);
+      // Si la compra se creó sin deuda (total 0 → nunca se insertó el debit) y la
+      // recepción la ajustó a un total > 0, no hay fila que actualizar: crear la
+      // deuda del proveedor ahora, para que no quede sin registrar.
+      if (upd.changes === 0 && total > 0) {
+        const ref = purchase.reference ? " · " + purchase.reference : "";
+        db.prepare(
+          "INSERT INTO supplier_movements (supplier_id, type, amount, description, purchase_order_id, created_at)" +
+          " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
+        ).run(purchase.supplier_id, total, "Compra #" + purchaseId + ref, purchaseId);
+      }
     }
   })();
 
@@ -6115,9 +6142,9 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
           ? (discountValue + "%")
           : ("$" + Math.round(discountValue).toLocaleString("es-AR"));
         db.prepare(
-          "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
-          " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
-        ).run(user_id, discountAmount, "Descuento pedido #" + orderId + " (" + dlabel + ")", orderId);
+          "INSERT INTO account_movements (user_id, type, amount, description, order_id, payment_id, created_at)" +
+          " VALUES (?, 'credit', ?, ?, ?, ?, datetime('now'))"
+        ).run(user_id, discountAmount, "Descuento pedido #" + orderId + " (" + dlabel + ")", orderId, paymentId);
       }
     }
     // Egreso automático de la comisión del vendedor (la caja queda en lo tuyo).
@@ -6141,6 +6168,23 @@ app.delete("/api/admin/payments/:id", requireAdmin, (req, res) => {
   const payment = db.prepare("SELECT id, order_id FROM payments WHERE id = ?").get(id);
   if (!payment) return res.status(404).json({ error: "Pago no encontrado" });
   db.transaction(() => {
+    // Si el descuento del pedido provino de este cobro (crédito "Descuento pedido"
+    // con este payment_id), limpiar el descuento guardado en el pedido: al borrar
+    // el cobro, el descuento deja de aplicar y no debe seguir bajando la deuda ni
+    // figurando en la rentabilidad. El crédito en sí lo borra el DELETE de abajo
+    // (tiene payment_id). Si el descuento vigente vino de una entrega (sin
+    // payment_id), no se toca acá.
+    if (payment.order_id) {
+      const hadDiscount = db.prepare(
+        "SELECT 1 FROM account_movements WHERE payment_id = ? AND type = 'credit'" +
+        "   AND description LIKE 'Descuento pedido%' LIMIT 1"
+      ).get(id);
+      if (hadDiscount) {
+        db.prepare(
+          "UPDATE orders SET discount_type = NULL, discount_value = NULL, discount_amount = 0 WHERE id = ?"
+        ).run(payment.order_id);
+      }
+    }
     db.prepare("DELETE FROM account_movements WHERE payment_id = ?").run(id);
     // Revertir el ingreso de caja generado por este cobro (si lo hubo).
     db.prepare("DELETE FROM cash_movements WHERE source = 'cobro' AND related_id = ?").run(id);
