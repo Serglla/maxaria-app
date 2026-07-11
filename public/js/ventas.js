@@ -855,14 +855,18 @@
     const total = vRound2(afterDisc * (1 + surPct / 100));
     const totalUnidades = vState.items.reduce((s, it) => s + (Math.round(Number(it.quantity)) || 0), 0);
 
+    const anyDisc = vState.items.some((it) => (Number(it.discount_percent) || 0) > 0);
     const rows = vState.items.map((it) => {
       const disc = Number(it.discount_percent) || 0;
+      const unitPrice = Number(it.unit_price) || 0;
+      const precioConDesc = vRound2(unitPrice * (1 - disc / 100));
       return "<tr>" +
         "<td class='col-cod'>" + vEsc(it.product_code || "") + "</td>" +
         "<td class='col-prod'>" + vEsc(it.product_name || "") + "</td>" +
         "<td class='col-cant'>" + Math.round(it.quantity) + "</td>" +
         "<td class='col-price'>$" + vFmtN(it.unit_price) + "</td>" +
-        (disc ? "<td class='col-disc'>" + disc + "%</td>" : "<td class='col-disc' style='color:#9ca3af'>—</td>") +
+        (anyDisc ? (disc ? "<td class='col-disc'>−" + disc + "%</td>" : "<td class='col-disc' style='color:#9ca3af'>—</td>") : "") +
+        (anyDisc ? (disc ? "<td class='col-precio'>$" + vFmtN(precioConDesc) + "</td>" : "<td class='col-precio' style='color:#9ca3af'>—</td>") : "") +
         "<td class='col-sub'>$" + vFmtN(it.subtotal) + "</td>" +
         "</tr>";
     }).join("");
@@ -896,7 +900,8 @@
       ".col-prod{font-weight:600}" +
       ".col-cant{text-align:center;font-weight:700;width:52px}" +
       ".col-price{text-align:right;width:90px;color:#374151}" +
-      ".col-disc{text-align:center;width:52px;color:#374151}" +
+      ".col-disc{text-align:right;width:56px;color:#b45309;font-weight:600}" +
+      ".col-precio{text-align:right;width:80px;color:#111}" +
       ".col-sub{text-align:right;width:90px;font-weight:700}" +
       ".summary-row{display:flex;justify-content:flex-end;align-items:baseline;gap:24px;border-top:2px solid #1e3a5f;padding:10px 8px 0}" +
       ".summary-meta{font-size:12px;color:#6b7280}" +
@@ -924,10 +929,11 @@
         "<th>Cód.</th><th>Artículo</th>" +
         "<th style='text-align:center'>Cant.</th>" +
         "<th style='text-align:right'>Precio unit.</th>" +
-        "<th style='text-align:center'>Desc%</th>" +
+        (anyDisc ? "<th style='text-align:right'>Desc.</th>" : "") +
+        (anyDisc ? "<th style='text-align:right'>Precio</th>" : "") +
         "<th style='text-align:right'>Subtotal</th>" +
       "</tr></thead>" +
-      "<tbody>" + (rows || "<tr><td colspan='6' style='padding:10px;color:#6b7280'>Sin artículos</td></tr>") + "</tbody>" +
+      "<tbody>" + (rows || "<tr><td colspan='" + (anyDisc ? 7 : 5) + "' style='padding:10px;color:#6b7280'>Sin artículos</td></tr>") + "</tbody>" +
       "</table>" +
       "<div class='summary-row'>" +
         "<span class='summary-meta'>" + vState.items.length + " artículos &nbsp;·&nbsp; " + totalUnidades + " unidades</span>" +

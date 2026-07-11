@@ -7005,35 +7005,56 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
   cy += 6;
 
   // ── Encabezado tabla ──
-  const COL = { cod: 50, prod: MW - 50 - 52 - 90 - 90, cant: 52, price: 90, sub: 90 };
-  const colX = {
-    cod: MX,
-    prod: MX + COL.cod,
-    cant: MX + COL.cod + COL.prod,
-    price: MX + COL.cod + COL.prod + COL.cant,
-    sub: MX + COL.cod + COL.prod + COL.cant + COL.price,
-  };
+  // Si algún item tiene descuento por línea, se agregan dos columnas extra:
+  // "Desc." (el % descontado) y "Precio" (el precio unitario ya con el
+  // descuento aplicado — solo se completa en las filas que tienen descuento).
+  const anyDisc = items.some((it) => (Number(it.discount_percent) || 0) > 0);
+  const COL = anyDisc
+    ? { cod: 42, cant: 40, price: 62, disc: 44, precio: 62, sub: 76 }
+    : { cod: 50, cant: 52, price: 90, disc: 0, precio: 0, sub: 90 };
+  COL.prod = MW - COL.cod - COL.cant - COL.price - COL.disc - COL.precio - COL.sub;
+  const colX = { cod: MX };
+  colX.prod = colX.cod + COL.cod;
+  colX.cant = colX.prod + COL.prod;
+  colX.price = colX.cant + COL.cant;
+  colX.disc = colX.price + COL.price;
+  colX.precio = colX.disc + COL.disc;
+  colX.sub = colX.precio + COL.precio;
   doc.rect(MX, cy, MW, 20).fill(BLU);
   doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff");
   doc.text("CÓD.", colX.cod, cy + 6);
   doc.text("PRODUCTO", colX.prod, cy + 6);
   doc.text("CANT.", colX.cant, cy + 6, { width: COL.cant, align: "center" });
   doc.text("P. UNIT.", colX.price, cy + 6, { width: COL.price, align: "right" });
+  if (anyDisc) {
+    doc.text("DESC.", colX.disc, cy + 6, { width: COL.disc, align: "right" });
+    doc.text("PRECIO", colX.precio, cy + 6, { width: COL.precio, align: "right" });
+  }
   doc.text("SUBTOTAL", colX.sub, cy + 6, { width: COL.sub, align: "right" });
   cy += 20;
 
   // ── Filas de items ──
   const ROW_H = 18;
+  const vSep = anyDisc ? [colX.prod, colX.cant, colX.price, colX.disc, colX.precio, colX.sub] : [colX.prod, colX.cant, colX.price, colX.sub];
   items.forEach((it, idx) => {
     if (cy + ROW_H > 800) { doc.addPage(); cy = 36; }
     if (idx % 2 === 1) doc.rect(MX, cy, MW, ROW_H).fill("#f8fafc");
+    const disc = Number(it.discount_percent) || 0;
+    const unitPrice = Number(it.unit_price) || 0;
     doc.font("Helvetica").fontSize(9).fillColor(GREY).text(String(it.product_code || ""), colX.cod, cy + 5, { width: COL.cod });
     doc.fillColor(BLACK).font("Helvetica-Bold").text(String(it.product_name || ""), colX.prod, cy + 5, { width: COL.prod - 4, ellipsis: true });
     doc.font("Helvetica-Bold").fillColor(BLACK).text(String(it.quantity), colX.cant, cy + 5, { width: COL.cant, align: "center" });
-    doc.font("Helvetica").fillColor(GREY).text("$" + Number(it.unit_price || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.price, cy + 5, { width: COL.price, align: "right" });
+    doc.font("Helvetica").fillColor(GREY).text("$" + unitPrice.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.price, cy + 5, { width: COL.price, align: "right" });
+    if (anyDisc) {
+      doc.font("Helvetica-Bold").fillColor(disc > 0 ? "#b45309" : "#9ca3af")
+        .text(disc > 0 ? "−" + (Math.round(disc * 100) / 100) + "%" : "—", colX.disc, cy + 5, { width: COL.disc, align: "right" });
+      const precioConDesc = round2(unitPrice * (1 - disc / 100));
+      doc.font("Helvetica").fillColor(disc > 0 ? BLACK : "#9ca3af")
+        .text(disc > 0 ? "$" + precioConDesc.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—", colX.precio, cy + 5, { width: COL.precio, align: "right" });
+    }
     doc.font("Helvetica-Bold").fillColor(BLACK).text("$" + Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.sub, cy + 5, { width: COL.sub, align: "right" });
     // separadores verticales azules
-    [colX.prod, colX.cant, colX.price, colX.sub].forEach((x) => {
+    vSep.forEach((x) => {
       doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
     });
     // separador horizontal azul (marca el renglón)

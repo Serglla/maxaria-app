@@ -5769,20 +5769,23 @@
     var rows = items.map(function(it) {
       var sub = Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)) || 0;
       var dp = Number(it.discount_percent) || 0;
-      var gross = (Number(it.unit_price) || 0) * (Number(it.quantity) || 0);
+      var unitPrice = Number(it.unit_price) || 0;
+      var gross = unitPrice * (Number(it.quantity) || 0);
       discTotalRem += Math.max(0, gross - sub);
       total += sub;
+      var precioConDesc = Math.round(unitPrice * (1 - dp / 100) * 100) / 100;
       return "<tr>" +
         "<td class='col-cod'>" + escapeHtml(it.product_code || "") + "</td>" +
         "<td class='col-prod'>" + escapeHtml(it.product_name || "") + "</td>" +
         "<td class='col-cant'>" + escapeHtml(String(it.quantity)) + "</td>" +
-        "<td class='col-price'>$" + Number(it.unit_price || 0).toLocaleString("es-AR") + "</td>" +
+        "<td class='col-price'>$" + unitPrice.toLocaleString("es-AR") + "</td>" +
         (anyDisc ? "<td class='col-disc'>" + (dp > 0 ? "−" + (Math.round(dp * 100) / 100) + "%" : "—") + "</td>" : "") +
+        (anyDisc ? "<td class='col-precio'>" + (dp > 0 ? "$" + precioConDesc.toLocaleString("es-AR") : "—") + "</td>" : "") +
         "<td class='col-sub'>$" + sub.toLocaleString("es-AR") + "</td>" +
         "</tr>";
     }).join("");
     var totalUnidades = items.reduce(function(s, it) { return s + (Number(it.quantity) || 0); }, 0);
-    var colCount = anyDisc ? 6 : 5;
+    var colCount = anyDisc ? 7 : 5;
     var budgetRef = order.budget_number ? "<p class='ref'>Facturado desde presupuesto " + escapeHtml(order.budget_number) + "</p>" : "";
     var html = "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
       "<title>Remito pedido #" + order.id + "</title>" +
@@ -5814,6 +5817,7 @@
       ".col-cant{text-align:center;font-weight:700;width:56px}" +
       ".col-price{text-align:right;width:90px;color:#374151}" +
       ".col-disc{text-align:right;width:64px;color:#b45309;font-weight:600}" +
+      ".col-precio{text-align:right;width:80px;color:#111}" +
       ".col-sub{text-align:right;width:90px;font-weight:700}" +
       ".summary-row{display:flex;justify-content:flex-end;align-items:baseline;gap:32px;border-top:2px solid #1e3a5f;padding:10px 8px 0}" +
       ".summary-meta{font-size:12px;color:#6b7280}" +
@@ -5843,6 +5847,7 @@
         "<th style='text-align:center'>Cant.</th>" +
         "<th style='text-align:right'>P. Unit.</th>" +
         (anyDisc ? "<th style='text-align:right'>Desc.</th>" : "") +
+        (anyDisc ? "<th style='text-align:right'>Precio</th>" : "") +
         "<th style='text-align:right'>Subtotal</th>" +
       "</tr></thead>" +
       "<tbody>" + (rows || "<tr><td colspan='" + colCount + "' style='padding:10px;color:#6b7280'>Sin items</td></tr>") + "</tbody>" +
