@@ -7047,7 +7047,7 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
     doc.font("Helvetica").fillColor(GREY).text("$" + unitPrice.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.price, cy + 5, { width: COL.price, align: "right" });
     if (anyDisc) {
       doc.font("Helvetica-Bold").fillColor(disc > 0 ? "#b45309" : "#9ca3af")
-        .text(disc > 0 ? "−" + (Math.round(disc * 100) / 100) + "%" : "—", colX.disc, cy + 5, { width: COL.disc, align: "right" });
+        .text(disc > 0 ? "-" + (Math.round(disc * 100) / 100) + "%" : "—", colX.disc, cy + 5, { width: COL.disc, align: "right" });
       const precioConDesc = round2(unitPrice * (1 - disc / 100));
       doc.font("Helvetica").fillColor(disc > 0 ? BLACK : "#9ca3af")
         .text(disc > 0 ? "$" + precioConDesc.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—", colX.precio, cy + 5, { width: COL.precio, align: "right" });
