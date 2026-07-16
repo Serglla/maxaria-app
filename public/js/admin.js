@@ -9502,62 +9502,76 @@
     if (els.pcotConvertBtn) {
       els.pcotConvertBtn.addEventListener("click", async () => {
         if (!state.cotizacionItems.length) return;
-        // Guardar primero si hay cambios
         if (els.pcotCreateMsg) { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
-        // Cerrar modal cotización y abrir modal de compra pre-rellenado
-        if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
-        // Esperar a que el modal de compra esté listo
-        state.purchaseItems = state.cotizacionItems.map((it) => {
-          const base = {
-            product_id:   it.product_id,
-            product_code: it.product_code,
-            product_name: it.product_name,
-            quantity:     it.quantity,
-            unit_cost:    it.unit_price || 0,
-            subtotal:     (it.unit_price || 0) * it.quantity,
-          };
-          // Si la cotización estaba en "por comprimido", arrancar la compra igual.
-          if (it.pack_unit === "comprimido") {
-            const cpt = cotComprimidos(it);
-            base.pack_mode = "comprimido";
-            base.cpt = cpt;
-            base.comp_qty = Math.max(1, Math.round(it.quantity * cpt));
-            base.comp_cost = Math.round((it.unit_price || 0) / cpt);
-          } else if ((it.pack_unit === "caja" || it.pack_unit === "bulto")) {
-            // Cotizada por caja/bulto: arrancar la compra en modo caja (solo si
-            // la cantidad da cajas exactas, para no ensuciar los números).
-            const upb = Math.max(1, Number(it.units_per_bulto) || 1);
-            if (upb > 1 && it.quantity > 0 && it.quantity % upb === 0) {
-              base.pack_mode = "caja";
-              base.upb = upb;
-              base.caja_qty = it.quantity / upb;
-              base.caja_cost = Math.round((it.unit_price || 0) * upb);
+        // Toda la preparación va dentro de un try: si algo falla, NO dejamos al
+        // usuario sin nada (la cotización se cierra recién cuando la compra está
+        // lista para mostrarse) y avisamos el error en vez de morir en silencio.
+        try {
+          // Siempre crear una compra NUEVA (nunca pisar una que se estuviera editando).
+          state.editingPurchaseId = null;
+          if (els.purSubmitBtn) els.purSubmitBtn.textContent = "Guardar compra";
+
+          state.purchaseItems = state.cotizacionItems.map((it) => {
+            const base = {
+              product_id:   it.product_id,
+              product_code: it.product_code,
+              product_name: it.product_name,
+              quantity:     it.quantity,
+              unit_cost:    it.unit_price || 0,
+              subtotal:     (it.unit_price || 0) * it.quantity,
+            };
+            // Si la cotización estaba en "por comprimido", arrancar la compra igual.
+            if (it.pack_unit === "comprimido") {
+              const cpt = cotComprimidos(it);
+              base.pack_mode = "comprimido";
+              base.cpt = cpt;
+              base.comp_qty = Math.max(1, Math.round(it.quantity * cpt));
+              base.comp_cost = Math.round((it.unit_price || 0) / cpt);
+            } else if ((it.pack_unit === "caja" || it.pack_unit === "bulto")) {
+              // Cotizada por caja/bulto: arrancar la compra en modo caja (solo si
+              // la cantidad da cajas exactas, para no ensuciar los números).
+              const upb = Math.max(1, Number(it.units_per_bulto) || 1);
+              if (upb > 1 && it.quantity > 0 && it.quantity % upb === 0) {
+                base.pack_mode = "caja";
+                base.upb = upb;
+                base.caja_qty = it.quantity / upb;
+                base.caja_cost = Math.round((it.unit_price || 0) * upb);
+              }
+            }
+            return base;
+          });
+
+          if (!state.suppliersLoaded) {
+            try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+          }
+          if (!Array.isArray(state.suppliers)) state.suppliers = [];
+          try { await ensureAllProducts(); } catch (_) {}
+
+          if (els.purchaseCreateForm) els.purchaseCreateForm.reset();
+          if (els.purchaseCreateMsg) els.purchaseCreateMsg.textContent = "";
+          populatePurchaseSupplierSelect();
+          // Pre-seleccionar proveedor
+          const supId = els.pcotFormSupplier ? els.pcotFormSupplier.value : "";
+          if (supId && els.purFormSupplier) els.purFormSupplier.value = supId;
+          // Fecha default = ahora
+          if (els.purchaseCreateForm) {
+            const dtInput = els.purchaseCreateForm.querySelector('[name="received_at"]');
+            if (dtInput) {
+              const now = new Date();
+              now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+              dtInput.value = now.toISOString().slice(0, 16);
             }
           }
-          return base;
-        });
-        if (!state.suppliersLoaded) {
-          try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+          if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = "Nueva compra (desde cotización)";
+          renderPurchaseItems();
+
+          // Todo listo: recién ahora cerramos la cotización y mostramos la compra.
+          if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
+          if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = false;
+          showToast("Cotización convertida — revisá y apretá \"Guardar compra\"");
+        } catch (err) {
+          showToast("No se pudo abrir la compra: " + (err && err.message ? err.message : err), "err");
         }
-        populatePurchaseSupplierSelect();
-        if (els.purchaseCreateForm) els.purchaseCreateForm.reset();
-        if (els.purchaseCreateMsg) els.purchaseCreateMsg.textContent = "";
-        // Pre-seleccionar proveedor
-        const supId = els.pcotFormSupplier ? els.pcotFormSupplier.value : "";
-        if (supId && els.purFormSupplier) els.purFormSupplier.value = supId;
-        // Fecha default = ahora
-        if (els.purchaseCreateForm) {
-          const dtInput = els.purchaseCreateForm.querySelector('[name="received_at"]');
-          if (dtInput) {
-            const now = new Date();
-            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-            dtInput.value = now.toISOString().slice(0, 16);
-          }
-        }
-        if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = "Nueva compra (desde cotización)";
-        renderPurchaseItems();
-        if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = false;
-        showToast("Cotización convertida — revisá y guardá la compra");
       });
     }
 
