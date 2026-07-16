@@ -8954,8 +8954,8 @@
         '<td style="text-align:right">' + (stockVal != null ? '<span style="font-weight:600;color:' + (stockVal > 0 ? "#059669" : "#9ca3af") + '">' + stockVal + '</span>' : '<span class="muted">—</span>') + '</td>' +
         '<td style="text-align:right">' +
           '<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:1px">' +
-            '<input type="number" min="0" step="1" value="' + packPriceVal + '" placeholder="0" ' +
-            'title="Precio por ' + (hasPack ? elemSing : "unidad") + ' que te cotiza el proveedor" ' +
+            '<input type="text" inputmode="decimal" value="' + packPriceVal + '" placeholder="0" ' +
+            'title="Precio por ' + (hasPack ? elemSing : "unidad") + ' que te cotiza el proveedor (podés usar coma: 96,5)" ' +
             'data-cot-idx="' + idx + '" data-price-mult="' + priceMult + '" ' +
             'style="width:84px;text-align:right" class="admin-input pcot-price-input">' +
             (hasPack
@@ -9002,7 +9002,13 @@
       inp.addEventListener("change", () => {
         const i = Number(inp.dataset.cotIdx);
         const mult = Number(inp.dataset.priceMult) || 1;
-        const packPrice = Number(inp.value) || 0;
+        // Parser es-AR: acepta coma decimal ("96,5") y punto de miles ("8.000").
+        const parsed = recvParseNum(inp.value);
+        if (parsed !== null && (isNaN(parsed) || parsed < 0)) {
+          showToast("Precio inválido");
+          return;
+        }
+        const packPrice = parsed || 0;
         // Convertir el precio del empaque a precio por unidad (canónico).
         state.cotizacionItems[i].unit_price = packPrice ? Math.round(packPrice / mult) : null;
         rerenderCotizacionPreservingFocus();
