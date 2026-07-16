@@ -8260,6 +8260,8 @@
         quantity: addQty,
         unit_cost: product.cost || 0,
         subtotal: (product.cost || 0) * addQty,
+        // Analgésicos → "tableta"; resto → "por unidad" (default por rubro).
+        pack_mode: isPillCategory(product) ? "tableta" : "unidad",
       });
     }
     renderPurchaseItems();
@@ -8858,6 +8860,13 @@
     }
     return last;
   }
+  // Solo las categorías de comprimidos (ANALGESICOS, ANALGESICOS G.) arrancan en
+  // modo pastilla por defecto (tableta en compras, comprimido en cotizaciones); el
+  // resto de los rubros arranca "por unidad". El usuario igual puede cambiarlo por fila.
+  function isPillCategory(product) {
+    const cat = String((product && product.category_name) || "").trim().toUpperCase();
+    return cat.indexOf("ANALGESICO") === 0;
+  }
   // Comprimidos/tableta efectivos del item: override manual del item, o detectado.
   function cotComprimidos(it) {
     if (it.comprimidos_per_unit && it.comprimidos_per_unit > 1) return it.comprimidos_per_unit;
@@ -9185,7 +9194,7 @@
           unit_price: it.unit_price || (prod ? prod.cost : null) || null,
           current_cost: prod ? (prod.cost || 0) : 0,
           units_per_bulto: prod ? (prod.units_per_bulto || 1) : 1,
-          pack_unit: savedMode || (prod ? (prod.pack_unit || "bulto") : "bulto"),
+          pack_unit: savedMode || (isPillCategory(prod) ? "comprimido" : "unidad"),
           stock: prod && prod.stock != null ? prod.stock : null,
         };
         if (it.comprimidos_per_unit && it.comprimidos_per_unit > 1) obj.comprimidos_per_unit = Number(it.comprimidos_per_unit);
@@ -9365,7 +9374,7 @@
             product_id: product.id, product_code: product.code || "",
             product_name: product.name, quantity: qty,
             units_per_bulto: product.units_per_bulto || 1,
-            pack_unit: product.pack_unit || "bulto",
+            pack_unit: isPillCategory(product) ? "comprimido" : "unidad",
             unit_price: existingPrice != null ? existingPrice : (product.cost || null),
             current_cost: product.cost || 0,
             stock: product.stock != null ? product.stock : null,
