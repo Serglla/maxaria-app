@@ -1116,6 +1116,34 @@
           <span class="act-pot-value" id="act-st-pot-val">—</span>
         </div>
 
+        <div style="margin-top:24px">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <h4 style="margin:0">📈 Evolución del valor del stock (a costo)</h4>
+            <label class="admin-filter small">Meses
+              <select id="act-st-hist-months" class="admin-input" style="width:80px">
+                <option value="6">6</option>
+                <option value="12" selected>12</option>
+                <option value="24">24</option>
+              </select>
+            </label>
+          </div>
+          <p class="muted small" style="margin:4px 0 10px">Reconstrucción aproximada a partir de compras, ventas y ajustes de stock. Los meses anteriores pueden tener margen de error; el mes actual es el valor real de hoy.</p>
+          <div style="position:relative;height:280px"><canvas id="act-st-hist-chart"></canvas></div>
+          <div class="admin-table-wrap" style="margin-top:12px">
+            <table class="admin-table" id="act-st-hist-table">
+              <thead>
+                <tr>
+                  <th>Mes</th>
+                  <th class="num">Valor a costo</th>
+                  <th class="num">Δ vs mes anterior</th>
+                  <th class="num">Unidades</th>
+                </tr>
+              </thead>
+              <tbody id="act-st-hist-tbody"><tr><td colspan="4" class="muted">—</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
         <h4 style="margin-top:24px;margin-bottom:8px">⚠️ Productos con stock bajo</h4>
         <div class="admin-table-wrap">
           <table class="admin-table" id="act-st-low-table">

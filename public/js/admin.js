@@ -2567,6 +2567,67 @@
       if (els.actStLowTbody) els.actStLowTbody.innerHTML = '<tr><td colspan="5" class="muted">Error cargando datos</td></tr>';
       if (els.actStOutTbody) els.actStOutTbody.innerHTML = '<tr><td colspan="4" class="muted">Error</td></tr>';
     }
+    loadActStockHistory();
+  }
+
+  // Evolución mensual del valor del stock a costo (reconstrucción aproximada).
+  let actStHistChart = null;
+  async function loadActStockHistory() {
+    const sel = document.getElementById("act-st-hist-months");
+    const tbody = document.getElementById("act-st-hist-tbody");
+    const months = sel ? sel.value : 12;
+    try {
+      const data = await api("/api/admin/activity/stock-history?months=" + months);
+      renderActStockHistory(data);
+    } catch (e) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="muted">Error cargando la evolución</td></tr>';
+    }
+  }
+  function renderActStockHistory(data) {
+    const rows = (data && data.months) || [];
+    const tbody = document.getElementById("act-st-hist-tbody");
+    if (tbody) {
+      tbody.innerHTML = rows.length ? rows.map((r) => {
+        const dv = r.delta_value;
+        const dcell = dv == null
+          ? '<span class="muted">—</span>'
+          : '<span style="color:' + (dv > 0 ? "#16a34a" : dv < 0 ? "#ef4444" : "#6b7280") + '">' +
+              (dv > 0 ? "+" : "") + fmtMoney(dv) +
+              (r.delta_pct != null ? ' <span style="font-size:11px">(' + (r.delta_pct > 0 ? "+" : "") + r.delta_pct + '%)</span>' : "") +
+            '</span>';
+        return '<tr>' +
+          '<td>' + escapeHtml(r.label) + '</td>' +
+          '<td class="num">' + fmtMoney(r.value_cost) + '</td>' +
+          '<td class="num">' + dcell + '</td>' +
+          '<td class="num muted">' + (Number(r.units) || 0).toLocaleString("es-AR") + '</td>' +
+        '</tr>';
+      }).join("") : '<tr><td colspan="4" class="muted">Sin datos suficientes para reconstruir</td></tr>';
+    }
+    const canvas = document.getElementById("act-st-hist-chart");
+    if (canvas && window.Chart) {
+      if (actStHistChart) { actStHistChart.destroy(); actStHistChart = null; }
+      actStHistChart = new Chart(canvas.getContext("2d"), {
+        type: "line",
+        data: {
+          labels: rows.map((r) => r.label),
+          datasets: [{
+            label: "Valor a costo",
+            data: rows.map((r) => r.value_cost),
+            borderColor: "#1e3a5f",
+            backgroundColor: "rgba(30,58,95,0.08)",
+            fill: true, tension: 0.25, pointRadius: 3, borderWidth: 2,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: (c) => " " + fmtMoney(c.parsed.y) } },
+          },
+          scales: { y: { ticks: { callback: (v) => fmtMoney(v) } } },
+        },
+      });
+    }
   }
   function stLowSortVal(p, k) {
     if (k === "code") return (p.code || "").toLowerCase();
@@ -2636,6 +2697,10 @@
     }
   }
   if (els.actStApply) els.actStApply.addEventListener("click", loadActStock);
+  (function () {
+    const hm = document.getElementById("act-st-hist-months");
+    if (hm) hm.addEventListener("change", loadActStockHistory);
+  })();
 
   // ---- Por categoria ----
   async function loadActCategories() {

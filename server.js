@@ -4585,6 +4585,86 @@ app.get("/api/admin/activity/stock-valuation", requireAdmin, (req, res) => {
   });
 });
 
+// ----- Evolucion mensual del valor del stock a costo (reconstruccion aproximada) -----
+// El sistema NO guarda historico de stock: se reconstruye hacia atras desde el stock
+// actual, revirtiendo los movimientos con fecha conocida:
+//   compras (suman stock), ventas entregadas con stock descontado (restan), y
+//   ajustes de stock manuales (con signo). El costo historico sale de cost_changes
+//   cuando existe; si no, se usa el costo actual como constante.
+// Es una ESTIMACION: faltan movimientos con fecha (presupuestos, ediciones) y costos
+// viejos, sobre todo en meses previos al registro de cost_changes/stock_adjustments.
+app.get("/api/admin/activity/stock-history", requireAdmin, (req, res) => {
+  const months = Math.min(36, Math.max(2, Number(req.query.months) || 12));
+  const prods = db.prepare("SELECT id, stock, cost FROM products WHERE active=1").all();
+  const byId = new Map();
+  for (const p of prods) byId.set(p.id, { stock: Number(p.stock) || 0, cost: Number(p.cost) || 0, deltas: [], changes: [] });
+
+  const addDelta = (pid, qty, d) => {
+    const e = byId.get(pid); if (!e || !d) return;
+    const n = Number(qty); if (!n) return;
+    e.deltas.push({ d: String(d), q: n });
+  };
+  // Compras: sumaron stock (delta +).
+  db.prepare(
+    "SELECT pi.product_id AS pid, pi.quantity AS qty, COALESCE(po.received_at, po.created_at) AS d" +
+    "  FROM purchase_items pi JOIN purchase_orders po ON po.id = pi.purchase_order_id"
+  ).all().forEach((r) => addDelta(r.pid, Math.abs(Number(r.qty) || 0), r.d));
+  // Ajustes de stock: qty_change ya viene con signo.
+  db.prepare("SELECT product_id AS pid, qty_change AS qty, created_at AS d FROM stock_adjustments")
+    .all().forEach((r) => addDelta(r.pid, Number(r.qty) || 0, r.d));
+  // Ventas con stock descontado: restaron stock (delta -). Excluye unificados/hijos y cancelados.
+  db.prepare(
+    "SELECT oi.product_id AS pid, oi.quantity AS qty, COALESCE(d.delivered_at, o.created_at) AS d" +
+    "  FROM order_items oi JOIN orders o ON o.id = oi.order_id" +
+    "  LEFT JOIN deliveries d ON d.order_id = o.id" +
+    " WHERE COALESCE(o.stock_discounted,0)=1 AND COALESCE(o.is_unified,0)=0" +
+    "   AND o.unified_parent_id IS NULL AND o.status != 'cancelado'"
+  ).all().forEach((r) => addDelta(r.pid, -Math.abs(Number(r.qty) || 0), r.d));
+  // Cambios de costo (costo historico por producto).
+  db.prepare("SELECT product_id AS pid, old_cost, new_cost, created_at AS d FROM cost_changes ORDER BY product_id, created_at, id")
+    .all().forEach((r) => { const e = byId.get(r.pid); if (e) e.changes.push({ d: String(r.d), oc: Number(r.old_cost) || 0, nc: Number(r.new_cost) || 0 }); });
+
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const cutoffOf = (y, m) => { // inicio del mes SIGUIENTE (movimientos con date >= esto = posteriores al mes)
+    const ny = m === 11 ? y + 1 : y, nm = m === 11 ? 0 : m + 1;
+    return ny + "-" + pad(nm + 1) + "-01 00:00:00";
+  };
+  const costAt = (e, cutoff) => {
+    if (!e.changes.length) return e.cost;
+    let c = null;
+    for (const ch of e.changes) { if (ch.d < cutoff) c = ch.nc; else break; }
+    return c === null ? e.changes[0].oc : c;
+  };
+  const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+  const out = [];
+  let prevVal = null;
+  for (let i = months - 1; i >= 0; i--) {
+    const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const y = dt.getFullYear(), m = dt.getMonth();
+    const cutoff = cutoffOf(y, m);
+    let valueCost = 0, units = 0;
+    byId.forEach((e) => {
+      let s = e.stock;
+      for (const dl of e.deltas) { if (dl.d >= cutoff) s -= dl.q; }
+      if (s <= 0) return;
+      units += s;
+      valueCost += s * costAt(e, cutoff);
+    });
+    valueCost = Math.round(valueCost);
+    const rec = {
+      month: y + "-" + pad(m + 1), label: MES[m] + " " + y,
+      value_cost: valueCost, units: Math.round(units),
+      delta_value: prevVal === null ? null : valueCost - prevVal,
+      delta_pct: prevVal ? Math.round(((valueCost - prevVal) / prevVal) * 1000) / 10 : null,
+    };
+    out.push(rec);
+    prevVal = valueCost;
+  }
+  res.json({ approx: true, months: out });
+});
+
 // ----- Valorizacion por categoria -----
 // Misma idea pero agrupado por categoria. Devuelve por cada categoria:
 // productos totales, en stock, unidades, valor a costo, valor a cada nivel
