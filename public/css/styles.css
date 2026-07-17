@@ -760,25 +760,47 @@ button { font: inherit; cursor: pointer; }
   transition: border-color .15s ease, box-shadow .15s ease;
 }
 .order-card:hover { border-color: #cdd4dd; box-shadow: var(--shadow-hover); }
-/* Barra de acciones siempre visible al pie de la tarjeta (Editar/Imprimir/Compartir). */
+/* Barra de acciones al pie de la tarjeta: monto + Ver/Compartir/Imprimir a la
+   izquierda, botones del circuito (+ ✕) a la derecha. Todo en una sola línea. */
 .order-actions-bar {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   flex-wrap: wrap;
-  padding: 10px 16px;
+  padding: 8px 14px;
   border-top: 1px solid #eef1f5;
   background: #fafbfc;
 }
-.order-actions-bar .btn {
-  font-weight: 600;
+.oab-left, .oab-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
+.order-actions-bar .btn { font-weight: 600; }
+/* Monto inline dentro de la barra (pisa el bloque full-width de la columna vieja). */
+.order-actions-bar .order-total {
+  display: inline-flex;
+  width: auto;
+  height: auto;
+  padding: 4px 10px;
+  margin-right: 4px;
+  font-size: 16px;
+  font-weight: 800;
+  background: transparent;
+  border: none;
+}
+/* Botones del circuito en la barra: alto compacto y ancho al contenido. */
+.oab-right .btn { height: 32px; }
+.oab-right .btn-x { height: 32px; width: 32px; padding: 0; }
 .order-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
   cursor: pointer;
-  padding: 14px 16px;
+  padding: 10px 14px 6px;
   background: var(--surface);
 }
 .order-head h4 {
@@ -788,7 +810,7 @@ button { font: inherit; cursor: pointer; }
   color: var(--brand);
 }
 .order-head h4.order-client {
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 800;
   color: #0f172a;
   letter-spacing: -0.3px;

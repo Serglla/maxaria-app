@@ -5473,20 +5473,23 @@
           "</h4>" +
           '<span class="meta">Pedido #' + o.id + " · " + dateLabel + "</span>" +
         "</div>" +
-        '<div class="order-card-right">' +
+      "</div>" +
+      // Barra de acciones al pie (todo en una sola línea, sin expandir):
+      // monto + Ver (abre el modal de detalle, donde se puede editar) + Compartir +
+      // Imprimir a la izquierda; a la derecha los botones del circuito y el ✕.
+      '<div class="order-actions-bar">' +
+        '<div class="oab-left">' +
           '<span class="order-total">' + totalLabel + "</span>" +
+          '<button type="button" class="btn btn-small oc-edit" data-id="' + o.id + '">👁 Ver</button>' +
+          '<button type="button" class="btn btn-small oc-share" data-id="' + o.id + '">📤 Compartir</button>' +
+          '<button type="button" class="btn btn-small oc-print" data-id="' + o.id + '">🖨 Imprimir</button>' +
+        "</div>" +
+        '<div class="oab-right">' +
           pickBtn +
           advBtn +
           delivBtn +
           delBtn +
         "</div>" +
-      "</div>" +
-      // Barra de acciones siempre visible (sin expandir): Editar abre el modal de
-      // detalle/edición completo; Imprimir el remito; Compartir el PDF por WhatsApp.
-      '<div class="order-actions-bar">' +
-        '<button type="button" class="btn btn-small oc-edit" data-id="' + o.id + '">✏️ Editar</button>' +
-        '<button type="button" class="btn btn-small oc-print" data-id="' + o.id + '">🖨 Imprimir</button>' +
-        '<button type="button" class="btn btn-small oc-share" data-id="' + o.id + '">📤 Compartir</button>' +
       "</div>" +
       '<div class="order-detail" hidden></div>' +
     "</article>";
