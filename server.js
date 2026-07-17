@@ -4638,6 +4638,16 @@ app.get("/api/admin/activity/stock-history", requireAdmin, (req, res) => {
   };
   const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
+  // Primer mes con datos reales de movimiento/costo: antes de esto la reconstruccion
+  // asume stock constante (no hay info), asi que el frontend puede recortar esa
+  // porcion plana para no mostrar meses "inventados".
+  let firstMove = null;
+  byId.forEach((e) => {
+    for (const dl of e.deltas) { if (!firstMove || dl.d < firstMove) firstMove = dl.d; }
+    for (const ch of e.changes) { if (!firstMove || ch.d < firstMove) firstMove = ch.d; }
+  });
+  const dataFrom = firstMove ? String(firstMove).slice(0, 7) : null;
+
   const out = [];
   let prevVal = null;
   for (let i = months - 1; i >= 0; i--) {
@@ -4662,7 +4672,7 @@ app.get("/api/admin/activity/stock-history", requireAdmin, (req, res) => {
     out.push(rec);
     prevVal = valueCost;
   }
-  res.json({ approx: true, months: out });
+  res.json({ approx: true, data_from: dataFrom, months: out });
 });
 
 // ----- Valorizacion por categoria -----

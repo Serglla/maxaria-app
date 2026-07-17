@@ -2584,10 +2584,28 @@
     }
   }
   function renderActStockHistory(data) {
-    const rows = (data && data.months) || [];
+    let rows = (data && data.months) || [];
+    // Recortar los meses previos al primer movimiento real: antes de esa fecha la
+    // reconstrucción asume stock constante (línea plana "inventada"). Dejamos desde
+    // el primer mes con datos en adelante. Siempre queda al menos el mes actual.
+    const from = data && data.data_from;
+    if (from) {
+      const trimmed = rows.filter((r) => r.month >= from);
+      if (trimmed.length) rows = trimmed;
+    }
+    // Recalcular las variaciones tras el recorte (el primer mes visible no tiene Δ).
+    let prev = null;
+    rows = rows.map((r) => {
+      const dv = prev === null ? null : r.value_cost - prev;
+      const dp = prev ? Math.round(((r.value_cost - prev) / prev) * 1000) / 10 : null;
+      prev = r.value_cost;
+      return Object.assign({}, r, { delta_value: dv, delta_pct: dp });
+    });
+    const lastIdx = rows.length - 1;
+
     const tbody = document.getElementById("act-st-hist-tbody");
     if (tbody) {
-      tbody.innerHTML = rows.length ? rows.map((r) => {
+      tbody.innerHTML = rows.length ? rows.map((r, i) => {
         const dv = r.delta_value;
         const dcell = dv == null
           ? '<span class="muted">—</span>'
@@ -2595,8 +2613,12 @@
               (dv > 0 ? "+" : "") + fmtMoney(dv) +
               (r.delta_pct != null ? ' <span style="font-size:11px">(' + (r.delta_pct > 0 ? "+" : "") + r.delta_pct + '%)</span>' : "") +
             '</span>';
-        return '<tr>' +
-          '<td>' + escapeHtml(r.label) + '</td>' +
+        const isNow = i === lastIdx;
+        const mesCell = escapeHtml(r.label) + (isNow
+          ? ' <span style="font-size:10px;font-weight:700;color:#1e3a5f;background:#e0e7ff;border-radius:4px;padding:1px 5px">HOY · real</span>'
+          : ' <span class="muted" style="font-size:10px">aprox.</span>');
+        return '<tr' + (isNow ? ' style="background:#f5f7ff"' : '') + '>' +
+          '<td>' + mesCell + '</td>' +
           '<td class="num">' + fmtMoney(r.value_cost) + '</td>' +
           '<td class="num">' + dcell + '</td>' +
           '<td class="num muted">' + (Number(r.units) || 0).toLocaleString("es-AR") + '</td>' +
@@ -2606,6 +2628,9 @@
     const canvas = document.getElementById("act-st-hist-chart");
     if (canvas && window.Chart) {
       if (actStHistChart) { actStHistChart.destroy(); actStHistChart = null; }
+      // El último punto (mes actual) es el valor REAL de hoy: lo destacamos.
+      const ptRadius = rows.map((r, i) => (i === lastIdx ? 6 : 3));
+      const ptColor = rows.map((r, i) => (i === lastIdx ? "#16a34a" : "#1e3a5f"));
       actStHistChart = new Chart(canvas.getContext("2d"), {
         type: "line",
         data: {
@@ -2615,14 +2640,19 @@
             data: rows.map((r) => r.value_cost),
             borderColor: "#1e3a5f",
             backgroundColor: "rgba(30,58,95,0.08)",
-            fill: true, tension: 0.25, pointRadius: 3, borderWidth: 2,
+            fill: true, tension: 0.25, borderWidth: 2,
+            pointRadius: ptRadius, pointBackgroundColor: ptColor, pointBorderColor: ptColor,
+            pointHoverRadius: rows.map((r, i) => (i === lastIdx ? 8 : 5)),
           }],
         },
         options: {
           responsive: true, maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
-            tooltip: { callbacks: { label: (c) => " " + fmtMoney(c.parsed.y) } },
+            tooltip: { callbacks: {
+              label: (c) => " " + fmtMoney(c.parsed.y),
+              afterLabel: (c) => (c.dataIndex === lastIdx ? "Mes actual · valor real de hoy" : "Reconstruido · aproximado"),
+            } },
           },
           scales: { y: { ticks: { callback: (v) => fmtMoney(v) } } },
         },
@@ -8246,32 +8276,35 @@
                      : isCaja ? "Cantidad en cajas/bultos (acepta 2.5)"
                      : "Cantidad en " + (mode === "unidad" ? "unidades" : "tabletas (unidades)");
       const modeSel =
-        '<select class="admin-input pur-mode" data-idx="' + idx + '" style="font-size:10px;padding:1px 2px;width:100px;margin-bottom:3px">' +
+        '<select class="admin-input pur-mode" data-idx="' + idx + '" style="font-size:11px;padding:3px 4px;width:120px">' +
           '<option value="tableta"' + (mode === "tableta" ? " selected" : "") + '>por tableta</option>' +
           '<option value="unidad"' + (mode === "unidad" ? " selected" : "") + '>por unidad</option>' +
           '<option value="caja"' + (isCaja ? " selected" : "") + '>por caja</option>' +
           '<option value="comprimido"' + (isComp ? " selected" : "") + '>por comprimido</option>' +
         '</select>';
       const compExtra = isComp
-        ? '<div style="display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:2px">' +
-            '<input type="number" class="cell-input cell-num pur-cpt" min="1" step="1" value="' + cpt + '" data-idx="' + idx + '" style="width:46px" title="Comprimidos por tableta (detectado del nombre, editable)" />' +
-            '<span style="font-size:10px;color:#9ca3af">c/tab</span>' +
+        ? '<div style="display:flex;align-items:center;gap:4px;justify-content:flex-end">' +
+            '<input type="number" class="cell-input cell-num pur-cpt" min="1" step="1" value="' + cpt + '" data-idx="' + idx + '" style="width:54px;text-align:center" title="Comprimidos por tableta (detectado del nombre, editable)" />' +
+            '<span style="font-size:11px;color:#9ca3af;font-weight:500">c/tab</span>' +
           '</div>' +
-          '<div style="font-size:10px;' + (tabIsInt ? "color:#9ca3af" : "color:#dc2626;font-weight:700") + '">= ' + fmtTabletas(it.quantity) + ' tabl' + (tabIsInt ? "" : " ⚠") + '</div>'
+          '<div style="font-size:11px;' + (tabIsInt ? "color:#9ca3af" : "color:#dc2626;font-weight:700") + '">= ' + fmtTabletas(it.quantity) + ' tabl' + (tabIsInt ? "" : " ⚠") + '</div>'
         : "";
       const cajaExtra = isCaja
-        ? '<div style="display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:2px">' +
-            '<input type="number" class="cell-input cell-num pur-upb" min="1" step="1" value="' + upb + '" data-idx="' + idx + '" style="width:46px" title="Unidades por caja (und/bulto del producto, editable)" />' +
-            '<span style="font-size:10px;color:#9ca3af">u/caja</span>' +
+        ? '<div style="display:flex;align-items:center;gap:4px;justify-content:flex-end">' +
+            '<input type="number" class="cell-input cell-num pur-upb" min="1" step="1" value="' + upb + '" data-idx="' + idx + '" style="width:54px;text-align:center" title="Unidades por caja (und/bulto del producto, editable)" />' +
+            '<span style="font-size:11px;color:#9ca3af;font-weight:500">u/caja</span>' +
           '</div>' +
-          '<div style="font-size:10px;' + (cajaIsInt ? "color:#9ca3af" : "color:#dc2626;font-weight:700") + '">= ' + fmtTabletas(it.quantity) + ' un' + (cajaIsInt ? "" : " ⚠") + '</div>'
+          '<div style="font-size:11px;' + (cajaIsInt ? "color:#9ca3af" : "color:#dc2626;font-weight:700") + '">= ' + fmtTabletas(it.quantity) + ' un' + (cajaIsInt ? "" : " ⚠") + '</div>'
         : "";
       return '<tr data-idx="' + idx + '">' +
         '<td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
         '<td>' + escapeHtml(it.product_name || "") + '</td>' +
-        '<td class="num">' + modeSel +
-          '<input type="number" class="cell-input cell-num pur-qty" ' + (isCaja ? 'min="0" step="any"' : 'min="1" step="1"') + ' value="' + qtyVal + '" data-idx="' + idx + '" style="width:70px" title="' + qtyTitle + '" />' +
-          compExtra + cajaExtra +
+        '<td class="num">' +
+          '<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px">' +
+            modeSel +
+            '<input type="number" class="cell-input cell-num pur-qty" ' + (isCaja ? 'min="0" step="any"' : 'min="1" step="1"') + ' value="' + qtyVal + '" data-idx="' + idx + '" style="width:120px;text-align:center;font-size:16px;font-weight:600;padding:6px 8px" title="' + qtyTitle + '" />' +
+            compExtra + cajaExtra +
+          '</div>' +
         '</td>' +
         '<td class="num"><input type="number" class="cell-input cell-num pur-cost" min="0" step="0.01" value="' + costVal + '" data-idx="' + idx + '" style="width:90px" />' +
           (isComp ? '<div style="font-size:10px;color:#9ca3af">$/comp</div>' : isCaja ? '<div style="font-size:10px;color:#9ca3af">$/caja</div>' : "") +
