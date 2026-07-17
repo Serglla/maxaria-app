@@ -5473,10 +5473,12 @@
           "</h4>" +
           '<span class="meta">Pedido #' + o.id + " · " + dateLabel + "</span>" +
         "</div>" +
+        // El ✕ eliminar queda arriba a la derecha del pedido.
+        (delBtn ? '<div class="order-head-right">' + delBtn + "</div>" : "") +
       "</div>" +
       // Barra de acciones al pie (todo en una sola línea, sin expandir):
       // monto + Ver (abre el modal de detalle, donde se puede editar) + Compartir +
-      // Imprimir a la izquierda; a la derecha los botones del circuito y el ✕.
+      // Imprimir a la izquierda; a la derecha los botones del circuito.
       '<div class="order-actions-bar">' +
         '<div class="oab-left">' +
           '<span class="order-total">' + totalLabel + "</span>" +
@@ -5488,7 +5490,6 @@
           pickBtn +
           advBtn +
           delivBtn +
-          delBtn +
         "</div>" +
       "</div>" +
       '<div class="order-detail" hidden></div>' +

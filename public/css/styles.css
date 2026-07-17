@@ -778,6 +778,9 @@ button { font: inherit; cursor: pointer; }
   gap: 8px;
   flex-wrap: wrap;
 }
+/* ✕ eliminar: arriba a la derecha del pedido, chico y discreto. */
+.order-head-right { flex-shrink: 0; }
+.order-head-right .btn-x { height: 28px; width: 28px; padding: 0; }
 .order-actions-bar .btn { font-weight: 600; }
 /* Monto inline dentro de la barra (pisa el bloque full-width de la columna vieja). */
 .order-actions-bar .order-total {
