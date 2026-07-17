@@ -760,6 +760,18 @@ button { font: inherit; cursor: pointer; }
   transition: border-color .15s ease, box-shadow .15s ease;
 }
 .order-card:hover { border-color: #cdd4dd; box-shadow: var(--shadow-hover); }
+/* Barra de acciones siempre visible al pie de la tarjeta (Editar/Imprimir/Compartir). */
+.order-actions-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-top: 1px solid #eef1f5;
+  background: #fafbfc;
+}
+.order-actions-bar .btn {
+  font-weight: 600;
+}
 .order-head {
   display: flex;
   justify-content: space-between;

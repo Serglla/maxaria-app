@@ -5481,6 +5481,13 @@
           delBtn +
         "</div>" +
       "</div>" +
+      // Barra de acciones siempre visible (sin expandir): Editar abre el modal de
+      // detalle/edición completo; Imprimir el remito; Compartir el PDF por WhatsApp.
+      '<div class="order-actions-bar">' +
+        '<button type="button" class="btn btn-small oc-edit" data-id="' + o.id + '">✏️ Editar</button>' +
+        '<button type="button" class="btn btn-small oc-print" data-id="' + o.id + '">🖨 Imprimir</button>' +
+        '<button type="button" class="btn btn-small oc-share" data-id="' + o.id + '">📤 Compartir</button>' +
+      "</div>" +
       '<div class="order-detail" hidden></div>' +
     "</article>";
   }
@@ -6573,6 +6580,54 @@
           } catch (err) {
             advBtn.disabled = false;
             showToast("Error: " + err.message, "error");
+          }
+        });
+      }
+
+      // Barra de acciones de la tarjeta (Editar / Imprimir / Compartir).
+      const ocEditBtn = card.querySelector(".oc-edit");
+      if (ocEditBtn) {
+        ocEditBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openOrderDetailModal(Number(ocEditBtn.dataset.id));
+        });
+      }
+
+      const ocPrintBtn = card.querySelector(".oc-print");
+      if (ocPrintBtn) {
+        ocPrintBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const id = Number(ocPrintBtn.dataset.id);
+          // La tarjeta no siempre trae los items: se traen del server antes de imprimir.
+          ocPrintBtn.disabled = true;
+          try {
+            const order = await api("/api/orders/" + id);
+            printOrderRemito(order);
+          } catch (err) {
+            showToast("Error: " + err.message, "error");
+          } finally {
+            ocPrintBtn.disabled = false;
+          }
+        });
+      }
+
+      const ocShareBtn = card.querySelector(".oc-share");
+      if (ocShareBtn) {
+        ocShareBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const id = Number(ocShareBtn.dataset.id);
+          const o = list.find((x) => x.id === id) || {};
+          const clientName = o.full_name || o.username || "Pedido";
+          const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+          const fileName = clientName + " " + dateSlug + ".pdf";
+          ocShareBtn.disabled = true;
+          const orig = ocShareBtn.textContent;
+          ocShareBtn.textContent = "…";
+          try {
+            await shareDocPdf("/api/admin/orders/" + id + "/pdf", fileName);
+          } finally {
+            ocShareBtn.disabled = false;
+            ocShareBtn.textContent = orig;
           }
         });
       }
