@@ -6648,6 +6648,13 @@
       state.products = await api("/api/admin/products");
       populateCategoryFilter(state.products);
       applyFilters();
+      // El stock cambió (creación/entrega/cancelación/edición de pedido, compra,
+      // ajuste, etc.). Invalidar también el cache de allProducts que usan los
+      // pickers de productos (Nuevo pedido, edición de items, cotizaciones):
+      // así el próximo ensureAllProducts() re-consulta y el picker muestra el
+      // stock ya descontado. Sin esto, el picker del pedido siguiente mostraba
+      // el stock viejo (no reflejaba lo descontado por el pedido anterior).
+      state.allProductsLoaded = false;
     } catch (_) {}
   }
 
