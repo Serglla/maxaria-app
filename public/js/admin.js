@@ -56,6 +56,7 @@
     filterCategory: document.getElementById("filter-category"),
     filterStock: document.getElementById("filter-stock"),
     filterState: document.getElementById("filter-state"),
+    filterPriceview: document.getElementById("filter-priceview"),
     filterClear: document.getElementById("filter-clear"),
     prodCount: document.getElementById("prod-count"),
     prodTbody: document.getElementById("prod-tbody"),
@@ -523,6 +524,10 @@
     // sortDir: "asc" | "desc"
     sortField: null,
     sortDir: "asc",
+    // Qué precio se muestra en cada producto (sobre todo en la tarjeta mobile):
+    // "minorista" (default) | "publico" | "mayorista" | "revendedor" | "vip" |
+    // "costo" | "todos".
+    priceView: "minorista",
     // Info de la DB (path, ephemeral, backups, etc). Se llena en checkDbInfo().
     dbInfo: null,
     isAdmin: false, // true si el usuario logueado es nivel 99
@@ -622,6 +627,7 @@
         category: els.filterCategory.value,
         stock: els.filterStock.value,
         estado: els.filterState.value,
+        priceView: state.priceView,
         sortField: state.sortField,
         sortDir: state.sortDir,
       };
@@ -642,6 +648,12 @@
       els.filterState.value = p.estado;
     } else if (typeof p.inactive === "boolean" && p.inactive) {
       els.filterState.value = "inactive"; // compat con prefs viejas
+    }
+    if (p.priceView && els.filterPriceview && els.filterPriceview.querySelector('[value="' + p.priceView + '"]')) {
+      state.priceView = p.priceView;
+      els.filterPriceview.value = p.priceView;
+    } else if (els.filterPriceview) {
+      els.filterPriceview.value = state.priceView; // default minorista
     }
     if (p.sortField && SORT_TYPES[p.sortField]) {
       state.sortField = p.sortField;
@@ -4397,12 +4409,17 @@
   });
 
   function renderProducts() {
+    // Reflejar la vista de precio activa en la tabla (para el layout de tarjeta).
+    if (els.prodTable) {
+      els.prodTable.className = els.prodTable.className.replace(/\bpv-\S+/g, "").trim();
+      els.prodTable.classList.add("pv-" + (state.priceView || "minorista"));
+    }
     const list = (state.selectMode && state.showOnlySelected)
       ? state.productsFiltered.filter((p) => state.selectedIds.has(p.id))
       : state.productsFiltered;
     els.prodCount.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     if (!list.length) {
-      els.prodTbody.innerHTML = '<tr><td colspan="' + (state.selectMode ? 15 : 14) + '" class="muted">Sin resultados</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="' + (state.selectMode ? 16 : 15) + '" class="muted">Sin resultados</td></tr>';
       els.pageInfo.textContent = "Página 0 / 0";
       els.pagePrev.disabled = true;
       els.pageNext.disabled = true;
@@ -4427,9 +4444,35 @@
   // Precios: SIEMPRE 2 decimales (centavos). El stock usa fmtNum (entero).
   function fmtPriceNum(n) { return (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
-  // Celda de dinero (solo lectura)
+  // Celda de dinero (solo lectura). Cada celda lleva una clase por nivel
+  // (cell-money-<nivel>) para poder ocultarla/mostrarla por CSS en mobile.
   function moneyCell(p, field, cls) {
-    return '<td class="num ' + (cls || "") + '">' + fmtPriceNum(p[field]) + '</td>';
+    const lvl = field === "cost" ? "cost" : field.replace("price_", "");
+    return '<td class="num cell-money cell-money-' + lvl + " " + (cls || "") + '">' + fmtPriceNum(p[field]) + '</td>';
+  }
+
+  // Precio que muestra la tarjeta mobile según state.priceView. Es una celda
+  // aparte (cell-cardprice) oculta en desktop; en mobile se ubica arriba a la
+  // derecha. Con "todos" apila los 5 precios de venta (el costo solo si se pide
+  // explícitamente).
+  var PRICE_VIEW_MAP = {
+    costo:      ["Costo", "cost"],
+    vip:        ["VIP", "price_vip"],
+    revendedor: ["Revend.", "price_revendedor"],
+    mayorista:  ["Mayor.", "price_mayorista"],
+    minorista:  ["Minor.", "price_minorista"],
+    publico:    ["Público", "price_publico"],
+  };
+  function cardPriceHtml(p) {
+    var pv = state.priceView || "minorista";
+    if (pv === "todos") {
+      return ["minorista", "publico", "mayorista", "revendedor", "vip"].map(function(k) {
+        var m = PRICE_VIEW_MAP[k];
+        return '<span class="cp-line"><span class="cp-lbl">' + m[0] + '</span><span class="cp-val">$' + fmtPriceNum(p[m[1]]) + '</span></span>';
+      }).join("");
+    }
+    var mm = PRICE_VIEW_MAP[pv] || PRICE_VIEW_MAP.minorista;
+    return '<span class="cp-line"><span class="cp-lbl">' + mm[0] + '</span><span class="cp-val">$' + fmtPriceNum(p[mm[1]]) + '</span></span>';
   }
 
   function rowHtml(p) {
@@ -4450,26 +4493,39 @@
       checkCell +
       '<td class="col-img"><button class="prod-img-btn" type="button" data-act="edit-img" data-id="' + p.id + '" data-name="' + escapeHtml(p.name) + '" title="Cambiar imagen">' + imgThumb + '</button></td>' +
       '<td class="cell-code">' + escapeHtml(p.code || "") + '</td>' +
-      '<td>' + escapeHtml(p.name) + '</td>' +
-      '<td class="muted">' + escapeHtml(p.category_name || "—") + '</td>' +
-      '<td class="num' + stockCls + '"' + stockTitle + '>' + fmtNum(p.stock) + (stockLow ? " ⚠" : "") + '</td>' +
+      '<td class="cell-name">' + escapeHtml(p.name) + '</td>' +
+      '<td class="muted cell-cat">' + escapeHtml(p.category_name || "—") + '</td>' +
+      '<td class="num cell-stock' + stockCls + '"' + stockTitle + '>' + fmtNum(p.stock) + (stockLow ? " ⚠" : "") + '</td>' +
       moneyCell(p, "cost", "muted") +
       moneyCell(p, "price_vip") +
       moneyCell(p, "price_revendedor") +
       moneyCell(p, "price_mayorista") +
       moneyCell(p, "price_minorista") +
       moneyCell(p, "price_publico") +
-      '<td><span class="cell-active-badge' + (p.active ? " active" : "") + '">' + (p.active ? "Sí" : "No") + '</span></td>' +
-      '<td class="num muted" title="Unidades por empaque de compra (caja/bulto)">' + (p.units_per_bulto > 1 && p.pack_unit !== "unidad" ? p.units_per_bulto + " u/" + (p.pack_unit === "caja" ? "caja" : "bulto") : "—") + '</td>' +
-      '<td><button class="btn btn-small" type="button" data-act="adj-stock" data-id="' + p.id + '" title="Ajustar stock">±</button></td>' +
+      '<td class="cell-activo"><span class="cell-active-badge' + (p.active ? " active" : "") + '">' + (p.active ? "Sí" : "No") + '</span></td>' +
+      '<td class="num muted cell-bulto" title="Unidades por empaque de compra (caja/bulto)">' + (p.units_per_bulto > 1 && p.pack_unit !== "unidad" ? p.units_per_bulto + " u/" + (p.pack_unit === "caja" ? "caja" : "bulto") : "—") + '</td>' +
+      '<td class="cell-adj"><button class="btn btn-small" type="button" data-act="adj-stock" data-id="' + p.id + '" title="Ajustar stock">±</button></td>' +
+      '<td class="cell-cardprice">' + cardPriceHtml(p) + '</td>' +
     '</tr>';
   }
 
-  // Doble click en fila → abrir modal de edición
+  // Doble click en fila (desktop) → abrir modal de edición
   els.prodTbody.addEventListener("dblclick", (e) => {
     if (state.selectMode) return; // en modo selección no se abre el modal
     const btn = e.target.closest("button");
     if (btn) return; // no abrir si hicieron doble click en un botón
+    const tr = e.target.closest("tr[data-id]");
+    if (!tr) return;
+    const p = state.products.find((x) => x.id === Number(tr.dataset.id));
+    if (p) openEditProdModal(p);
+  });
+  // Un toque en la tarjeta (mobile) → abrir modal de edición. El doble toque no
+  // funciona bien en celular. Solo aplica en la vista tarjeta (<=640px) y fuera
+  // del modo selección; ignora toques en botones (± / foto) y en el checkbox.
+  const IS_MOBILE = () => window.matchMedia("(max-width: 640px)").matches;
+  els.prodTbody.addEventListener("click", (e) => {
+    if (!IS_MOBILE() || state.selectMode) return;
+    if (e.target.closest("button") || e.target.closest("input")) return;
     const tr = e.target.closest("tr[data-id]");
     if (!tr) return;
     const p = state.products.find((x) => x.id === Number(tr.dataset.id));
@@ -4789,6 +4845,17 @@
   els.filterCategory.addEventListener("change", applyFilters);
   els.filterStock.addEventListener("change", applyFilters);
   els.filterState.addEventListener("change", applyFilters);
+  // Selector de precio a mostrar: cambia qué precio aparece en cada tarjeta.
+  // No filtra la lista, solo re-renderiza con el precio elegido y guarda la pref.
+  if (els.filterPriceview) els.filterPriceview.addEventListener("change", () => {
+    state.priceView = els.filterPriceview.value || "minorista";
+    if (els.prodTable) {
+      els.prodTable.className = els.prodTable.className.replace(/\bpv-\S+/g, "").trim();
+      els.prodTable.classList.add("pv-" + state.priceView);
+    }
+    renderProducts();
+    savePrefs();
+  });
   if (els.filterClear) els.filterClear.addEventListener("click", () => {
     els.prodSearch.value = "";
     els.filterCategory.value = "all";

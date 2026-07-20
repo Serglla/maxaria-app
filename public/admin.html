@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260717a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260720a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -352,6 +352,18 @@
               <option value="inactive">Solo inactivos</option>
             </select>
           </label>
+          <label class="admin-filter" title="Qué precio mostrar en cada producto (sobre todo en la vista celular)">
+            Precio:
+            <select id="filter-priceview" class="admin-select">
+              <option value="minorista">Minorista</option>
+              <option value="publico">Público</option>
+              <option value="mayorista">Mayorista</option>
+              <option value="revendedor">Revendedor</option>
+              <option value="vip">VIP</option>
+              <option value="costo">Costo</option>
+              <option value="todos">Todos</option>
+            </select>
+          </label>
           <button class="tb-clear" id="filter-clear" type="button" title="Limpiar búsqueda y filtros" hidden>✕ Limpiar filtros</button>
         </div>
 
@@ -395,9 +407,10 @@
               <th class="sortable" data-sort="active">Activo<span class="sort-arrow"></span></th>
               <th class="num" title="Unidades por empaque de compra (caja/bulto)">Empaque</th>
               <th></th>
+              <th class="cell-cardprice" aria-hidden="true"></th>
             </tr>
           </thead>
-          <tbody id="prod-tbody"><tr><td colspan="14" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="prod-tbody"><tr><td colspan="15" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
 
@@ -3448,6 +3461,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260720a"></script>
+  <script src="/js/admin.js?v=20260720b"></script>
 </body>
 </html>

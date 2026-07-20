@@ -2221,10 +2221,105 @@ button { font: inherit; cursor: pointer; }
   color: #4b5563;
 }
 .btn-tool:hover { background: #f6f7f9; }
+
+/* Celda de precio de la tarjeta mobile: oculta en desktop (donde se ven todas
+   las columnas de precio). En mobile la muestra el media query de abajo. */
+.cell-cardprice { display: none; }
+.cp-line { display: block; white-space: nowrap; }
+.cp-lbl { color: #9ca3af; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; margin-right: 5px; }
+.cp-val { color: #b45309; font-weight: 800; }
+
+/* ===== Productos en mobile: tarjetas + barra compacta ===== */
 @media (max-width: 640px) {
+  /* — Barra superior compacta — */
+  .tb-title-text { font-size: 18px; }
+  .tb-head-actions .btn-primary { font-size: 13px; padding: 7px 12px; }
+  .tb-filters { gap: 8px; padding: 8px 0; }
   .tb-filters .admin-search { flex: 1 1 100%; max-width: none; }
+  /* Cada filtro ocupa media fila (2 por renglón): Categoría | Stock, Estado | Precio */
+  .tb-filters .admin-filter {
+    flex: 1 1 calc(50% - 4px);
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .tb-filters .admin-select { width: 100%; font-size: 13px; }
   .tb-tools { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .tb-tools .btn-tool { white-space: nowrap; }
+
+  /* — Tabla de productos → tarjetas — */
+  .admin-table-wrap { overflow: visible; }
+  #prod-table { min-width: 0; display: block; width: 100%; }
+  #prod-table thead { display: none; }
+  #prod-tbody { display: block; }
+  .prod-row {
+    display: grid;
+    grid-template-columns: 46px auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "img name name  price adj"
+      "img code cat   stock adj";
+    column-gap: 8px;
+    row-gap: 1px;
+    align-items: center;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 9px 11px;
+    margin-bottom: 9px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(16,24,40,.04);
+  }
+  .prod-row.prod-selected { border-color: #2563eb; background: #eff4ff; }
+  .prod-row.row-inactive { opacity: .62; }
+  .prod-row > td { display: block; border: none; padding: 0; background: none; }
+  /* columnas que no van en la tarjeta */
+  .prod-row .cell-money,
+  .prod-row .cell-activo,
+  .prod-row .cell-bulto { display: none; }
+
+  .prod-row .col-img { grid-area: img; align-self: center; }
+  .prod-row .col-img .prod-img-btn { padding: 0; border: none; background: none; }
+  .prod-row .col-img .prod-thumb,
+  .prod-row .col-img .prod-thumb-empty {
+    width: 46px; height: 46px; border-radius: 8px; object-fit: cover;
+    display: flex; align-items: center; justify-content: center;
+    background: #f3f4f6; font-size: 20px;
+  }
+  .prod-row .cell-name {
+    grid-area: name; align-self: end;
+    font-size: 15px; font-weight: 800; color: #b45309; line-height: 1.15;
+    white-space: normal;
+  }
+  .prod-row .cell-code {
+    grid-area: code; align-self: start;
+    font-size: 12px; font-weight: 700; color: #6b7280; white-space: nowrap;
+  }
+  .prod-row .cell-code::before { content: "#"; opacity: .6; }
+  .prod-row .cell-cat {
+    grid-area: cat; align-self: start;
+    font-size: 10.5px; color: #9ca3af; text-transform: uppercase;
+    letter-spacing: .3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .prod-row .cell-cardprice {
+    grid-area: price; display: block; align-self: end; text-align: right;
+    font-size: 13px;
+  }
+  .prod-row .cell-stock {
+    grid-area: stock; align-self: start; text-align: right;
+    font-size: 19px; font-weight: 800; color: #111827;
+  }
+  .prod-row .cell-adj { grid-area: adj; align-self: center; justify-self: end; }
+  .prod-row .cell-adj .btn { padding: 6px 9px; font-size: 15px; line-height: 1; }
+
+  /* Modo selección: mostrar el checkbox sobre la esquina de la imagen */
+  .prod-row .col-check {
+    grid-area: img; align-self: start; justify-self: start;
+    z-index: 2; background: #fff; border-radius: 4px; padding: 0 1px;
+    box-shadow: 0 0 0 1px #cbd5e1;
+  }
+  .prod-row .col-check + .col-img .prod-thumb,
+  .prod-row .col-check + .col-img .prod-thumb-empty { opacity: .85; }
 }
 .admin-upload {
   position: relative;
