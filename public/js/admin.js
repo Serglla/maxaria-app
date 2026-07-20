@@ -3416,6 +3416,7 @@
         cost_total: Number(pf.cost_total) || 0,
         commission: commission,
         vendor_name: (pf.vendor && pf.vendor.name) || "",
+        is_tercerizado: !!(pf.vendor && pf.vendor.is_tercerizado),
         cash_other: Math.max(0, (Number(order.cash_collected) || 0) - existAmt),
       };
       if (state.isAdmin) {
@@ -3490,16 +3491,27 @@
       '<div class="ds-line">💰 Rentabilidad: <strong style="color:' + rentColor + '">' + fmtPrice(rent) +
         '</strong> <span class="muted">(' + margin.toLocaleString("es-AR", { maximumFractionDigits: 1 }) +
         '% margen · costo ' + fmtPrice(cost) + ')</span></div>';
-    // Reparto del cobro: lo tuyo (entra a la caja) vs la comisión del vendedor
-    // (sale como egreso). Solo si el pedido genera comisión.
-    var sp = deliverySplit();
-    if (sp) {
-      var vname = sp.vendor_name ? " (" + escapeHtml(sp.vendor_name) + ")" : "";
+    // Reparto del cobro. Tercerizado (cobra y rinde): el vendedor ya se quedó su
+    // comisión y te rinde el neto → todo lo que cobrás entra a tu caja, sin
+    // egreso. Propio/admin: split "primero lo tuyo" (la comisión sale como egreso).
+    if (deliveryOrderInfo.is_tercerizado && deliveryOrderInfo.commission > 0) {
+      var a2 = deliveryAmounts();
+      var cobr = a2.ef + a2.tr;
+      var vn = deliveryOrderInfo.vendor_name ? " (" + escapeHtml(deliveryOrderInfo.vendor_name) + ")" : "";
       html +=
-        '<div class="ds-line ds-split">De este cobro → ' +
-          '🧑‍💼 Vendedor' + vname + ': <strong>' + fmtPrice(sp.vendorPart) + '</strong> · ' +
-          '🏦 A tu caja: <strong>' + fmtPrice(sp.yourPart) + '</strong>' +
-          ' <span class="muted">(comisión total ' + fmtPrice(sp.commission) + ')</span></div>';
+        '<div class="ds-line ds-split">🧑‍💼 El vendedor' + vn + ' se queda su comisión <strong>' +
+          fmtPrice(deliveryOrderInfo.commission) + '</strong> · 🏦 A tu caja: <strong>' + fmtPrice(cobr) + '</strong>' +
+          ' <span class="muted">(te rinde el neto)</span></div>';
+    } else {
+      var sp = deliverySplit();
+      if (sp) {
+        var vname = sp.vendor_name ? " (" + escapeHtml(sp.vendor_name) + ")" : "";
+        html +=
+          '<div class="ds-line ds-split">De este cobro → ' +
+            '🧑‍💼 Vendedor' + vname + ': <strong>' + fmtPrice(sp.vendorPart) + '</strong> · ' +
+            '🏦 A tu caja: <strong>' + fmtPrice(sp.yourPart) + '</strong>' +
+            ' <span class="muted">(comisión total ' + fmtPrice(sp.commission) + ')</span></div>';
+      }
     }
     els.deliverySummary.innerHTML = html;
   }
@@ -3509,6 +3521,20 @@
   function deliveryNetTotal() {
     if (!deliveryOrderInfo) return null;
     return Math.max(0, deliveryOrderInfo.total - deliveryDiscountAmount());
+  }
+
+  // Lo que esperás COBRAR/recibir físicamente. Para un pedido de vendedor
+  // tercerizado (cobra y rinde) es el neto = total − descuento − comisión (lo
+  // que te rinde el vendedor). Para el resto es el neto a cobrar normal. Esto
+  // alimenta el tilde "pagó el total", el bloqueo de transferencia y el aviso
+  // de adeudado, para que reflejen lo que realmente entra a tu mano/caja.
+  function deliveryExpectedCollection() {
+    var net = deliveryNetTotal();
+    if (net == null) return null;
+    if (deliveryOrderInfo && deliveryOrderInfo.is_tercerizado && deliveryOrderInfo.commission > 0) {
+      return Math.max(0, net - deliveryOrderInfo.commission);
+    }
+    return net;
   }
 
   function deliveryAmounts() {
@@ -3525,7 +3551,7 @@
   function deliverySyncPaidFull() {
     const chk = document.getElementById("delivery-paid-full");
     const amtEl = document.getElementById("delivery-paid-full-amt");
-    const neto = deliveryNetTotal();
+    const neto = deliveryExpectedCollection();
     if (amtEl) amtEl.textContent = neto != null ? "(= " + fmtPrice(neto) + ")" : "";
     if (chk) {
       const a = deliveryAmounts();
@@ -3538,7 +3564,7 @@
   function deliverySyncTransferLock() {
     const f = els.deliveryForm;
     if (!f) return;
-    const neto = deliveryNetTotal();
+    const neto = deliveryExpectedCollection();
     const ef = Math.max(0, parseMoney(f.querySelector('[name="efectivo_amount"]').value));
     const lock = neto != null && neto > 0 && ef >= neto;
     const trInput = f.querySelector('[name="transferencia_amount"]');
@@ -3560,7 +3586,7 @@
     const cobrado = a.ef + a.tr;
     const el = els.deliveryTotalPreview;
     el.classList.remove("dcs-debt", "dcs-ok", "dcs-over");
-    const neto = deliveryNetTotal();
+    const neto = deliveryExpectedCollection();
     const breakdown = a.ef > 0 && a.tr > 0
       ? " (" + fmtPrice(a.ef) + " efectivo + " + fmtPrice(a.tr) + " transf.)" : "";
     if (neto == null) {
@@ -3608,7 +3634,7 @@
     if (deliveryPaidChk) {
       deliveryPaidChk.addEventListener("change", () => {
         const f = els.deliveryForm;
-        const neto = deliveryNetTotal();
+        const neto = deliveryExpectedCollection();
         if (deliveryPaidChk.checked) {
           if (neto == null || neto <= 0) { deliveryPaidChk.checked = false; return; }
           setMoney(f.querySelector('[name="efectivo_amount"]'), neto);
