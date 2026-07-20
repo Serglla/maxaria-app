@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260720a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260720c" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -381,11 +381,14 @@
         <!-- Barra contextual: solo visible en modo selección múltiple -->
         <span class="bulk-bar" id="prod-sel-bar" hidden>
           <strong id="prod-sel-count" style="font-size:13px">0 seleccionados</strong>
-          <label class="pbm-chk" style="font-size:12px" title="Mostrar en la tabla solo los productos seleccionados"><input type="checkbox" id="prod-sel-only"> Ver solo seleccionados</label>
-          <button class="btn btn-small" id="prod-sel-clear" type="button" title="Limpiar selección">Limpiar</button>
-          <button class="btn btn-primary btn-small" id="prod-sel-edit" type="button" disabled>✎ Editar seleccionados</button>
-          <button class="btn btn-small" id="prod-sel-costs" type="button" disabled title="Cambiar el costo de cada producto seleccionado, uno por uno">💲 Cambiar costos</button>
-          <button class="btn btn-small" id="prod-sel-cancel" type="button">Cancelar</button>
+          <button class="btn btn-small bulk-menu-btn" id="prod-sel-menu-btn" type="button" aria-expanded="false">Opciones ▾</button>
+          <span class="bulk-actions" id="prod-sel-actions">
+            <label class="pbm-chk" style="font-size:12px" title="Mostrar en la tabla solo los productos seleccionados"><input type="checkbox" id="prod-sel-only"> Ver solo seleccionados</label>
+            <button class="btn btn-small" id="prod-sel-clear" type="button" title="Limpiar selección">Limpiar</button>
+            <button class="btn btn-primary btn-small" id="prod-sel-edit" type="button" disabled>✎ Editar seleccionados</button>
+            <button class="btn btn-small" id="prod-sel-costs" type="button" disabled title="Cambiar el costo de cada producto seleccionado, uno por uno">💲 Cambiar costos</button>
+            <button class="btn btn-small" id="prod-sel-cancel" type="button">Cancelar</button>
+          </span>
         </span>
       </div>
 
@@ -3461,6 +3464,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260720b"></script>
+  <script src="/js/admin.js?v=20260720c"></script>
 </body>
 </html>

@@ -68,6 +68,7 @@
     prodHeaders: document.querySelectorAll('#prod-table thead th.sortable'),
     selectBtn:  document.getElementById("prod-select-btn"),
     selBar:     document.getElementById("prod-sel-bar"),
+    selMenuBtn: document.getElementById("prod-sel-menu-btn"),
     selCount:   document.getElementById("prod-sel-count"),
     selOnly:    document.getElementById("prod-sel-only"),
     selClear:   document.getElementById("prod-sel-clear"),
@@ -4573,13 +4574,34 @@
   }
   function setSelectMode(on) {
     state.selectMode = on;
-    if (!on) { state.selectedIds.clear(); state.showOnlySelected = false; if (els.selOnly) els.selOnly.checked = false; }
+    if (!on) { state.selectedIds.clear(); state.showOnlySelected = false; if (els.selOnly) els.selOnly.checked = false; closeSelMenu(); }
     if (els.selectBtn) els.selectBtn.hidden = on;
     if (els.selBar) els.selBar.hidden = !on;
     syncSelectHeader();
     updateSelCount();
     renderProducts();
   }
+  // Menú "Opciones" del modo selección (solo mobile): agrupa las acciones para
+  // que no se salgan de pantalla. En desktop las acciones van inline y el botón
+  // está oculto por CSS.
+  function closeSelMenu() {
+    if (els.selBar) els.selBar.classList.remove("menu-open");
+    if (els.selMenuBtn) els.selMenuBtn.setAttribute("aria-expanded", "false");
+  }
+  if (els.selMenuBtn) els.selMenuBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = els.selBar.classList.toggle("menu-open");
+    els.selMenuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  // Cerrar el menú al elegir una acción (menos el checkbox "Ver solo") o al
+  // tocar fuera de la barra.
+  const selActionsEl = document.getElementById("prod-sel-actions");
+  if (selActionsEl) selActionsEl.addEventListener("click", (e) => {
+    if (e.target.closest("button")) closeSelMenu();
+  });
+  document.addEventListener("click", (e) => {
+    if (els.selBar && els.selBar.classList.contains("menu-open") && !els.selBar.contains(e.target)) closeSelMenu();
+  });
   if (els.selectBtn) els.selectBtn.addEventListener("click", () => setSelectMode(true));
   if (els.selCancel) els.selCancel.addEventListener("click", () => setSelectMode(false));
   if (els.selClear) els.selClear.addEventListener("click", () => {
