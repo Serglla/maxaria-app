@@ -602,6 +602,45 @@ function logCostChange(productId, oldCost, newCost, source, sourceId, stockOverr
   ).run(productId, o, n, Math.max(0, Math.floor(Number(stock) || 0)), String(source || "manual"), sourceId || null);
 }
 
+// Historial unificado de movimientos de stock por producto (10 jun request de
+// Sergio: poder ver cuando se hizo una compra, cuando aumento el stock, y si
+// fue manual o por ingreso de compra). No reemplaza stock_adjustments (que
+// sigue siendo la fuente de los ajustes manuales) ni cost_changes (costo) —
+// es un LOG adicional, un renglon por cada vez que products.stock cambia,
+// con el tipo de origen. Se llama DESPUES de cada UPDATE de stock: lee el
+// stock ya actualizado (qty_after) y calcula qty_before = qty_after - delta.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS stock_movements (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  product_id INTEGER NOT NULL REFERENCES products(id)," +
+  "  type TEXT NOT NULL," + // compra|ajuste|venta|entrega|cancelacion|edicion_pedido|armado|recepcion|presupuesto|compra_eliminada
+  "  delta INTEGER NOT NULL DEFAULT 0," + // positivo o negativo
+  "  qty_before INTEGER NOT NULL DEFAULT 0," +
+  "  qty_after INTEGER NOT NULL DEFAULT 0," +
+  "  source_id INTEGER," + // id de la compra/pedido/presupuesto/ajuste segun corresponda
+  "  note TEXT," +
+  "  registered_by INTEGER REFERENCES users(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_stock_mov_product ON stock_movements(product_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_stock_mov_date ON stock_movements(created_at);"
+);
+
+// Registra un movimiento de stock. Llamar DESPUES de aplicar el UPDATE de
+// products.stock correspondiente (lee el stock ya actualizado como qty_after).
+// delta = 0 no se loguea (no hubo cambio real).
+function logStockMovement(productId, type, delta, sourceId, note, userId) {
+  const d = Math.round(Number(delta) || 0);
+  if (!productId || !d) return;
+  const row = db.prepare("SELECT stock FROM products WHERE id = ?").get(productId);
+  const qtyAfter = row ? Math.round(Number(row.stock) || 0) : 0;
+  const qtyBefore = qtyAfter - d;
+  db.prepare(
+    "INSERT INTO stock_movements (product_id, type, delta, qty_before, qty_after, source_id, note, registered_by)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(productId, String(type || "otro"), d, qtyBefore, qtyAfter, sourceId || null, note || null, userId || null);
+}
+
 // ─── Pedidos de cotizacion ────────────────────────────────────────────────────
 db.exec(
   "CREATE TABLE IF NOT EXISTS purchase_requests (" +
@@ -2303,7 +2342,10 @@ app.post("/api/orders", requireLogin, (req, res) => {
       insBI.run(budgetId, l.product_id, l.product_code, l.product_name,
                 l.quantity, l.unit_price, l.subtotal);
       // Descontar stock al crear el presupuesto (no al entregar)
-      if (l.product_id) updStockOrder.run(l.quantity, l.product_id);
+      if (l.product_id) {
+        updStockOrder.run(l.quantity, l.product_id);
+        logStockMovement(l.product_id, "venta", -l.quantity, orderId, "Pedido #" + orderId + " (catalogo)", orderUserId);
+      }
     }
   })();
 
@@ -2553,7 +2595,9 @@ app.post("/api/admin/picks/:orderId/apply", requireAdmin, (req, res) => {
       // Stock ya descontado: devolver/descontar la diferencia (viejo - nuevo).
       // Si se armo de mas (newQty > pedido) el delta es negativo y descuenta.
       if (stockCurrentlyOut && !skipStock && it.product_id) {
-        adjStock.run(Number(it.quantity) - newQty, it.product_id);
+        const deltaPick = Number(it.quantity) - newQty;
+        adjStock.run(deltaPick, it.product_id);
+        logStockMovement(it.product_id, "armado", deltaPick, orderId, "Chequeo de armado del pedido #" + orderId, req.session.userId);
       }
       insChange.run(orderId, it.product_code || null, it.product_name || null,
         Number(it.quantity), newQty, req.session.userId);
@@ -2782,7 +2826,10 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
           "UPDATE products SET stock = stock - ? WHERE id = ?"
         );
         for (const it of items) {
-          if (it.product_id) updStock.run(it.quantity, it.product_id);
+          if (it.product_id) {
+            updStock.run(it.quantity, it.product_id);
+            logStockMovement(it.product_id, "venta", -it.quantity, id, "Pedido #" + id + " entregado", req.session.userId);
+          }
         }
       }
       // El pedido unificado no genera debito en cuenta corriente del vendedor
@@ -2812,7 +2859,10 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
           "UPDATE products SET stock = stock + ? WHERE id = ?"
         );
         for (const it of items) {
-          if (it.product_id) retStock.run(it.quantity, it.product_id);
+          if (it.product_id) {
+            retStock.run(it.quantity, it.product_id);
+            logStockMovement(it.product_id, "cancelacion", it.quantity, id, "Pedido #" + id + " cancelado", req.session.userId);
+          }
         }
       }
       // Mantener en sync el presupuesto vinculado: cancelarlo y limpiar su flag
@@ -2973,7 +3023,10 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
         if (cp && cp.base_price != null) costUnit = Math.round(Number(cp.base_price));
       }
       ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, disc, sub, costUnit);
-      if (it.product_id) updStock.run(qty, it.product_id);
+      if (it.product_id) {
+        updStock.run(qty, it.product_id);
+        logStockMovement(it.product_id, "venta", -qty, orderId, "Pedido #" + orderId + " (creado desde admin)", req.session.userId);
+      }
     });
     // Si el pedido es a nombre de un cliente real, debitar su cuenta corriente
     // ahora (misma lógica que facturar un presupuesto). Al pasar a 'entregado'
@@ -3008,7 +3061,10 @@ app.delete("/api/admin/orders/:id", requireAdmin, (req, res) => {
     if (order.stock_discounted) {
       const ois = db.prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?").all(id);
       const upd = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
-      ois.forEach((it) => upd.run(it.quantity, it.product_id));
+      ois.forEach((it) => {
+        upd.run(it.quantity, it.product_id);
+        if (it.product_id) logStockMovement(it.product_id, "cancelacion", it.quantity, id, "Pedido #" + id + " eliminado", req.session.userId);
+      });
     }
     // Desligar presupuestos que referencian este pedido (FK: budgets.order_id).
     db.prepare("UPDATE budgets SET order_id = NULL WHERE order_id = ?").run(id);
@@ -3124,7 +3180,10 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     for (const o of oldItems) {
       if (!o.product_id || !newProductIds.has(o.product_id)) {
         delItem.run(o.id);
-        if (stockCurrentlyOut && !skipStock && o.product_id) adjStock.run(o.quantity, o.product_id);
+        if (stockCurrentlyOut && !skipStock && o.product_id) {
+          adjStock.run(o.quantity, o.product_id);
+          logStockMovement(o.product_id, "edicion_pedido", o.quantity, id, "Edicion de items del pedido #" + id + " (item quitado)", req.session.userId);
+        }
         hadQtyChange = true;
         changes.push({ product_code: o.product_code, product_name: o.product_name, old_qty: o.quantity, new_qty: 0 });
       }
@@ -3134,12 +3193,19 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
       const old = oldByProduct.get(l.product_id);
       if (!old) {
         insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.discount_percent, l.subtotal, l.vendedor_cost_unit);
-        if (stockCurrentlyOut && !skipStock) adjStock.run(-l.quantity, l.product_id);
+        if (stockCurrentlyOut && !skipStock) {
+          adjStock.run(-l.quantity, l.product_id);
+          logStockMovement(l.product_id, "edicion_pedido", -l.quantity, id, "Edicion de items del pedido #" + id + " (item agregado)", req.session.userId);
+        }
         hadQtyChange = true;
         changes.push({ product_code: l.product_code, product_name: l.product_name, old_qty: 0, new_qty: l.quantity });
       } else if (Number(old.quantity) !== Number(l.quantity)) {
         updQtyItem.run(l.product_code, l.product_name, l.quantity, l.unit_price, l.discount_percent, l.subtotal, l.vendedor_cost_unit, old.id);
-        if (stockCurrentlyOut && !skipStock) adjStock.run(Number(old.quantity) - Number(l.quantity), l.product_id);
+        if (stockCurrentlyOut && !skipStock) {
+          const deltaEdit = Number(old.quantity) - Number(l.quantity);
+          adjStock.run(deltaEdit, l.product_id);
+          logStockMovement(l.product_id, "edicion_pedido", deltaEdit, id, "Edicion de items del pedido #" + id + " (cantidad cambiada)", req.session.userId);
+        }
         hadQtyChange = true;
         changes.push({ product_code: l.product_code, product_name: l.product_name, old_qty: old.quantity, new_qty: l.quantity });
       } else {
@@ -3372,6 +3438,12 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   const costBefore = touchesCost
     ? db.prepare("SELECT cost, stock FROM products WHERE id = ?").get(id)
     : null;
+  // Si el modal de edición toca el stock directamente (no vía el modal de
+  // ajuste ±), igual queda en el historial de movimientos como "ajuste manual".
+  const touchesStock = cols.includes("stock");
+  const stockBefore = touchesStock
+    ? db.prepare("SELECT stock FROM products WHERE id = ?").get(id)
+    : null;
 
   const sets = cols.map((c) => c + " = ?");
   sets.push("updated_at = datetime('now')");
@@ -3391,6 +3463,10 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
   if (touchesCost && costBefore) {
     const costAfter = db.prepare("SELECT cost FROM products WHERE id = ?").get(id);
     try { logCostChange(id, costBefore.cost, costAfter.cost, "manual", null, costBefore.stock); } catch (_) {}
+  }
+  if (touchesStock && stockBefore) {
+    const delta = Math.round((Number(vals[cols.indexOf("stock")]) || 0) - (Number(stockBefore.stock) || 0));
+    try { logStockMovement(id, "ajuste", delta, null, "Edición manual del producto (modal Editar producto)", req.session.userId); } catch (_) {}
   }
 
   res.json({ ok: true, id: id });
@@ -5159,7 +5235,10 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
           "UPDATE products SET stock = stock - ? WHERE id = ?"
         );
         for (const it of items) {
-          if (it.product_id) updStock.run(it.quantity, it.product_id);
+          if (it.product_id) {
+            updStock.run(it.quantity, it.product_id);
+            logStockMovement(it.product_id, "entrega", -it.quantity, id, "Pedido #" + id + " entregado", req.session.userId);
+          }
         }
       }
       // El pedido unificado no genera debito (es solo el consolidado para el admin);
@@ -5565,7 +5644,10 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
       const oldItems = db.prepare("SELECT product_id, quantity FROM purchase_items WHERE purchase_order_id = ?").all(id);
       const decStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
       for (const oi of oldItems) {
-        if (oi.product_id) decStock.run(oi.quantity, oi.product_id);
+        if (oi.product_id) {
+          decStock.run(oi.quantity, oi.product_id);
+          logStockMovement(oi.product_id, "compra", -oi.quantity, id, "Edicion de compra #" + id + " (revierte items anteriores)", req.session.userId);
+        }
       }
     }
 
@@ -5591,7 +5673,10 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
         // se vuelve a sumar si la compra ya estaba recibida (sino entra en la
         // recepcion).
         applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy, id);
-        if (wasReceived) incStock.run(l.quantity, l.product_id);
+        if (wasReceived) {
+          incStock.run(l.quantity, l.product_id);
+          logStockMovement(l.product_id, "compra", l.quantity, id, "Edicion de compra #" + id + (reference ? " · " + reference : ""), req.session.userId);
+        }
       }
     }
 
@@ -5645,6 +5730,7 @@ app.delete("/api/admin/purchases/:id", requireAdmin, (req, res) => {
         if (it.product_id) {
           decStock.run(it.quantity, it.product_id);
           stockReverted += Number(it.quantity) || 0;
+          logStockMovement(it.product_id, "compra_eliminada", -it.quantity, id, "Compra #" + id + " eliminada (revierte stock)", req.session.userId);
         }
       }
     }
@@ -5848,7 +5934,10 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
           ": cargado " + Number(it.quantity) + " → recibido " + rq);
       }
       // El stock entra AHORA: la compra no lo habia sumado al cargarse.
-      if (it.product_id && rq > 0) incStock.run(rq, it.product_id);
+      if (it.product_id && rq > 0) {
+        incStock.run(rq, it.product_id);
+        logStockMovement(it.product_id, "compra", rq, purchaseId, "Recepcion de compra #" + purchaseId + (purchase.reference ? " · " + purchase.reference : ""), req.session.userId);
+      }
     }
     total = round2(
       db.prepare(
@@ -7910,7 +7999,10 @@ app.post("/api/budgets", requireVendedorOrAdmin, requireSectionForAdmin("ventas"
       insItem.run(bid, it.product_id || null, it.product_code || "", it.product_name || "",
                   it.quantity, it.unit_price, it.discount_percent, it.subtotal);
       // Descontar stock al crear el presupuesto
-      if (it.product_id) updStockBudget.run(it.quantity, it.product_id);
+      if (it.product_id) {
+        updStockBudget.run(it.quantity, it.product_id);
+        logStockMovement(it.product_id, "presupuesto", -it.quantity, bid, "Presupuesto #" + bid + " creado", u.id);
+      }
     }
     return bid;
   });
@@ -7971,7 +8063,10 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
       ).all(budget.id);
       const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
       for (const oi of oldItems) {
-        if (oi.product_id) retStock.run(oi.quantity, oi.product_id);
+        if (oi.product_id) {
+          retStock.run(oi.quantity, oi.product_id);
+          logStockMovement(oi.product_id, "presupuesto", oi.quantity, budget.id, "Edicion de presupuesto #" + budget.id + " (revierte items anteriores)", u.id);
+        }
       }
     }
     db.prepare(
@@ -7991,7 +8086,10 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
     for (const it of computedItems) {
       insItem.run(budget.id, it.product_id || null, it.product_code || "", it.product_name || "",
                   it.quantity, it.unit_price, it.discount_percent, it.subtotal);
-      if (budget.stock_discounted && it.product_id) decStock.run(it.quantity, it.product_id);
+      if (budget.stock_discounted && it.product_id) {
+        decStock.run(it.quantity, it.product_id);
+        logStockMovement(it.product_id, "presupuesto", -it.quantity, budget.id, "Edicion de presupuesto #" + budget.id + " (nuevos items)", u.id);
+      }
     }
   });
 
@@ -8023,7 +8121,10 @@ app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, requireSectionForAd
         ).all(budget.id);
         const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
         for (const it of budgetItems) {
-          if (it.product_id) retStock.run(it.quantity, it.product_id);
+          if (it.product_id) {
+            retStock.run(it.quantity, it.product_id);
+            logStockMovement(it.product_id, "cancelacion", it.quantity, budget.id, "Presupuesto #" + budget.id + " cancelado", u.id);
+          }
         }
         db.prepare("UPDATE budgets SET stock_discounted = 0 WHERE id = ?").run(budget.id);
       }
@@ -8149,7 +8250,10 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("v
         ).all(budget.id);
         const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
         for (const it of budgetItems) {
-          if (it.product_id) retStock.run(it.quantity, it.product_id);
+          if (it.product_id) {
+            retStock.run(it.quantity, it.product_id);
+            logStockMovement(it.product_id, "presupuesto_eliminado", it.quantity, budget.id, "Presupuesto #" + budget.id + " eliminado", u.id);
+          }
         }
       }
       db.prepare("DELETE FROM budgets WHERE id = ?").run(budget.id);
@@ -8539,6 +8643,33 @@ app.get("/api/admin/stock-adjustments", requireAdmin, (req, res) => {
   res.json(rows);
 });
 
+// GET /api/admin/products/:id/stock-history — historial UNIFICADO de movimientos
+// de stock de un producto puntual (10 jun request de Sergio: ver cuando se hizo
+// una compra, cuando aumento el stock, y si fue manual o por compra). Lee de
+// stock_movements (el log generico que se llena en cada punto de la app que
+// toca products.stock: compras/recepcion, ventas/entregas/cancelaciones,
+// ediciones de pedido, armado, presupuestos y ajustes manuales).
+app.get("/api/admin/products/:id/stock-history", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  const product = db.prepare("SELECT id, code, name, stock FROM products WHERE id = ?").get(id);
+  if (!product) return res.status(404).json({ error: "Producto no encontrado" });
+  const { from, to, type } = req.query;
+  const where = ["sm.product_id = ?"];
+  const params = [id];
+  if (from) { where.push("date(sm.created_at) >= ?"); params.push(from); }
+  if (to)   { where.push("date(sm.created_at) <= ?"); params.push(to); }
+  if (type) { where.push("sm.type = ?"); params.push(type); }
+  const rows = db.prepare(
+    "SELECT sm.*, u.username AS registered_by_username, u.full_name AS registered_by_name" +
+    "  FROM stock_movements sm" +
+    "  LEFT JOIN users u ON u.id = sm.registered_by" +
+    "  WHERE " + where.join(" AND ") +
+    "  ORDER BY sm.id DESC LIMIT 500"
+  ).all(...params);
+  res.json({ product: { id: product.id, code: product.code, name: product.name, stock: product.stock }, movements: rows });
+});
+
 // POST /api/admin/stock-adjustments — crear ajuste
 app.post("/api/admin/stock-adjustments", requireAdmin, (req, res) => {
   const userId = req.session.userId;
@@ -8575,6 +8706,7 @@ app.post("/api/admin/stock-adjustments", requireAdmin, (req, res) => {
       "INSERT INTO stock_adjustments (product_id, product_code, product_name, type, qty_before, qty_change, qty_after, reason, registered_by)" +
       " VALUES (?,?,?,?,?,?,?,?,?)"
     ).run(product_id, product.code, product.name, adjType, qtyBefore, qtyChange, qtyAfter, reason || null, userId);
+    logStockMovement(product_id, "ajuste", qtyChange, null, reason || ("Ajuste manual (" + adjType + ")"), userId);
   })();
 
   res.json({ ok: true, qty_before: qtyBefore, qty_after: qtyAfter, qty_change: qtyChange });

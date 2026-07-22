@@ -4531,7 +4531,10 @@
       moneyCell(p, "price_publico") +
       '<td class="cell-activo"><span class="cell-active-badge' + (p.active ? " active" : "") + '">' + (p.active ? "Sí" : "No") + '</span></td>' +
       '<td class="num muted cell-bulto" title="Unidades por empaque de compra (caja/bulto)">' + (p.units_per_bulto > 1 && p.pack_unit !== "unidad" ? p.units_per_bulto + " u/" + (p.pack_unit === "caja" ? "caja" : "bulto") : "—") + '</td>' +
-      '<td class="cell-adj"><button class="btn btn-small" type="button" data-act="adj-stock" data-id="' + p.id + '" title="Ajustar stock">±</button></td>' +
+      '<td class="cell-adj">' +
+        '<button class="btn btn-small" type="button" data-act="adj-stock" data-id="' + p.id + '" title="Ajustar stock">±</button>' +
+        '<button class="btn btn-small" type="button" data-act="stock-hist" data-id="' + p.id + '" title="Historial de stock (compras, ventas, ajustes...)">🕒</button>' +
+      '</td>' +
       '<td class="cell-cardprice">' + cardPriceHtml(p) + '</td>' +
     '</tr>';
   }
@@ -12477,6 +12480,109 @@
 
   const stockHistFilterBtn = document.getElementById("stock-hist-filter-btn");
   if (stockHistFilterBtn) stockHistFilterBtn.addEventListener("click", () => loadStockHistory());
+
+  // ─────────────────────────────────────────────────────────────────
+  // HISTORIAL UNIFICADO DE STOCK POR PRODUCTO (10 jun request de Sergio:
+  // ver cuando se hizo una compra, cuando aumento el stock, y si fue manual
+  // o por ingreso de compra). Junta TODOS los origenes que tocan
+  // products.stock (stock_movements en el server), no solo los ajustes
+  // manuales (eso ya lo cubre el modal de arriba, "📋 Ajustes").
+  // ─────────────────────────────────────────────────────────────────
+  const stockMovModal = document.getElementById("stock-mov-modal");
+  const STOCK_MOV_TYPE_LABEL = {
+    compra: "Compra", recepcion: "Recepción de compra", venta: "Venta",
+    entrega: "Entrega", cancelacion: "Cancelación", edicion_pedido: "Edición de pedido",
+    armado: "Armado", presupuesto: "Presupuesto", presupuesto_eliminado: "Presupuesto eliminado",
+    compra_eliminada: "Compra eliminada", ajuste: "Ajuste manual",
+  };
+  const stockMovState = { productId: null, productName: "" };
+
+  async function loadStockMov() {
+    const tbody = document.getElementById("stock-mov-tbody");
+    if (!tbody || !stockMovState.productId) return;
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando…</td></tr>';
+    try {
+      const from = document.getElementById("stock-mov-from");
+      const to   = document.getElementById("stock-mov-to");
+      const type = document.getElementById("stock-mov-type");
+      const qs = [
+        from && from.value ? "from=" + from.value : "",
+        to   && to.value   ? "to="   + to.value   : "",
+        type && type.value ? "type=" + type.value : "",
+      ].filter(Boolean).join("&");
+      const data = await api("/api/admin/products/" + stockMovState.productId + "/stock-history" + (qs ? "?" + qs : ""));
+      const rows = data.movements || [];
+      const nameEl = document.getElementById("stock-mov-product-name");
+      if (nameEl) nameEl.textContent = data.product ? (" — " + data.product.name + " (" + (data.product.code || "") + ")") : "";
+      const summary = document.getElementById("stock-mov-summary");
+      if (summary) {
+        summary.innerHTML = data.product
+          ? "Stock actual: <strong>" + fmtNum(data.product.stock) + "</strong> · " + rows.length + " movimiento(s) en el rango"
+          : "";
+      }
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="muted">Sin movimientos de stock registrados en este rango.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map((r) => {
+        const delta = Number(r.delta) || 0;
+        const deltaStr = (delta > 0 ? "+" : "") + delta;
+        const deltaCls = delta > 0 ? "stock-mov-plus" : (delta < 0 ? "stock-mov-minus" : "");
+        const dateStr = (r.created_at || "").slice(0, 16).replace("T", " ").split(" ");
+        const dateFmt = dateStr[0] ? dateStr[0].split("-").reverse().join("/") + (dateStr[1] ? " " + dateStr[1] : "") : "";
+        const typeLbl = STOCK_MOV_TYPE_LABEL[r.type] || r.type;
+        const userLbl = r.registered_by_name || r.registered_by_username || "—";
+        return "<tr>" +
+          "<td class=\"muted small\">" + dateFmt + "</td>" +
+          "<td><span class=\"stock-mov-type stock-mov-type-" + escapeHtml(r.type) + "\">" + escapeHtml(typeLbl) + "</span></td>" +
+          "<td class=\"num muted\">" + r.qty_before + "</td>" +
+          "<td class=\"num " + deltaCls + "\">" + deltaStr + "</td>" +
+          "<td class=\"num\"><strong>" + r.qty_after + "</strong></td>" +
+          "<td class=\"muted small\">" + escapeHtml(r.note || "—") + "</td>" +
+          "<td class=\"muted small\">" + escapeHtml(userLbl) + "</td>" +
+          "</tr>";
+      }).join("");
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted">Error cargando el historial.</td></tr>';
+    }
+  }
+
+  function openStockMovModal(product) {
+    if (!product || !stockMovModal) return;
+    stockMovState.productId = product.id;
+    stockMovState.productName = product.name || "";
+    const from = document.getElementById("stock-mov-from");
+    const to   = document.getElementById("stock-mov-to");
+    const type = document.getElementById("stock-mov-type");
+    if (from) from.value = "";
+    if (to)   to.value = "";
+    if (type) type.value = "";
+    stockMovModal.hidden = false;
+    loadStockMov();
+  }
+
+  const stockMovFilterBtn = document.getElementById("stock-mov-filter-btn");
+  if (stockMovFilterBtn) stockMovFilterBtn.addEventListener("click", () => loadStockMov());
+
+  // Botón 🕒 de cada fila de la tabla de Productos
+  els.prodTbody.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act='stock-hist']");
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    const product = state.products.find((x) => x.id === id);
+    if (product) openStockMovModal(product);
+  });
+
+  // Botón "🕒 Historial de stock" dentro del modal Editar producto
+  const epStockHistBtn = document.getElementById("ep-stock-hist-btn");
+  if (epStockHistBtn) {
+    epStockHistBtn.addEventListener("click", () => {
+      const id = Number(editProdId);
+      const product = (state.allProducts || []).find((x) => x.id === id) ||
+                       state.products.find((x) => x.id === id);
+      if (product) openStockMovModal(product);
+    });
+  }
 
   // ─────────────────────────────────────────────────────────────────
   // REPORTES DE VENTAS
