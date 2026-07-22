@@ -12437,40 +12437,46 @@
     });
   }
 
-  async function loadStockHistory(productId) {
+  // Historial global UNIFICADO: mismo origen (stock_movements) que el modal por
+  // producto. Filtra por fecha/tipo en el server y por texto en el cliente.
+  async function loadStockHistory() {
     const tbody = document.getElementById("stock-hist-tbody");
     if (!tbody) return;
     tbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
     try {
       const from   = document.getElementById("stock-hist-from");
       const to     = document.getElementById("stock-hist-to");
+      const typeEl = document.getElementById("stock-hist-type");
       const search = document.getElementById("stock-hist-search");
       const qs = [
-        productId ? "product_id=" + productId : "",
         from && from.value ? "from=" + from.value : "",
         to   && to.value   ? "to="   + to.value   : "",
+        typeEl && typeEl.value ? "type=" + typeEl.value : "",
       ].filter(Boolean).join("&");
-      let rows = await api("/api/admin/stock-adjustments" + (qs ? "?" + qs : ""));
+      let rows = await api("/api/admin/stock-movements" + (qs ? "?" + qs : ""));
       const q = search ? search.value.trim().toLowerCase() : "";
-      if (q) rows = rows.filter((r) => matchWords(r.product_name + " " + r.product_code, q));
+      if (q) rows = rows.filter((r) => matchWords((r.product_name || "") + " " + (r.product_code || ""), q));
       if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="muted">Sin ajustes</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="muted">Sin movimientos de stock en este rango.</td></tr>';
         return;
       }
       tbody.innerHTML = rows.map((r) => {
-        const chg     = Number(r.qty_change);
-        const chgStr  = (chg > 0 ? "+" : "") + chg;
-        const chgCls  = chg > 0 ? "stock-adj-plus" : (chg < 0 ? "stock-adj-minus" : "");
-        const dateStr = (r.created_at || "").slice(0, 10).split("-").reverse().join("/");
+        const delta   = Number(r.delta) || 0;
+        const chgStr  = (delta > 0 ? "+" : "") + delta;
+        const chgCls  = delta > 0 ? "stock-mov-plus" : (delta < 0 ? "stock-mov-minus" : "");
+        const parts   = (r.created_at || "").slice(0, 16).replace("T", " ").split(" ");
+        const dateStr = parts[0] ? parts[0].split("-").reverse().join("/") + (parts[1] ? " " + parts[1] : "") : "";
+        const typeLbl = STOCK_MOV_TYPE_LABEL[r.type] || r.type;
+        const userLbl = r.registered_by_name || r.registered_by_username || "—";
         return "<tr>" +
           "<td class=\"muted small\">" + dateStr + "</td>" +
-          "<td><strong>" + escapeHtml(r.product_name) + "</strong> <span class=\"muted small\">" + escapeHtml(r.product_code) + "</span></td>" +
-          "<td class=\"muted small\">" + escapeHtml(ADJ_TYPE_LABEL[r.type] || r.type) + "</td>" +
+          "<td><strong>" + escapeHtml(r.product_name || "") + "</strong> <span class=\"muted small\">" + escapeHtml(r.product_code || "") + "</span></td>" +
+          "<td><span class=\"stock-mov-type stock-mov-type-" + escapeHtml(r.type) + "\">" + escapeHtml(typeLbl) + "</span></td>" +
           "<td class=\"num muted\">" + r.qty_before + "</td>" +
           "<td class=\"num " + chgCls + "\">" + chgStr + "</td>" +
           "<td class=\"num\"><strong>" + r.qty_after + "</strong></td>" +
-          "<td class=\"muted small\">" + escapeHtml(r.reason || "—") + "</td>" +
-          "<td class=\"muted small\">" + escapeHtml(r.registered_by_username || "—") + "</td>" +
+          "<td class=\"muted small\">" + escapeHtml(r.note || "—") + "</td>" +
+          "<td class=\"muted small\">" + escapeHtml(userLbl) + "</td>" +
           "</tr>";
       }).join("");
     } catch (e) {
@@ -12480,6 +12486,10 @@
 
   const stockHistFilterBtn = document.getElementById("stock-hist-filter-btn");
   if (stockHistFilterBtn) stockHistFilterBtn.addEventListener("click", () => loadStockHistory());
+  const stockHistSearch = document.getElementById("stock-hist-search");
+  if (stockHistSearch) stockHistSearch.addEventListener("input", () => loadStockHistory());
+  const stockHistType = document.getElementById("stock-hist-type");
+  if (stockHistType) stockHistType.addEventListener("change", () => loadStockHistory());
 
   // ─────────────────────────────────────────────────────────────────
   // HISTORIAL UNIFICADO DE STOCK POR PRODUCTO (10 jun request de Sergio:

@@ -375,7 +375,7 @@
             <input type="file" id="excel-file" accept=".xlsx,.xls" hidden />
           </label>
           <button class="btn btn-tool" id="catalog-btn" type="button" title="Generar catálogo en PDF con lista de precios a elección">📄 Catálogo PDF</button>
-          <button class="btn btn-tool" id="stock-adj-history-btn" type="button" title="Ver historial de ajustes de stock">📋 Ajustes</button>
+          <button class="btn btn-tool" id="stock-adj-history-btn" type="button" title="Ver historial completo de movimientos de stock (compras, ventas, ajustes...)">🕒 Historial de stock</button>
         </div>
 
         <!-- Barra contextual: solo visible en modo selección múltiple -->
@@ -3415,28 +3415,42 @@
 
   <!-- Modal historial de ajustes -->
   <div id="stock-adj-hist-modal" class="admin-modal" hidden>
-    <div class="admin-modal-box" style="max-width:720px">
+    <div class="admin-modal-box" style="max-width:860px">
       <div class="admin-modal-head">
-        <strong>Historial de ajustes de stock</strong>
+        <strong>Historial de stock — todos los productos</strong>
         <button type="button" class="admin-modal-close" data-close>✕</button>
       </div>
       <div style="padding:12px 20px;border-bottom:1px solid #e5e7eb;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <input type="date" id="stock-hist-from" class="admin-input" style="width:130px" />
         <input type="date" id="stock-hist-to" class="admin-input" style="width:130px" />
+        <select id="stock-hist-type" class="admin-select" style="width:180px">
+          <option value="">Todos los tipos</option>
+          <option value="compra">Compra</option>
+          <option value="recepcion">Recepción de compra</option>
+          <option value="venta">Venta</option>
+          <option value="entrega">Entrega</option>
+          <option value="cancelacion">Cancelación</option>
+          <option value="edicion_pedido">Edición de pedido</option>
+          <option value="armado">Armado</option>
+          <option value="presupuesto">Presupuesto</option>
+          <option value="presupuesto_eliminado">Presupuesto eliminado</option>
+          <option value="compra_eliminada">Compra eliminada</option>
+          <option value="ajuste">Ajuste manual</option>
+        </select>
         <input type="search" id="stock-hist-search" class="admin-search" placeholder="Buscar producto…" style="width:160px" autocomplete="off" />
         <button type="button" class="btn btn-small" id="stock-hist-filter-btn">Filtrar</button>
       </div>
-      <div style="max-height:420px;overflow-y:auto">
+      <div style="max-height:440px;overflow-y:auto">
         <table class="admin-table" id="stock-hist-table">
           <thead>
             <tr>
               <th>Fecha</th>
               <th>Producto</th>
-              <th>Tipo</th>
+              <th>Origen</th>
               <th class="num">Antes</th>
               <th class="num">Cambio</th>
               <th class="num">Después</th>
-              <th>Razón</th>
+              <th>Detalle</th>
               <th>Usuario</th>
             </tr>
           </thead>
@@ -3516,6 +3530,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260722a"></script>
+  <script src="/js/admin.js?v=20260722b"></script>
 </body>
 </html>

@@ -883,6 +883,118 @@ function setSetting(key, value) {
   ).run(key, value == null ? null : String(value));
 }
 
+// ─── Reconstruccion historica de stock_movements (22 jul 2026) ────────────────
+// El log stock_movements arranco vacio: solo registra movimientos posteriores a
+// su deploy. Este backfill rellena hacia atras los movimientos ANTERIORES desde
+// las fuentes que tienen fecha: compras cargadas, ajustes manuales, ventas/
+// entregas y presupuestos. Corre UNA sola vez (guard en settings).
+//
+// Como funciona el saldo: por cada producto, el PRIMER movimiento real ya
+// logueado tiene un qty_before exacto = el stock justo antes de que arrancara el
+// log. Ese es el ANCLA. La reconstruccion toma los eventos con fecha < ese
+// primer movimiento y camina hacia atras desde el ancla (qty_after del evento
+// mas nuevo = ancla, y asi). Para productos sin ningun movimiento real logueado,
+// el ancla es el stock actual. Es una ESTIMACION en el pasado (faltan
+// movimientos sin fecha exacta y puede haber saldos negativos si algo se
+// solapa), pero cierra contra el ancla, que es exacto. Las filas se marcan
+// "(reconstruido)" en el detalle.
+function backfillStockMovements() {
+  if (getSetting("stock_movements_backfill_v1")) return;
+  try {
+    const prods = db.prepare("SELECT id, stock FROM products").all();
+
+    // Ancla por producto: primer movimiento real logueado (menor created_at).
+    const anchor = new Map(); // pid -> { boundary, startStock }
+    db.prepare(
+      "SELECT product_id AS pid, created_at AS d, qty_before AS qb" +
+      "  FROM stock_movements ORDER BY product_id, created_at ASC, id ASC"
+    ).all().forEach((r) => {
+      if (!anchor.has(r.pid)) anchor.set(r.pid, { boundary: String(r.d), startStock: Number(r.qb) || 0 });
+    });
+
+    // Eventos historicos datables (delta con signo + fecha + tipo + detalle).
+    const ev = new Map(); // pid -> [{ d, delta, type, note, sid }]
+    const push = (pid, d, delta, type, note, sid) => {
+      const dd = Math.round(Number(delta) || 0);
+      if (!pid || !dd || !d) return;
+      if (!ev.has(pid)) ev.set(pid, []);
+      ev.get(pid).push({ d: String(d), delta: dd, type, note, sid: sid || null });
+    };
+
+    // Compras (suman stock).
+    db.prepare(
+      "SELECT pi.product_id AS pid, pi.quantity AS qty, pi.purchase_order_id AS poid," +
+      "  COALESCE(po.received_at, po.created_at) AS d, po.reference AS ref" +
+      "  FROM purchase_items pi JOIN purchase_orders po ON po.id = pi.purchase_order_id"
+    ).all().forEach((r) => push(
+      r.pid, r.d, Math.abs(Number(r.qty) || 0), "compra",
+      "Compra #" + r.poid + (r.ref ? " · " + r.ref : "") + " (reconstruido)", r.poid
+    ));
+
+    // Ajustes manuales (qty_change ya viene con signo).
+    db.prepare("SELECT product_id AS pid, qty_change AS qty, type, reason, created_at AS d, id FROM stock_adjustments")
+      .all().forEach((r) => push(
+        r.pid, r.d, Number(r.qty) || 0, "ajuste",
+        (r.reason || ("Ajuste manual (" + (r.type || "ajuste") + ")")) + " (reconstruido)", r.id
+      ));
+
+    // Ventas: ordenes con stock descontado, sin presupuesto vinculado (ese lo
+    // cuenta el presupuesto aparte), no unificadas/hijas/canceladas.
+    db.prepare(
+      "SELECT oi.product_id AS pid, oi.quantity AS qty, o.id AS oid," +
+      "  COALESCE(d.delivered_at, o.created_at) AS dt" +
+      "  FROM order_items oi JOIN orders o ON o.id = oi.order_id" +
+      "  LEFT JOIN deliveries d ON d.order_id = o.id" +
+      " WHERE COALESCE(o.stock_discounted,0)=1 AND COALESCE(o.is_unified,0)=0" +
+      "   AND o.unified_parent_id IS NULL AND o.status != 'cancelado'" +
+      "   AND NOT EXISTS (SELECT 1 FROM budgets b WHERE b.order_id = o.id)"
+    ).all().forEach((r) => push(
+      r.pid, r.dt, -Math.abs(Number(r.qty) || 0), "venta",
+      "Pedido #" + r.oid + " (reconstruido)", r.oid
+    ));
+
+    // Presupuestos que descontaron stock (facturados o no), no cancelados.
+    db.prepare(
+      "SELECT bi.product_id AS pid, bi.quantity AS qty, b.id AS bid, b.created_at AS d" +
+      "  FROM budget_items bi JOIN budgets b ON b.id = bi.budget_id" +
+      " WHERE COALESCE(b.stock_discounted,0)=1 AND b.status != 'cancelado'"
+    ).all().forEach((r) => push(
+      r.pid, r.d, -Math.abs(Number(r.qty) || 0), "presupuesto",
+      "Presupuesto #" + r.bid + " (reconstruido)", r.bid
+    ));
+
+    const insert = db.prepare(
+      "INSERT INTO stock_movements (product_id, type, delta, qty_before, qty_after, source_id, note, created_at)" +
+      " VALUES (?,?,?,?,?,?,?,?)"
+    );
+    let inserted = 0;
+    db.transaction(() => {
+      for (const p of prods) {
+        const a = anchor.get(p.id);
+        const boundary = a ? a.boundary : null; // null = sin log real todavia
+        let running = a ? a.startStock : (Number(p.stock) || 0);
+        // Solo eventos ANTERIORES al ancla (los posteriores ya estan logueados).
+        let list = (ev.get(p.id) || []).filter((e) => boundary == null || e.d < boundary);
+        if (!list.length) continue;
+        // Mas nuevo primero para caminar hacia atras desde el ancla.
+        list.sort((x, y) => (x.d < y.d ? 1 : x.d > y.d ? -1 : 0));
+        for (const e of list) {
+          const qtyAfter = running;
+          const qtyBefore = qtyAfter - e.delta;
+          insert.run(p.id, e.type, e.delta, qtyBefore, qtyAfter, e.sid, e.note, e.d);
+          running = qtyBefore;
+          inserted++;
+        }
+      }
+      setSetting("stock_movements_backfill_v1", new Date().toISOString());
+    })();
+    console.log("[backfill] stock_movements reconstruidos: " + inserted);
+  } catch (err) {
+    console.error("[backfill] fallo la reconstruccion de stock_movements:", err.message);
+  }
+}
+backfillStockMovements();
+
 // Bootstrap: si nunca hubo config de WhatsApp en la base pero hay env, migrar.
 if (getSetting("whatsapp_number") == null && WHATSAPP_NUMBER) {
   setSetting("whatsapp_number", WHATSAPP_NUMBER);
@@ -8665,9 +8777,33 @@ app.get("/api/admin/products/:id/stock-history", requireAdmin, (req, res) => {
     "  FROM stock_movements sm" +
     "  LEFT JOIN users u ON u.id = sm.registered_by" +
     "  WHERE " + where.join(" AND ") +
-    "  ORDER BY sm.id DESC LIMIT 500"
+    "  ORDER BY sm.created_at DESC, sm.id DESC LIMIT 500"
   ).all(...params);
   res.json({ product: { id: product.id, code: product.code, name: product.name, stock: product.stock }, movements: rows });
+});
+
+// GET /api/admin/stock-movements — historial UNIFICADO global (todos los
+// productos). Misma fuente que el modal por producto (stock_movements), para la
+// vista global buscable del boton "Historial de stock" de la toolbar. Filtros:
+// from/to (fecha), type (origen). El texto se filtra en el cliente (multi-word).
+app.get("/api/admin/stock-movements", requireAdmin, (req, res) => {
+  const { from, to, type } = req.query;
+  const where = [];
+  const params = [];
+  if (from) { where.push("date(sm.created_at) >= ?"); params.push(from); }
+  if (to)   { where.push("date(sm.created_at) <= ?"); params.push(to); }
+  if (type) { where.push("sm.type = ?"); params.push(type); }
+  const wStr = where.length ? " WHERE " + where.join(" AND ") : "";
+  const rows = db.prepare(
+    "SELECT sm.*, p.code AS product_code, p.name AS product_name," +
+    "  u.username AS registered_by_username, u.full_name AS registered_by_name" +
+    "  FROM stock_movements sm" +
+    "  JOIN products p ON p.id = sm.product_id" +
+    "  LEFT JOIN users u ON u.id = sm.registered_by" +
+    wStr +
+    "  ORDER BY sm.created_at DESC, sm.id DESC LIMIT 500"
+  ).all(...params);
+  res.json(rows);
 });
 
 // POST /api/admin/stock-adjustments — crear ajuste
