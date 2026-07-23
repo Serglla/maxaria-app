@@ -2835,10 +2835,11 @@ button { font: inherit; cursor: pointer; }
 
 /* Detalle de compra (historial de stock): columnas justas, sin scroll lateral */
 #spm-table { min-width: 0; table-layout: fixed; width: 100%; }
-#spm-table thead th, #spm-table tbody td { white-space: normal; word-break: break-word; }
-#spm-table th:nth-child(1), #spm-table td:nth-child(1) { width: 62px; }
-#spm-table th:nth-child(3), #spm-table td:nth-child(3) { width: 48px; }
-#spm-table th:nth-child(4), #spm-table td:nth-child(4) { width: 76px; }
+#spm-table thead th { white-space: nowrap; }
+#spm-table tbody td { white-space: normal; word-break: break-word; }
+#spm-table th:nth-child(1), #spm-table td:nth-child(1) { width: 56px; }
+#spm-table th:nth-child(3), #spm-table td:nth-child(3) { width: 52px; }
+#spm-table th:nth-child(4), #spm-table td:nth-child(4) { width: 72px; }
 #spm-table th:nth-child(5), #spm-table td:nth-child(5) { width: 84px; }
 
 /* ── Filas de todos los pickers: bordes y alternado uniforme ── */
