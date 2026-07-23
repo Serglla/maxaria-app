@@ -12475,7 +12475,7 @@
           "<td class=\"num muted\">" + r.qty_before + "</td>" +
           "<td class=\"num " + chgCls + "\">" + chgStr + "</td>" +
           "<td class=\"num\"><strong>" + r.qty_after + "</strong></td>" +
-          "<td class=\"muted small\">" + escapeHtml(r.note || "—") + "</td>" +
+          "<td class=\"muted small\">" + stockMovDetailContent(r) + "</td>" +
           "<td class=\"muted small\">" + escapeHtml(userLbl) + "</td>" +
           "</tr>";
       }).join("");
@@ -12506,6 +12506,63 @@
     compra_eliminada: "Compra eliminada", ajuste: "Ajuste manual",
   };
   const stockMovState = { productId: null, productName: "" };
+
+  // Celda "Detalle": si el movimiento es una compra con source_id, se muestra
+  // como link clickeable que abre el detalle de esa compra (proveedor, ítems...).
+  function stockMovDetailContent(r) {
+    const note = escapeHtml(r.note || "—");
+    const sid = Number(r.source_id) || 0;
+    if (sid && r.type === "compra") {
+      return '<a href="#" class="stock-mov-detail-link" data-purchase-id="' + sid +
+             '" style="color:#1e3a5f;text-decoration:underline;cursor:pointer;font-weight:600">' + note + '</a>';
+    }
+    return note;
+  }
+
+  // Modal de detalle de compra (abierto desde el historial de stock).
+  async function openStockPurchaseModal(id) {
+    const modal = document.getElementById("stock-purchase-modal");
+    if (!modal || !id) return;
+    const meta  = document.getElementById("spm-meta");
+    const tbody = document.getElementById("spm-tbody");
+    const title = document.getElementById("spm-title");
+    const total = document.getElementById("spm-total");
+    if (title) title.textContent = "#" + id;
+    if (meta)  meta.innerHTML = '<span class="muted">Cargando…</span>';
+    if (tbody) tbody.innerHTML = "";
+    if (total) total.textContent = "";
+    modal.hidden = false;
+    try {
+      const p = await api("/api/admin/purchases/" + id);
+      const dateStr = (p.received_at || p.created_at || "").slice(0, 10).split("-").reverse().join("/");
+      if (meta) meta.innerHTML =
+        '<div><strong>Proveedor:</strong> ' + escapeHtml(p.supplier_name || "—") + '</div>' +
+        '<div><strong>Fecha:</strong> ' + dateStr + (Number(p.received) === 1 ? ' · recibida' : ' · pendiente') + '</div>' +
+        (p.reference ? '<div><strong>Referencia:</strong> ' + escapeHtml(p.reference) + '</div>' : '') +
+        (p.notes ? '<div class="muted small">' + escapeHtml(p.notes) + '</div>' : '');
+      const items = p.items || [];
+      if (tbody) tbody.innerHTML = items.length ? items.map((it) =>
+        "<tr>" +
+        "<td class=\"muted small\">" + escapeHtml(it.product_code || "") + "</td>" +
+        "<td>" + escapeHtml(it.product_name || "") + "</td>" +
+        "<td class=\"num\">" + fmtNum(it.quantity) + "</td>" +
+        "<td class=\"num\">" + fmtPrice(it.unit_cost) + "</td>" +
+        "<td class=\"num\">" + fmtPrice(it.subtotal) + "</td>" +
+        "</tr>"
+      ).join("") : '<tr><td colspan="5" class="muted">Sin ítems.</td></tr>';
+      if (total) total.textContent = "Total: " + fmtPrice(p.total_cost);
+    } catch (err) {
+      if (meta) meta.innerHTML = '<span class="muted">No se pudo cargar la compra (puede haber sido eliminada).</span>';
+    }
+  }
+
+  // Click en un link "Compra #N" de cualquiera de los historiales de stock.
+  document.addEventListener("click", (e) => {
+    const link = e.target.closest("[data-purchase-id]");
+    if (!link) return;
+    e.preventDefault();
+    openStockPurchaseModal(Number(link.dataset.purchaseId));
+  });
 
   async function loadStockMov() {
     const tbody = document.getElementById("stock-mov-tbody");
@@ -12548,7 +12605,7 @@
           "<td class=\"num muted\">" + r.qty_before + "</td>" +
           "<td class=\"num " + deltaCls + "\">" + deltaStr + "</td>" +
           "<td class=\"num\"><strong>" + r.qty_after + "</strong></td>" +
-          "<td class=\"muted small\">" + escapeHtml(r.note || "—") + "</td>" +
+          "<td class=\"muted small\">" + stockMovDetailContent(r) + "</td>" +
           "<td class=\"muted small\">" + escapeHtml(userLbl) + "</td>" +
           "</tr>";
       }).join("");

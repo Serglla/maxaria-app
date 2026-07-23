@@ -3514,6 +3514,36 @@
     </div>
   </div>
 
+  <!-- Modal de detalle de compra (se abre al clickear una fila "Compra" del
+       historial de stock). Muestra proveedor, fecha, referencia e ítems. -->
+  <div id="stock-purchase-modal" class="admin-modal" hidden style="z-index:1500">
+    <div class="admin-modal-box" style="max-width:660px">
+      <div class="admin-modal-head">
+        <strong>Compra <span id="spm-title"></span></strong>
+        <button type="button" class="admin-modal-close" data-close>✕</button>
+      </div>
+      <div id="spm-meta" style="padding:12px 20px;border-bottom:1px solid #e5e7eb;display:flex;flex-direction:column;gap:3px"></div>
+      <div style="max-height:380px;overflow-y:auto">
+        <table class="admin-table" id="spm-table">
+          <thead>
+            <tr>
+              <th>Código</th>
+              <th>Producto</th>
+              <th class="num">Cant.</th>
+              <th class="num">Costo u.</th>
+              <th class="num">Subtotal</th>
+            </tr>
+          </thead>
+          <tbody id="spm-tbody"></tbody>
+        </table>
+      </div>
+      <div class="admin-modal-foot">
+        <div id="spm-total" style="margin-right:auto;font-weight:700"></div>
+        <button type="button" class="btn" data-close>Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal de confirmación propio (reemplaza al confirm() nativo del navegador,
        que muestra el dominio "...railway.app dice" y botones no editables). -->
   <div id="confirm-modal" class="app-confirm" hidden>
@@ -3530,6 +3560,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260722b"></script>
+  <script src="/js/admin.js?v=20260722c"></script>
 </body>
 </html>
