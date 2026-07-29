@@ -3058,7 +3058,7 @@
     const q = (els.plSearch ? els.plSearch.value : "").trim().toLowerCase();
     let list = state.priceLists;
     if (q) {
-      list = list.filter((pl) => matchWords((pl.name || "") + " " + (pl.base_level || "") + " " + (pl.notes || ""), q));
+      list = list.filter((pl) => matchWords((pl.name || "") + " " + (pl.base_level || "") + " " + (pl.base_list_name || "") + " " + (pl.notes || ""), q));
     }
     if (els.plCount) els.plCount.textContent = list.length + (list.length === 1 ? " lista" : " listas");
     if (!list.length) {
@@ -3068,20 +3068,47 @@
     els.plTbody.innerHTML = list.map(plRowHtml).join("");
   }
 
+  // Opciones del select "Lista base": niveles base + otras listas (encadenadas).
+  // Values: "<nivel>" para nivel base, "list:<id>" para basarse en otra lista.
+  // excludeId evita ofrecer la propia lista (el server valida ciclos igual).
+  function plBaseOptsHtml(selectedRef, excludeId) {
+    let html = '<optgroup label="Nivel base">';
+    ["costo", "minorista", "revendedor", "mayorista", "vip", "publico"].forEach((b) => {
+      html += '<option value="' + b + '"' + (selectedRef === b ? " selected" : "") + '>' +
+        b.charAt(0).toUpperCase() + b.slice(1) + '</option>';
+    });
+    html += '</optgroup>';
+    const others = (state.priceLists || []).filter((l) => Number(l.id) !== Number(excludeId));
+    if (others.length) {
+      html += '<optgroup label="Otra lista">';
+      others.forEach((l) => {
+        const ref = "list:" + l.id;
+        html += '<option value="' + ref + '"' + (selectedRef === ref ? " selected" : "") + '>' +
+          escapeHtml(l.name) + (l.active ? "" : " (inactiva)") + '</option>';
+      });
+      html += '</optgroup>';
+    }
+    return html;
+  }
+
   function plRowHtml(pl) {
-    const baseOpts = ["costo", "minorista", "revendedor", "mayorista", "vip", "publico"].map((b) =>
-      '<option value="' + b + '"' + (pl.base_level === b ? " selected" : "") + '>' +
-        b.charAt(0).toUpperCase() + b.slice(1) +
-      '</option>'
-    ).join("");
+    const selectedRef = pl.base_list_id ? ("list:" + pl.base_list_id) : pl.base_level;
+    const baseOpts = plBaseOptsHtml(selectedRef, pl.id);
+    // Para listas encadenadas mostramos el % efectivo combinado de la cadena.
+    const effHint = pl.base_list_id && pl.effective_markup_percent != null
+      ? '<div class="muted" style="font-size:11px;white-space:nowrap">ef. ' + pl.effective_markup_percent + '% s/' + escapeHtml(pl.effective_base_level || "") + '</div>'
+      : '';
     const inUse = (pl.users_count || 0) > 0;
+    const hasDeps = (pl.dependents_count || 0) > 0;
     const delTitle = inUse
       ? "No se puede borrar: hay " + pl.users_count + " cliente(s) usando esta lista"
-      : "Borrar lista";
+      : hasDeps
+        ? "No se puede borrar: hay " + pl.dependents_count + " lista(s) basadas en esta lista"
+        : "Borrar lista";
     return '<tr data-id="' + pl.id + '"' + (pl.active ? '' : ' class="row-inactive"') + '>' +
       '<td><input class="cell-input" data-field="name" value="' + escapeHtml(pl.name) + '" /></td>' +
-      '<td><select class="cell-input" data-field="base_level">' + baseOpts + '</select></td>' +
-      '<td class="num"><input class="cell-input num" data-field="markup_percent" type="number" step="0.01" min="-90" max="95" value="' + (Number(pl.markup_percent) || 0) + '" style="width:80px;text-align:right" title="Ganancia limpia % del vendedor sobre el precio final" /></td>' +
+      '<td><select class="cell-input" data-field="base_ref" title="Nivel base u otra lista sobre la que se calcula esta lista">' + baseOpts + '</select></td>' +
+      '<td class="num"><input class="cell-input num" data-field="markup_percent" type="number" step="0.01" min="-90" max="95" value="' + (Number(pl.markup_percent) || 0) + '" style="width:80px;text-align:right" title="Ganancia limpia % del vendedor sobre el precio final (puede ser negativa, ej: -2 para vender 2% más barato que la base)" />' + effHint + '</td>' +
       '<td><label class="cell-toggle">' +
         '<input type="checkbox" data-field="active"' + (pl.active ? " checked" : "") + ' /><span></span></label></td>' +
       '<td class="num muted">' + (pl.users_count || 0) + '</td>' +
@@ -3089,7 +3116,7 @@
       '<td>' +
         '<button class="btn btn-small" data-act="pl-preview" data-id="' + pl.id + '" type="button" title="Ver precios calculados">Preview</button> ' +
         '<button class="btn btn-small btn-danger" data-act="pl-delete" data-id="' + pl.id + '" type="button"' +
-          (inUse ? ' disabled' : '') + ' title="' + escapeHtml(delTitle) + '">Borrar</button>' +
+          ((inUse || hasDeps) ? ' disabled' : '') + ' title="' + escapeHtml(delTitle) + '">Borrar</button>' +
       '</td>' +
     '</tr>';
   }
@@ -3103,17 +3130,23 @@
       if (!tr) return;
       const id = Number(tr.dataset.id);
       const field = inp.dataset.field;
-      let value;
-      if (inp.type === "checkbox") value = inp.checked ? 1 : 0;
-      else if (field === "markup_percent") value = Number(inp.value);
-      else value = inp.value;
+      let body;
+      if (field === "base_ref") {
+        // "list:<id>" => basada en otra lista; "<nivel>" => nivel base (limpia el padre)
+        const v = String(inp.value || "");
+        body = v.indexOf("list:") === 0
+          ? { base_list_id: Number(v.slice(5)) }
+          : { base_level: v, base_list_id: null };
+      } else if (inp.type === "checkbox") body = { [field]: inp.checked ? 1 : 0 };
+      else if (field === "markup_percent") body = { [field]: Number(inp.value) };
+      else body = { [field]: inp.value };
 
       inp.classList.add("saving");
       try {
         const out = await api("/api/admin/price-lists/" + id, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ [field]: value }),
+          body: JSON.stringify(body),
         });
         const idx = state.priceLists.findIndex((x) => x.id === id);
         if (idx >= 0) state.priceLists[idx] = out.price_list;
@@ -3123,12 +3156,16 @@
         if (field === "active") tr.classList.toggle("row-inactive", !out.price_list.active);
         // Invalidar la cache de la tabla de usuarios para que se vea el nombre nuevo
         state.usersLoaded = false;
+        // Cambiar base o % afecta el % efectivo de las listas basadas en esta:
+        // recargamos para que los hints "ef. X%" queden al día.
+        if (field === "base_ref" || field === "markup_percent") loadPriceLists();
       } catch (err) {
         inp.classList.remove("saving");
         inp.classList.add("error");
         const orig = state.priceLists.find((x) => x.id === id);
         if (orig) {
           if (inp.type === "checkbox") inp.checked = !!orig.active;
+          else if (field === "base_ref") inp.value = orig.base_list_id ? ("list:" + orig.base_list_id) : orig.base_level;
           else inp.value = orig[field] != null ? orig[field] : "";
         }
         showToast("Error: " + err.message, "err");
@@ -3184,8 +3221,14 @@
     overlay.innerHTML =
       '<div class="admin-modal-box" style="max-width:680px">' +
         '<h3>Preview · ' + escapeHtml(list.name || "") + '</h3>' +
-        '<p class="muted small">Base: <strong>' + escapeHtml(list.base_level || "") +
-          '</strong> · Ganancia: <strong>' + (Number(list.markup_percent) || 0) + '%</strong>' +
+        '<p class="muted small">Base: <strong>' +
+          escapeHtml(list.chain && list.chain.length > 1
+            ? list.chain.slice(1).join(" → ") + " (raíz: " + (list.effective_base_level || list.base_level || "") + ")"
+            : (list.base_level || "")) +
+          '</strong> · Ganancia propia: <strong>' + (Number(list.markup_percent) || 0) + '%</strong>' +
+          (list.chain && list.chain.length > 1
+            ? ' · Efectiva de la cadena: <strong>' + (list.effective_markup_percent != null ? list.effective_markup_percent : "?") + '%</strong>'
+            : '') +
           ' · Mostrando hasta 30 productos.</p>' +
         '<div class="admin-table-wrap" style="max-height:60vh;overflow:auto">' +
           '<table class="admin-table">' +
@@ -3209,6 +3252,9 @@
   if (els.plCreateBtn) {
     els.plCreateBtn.addEventListener("click", () => {
       if (els.plCreateForm) els.plCreateForm.reset();
+      // Rellenar el select de base con niveles + listas existentes (encadenables)
+      const baseSel = els.plCreateForm ? els.plCreateForm.querySelector('[name="base_ref"]') : null;
+      if (baseSel) baseSel.innerHTML = plBaseOptsHtml("mayorista", null);
       if (els.plCreateMsg) els.plCreateMsg.textContent = "";
       if (els.plCreateModal) els.plCreateModal.hidden = false;
       setTimeout(() => { if (els.plCreateForm) els.plCreateForm.querySelector('[name="name"]').focus(); }, 50);
@@ -3219,12 +3265,15 @@
     els.plCreateForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(els.plCreateForm);
+      const baseRef = String(fd.get("base_ref") || "");
       const body = {
         name: fd.get("name"),
-        base_level: fd.get("base_level"),
         markup_percent: Number(fd.get("markup_percent")) || 0,
         notes: fd.get("notes") || null,
       };
+      // "list:<id>" => basada en otra lista; "<nivel>" => nivel base clásico
+      if (baseRef.indexOf("list:") === 0) body.base_list_id = Number(baseRef.slice(5));
+      else body.base_level = baseRef;
       els.plCreateMsg.textContent = "Creando…";
       els.plCreateMsg.className = "config-msg";
       try {
@@ -4987,6 +5036,24 @@
     return Math.round(base / denom);
   }
 
+  // Resuelve la config efectiva de una lista siguiendo la cadena base_list_id
+  // (mirror server resolvePriceListConfig): columna del nivel RAIZ + % efectivo
+  // combinado: (1 - m_ef/100) = producto de (1 - m_i/100) de toda la cadena.
+  function plResolveClientCfg(pl) {
+    var divisor = 1, base = "minorista", seen = {}, cur = pl, hops = 0;
+    while (cur && !seen[cur.id] && hops < 6) {
+      seen[cur.id] = true; hops++;
+      var m = Number(cur.markup_percent) || 0;
+      var d = 1 - m / 100;
+      if (d > 0) divisor *= d;
+      base = cur.base_level || "minorista";
+      if (!cur.base_list_id) break;
+      var pid = Number(cur.base_list_id);
+      cur = (state.priceLists || []).find(function(l) { return Number(l.id) === pid; });
+    }
+    return { column: PL_BASE_COL[base] || "price_minorista", markup: 100 * (1 - divisor) };
+  }
+
   // Construye la config de precio a partir de un valor de <select>:
   //   "level:N" -> nivel base ; "list:ID" -> lista personalizada
   function orderCfgFromSel(sel) {
@@ -4995,8 +5062,8 @@
       var id = Number(sel.slice(5));
       var pl = (state.priceLists || []).find(function(l) { return l.id === id; });
       if (pl) {
-        return { sel: "list:" + pl.id, column: PL_BASE_COL[pl.base_level] || "price_minorista",
-                 markup: Number(pl.markup_percent) || 0, label: pl.name };
+        var eff = plResolveClientCfg(pl);
+        return { sel: "list:" + pl.id, column: eff.column, markup: eff.markup, label: pl.name };
       }
     }
     var lvl = sel.indexOf("level:") === 0 ? Number(sel.slice(6)) : 1;
@@ -5030,8 +5097,14 @@
     if (lists.length) {
       html += '<optgroup label="Listas personalizadas">';
       lists.forEach(function(pl) {
+        var baseDesc = pl.base_list_id
+          ? "basada en " + (pl.base_list_name || ("lista #" + pl.base_list_id))
+          : pl.base_level;
+        var mShow = pl.base_list_id && pl.effective_markup_percent != null
+          ? "ef. " + pl.effective_markup_percent
+          : (Number(pl.markup_percent) || 0);
         html += '<option value="list:' + pl.id + '">' + escapeHtml(pl.name) +
-          " (" + escapeHtml(pl.base_level) + ", gana " + (Number(pl.markup_percent) || 0) + "%)</option>";
+          " (" + escapeHtml(baseDesc) + ", gana " + mShow + "%)</option>";
       });
       html += "</optgroup>";
     }

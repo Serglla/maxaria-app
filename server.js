@@ -189,6 +189,11 @@ db.exec(
 );
 try { db.exec("ALTER TABLE users ADD COLUMN assigned_vendedor_id INTEGER REFERENCES users(id)"); } catch (_) {}
 try { db.exec("ALTER TABLE users ADD COLUMN price_list_id INTEGER REFERENCES price_lists(id)"); } catch (_) {}
+// Migracion: listas encadenadas. Una lista puede basarse en OTRA lista en vez
+// de un nivel base (ej: "SuperVip" = lista "Vip" con -2% de ganancia).
+// Si base_list_id es NULL, la lista se basa en base_level como siempre.
+// El % efectivo se combina multiplicando divisores: (1 - m1/100) * (1 - m2/100) * ...
+try { db.exec("ALTER TABLE price_lists ADD COLUMN base_list_id INTEGER REFERENCES price_lists(id)"); } catch (_) {}
 db.exec(
   "CREATE TABLE IF NOT EXISTS deliveries (" +
   "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -1252,27 +1257,96 @@ function priceColumnForBaseLevel(baseLevel) {
   return "price_" + b;
 }
 
+// Resuelve la config efectiva de una lista de precios, siguiendo la cadena de
+// listas base (price_lists.base_list_id). Devuelve:
+//   { listId, name, base_level (raiz), column, markup_percent (EFECTIVO combinado), chain }
+// o null si la lista no existe.
+// El % efectivo combina los margenes de toda la cadena en un unico equivalente:
+//   (1 - m_eff/100) = PRODUCTO de (1 - m_i/100)
+// asi TODO el codigo downstream (computeEffectivePrice, priceSqlExpr, snapshots,
+// preview, PDF) sigue funcionando sin cambios con la formula de siempre.
+// La cadena se corta ante ciclos, padres borrados o profundidad > 6; en ese caso
+// cae al base_level propio de la ultima lista alcanzada (denormalizado al guardar).
+// NOTA: los padres se siguen aunque esten inactivos (una lista "base" puede
+// existir solo como bloque de construccion); el flag active de la lista ASIGNADA
+// al cliente si se respeta (en getEffectivePriceConfig).
+function resolvePriceListConfig(listOrId) {
+  const selectSql =
+    "SELECT id, name, base_level, base_list_id, markup_percent, active FROM price_lists WHERE id = ?";
+  let row = listOrId && typeof listOrId === "object" ? listOrId : db.prepare(selectSql).get(Number(listOrId));
+  if (!row) return null;
+  // Si nos pasaron un objeto sin base_list_id (SELECT viejo), re-consultamos completo.
+  if (!("base_list_id" in row)) {
+    const full = db.prepare(selectSql).get(row.id);
+    if (full) row = full;
+  }
+  const visited = new Set();
+  const chain = [];
+  let divisor = 1;
+  let rootBase = "minorista";
+  let cur = row;
+  while (cur) {
+    if (visited.has(cur.id) || visited.size >= 6) break; // ciclo o cadena demasiado larga
+    visited.add(cur.id);
+    chain.push(cur.name);
+    const m = Number(cur.markup_percent) || 0;
+    const d = 1 - m / 100;
+    if (d > 0) divisor *= d; // margen invalido (>=100): se ignora, igual que computeEffectivePrice
+    rootBase = cur.base_level || "minorista";
+    if (!cur.base_list_id) break;
+    const parent = db.prepare(selectSql).get(Number(cur.base_list_id));
+    if (!parent) break; // padre borrado: cae al base_level denormalizado de esta lista
+    cur = parent;
+  }
+  return {
+    listId: row.id,
+    name: row.name,
+    base_level: rootBase,
+    column: priceColumnForBaseLevel(rootBase),
+    markup_percent: 100 * (1 - divisor), // % efectivo equivalente de toda la cadena
+    chain: chain,
+  };
+}
+
+// Chequeo de ciclos al guardar: si partiendo de parentId y subiendo por
+// base_list_id se llega a selfId, asignar ese padre crearia un ciclo.
+function priceListWouldCycle(parentId, selfId) {
+  let cur = Number(parentId);
+  const seen = new Set();
+  while (cur) {
+    if (cur === Number(selfId) || seen.has(cur) || seen.size > 10) return true;
+    seen.add(cur);
+    const r = db.prepare("SELECT base_list_id FROM price_lists WHERE id = ?").get(cur);
+    if (!r || !r.base_list_id) break;
+    cur = Number(r.base_list_id);
+  }
+  return false;
+}
+
 // Devuelve la "config de precios" efectiva para un cliente (level 1-4 o vendedor
 // atendiendo a un cliente). El resultado define como calcular el precio de un
 // producto para ese cliente:
 //   - Si tiene price_list_id valido: { kind: "list", column, markup_percent, listId }
-//     -> efectivo = round(products.<column> * (1 + markup_percent/100))
+//     -> efectivo = round(products.<column> / (1 - markup_percent/100))
+//     (si la lista se basa en otra lista, column y markup_percent ya vienen
+//      resueltos de toda la cadena por resolvePriceListConfig)
 //   - Si no: { kind: "level", column }
 //     -> efectivo = products.<column> directo
 // Para nivel admin/vendedor sin contexto, devolvemos config por nivel.
 function getEffectivePriceConfig(userId, level) {
   if (userId && [1, 2, 3, 4].includes(Number(level))) {
     const row = db.prepare(
-      "SELECT pl.id, pl.base_level, pl.markup_percent, pl.active" +
+      "SELECT pl.id, pl.name, pl.base_level, pl.base_list_id, pl.markup_percent, pl.active" +
       "  FROM users u JOIN price_lists pl ON pl.id = u.price_list_id" +
       "  WHERE u.id = ?"
     ).get(userId);
     if (row && row.active) {
+      const r = resolvePriceListConfig(row);
       return {
         kind: "list",
         listId: row.id,
-        column: priceColumnForBaseLevel(row.base_level),
-        markup_percent: Number(row.markup_percent) || 0,
+        column: r.column,
+        markup_percent: r.markup_percent,
       };
     }
   }
@@ -1703,16 +1777,23 @@ app.get("/api/price-options", requireVendedorOrAdmin, (req, res) => {
     { value: "base:publico",    label: "Público" },
   ];
   const lists = db.prepare(
-    "SELECT id, name, base_level, markup_percent FROM price_lists" +
+    "SELECT id, name, base_level, base_list_id, markup_percent FROM price_lists" +
     "  WHERE active = 1 ORDER BY name"
-  ).all().map((l) => ({
-    value: "list:" + l.id,
-    id: l.id,
-    name: l.name,
-    base_level: l.base_level,
-    markup_percent: Number(l.markup_percent) || 0,
-    label: l.name + " (" + l.base_level + (Number(l.markup_percent) ? " " + l.markup_percent + "%" : "") + ")",
-  }));
+  ).all().map((l) => {
+    // Si la lista se basa en otra lista, mostramos la base real y el % efectivo
+    // combinado de la cadena (mismo criterio que el resto del sistema).
+    const eff = l.base_list_id ? resolvePriceListConfig(l) : null;
+    const baseDesc = eff && eff.chain && eff.chain.length > 1 ? "basada en " + eff.chain[1] : l.base_level;
+    const mEff = eff ? Math.round(eff.markup_percent * 100) / 100 : (Number(l.markup_percent) || 0);
+    return {
+      value: "list:" + l.id,
+      id: l.id,
+      name: l.name,
+      base_level: eff ? eff.base_level : l.base_level,
+      markup_percent: mEff,
+      label: l.name + " (" + baseDesc + (mEff ? " " + mEff + "%" : "") + ")",
+    };
+  });
   res.json({ levels, lists });
 });
 
@@ -2050,15 +2131,13 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
   let cfg;
   if (level === 99 && req.query.as_list_id != null) {
     const listIdQ = Number(req.query.as_list_id);
-    const lst = db.prepare(
-      "SELECT id, base_level, markup_percent FROM price_lists WHERE id = ?"
-    ).get(listIdQ);
-    if (lst) {
+    const lstCfg = resolvePriceListConfig(listIdQ);
+    if (lstCfg) {
       cfg = {
         kind: "list",
-        listId: lst.id,
-        column: priceColumnForBaseLevel(lst.base_level),
-        markup_percent: Number(lst.markup_percent) || 0,
+        listId: lstCfg.listId,
+        column: lstCfg.column,
+        markup_percent: lstCfg.markup_percent,
       };
     }
   }
@@ -2244,15 +2323,13 @@ app.get("/api/products", requireLogin, (req, res) => {
   let overrideApplied = false;
   if (canOverride && req.query.as_list_id != null) {
     const listId = Number(req.query.as_list_id);
-    const list = db.prepare(
-      "SELECT id, base_level, markup_percent FROM price_lists WHERE id = ?"
-    ).get(listId);
-    if (list) {
+    const listCfg = resolvePriceListConfig(listId);
+    if (listCfg) {
       vendorCostCfg = {
         kind: "list",
-        listId: list.id,
-        column: priceColumnForBaseLevel(list.base_level),
-        markup_percent: Number(list.markup_percent) || 0,
+        listId: listCfg.listId,
+        column: listCfg.column,
+        markup_percent: listCfg.markup_percent,
       };
       effectiveUserId = null;
       overrideApplied = true;
@@ -4335,25 +4412,48 @@ app.post("/api/admin/import-excel", requireAdmin, excelUpload.single("file"), (r
 // Devuelve todas las listas + cantidad de clientes asignados a cada una.
 app.get("/api/admin/price-lists", requireAdmin, (req, res) => {
   const rows = db.prepare(
-    "SELECT pl.id, pl.name, pl.base_level, pl.markup_percent, pl.active, pl.notes," +
+    "SELECT pl.id, pl.name, pl.base_level, pl.base_list_id, pl.markup_percent, pl.active, pl.notes," +
     "       pl.created_at, pl.updated_at," +
-    "       (SELECT COUNT(*) FROM users u WHERE u.price_list_id = pl.id) AS users_count" +
-    "  FROM price_lists pl ORDER BY pl.active DESC, pl.name"
+    "       bl.name AS base_list_name," +
+    "       (SELECT COUNT(*) FROM users u WHERE u.price_list_id = pl.id) AS users_count," +
+    "       (SELECT COUNT(*) FROM price_lists d WHERE d.base_list_id = pl.id) AS dependents_count" +
+    "  FROM price_lists pl LEFT JOIN price_lists bl ON bl.id = pl.base_list_id" +
+    "  ORDER BY pl.active DESC, pl.name"
   ).all();
+  // % efectivo combinado de la cadena (para mostrar en el front)
+  for (const r of rows) {
+    if (r.base_list_id) {
+      const eff = resolvePriceListConfig(r);
+      r.effective_markup_percent = eff ? Math.round(eff.markup_percent * 100) / 100 : null;
+      r.effective_base_level = eff ? eff.base_level : null;
+    } else {
+      r.effective_markup_percent = Number(r.markup_percent) || 0;
+      r.effective_base_level = r.base_level;
+    }
+  }
   res.json(rows);
 });
 
 // POST /api/admin/price-lists
-// Body: { name, base_level, markup_percent, notes? }
+// Body: { name, base_level?, base_list_id?, markup_percent, notes? }
+// base_list_id != null => la lista se basa en OTRA lista (encadenada); en ese
+// caso base_level se guarda igual (denormalizado con el nivel raiz de la cadena)
+// como fallback por si el padre se borra.
 app.post("/api/admin/price-lists", requireAdmin, (req, res) => {
   const b = req.body || {};
   const name = String(b.name || "").trim().slice(0, 80);
-  const base_level = String(b.base_level || "").trim().toLowerCase();
+  let base_level = String(b.base_level || "").trim().toLowerCase();
+  const base_list_id = b.base_list_id != null && b.base_list_id !== "" ? Number(b.base_list_id) : null;
   const markup_percent = Number(b.markup_percent);
   const notes = String(b.notes || "").trim().slice(0, 300) || null;
   if (!name) return res.status(400).json({ error: "Nombre requerido" });
-  if (!PRICE_LIST_BASE_LEVELS.includes(base_level))
+  if (base_list_id) {
+    const parentCfg = resolvePriceListConfig(base_list_id);
+    if (!parentCfg) return res.status(400).json({ error: "La lista base elegida no existe" });
+    base_level = parentCfg.base_level; // fallback denormalizado (nivel raiz de la cadena)
+  } else if (!PRICE_LIST_BASE_LEVELS.includes(base_level)) {
     return res.status(400).json({ error: "Lista base invalida. Valores: " + PRICE_LIST_BASE_LEVELS.join(", ") });
+  }
   if (!isFinite(markup_percent) || markup_percent < -90 || markup_percent > 95)
     return res.status(400).json({ error: "Ganancia invalida (debe ser un numero entre -90 y 95)" });
 
@@ -4361,13 +4461,18 @@ app.post("/api/admin/price-lists", requireAdmin, (req, res) => {
   if (exists) return res.status(409).json({ error: "Ya existe una lista con ese nombre" });
 
   const r = db.prepare(
-    "INSERT INTO price_lists (name, base_level, markup_percent, notes)" +
-    " VALUES (?, ?, ?, ?)"
-  ).run(name, base_level, markup_percent, notes);
+    "INSERT INTO price_lists (name, base_level, base_list_id, markup_percent, notes)" +
+    " VALUES (?, ?, ?, ?, ?)"
+  ).run(name, base_level, base_list_id, markup_percent, notes);
   const row = db.prepare(
-    "SELECT id, name, base_level, markup_percent, active, notes, created_at, updated_at," +
-    "       0 AS users_count FROM price_lists WHERE id = ?"
+    "SELECT pl.id, pl.name, pl.base_level, pl.base_list_id, pl.markup_percent, pl.active," +
+    "       pl.notes, pl.created_at, pl.updated_at, bl.name AS base_list_name," +
+    "       0 AS users_count, 0 AS dependents_count" +
+    "  FROM price_lists pl LEFT JOIN price_lists bl ON bl.id = pl.base_list_id WHERE pl.id = ?"
   ).get(r.lastInsertRowid);
+  const eff = resolvePriceListConfig(row);
+  row.effective_markup_percent = eff ? Math.round(eff.markup_percent * 100) / 100 : null;
+  row.effective_base_level = eff ? eff.base_level : row.base_level;
   res.json({ ok: true, price_list: row });
 });
 
@@ -4389,7 +4494,24 @@ app.patch("/api/admin/price-lists/:id", requireAdmin, (req, res) => {
     if (dup) return res.status(409).json({ error: "Ya existe otra lista con ese nombre" });
     sets.push("name = ?"); vals.push(v);
   }
-  if ("base_level" in b) {
+  // base_list_id: null/""/0 desasigna (vuelve a basarse en base_level).
+  // Se procesa ANTES que base_level porque al setear un padre pisamos
+  // base_level con el nivel raiz de la cadena (fallback denormalizado).
+  if ("base_list_id" in b) {
+    const v = b.base_list_id != null && b.base_list_id !== "" ? Number(b.base_list_id) : null;
+    if (v) {
+      if (v === id) return res.status(400).json({ error: "Una lista no puede basarse en si misma" });
+      if (priceListWouldCycle(v, id))
+        return res.status(400).json({ error: "No se puede: eso crearia un ciclo entre listas (A basada en B basada en A)" });
+      const parentCfg = resolvePriceListConfig(v);
+      if (!parentCfg) return res.status(400).json({ error: "La lista base elegida no existe" });
+      sets.push("base_list_id = ?"); vals.push(v);
+      sets.push("base_level = ?"); vals.push(parentCfg.base_level);
+    } else {
+      sets.push("base_list_id = NULL");
+    }
+  }
+  if ("base_level" in b && !(b.base_list_id != null && b.base_list_id !== "")) {
     const v = String(b.base_level || "").trim().toLowerCase();
     if (!PRICE_LIST_BASE_LEVELS.includes(v))
       return res.status(400).json({ error: "Lista base invalida" });
@@ -4413,11 +4535,15 @@ app.patch("/api/admin/price-lists/:id", requireAdmin, (req, res) => {
   db.prepare("UPDATE price_lists SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
 
   const row = db.prepare(
-    "SELECT pl.id, pl.name, pl.base_level, pl.markup_percent, pl.active, pl.notes," +
-    "       pl.created_at, pl.updated_at," +
-    "       (SELECT COUNT(*) FROM users u WHERE u.price_list_id = pl.id) AS users_count" +
-    "  FROM price_lists pl WHERE pl.id = ?"
+    "SELECT pl.id, pl.name, pl.base_level, pl.base_list_id, pl.markup_percent, pl.active, pl.notes," +
+    "       pl.created_at, pl.updated_at, bl.name AS base_list_name," +
+    "       (SELECT COUNT(*) FROM users u WHERE u.price_list_id = pl.id) AS users_count," +
+    "       (SELECT COUNT(*) FROM price_lists d WHERE d.base_list_id = pl.id) AS dependents_count" +
+    "  FROM price_lists pl LEFT JOIN price_lists bl ON bl.id = pl.base_list_id WHERE pl.id = ?"
   ).get(id);
+  const eff = resolvePriceListConfig(row);
+  row.effective_markup_percent = eff ? Math.round(eff.markup_percent * 100) / 100 : null;
+  row.effective_base_level = eff ? eff.base_level : row.base_level;
   res.json({ ok: true, price_list: row });
 });
 
@@ -4435,6 +4561,13 @@ app.delete("/api/admin/price-lists/:id", requireAdmin, (req, res) => {
              "Desasignala primero o desactiva la lista."
     });
   }
+  const deps = db.prepare("SELECT COUNT(*) AS n FROM price_lists WHERE base_list_id = ?").get(id);
+  if (deps.n > 0) {
+    return res.status(409).json({
+      error: "No se puede borrar: hay " + deps.n + " lista(s) basadas en esta lista. " +
+             "Cambiales la base primero."
+    });
+  }
   db.prepare("DELETE FROM price_lists WHERE id = ?").run(id);
   res.json({ ok: true });
 });
@@ -4446,10 +4579,16 @@ app.get("/api/admin/price-lists/:id/preview", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
   const list = db.prepare(
-    "SELECT id, name, base_level, markup_percent FROM price_lists WHERE id = ?"
+    "SELECT id, name, base_level, base_list_id, markup_percent FROM price_lists WHERE id = ?"
   ).get(id);
   if (!list) return res.status(404).json({ error: "Lista no encontrada" });
-  const col = priceColumnForBaseLevel(list.base_level);
+  // Resolver la cadena (si se basa en otra lista): columna raiz + % efectivo combinado
+  const cfg = resolvePriceListConfig(list);
+  const col = cfg.column;
+  const effMarkup = cfg.markup_percent;
+  list.effective_markup_percent = Math.round(effMarkup * 100) / 100;
+  list.effective_base_level = cfg.base_level;
+  list.chain = cfg.chain; // nombres de la cadena, de esta lista hacia la raiz
   const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
   const products = db.prepare(
     "SELECT p.id, p.code, p.name, p." + col + " AS base_price," +
@@ -4460,7 +4599,7 @@ app.get("/api/admin/price-lists/:id/preview", requireAdmin, (req, res) => {
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  WHERE p.active = 1 AND p.stock > 0" +
     "  ORDER BY c.sort_order, c.name, p.name LIMIT ?"
-  ).all(Number(list.markup_percent) || 0, Number(list.markup_percent) || 0, limit);
+  ).all(effMarkup, effMarkup, limit);
   res.json({ list: list, products: products });
 });
 
@@ -7608,9 +7747,9 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
     const cname = cu.full_name || cu.username || ("Cliente #" + cu.id);
     if (cfg.kind === "list") {
       markup = Number(cfg.markup_percent) || 0;
-      const li = db.prepare("SELECT name, base_level FROM price_lists WHERE id = ?").get(cfg.listId);
-      priceLabel = cname + " (" + ((li && li.name) || "lista") + ")";
-      chgBaseLevel = (li && li.base_level) || "minorista";
+      const liCfg = resolvePriceListConfig(cfg.listId);
+      priceLabel = cname + " (" + ((liCfg && liCfg.name) || "lista") + ")";
+      chgBaseLevel = (liCfg && liCfg.base_level) || "minorista"; // nivel RAIZ de la cadena
     } else {
       const lk = lvlNames[cu.level] || "minorista";
       priceLabel = cname + " (" + lk.charAt(0).toUpperCase() + lk.slice(1) + ")";
@@ -7619,10 +7758,11 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   } else if (pConf.type === "list" && pConf.listId) {
     const lst = db.prepare("SELECT * FROM price_lists WHERE id = ? AND active = 1").get(Number(pConf.listId));
     if (!lst) return res.status(400).json({ error: "Lista de precios no encontrada o inactiva" });
-    priceCol = priceColumnForBaseLevel(lst.base_level);
-    markup = Number(lst.markup_percent) || 0;
+    const lstCfg = resolvePriceListConfig(lst); // resuelve cadena si se basa en otra lista
+    priceCol = lstCfg.column;
+    markup = lstCfg.markup_percent;
     priceLabel = lst.name;
-    chgBaseLevel = lst.base_level || "minorista";
+    chgBaseLevel = lstCfg.base_level || "minorista";
   } else {
     priceCol = lvlMap[pConf.level] || "price_minorista";
     const lk = pConf.level || "minorista";

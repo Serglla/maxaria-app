@@ -1519,6 +1519,20 @@ Pedido de Sergio: poder ver, por producto, cuándo se le hizo una compra, cuánd
 
 **Pendiente**: `git add/commit/push` + deploy Railway (en disco local). Como el log es nuevo desde hoy, los movimientos de stock ANTERIORES a este deploy no van a aparecer — el historial arranca a partir de ahora (mismo criterio que `cost_changes`, que también solo mide hacia adelante).
 
+### Listas de precios encadenadas — basadas en otra lista (29 julio 2026 — `admin.js?v=20260729a`)
+
+Pedido de Sergio: crear una lista basada en OTRA lista con un % menor (ej: "SuperVip" = lista Vip con −2%). Decisiones (AskUserQuestion): base = **otra lista personalizada** (encadenable), % con la **fórmula de ganancia actual** (no descuento directo: −2% → precio_padre / 1.02).
+
+**Schema** (migración idempotente junto a las de price_lists): `price_lists.base_list_id INTEGER REFERENCES price_lists(id)`. NULL = se basa en `base_level` como siempre. Al guardar con base_list_id, `base_level` se pisa con el **nivel raíz** de la cadena (denormalizado, fallback si el padre se borra).
+
+**Diseño clave — % efectivo combinado**: `resolvePriceListConfig(listOrId)` (server.js, junto a getEffectivePriceConfig) sube por la cadena y devuelve `{column (nivel raíz), markup_percent EFECTIVO, base_level raíz, chain}` donde `(1 − m_ef/100) = Π(1 − m_i/100)`. Así TODO el downstream (computeEffectivePrice, priceSqlExpr, snapshots vendedor_cost_unit, comisiones, preview, PDF, ver-cambios) sigue intacto con la fórmula de siempre — solo cambió cómo se construye la config. Nota: un solo redondeo al final (no redondea por eslabón; diferencia máx $1 vs redondear en cada paso). Los padres se siguen aunque estén **inactivos** (el active solo gobierna la lista asignada al cliente); la cadena corta ante ciclo/padre borrado/profundidad>6 y cae al base_level propio.
+
+**Server**: `getEffectivePriceConfig` usa el resolutor; también los as_list_id de `/api/products` y `/api/price-changes`, el preview, el catálogo PDF (priceCol/markup/chgBaseLevel = raíz) y `/api/price-options` (label "basada en X" + % efectivo). `priceListWouldCycle(parentId, selfId)` valida ciclos. POST/PATCH `/api/admin/price-lists` aceptan `base_list_id` (null desasigna; 400 si ciclo o basarse en sí misma; base_level explícito limpia el padre). GET devuelve `base_list_id`, `base_list_name`, `dependents_count`, `effective_markup_percent`, `effective_base_level`. DELETE: 409 si hay listas basadas en ella (además del check de clientes).
+
+**Frontend (`admin.js` + `admin.html`)**: el select "Lista base" (tabla inline y modal Nueva lista) ahora tiene optgroups Nivel base / **Otra lista** (values `"<nivel>"` / `"list:<id>"`, data-field `base_ref`, decodifica al guardar; excluye la propia lista). La celda Ganancia muestra debajo "ef. X% s/<nivel>" para encadenadas; guardar base o % recarga la tabla (los ef. de las dependientes cambian). Preview muestra la cadena ("SuperVip → Vip") + % efectivo. `plResolveClientCfg(pl)` (mirror del resolutor) en los helpers de pedidos: `orderCfgFromSel` resuelve la cadena para nuevo pedido/edición de items; `fillOrderPriceListSelect` etiqueta "basada en X, gana ef. Y%". `priceListOptsHtml` (dead code) no se tocó.
+
+**Verificación**: `node --check` OK en server.js y admin.js (mount NO stale). Resolutor + ciclos testeados aislados en /tmp con db stub (13 asserts: simple, encadenada −2% → $1000 base da Vip $1111 / SuperVip $1089, cadena de 3, padre borrado, ciclo en datos no cuelga, wouldCycle directo/indirecto). Migración validada sobre copia de la DB. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

@@ -1343,11 +1343,13 @@
         <button class="btn btn-primary" id="pl-create-btn" type="button">+ Nueva lista</button>
       </div>
       <p class="muted small" style="margin: 4px 0 12px 0">
-        Cada lista parte de una lista base (Costo, Minorista, Revendedor, Mayorista, VIP) y le aplica un % de
-        <strong>ganancia limpia del vendedor</strong> sobre el precio final.
+        Cada lista parte de una base —un nivel (Costo, Minorista, Revendedor, Mayorista, VIP) <strong>u otra lista</strong>—
+        y le aplica un % de <strong>ganancia limpia del vendedor</strong> sobre el precio final.
         Luego se asigna a un cliente desde la pestaña <strong>Usuarios</strong> (columna "Lista de precios").
         El precio que ve el cliente es <code>base / (1 − ganancia/100)</code>, redondeado, de modo que
         <em>precio_venta − ganancia% = precio_base</em>. Ej: base $1000 con 10% → vende a $1111 (gana $111 limpios).
+        Con base en otra lista, el % se aplica sobre el precio de esa lista (puede ser negativo, ej: "SuperVip" = lista Vip con −2%);
+        la columna Ganancia muestra debajo el % <em>efectivo</em> combinado de la cadena.
       </p>
       <div class="admin-table-wrap">
         <table class="admin-table" id="pl-table">
@@ -1376,8 +1378,8 @@
           <label>Nombre <span class="muted">(ej: "Vendedor Norte 15%")</span>
             <input type="text" name="name" required maxlength="80" autocomplete="off" />
           </label>
-          <label>Lista base
-            <select name="base_level" required>
+          <label>Lista base <span class="muted">(un nivel, u otra lista para encadenar)</span>
+            <select name="base_ref" required>
               <option value="costo">Costo</option>
               <option value="minorista">Minorista</option>
               <option value="revendedor">Revendedor</option>
@@ -1386,7 +1388,7 @@
               <option value="publico">Público</option>
             </select>
           </label>
-          <label>Ganancia % <span class="muted">(ganancia limpia del vendedor sobre el precio final. Ej: 10 → vendés a base/0.90)</span>
+          <label>Ganancia % <span class="muted">(ganancia limpia sobre el precio final. Ej: 10 → vendés a base/0.90. Puede ser negativa: −2 sobre otra lista = 2% de descuento sobre esa lista)</span>
             <input type="number" name="markup_percent" required step="0.01" min="-90" max="95" value="0" />
           </label>
           <label>Notas <span class="muted">(opcional)</span>
@@ -3560,6 +3562,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260722c"></script>
+  <script src="/js/admin.js?v=20260729a"></script>
 </body>
 </html>
