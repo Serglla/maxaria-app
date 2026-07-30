@@ -1533,6 +1533,10 @@ Pedido de Sergio: crear una lista basada en OTRA lista con un % menor (ej: "Supe
 
 **Verificación**: `node --check` OK en server.js y admin.js (mount NO stale). Resolutor + ciclos testeados aislados en /tmp con db stub (13 asserts: simple, encadenada −2% → $1000 base da Vip $1111 / SuperVip $1089, cadena de 3, padre borrado, ciclo en datos no cuelga, wouldCycle directo/indirecto). Migración validada sobre copia de la DB. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
 
+### Fix panel de notificaciones cortado en mobile (30 julio 2026 — `styles.css?v=20260730a`)
+
+Sergio reportó (captura de celular) que el dropdown de la campana 🔔 del admin se salía de pantalla por la izquierda. Causa: `.notif-panel` es `position:absolute; right:0; width:360px` anclado a `.notif-wrap` (la campana), que en mobile no está pegada al borde derecho → el panel desborda a la izquierda. Fix: media query `@media (max-width: 720px)` (mismo breakpoint mobile del admin) que lo pasa a `position: fixed; top:58px; left:10px; right:10px; width:auto; max-height: calc(100dvh - 74px)` — ocupa el ancho del viewport debajo del topbar (48px). El topbar es `sticky` sin transforms, así que `fixed` funciona sin sorpresas. Solo admin usa el panel (index/ventas no) → cache busting bumpeado solo en `admin.html`. Pendiente: `git add/commit/push` + deploy Railway.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

@@ -5815,6 +5815,20 @@ html.in-modal .ventas-wrap {
   color: #0f172a;
 }
 .notif-panel[hidden] { display: none; }
+/* Mobile: anclado a la campana se sale de pantalla por la izquierda →
+   fijo a lo ancho del viewport, debajo del topbar (48px + margen) */
+@media (max-width: 720px) {
+  .notif-panel {
+    position: fixed;
+    top: 58px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-width: none;
+    max-height: calc(100vh - 74px);
+    max-height: calc(100dvh - 74px);
+  }
+}
 .notif-panel-head {
   display: flex;
   align-items: center;
