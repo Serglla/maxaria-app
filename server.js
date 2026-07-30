@@ -3739,6 +3739,7 @@ app.delete("/api/admin/products/:id", requireAdmin, (req, res) => {
 // campos a tocar (el front ya computó %/sumar-restar por producto).
 app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
   const patches = Array.isArray((req.body || {}).patches) ? req.body.patches : [];
+  const bulkNote = (req.body || {}).note || null; // nota para el historial de stock
   if (!patches.length) return res.status(400).json({ error: "Sin cambios para aplicar" });
   if (patches.length > 5000) return res.status(400).json({ error: "Demasiados productos" });
 
@@ -3772,6 +3773,12 @@ app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
       const costBefore = touchesCost
         ? db.prepare("SELECT cost, stock FROM products WHERE id = ?").get(id)
         : null;
+      // Si el patch toca stock, snapshot para dejarlo en el historial de stock
+      // como ajuste manual (igual que el PATCH individual).
+      const touchesStock = cols.includes("stock");
+      const stockBefore = touchesStock
+        ? (db.prepare("SELECT stock FROM products WHERE id = ?").get(id) || {}).stock
+        : null;
       const sets = cols.map((c) => c + " = ?");
       sets.push("updated_at = datetime('now')");
       vals.push(id);
@@ -3790,6 +3797,14 @@ app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
             if (touchesCost && costBefore) {
               const costAfter = db.prepare("SELECT cost FROM products WHERE id = ?").get(id);
               logCostChange(id, costBefore.cost, costAfter.cost, "manual", null, costBefore.stock);
+            }
+            if (touchesStock && stockBefore != null) {
+              const stockAfter = (db.prepare("SELECT stock FROM products WHERE id = ?").get(id) || {}).stock;
+              logStockMovement(
+                id, "ajuste", Math.round(Number(stockAfter) - Number(stockBefore)), null,
+                String(bulkNote || "Edición masiva desde la tabla de productos").slice(0, 200),
+                req.session.userId
+              );
             }
           } catch (_) {}
         } else failed++;

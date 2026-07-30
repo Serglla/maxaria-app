@@ -67,6 +67,11 @@
     prodTable: document.getElementById("prod-table"),
     prodHeaders: document.querySelectorAll('#prod-table thead th.sortable'),
     selectBtn:  document.getElementById("prod-select-btn"),
+    editBtn:    document.getElementById("prod-edit-btn"),
+    editBar:    document.getElementById("prod-edit-bar"),
+    editCount:  document.getElementById("prod-edit-count"),
+    editSave:   document.getElementById("prod-edit-save"),
+    editCancel: document.getElementById("prod-edit-cancel"),
     selBar:     document.getElementById("prod-sel-bar"),
     selMenuBtn: document.getElementById("prod-sel-menu-btn"),
     selCount:   document.getElementById("prod-sel-count"),
@@ -529,6 +534,11 @@
     // "minorista" (default) | "publico" | "mayorista" | "revendedor" | "vip" |
     // "costo" | "todos".
     priceView: "minorista",
+    // Modo edición de la tabla (botón "✏️ Editar tabla"): las filas visibles se
+    // vuelven editables (nombre, categoría, costo, stock, activo) y los cambios
+    // se acumulan en editDirty (id -> {campo: valor}) hasta apretar Guardar.
+    editMode: false,
+    editDirty: new Map(),
     // Info de la DB (path, ephemeral, backups, etc). Se llena en checkDbInfo().
     dbInfo: null,
     isAdmin: false, // true si el usuario logueado es nivel 99
@@ -4636,7 +4646,37 @@
     return '<span class="cp-line"><span class="cp-lbl">' + mm[0] + '</span><span class="cp-val">$' + fmtPriceNum(p[mm[1]]) + '</span></span>';
   }
 
+  // ---------- Modo edición de tabla (botón "✏️ Editar tabla") ----------
+  // Valor vigente de un campo: el editado (pendiente de guardar) o el original.
+  function editVal(p, field) {
+    const d = state.editDirty.get(p.id);
+    return (d && field in d) ? d[field] : p[field];
+  }
+  // Celdas editables de la fila (solo en modo edición).
+  function editCellName(p) {
+    return '<td class="cell-name cell-edit" data-label="Nombre"><input type="text" class="tbl-edit tbl-edit-name" data-id="' + p.id +
+      '" data-field="name" value="' + escapeHtml(String(editVal(p, "name") || "")) + '" maxlength="200"></td>';
+  }
+  function editCellCat(p) {
+    const cur = editVal(p, "category_id");
+    const opts = (state.allCategories || [])
+      .map((c) => '<option value="' + c.id + '"' + (Number(cur) === Number(c.id) ? " selected" : "") + '>' + escapeHtml(c.name) + '</option>')
+      .join("");
+    return '<td class="cell-cat cell-edit" data-label="Categoría"><select class="tbl-edit tbl-edit-cat" data-id="' + p.id + '" data-field="category_id">' +
+      '<option value=""' + (cur == null || cur === "" ? " selected" : "") + '>— sin categoría —</option>' + opts + '</select></td>';
+  }
+  function editCellNum(p, field, cls) {
+    return '<td class="num cell-edit ' + (cls || "") + '" data-label="' + (field === "stock" ? "Stock" : "Costo") +
+      '"><input type="number" class="tbl-edit tbl-edit-num" data-id="' + p.id +
+      '" data-field="' + field + '" value="' + (Number(editVal(p, field)) || 0) + '" min="0" step="' + (field === "stock" ? "1" : "0.01") + '"></td>';
+  }
+  function editCellActive(p) {
+    return '<td class="cell-activo cell-edit" data-label="Activo"><input type="checkbox" class="tbl-edit tbl-edit-chk" data-id="' + p.id +
+      '" data-field="active"' + (editVal(p, "active") ? " checked" : "") + '></td>';
+  }
+
   function rowHtml(p) {
+    if (state.editMode) return rowHtmlEdit(p);
     const imgSrc = p.image_url ? escapeHtml(p.image_url) : "";
     const imgThumb = imgSrc
       ? '<img src="' + imgSrc + '" alt="" class="prod-thumb" />'
@@ -4677,9 +4717,41 @@
     '</tr>';
   }
 
+  // Fila en modo edición: mismas columnas que rowHtml (para que el thead calce)
+  // pero con inputs en nombre, categoría, costo, stock y activo. Los precios y
+  // el resto quedan de solo lectura (se editan en el modal del producto).
+  function rowHtmlEdit(p) {
+    const imgSrc = p.image_url ? escapeHtml(p.image_url) : "";
+    const imgThumb = imgSrc
+      ? '<img src="' + imgSrc + '" alt="" class="prod-thumb" />'
+      : '<span class="prod-thumb-empty" title="Sin imagen">📷</span>';
+    const dirty = state.editDirty.has(p.id);
+    return '<tr data-id="' + p.id + '" class="prod-row prod-row-edit' + (dirty ? " prod-row-dirty" : "") + '">' +
+      '<td class="col-img"><button class="prod-img-btn" type="button" data-act="edit-img" data-id="' + p.id + '" data-name="' + escapeHtml(p.name) + '" title="Cambiar imagen">' + imgThumb + '</button></td>' +
+      '<td class="cell-code">' + escapeHtml(p.code || "") + '</td>' +
+      editCellName(p) +
+      editCellCat(p) +
+      editCellNum(p, "stock", "cell-stock") +
+      editCellNum(p, "cost", "cell-money") +
+      moneyCell(p, "price_vip") +
+      moneyCell(p, "price_revendedor") +
+      moneyCell(p, "price_mayorista") +
+      moneyCell(p, "price_minorista") +
+      moneyCell(p, "price_publico") +
+      (curListCfg
+        ? '<td class="num cell-money cell-listprice"><strong>' +
+          fmtPriceNum(priceViewListPrice(p, curListCfg)) + '</strong></td>'
+        : "") +
+      editCellActive(p) +
+      '<td class="num muted cell-bulto">' + (p.units_per_bulto > 1 && p.pack_unit !== "unidad" ? p.units_per_bulto + " u/" + (p.pack_unit === "caja" ? "caja" : "bulto") : "—") + '</td>' +
+      '<td class="cell-adj">' + (dirty ? '<button class="btn btn-small" type="button" data-act="edit-undo" data-id="' + p.id + '" title="Deshacer los cambios de esta fila">↺</button>' : "") + '</td>' +
+      '<td class="cell-cardprice">' + cardPriceHtml(p) + '</td>' +
+    '</tr>';
+  }
+
   // Doble click en fila (desktop) → abrir modal de edición
   els.prodTbody.addEventListener("dblclick", (e) => {
-    if (state.selectMode) return; // en modo selección no se abre el modal
+    if (state.selectMode || state.editMode) return; // en selección/edición no se abre el modal
     const btn = e.target.closest("button");
     if (btn) return; // no abrir si hicieron doble click en un botón
     const tr = e.target.closest("tr[data-id]");
@@ -4692,12 +4764,141 @@
   // del modo selección; ignora toques en botones (± / foto) y en el checkbox.
   const IS_MOBILE = () => window.matchMedia("(max-width: 640px)").matches;
   els.prodTbody.addEventListener("click", (e) => {
-    if (!IS_MOBILE() || state.selectMode) return;
+    if (!IS_MOBILE() || state.selectMode || state.editMode) return;
     if (e.target.closest("button") || e.target.closest("input")) return;
     const tr = e.target.closest("tr[data-id]");
     if (!tr) return;
     const p = state.products.find((x) => x.id === Number(tr.dataset.id));
     if (p) openEditProdModal(p);
+  });
+
+  // ---------- Modo edición de tabla: captura de cambios y guardado único ----------
+  // Normaliza el valor de un input al tipo del campo, para comparar contra el
+  // producto original y no marcar como "cambiado" algo que quedó igual.
+  function editParse(field, el) {
+    if (field === "active") return el.checked ? 1 : 0;
+    if (field === "category_id") return el.value === "" ? null : Number(el.value);
+    if (field === "name") return el.value.trim().slice(0, 200);
+    const n = Number(el.value);
+    if (!isFinite(n) || n < 0) return 0;
+    return field === "stock" ? Math.round(n) : round2(n);
+  }
+  function editSameAsOriginal(p, field, val) {
+    const orig = p[field];
+    if (field === "category_id") return Number(orig || 0) === Number(val || 0);
+    if (field === "active") return (orig ? 1 : 0) === val;
+    if (field === "name") return String(orig || "").trim() === val;
+    return Math.abs((Number(orig) || 0) - (Number(val) || 0)) < 0.005;
+  }
+  function updateEditCount() {
+    const rows = state.editDirty.size;
+    let fields = 0;
+    state.editDirty.forEach((d) => { fields += Object.keys(d).length; });
+    if (els.editCount) {
+      els.editCount.textContent = rows
+        ? rows + (rows === 1 ? " producto con cambios" : " productos con cambios") + " · " + fields + (fields === 1 ? " campo" : " campos")
+        : "Sin cambios";
+    }
+    if (els.editSave) els.editSave.disabled = rows === 0;
+  }
+  // Un solo handler para inputs de texto/número y otro para selects/checkbox.
+  function onEditInput(e) {
+    const el = e.target.closest(".tbl-edit");
+    if (!el || !state.editMode) return;
+    const id = Number(el.dataset.id);
+    const field = el.dataset.field;
+    const p = state.products.find((x) => x.id === id);
+    if (!p || !field) return;
+    const val = editParse(field, el);
+    const d = state.editDirty.get(id) || {};
+    if (editSameAsOriginal(p, field, val)) delete d[field];
+    else d[field] = val;
+    if (Object.keys(d).length) state.editDirty.set(id, d);
+    else state.editDirty.delete(id);
+    const tr = el.closest("tr");
+    if (tr) tr.classList.toggle("prod-row-dirty", state.editDirty.has(id));
+    updateEditCount();
+  }
+  els.prodTbody.addEventListener("input", onEditInput);
+  els.prodTbody.addEventListener("change", onEditInput);
+  // Deshacer los cambios de una fila
+  els.prodTbody.addEventListener("click", (e) => {
+    const btn = e.target.closest('[data-act="edit-undo"]');
+    if (!btn) return;
+    state.editDirty.delete(Number(btn.dataset.id));
+    renderProducts();
+    updateEditCount();
+  });
+
+  function setEditMode(on) {
+    state.editMode = !!on;
+    if (!on) state.editDirty.clear();
+    if (els.editBar) els.editBar.hidden = !on;
+    if (els.editBtn) {
+      els.editBtn.classList.toggle("btn-tool-active", !!on);
+      els.editBtn.textContent = on ? "✏️ Editando…" : "✏️ Editar tabla";
+      els.editBtn.disabled = !!on;
+    }
+    if (els.prodTable) els.prodTable.classList.toggle("table-edit-mode", !!on);
+    if (els.selectBtn) els.selectBtn.hidden = !!on;
+    // Selección múltiple y edición no conviven: al entrar en una, salir de la otra
+    if (on && state.selectMode) {
+      state.selectMode = false;
+      state.selectedIds.clear();
+      state.showOnlySelected = false;
+      if (els.selOnly) els.selOnly.checked = false;
+      if (els.selBar) els.selBar.hidden = true;
+      syncSelectHeader();
+    }
+    updateEditCount();
+    renderProducts();
+  }
+
+  if (els.editBtn) els.editBtn.addEventListener("click", () => setEditMode(true));
+  if (els.editCancel) els.editCancel.addEventListener("click", async () => {
+    if (state.editDirty.size &&
+        !(await confirmModal({
+          title: "Descartar cambios",
+          message: "Hay " + state.editDirty.size + " producto(s) con cambios sin guardar. ¿Descartarlos?",
+          confirmText: "Descartar", cancelText: "Seguir editando", danger: true,
+        }))) return;
+    setEditMode(false);
+  });
+  if (els.editSave) els.editSave.addEventListener("click", async () => {
+    if (!state.editDirty.size) return;
+    const patches = [];
+    state.editDirty.forEach((d, id) => { patches.push(Object.assign({ id: id }, d)); });
+    const stockChanges = patches.filter((p) => "stock" in p).length;
+    const msg = "Se van a guardar cambios en " + patches.length + " producto(s)." +
+      (stockChanges ? "\n\n" + stockChanges + " con cambio de stock: queda registrado en el historial como ajuste manual." : "");
+    if (!(await confirmModal({ title: "Guardar cambios", message: msg, confirmText: "Guardar" }))) return;
+    els.editSave.disabled = true;
+    const prevText = els.editSave.textContent;
+    els.editSave.textContent = "Guardando…";
+    try {
+      const res = await api("/api/admin/products/bulk-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patches: patches, note: "Edición desde la tabla de productos" }),
+      });
+      // Reflejar en el cache local sin recargar toda la tabla
+      const catName = (id) => ((state.allCategories || []).find((c) => Number(c.id) === Number(id)) || {}).name || null;
+      state.editDirty.forEach((d, id) => {
+        [state.products, state.allProducts].forEach((arr) => {
+          const p = Array.isArray(arr) ? arr.find((x) => x.id === id) : null;
+          if (!p) return;
+          Object.assign(p, d);
+          if ("category_id" in d) p.category_name = catName(d.category_id);
+        });
+      });
+      showToast("Guardado: " + res.updated + " producto(s)" + (res.failed ? " · " + res.failed + " con error" : ""));
+      setEditMode(false);
+      applyFilters(); // re-render con los valores nuevos (y re-aplica orden/filtros)
+    } catch (err) {
+      showToast("Error al guardar: " + err.message, "err");
+      els.editSave.disabled = false;
+      els.editSave.textContent = prevText;
+    }
   });
 
   // ---------- Selección múltiple + cambios en lote ----------
@@ -4742,6 +4943,9 @@
   function setSelectMode(on) {
     state.selectMode = on;
     if (!on) { state.selectedIds.clear(); state.showOnlySelected = false; if (els.selOnly) els.selOnly.checked = false; closeSelMenu(); }
+    // Selección múltiple y edición de tabla no conviven
+    if (on && state.editMode) setEditMode(false);
+    if (els.editBtn) els.editBtn.hidden = on;
     if (els.selectBtn) els.selectBtn.hidden = on;
     if (els.selBar) els.selBar.hidden = !on;
     syncSelectHeader();

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260730a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260730c" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -370,6 +370,7 @@
         <!-- Zona 3: herramientas -->
         <div class="tb-tools">
           <button class="btn btn-tool" id="prod-select-btn" type="button" title="Seleccionar varios productos para editarlos en lote">☑️ Selección múltiple</button>
+          <button class="btn btn-tool" id="prod-edit-btn" type="button" title="Editar nombre, categoría, costo, stock y activo directamente en la tabla, y guardar todo junto">✏️ Editar tabla</button>
           <label class="btn btn-tool admin-upload">
             📥 Subir Excel
             <input type="file" id="excel-file" accept=".xlsx,.xls" hidden />
@@ -388,6 +389,16 @@
             <button class="btn btn-primary btn-small" id="prod-sel-edit" type="button" disabled>✎ Editar seleccionados</button>
             <button class="btn btn-small" id="prod-sel-costs" type="button" disabled title="Cambiar el costo de cada producto seleccionado, uno por uno">💲 Cambiar costos</button>
             <button class="btn btn-small" id="prod-sel-cancel" type="button">Cancelar</button>
+          </span>
+        </span>
+
+        <!-- Barra contextual: solo visible en modo edición de tabla -->
+        <span class="bulk-bar edit-bar" id="prod-edit-bar" hidden>
+          <strong id="prod-edit-count" style="font-size:13px">Sin cambios</strong>
+          <span class="muted" style="font-size:12px">Editá nombre, categoría, costo, stock y activo. Los cambios se guardan todos juntos.</span>
+          <span class="bulk-actions">
+            <button class="btn btn-primary btn-small" id="prod-edit-save" type="button" disabled>💾 Guardar cambios</button>
+            <button class="btn btn-small" id="prod-edit-cancel" type="button">Cancelar</button>
           </span>
         </span>
       </div>
@@ -3563,6 +3574,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260730b"></script>
+  <script src="/js/admin.js?v=20260730c"></script>
 </body>
 </html>

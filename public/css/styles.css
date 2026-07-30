@@ -2229,6 +2229,35 @@ button { font: inherit; cursor: pointer; }
 .cp-lbl { color: #9ca3af; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; margin-right: 5px; }
 .cp-val { color: #b45309; font-weight: 800; }
 
+/* ===== Modo edición de la tabla de productos ("✏️ Editar tabla") ===== */
+.btn-tool.btn-tool-active { background: #1e3a5f; border-color: #1e3a5f; color: #fff; }
+.bulk-bar.edit-bar { background: #fff7ed; border-color: #fed7aa; }
+.prod-row-edit .cell-edit { padding: 4px 6px; }
+.tbl-edit {
+  width: 100%;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 5px 7px;
+  font-size: 12.5px;
+  font-family: inherit;
+  background: #fff;
+  color: #0f172a;
+}
+.tbl-edit:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+}
+.tbl-edit-num { text-align: right; -moz-appearance: textfield; }
+.tbl-edit-num::-webkit-outer-spin-button,
+.tbl-edit-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.tbl-edit-name { min-width: 160px; }
+.tbl-edit-cat { min-width: 120px; }
+.tbl-edit-chk { width: 18px; height: 18px; cursor: pointer; }
+/* Fila con cambios sin guardar */
+.prod-row-dirty > td { background: #fffbeb !important; }
+.prod-row-dirty > td:first-child { box-shadow: inset 3px 0 0 #f59e0b; }
+
 /* Celda con los botones ± (ajustar stock) y 🕒 (historial) de cada fila */
 .cell-adj { white-space: nowrap; }
 .cell-adj .btn { margin-right: 4px; }
@@ -2302,6 +2331,34 @@ button { font: inherit; cursor: pointer; }
   }
   .prod-row.prod-selected { border-color: #2563eb; background: #eff4ff; }
   .prod-row.row-inactive { opacity: .62; }
+  /* Modo edición en mobile: la tarjeta pasa a una columna con etiqueta + campo,
+     así entran los campos que en la tarjeta normal no se muestran (costo, activo). */
+  .prod-row.prod-row-edit {
+    grid-template-columns: 1fr;
+    grid-template-areas: none;
+    row-gap: 7px;
+  }
+  .prod-row.prod-row-edit > td { grid-area: auto; display: block; }
+  .prod-row.prod-row-edit .col-img,
+  .prod-row.prod-row-edit .cell-bulto,
+  .prod-row.prod-row-edit .cell-cardprice,
+  .prod-row.prod-row-edit .cell-money:not(.cell-edit) { display: none; }
+  .prod-row.prod-row-edit .cell-edit { display: block; }
+  .prod-row.prod-row-edit .cell-edit::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .3px;
+    color: #9ca3af;
+    margin-bottom: 2px;
+  }
+  .prod-row.prod-row-edit .cell-code {
+    font-size: 11px; color: #6b7280; font-weight: 700;
+  }
+  .prod-row.prod-row-edit .tbl-edit { font-size: 16px; padding: 8px 10px; } /* 16px: evita el zoom de iOS */
+  .prod-row.prod-row-edit .tbl-edit-chk { width: 22px; height: 22px; }
   .prod-row > td { display: block; border: none; padding: 0; background: none; }
   /* columnas que no van en la tarjeta */
   .prod-row .cell-money,

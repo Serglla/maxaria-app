@@ -1569,6 +1569,25 @@ El select **Precio** de la pestaña Productos solo ofrecía los 5 niveles base +
 - La clase `pv-*` de la tabla usa `list:` → `list-` (los dos puntos rompen el selector CSS). El handler del select ya no duplica esa lógica: delega en `renderProducts()`.
 - Verificado aislado en `/tmp` con la cadena real (Suc_Leon → $3.997, BC → $3.757, niveles → columnas normales, lista inexistente → cae a normal) y `node --check` OK.
 
+### Modo edición de la tabla de Productos con guardado único (30 julio 2026 — `admin.js?v=20260730c`, `styles.css?v=20260730c`)
+
+Pedido de Sergio: un botón que permita editar los productos desde la propia tabla y **un solo botón para guardar todo**. Decisiones (AskUserQuestion): campos = **nombre, categoría, costo, stock y activo**; el cambio de stock queda registrado **como ajuste con nota automática**; se entra con un **botón "✏️ Editar tabla"** en la barra de herramientas.
+
+**Server (`server.js`)** — `POST /api/admin/products/bulk-update`:
+- Acepta `note` en el body (nota para el historial de stock, default "Edición masiva desde la tabla de productos").
+- **Gap cerrado**: el bulk-update historizaba precios (`recordManualPriceChange`) y costo (`logCostChange`) pero **no** el stock. Ahora, si el patch toca `stock`, snapshotea el valor previo y llama a `logStockMovement(id, "ajuste", delta, null, note, userId)` — mismo criterio que el PATCH individual (22 jul). Sin esto, editar stock en lote no dejaba rastro en el historial.
+
+**Frontend (`admin.html` + `admin.js` + `styles.css`)**:
+- Botón `#prod-edit-btn` ("✏️ Editar tabla") en `.tb-tools` + barra contextual `#prod-edit-bar` (clase `bulk-bar edit-bar`, ámbar) con contador de cambios, **💾 Guardar cambios** y **Cancelar**.
+- `state.editMode` + `state.editDirty` (Map `id -> {campo: valor}`). `rowHtml` deriva a **`rowHtmlEdit(p)`** cuando el modo está activo: mismas columnas (para que el thead calce) pero con inputs en nombre/categoría/costo/stock/activo; precios y empaque quedan de solo lectura (se editan en el modal del producto).
+- Captura: un handler `input`+`change` delegado en el tbody (`onEditInput`) con `editParse` (normaliza por tipo) y `editSameAsOriginal` (compara contra `state.products`) — **si el valor vuelve al original, el campo sale de editDirty** y la fila deja de estar marcada. Fila con cambios: clase `prod-row-dirty` (fondo ámbar + barra lateral) y botón **↺** para deshacer esa fila.
+- `editVal(p, field)` hace que los cambios pendientes **sobrevivan al cambio de página, orden o filtro** (el render los re-aplica desde editDirty).
+- Guardar: confirma con `confirmModal` (avisa cuántos productos tienen cambio de stock), manda UN solo POST `bulk-update` con los patches, actualiza `state.products` **y `state.allProducts`** (+ `category_name` si cambió la categoría) y sale del modo edición.
+- `setEditMode` y `setSelectMode` se excluyen mutuamente (no conviven la selección múltiple y la edición).
+- **Mobile**: la fila en modo edición deja el layout de tarjeta de 5 columnas y pasa a una columna con etiqueta arriba de cada campo (`data-label` + `::before`), mostrando también costo y activo (que la tarjeta normal oculta). Inputs a 16px para evitar el zoom de iOS.
+
+**Verificación**: `node --check` OK (server + admin.js), llaves del CSS balanceadas, lógica de detección de cambios testeada aislada en `/tmp` (7 casos: nombre con espacios = sin cambio, costo mismo valor, ida y vuelta del stock, patch final, negativo → 0, categoría vacía → null) y el guardado simulado con Python sqlite3 sobre copia de la DB (stock 206→210 deja `stock_movements` con `qty_before+delta==qty_after`, y `cost_changes` con el stock previo al cambio).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.
