@@ -1537,6 +1537,27 @@ Pedido de Sergio: crear una lista basada en OTRA lista con un % menor (ej: "Supe
 
 Sergio reportó (captura de celular) que el dropdown de la campana 🔔 del admin se salía de pantalla por la izquierda. Causa: `.notif-panel` es `position:absolute; right:0; width:360px` anclado a `.notif-wrap` (la campana), que en mobile no está pegada al borde derecho → el panel desborda a la izquierda. Fix: media query `@media (max-width: 720px)` (mismo breakpoint mobile del admin) que lo pasa a `position: fixed; top:58px; left:10px; right:10px; width:auto; max-height: calc(100dvh - 74px)` — ocupa el ancho del viewport debajo del topbar (48px). El topbar es `sticky` sin transforms, así que `fixed` funciona sin sorpresas. Solo admin usa el panel (index/ventas no) → cache busting bumpeado solo en `admin.html`. Pendiente: `git add/commit/push` + deploy Railway.
 
+### Fix comisión en listas encadenadas + snapshot faltante al facturar presupuesto (30 julio 2026)
+
+Caso real de Sergio: lista **BC** = vip con −2% (cliente grande con precio preferencial) y lista **Suc_Leon** basada en BC con 6% (las sucursales de BC, a las que Sergio les vende y por eso le paga a BC el 6% limpio). Los **precios** salían bien (3.832 vip → BC 3.757 → Suc_Leon 3.997) pero la **comisión del vendedor salía mal**: $165 (4,12%) en vez de $240 (6%).
+
+**Causa**: el snapshot `order_items.vendedor_cost_unit` se guardaba con el precio de la **raíz** de la cadena (`price_<base_level>` = vip $3.832), así que la comisión = venta − raíz = margen efectivo de TODA la cadena (4,12%), mezclando el −2% de descuento a BC con el 6% que se le paga. Lo correcto: el costo es el precio de la **lista padre** (BC $3.757) → comisión = margen **propio** del último eslabón = 6% exacto.
+
+**Cambios en `server.js`**:
+- `resolvePriceListConfig` devuelve además `own_markup_percent` (margen propio de la lista) y `parent_markup_percent` (efectivo de la cadena SIN el eslabón propio = el de la lista padre). Se calcula guardando `ownDivisor` del primer eslabón: `parentDivisor = divisor / ownDivisor`. Sin padre → 0.
+- `getEffectivePriceConfig` propaga `cost_markup_percent = parent_markup_percent` en el config `kind:"list"`.
+- Helper nuevo **`costUnitFromBase(basePrice, config)`**: `round(base / (1 − cost_markup/100))`, null si no hay lista. Con `cost_markup = 0` (lista basada en un nivel, sin encadenar) devuelve el precio base → **comportamiento idéntico al anterior** para todas las listas no encadenadas.
+- Se usa en los 3 puntos de snapshot: `POST /api/orders` (catálogo), `POST /api/admin/orders`, `PUT /api/admin/orders/:id/items`.
+- **Bug aparte encontrado y arreglado**: `POST /api/budgets/:id/invoice` insertaba los `order_items` **sin** `vendedor_cost_unit` → todo pedido facturado desde un presupuesto (`/ventas`) tenía comisión **0**. Ahora resuelve la config del cliente del presupuesto y guarda el snapshot igual que el resto (consumidor final o cliente sin lista → NULL).
+
+**Verificado** aislado en `/tmp` con la cadena real: BC (sin padre) → costo = precio vip (igual que antes); Suc_Leon → costo = precio BC, comisión **6,00%**; cadena de 3 (Nieta 5% sobre Suc_Leon) → comisión 5,00% (siempre el margen propio). 
+
+**Notas / efectos**:
+- **Pedidos viejos** de Suc_Leon conservan el snapshot mal calculado. Para corregirlos: abrir el pedido → **Editar items** → Guardar (recalcula el snapshot con la lista actual).
+- BC como **cliente** (comprando para sí, lista BC con −2%) genera comisión **negativa** (−2%) si tiene un vendedor asignado — es el descuento, no una comisión. Ya pasaba antes; si molesta, no asignarle vendedor a BC-cliente.
+- Los reportes de ventas usan `COALESCE(vendedor_cost_unit, p.cost)` como "costo": para clientes con lista, ese costo es el precio de la lista padre (antes era el de la raíz), así que la "ganancia" de esos reportes cambia de valor. Inconsistencia preexistente (mezcla costo-del-negocio con costo-del-vendedor), no se tocó.
+**Preview de listas encadenadas mejorado (mismo día — `admin.js?v=20260730a`)**: el preview mostraba "PRECIO BASE" = precio de la raíz (vip $3.832), lo que hacía parecer que el 6% no se aplicaba. Ahora, cuando la lista está encadenada, el endpoint `/api/admin/price-lists/:id/preview` devuelve además `parent_price` (precio de la lista padre, calculado con `parent_markup_percent`) + `parent_name`/`own_markup_percent`, y el modal muestra **tres columnas**: "Precio vip" (raíz, gris) · "Precio BC" (padre, gris) · "Precio cliente", con los headers rotulados por nombre real. Se agregó una línea explicativa: "La comisión del vendedor es la ganancia propia (6%): se calcula sobre el precio de BC, no sobre el de vip". Para listas NO encadenadas el preview queda idéntico (2 columnas).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

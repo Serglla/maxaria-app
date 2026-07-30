@@ -3206,11 +3206,17 @@
     // Modal simple en JS, sin estilos extra: usamos una ventana con un dialog basico.
     const list = data.list || {};
     const products = data.products || [];
+    // Lista encadenada (basada en otra lista): mostramos una columna extra con el
+    // precio de la lista PADRE, que es el costo real sobre el que se calcula la
+    // comisión del vendedor (= ganancia propia de esta lista).
+    const chained = !!(list.chain && list.chain.length > 1);
+    const rootLabel = list.effective_base_level || list.base_level || "base";
     const rows = products.map((p) =>
       '<tr>' +
         '<td>' + escapeHtml(p.code || "") + '</td>' +
         '<td>' + escapeHtml(p.name || "") + '</td>' +
         '<td class="num muted">' + fmtPrice(p.base_price) + '</td>' +
+        (chained ? '<td class="num muted">' + fmtPrice(p.parent_price) + '</td>' : '') +
         '<td class="num"><strong>' + fmtPrice(p.effective_price) + '</strong></td>' +
       '</tr>'
     ).join("");
@@ -3222,19 +3228,27 @@
       '<div class="admin-modal-box" style="max-width:680px">' +
         '<h3>Preview · ' + escapeHtml(list.name || "") + '</h3>' +
         '<p class="muted small">Base: <strong>' +
-          escapeHtml(list.chain && list.chain.length > 1
-            ? list.chain.slice(1).join(" → ") + " (raíz: " + (list.effective_base_level || list.base_level || "") + ")"
+          escapeHtml(chained
+            ? list.chain.slice(1).join(" → ") + " (raíz: " + rootLabel + ")"
             : (list.base_level || "")) +
           '</strong> · Ganancia propia: <strong>' + (Number(list.markup_percent) || 0) + '%</strong>' +
-          (list.chain && list.chain.length > 1
+          (chained
             ? ' · Efectiva de la cadena: <strong>' + (list.effective_markup_percent != null ? list.effective_markup_percent : "?") + '%</strong>'
             : '') +
           ' · Mostrando hasta 30 productos.</p>' +
+        (chained
+          ? '<p class="muted small">La comisión del vendedor es la <strong>ganancia propia</strong> (' +
+            (Number(list.markup_percent) || 0) + '%): se calcula sobre el precio de <strong>' +
+            escapeHtml(list.parent_name || list.chain[1] || "la lista base") + '</strong>, no sobre el de ' +
+            escapeHtml(rootLabel) + '.</p>'
+          : '') +
         '<div class="admin-table-wrap" style="max-height:60vh;overflow:auto">' +
           '<table class="admin-table">' +
             '<thead><tr><th>Código</th><th>Producto</th>' +
-              '<th class="num">Precio base</th><th class="num">Precio cliente</th></tr></thead>' +
-            '<tbody>' + (rows || '<tr><td colspan="4" class="muted">Sin productos</td></tr>') + '</tbody>' +
+              '<th class="num">Precio ' + escapeHtml(rootLabel) + '</th>' +
+              (chained ? '<th class="num">Precio ' + escapeHtml(list.parent_name || list.chain[1] || "base") + '</th>' : '') +
+              '<th class="num">Precio cliente</th></tr></thead>' +
+            '<tbody>' + (rows || '<tr><td colspan="' + (chained ? 5 : 4) + '" class="muted">Sin productos</td></tr>') + '</tbody>' +
           '</table>' +
         '</div>' +
         '<div class="admin-modal-foot"><button type="button" class="btn btn-primary" data-close-preview>Cerrar</button></div>' +

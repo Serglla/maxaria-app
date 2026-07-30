@@ -1283,6 +1283,7 @@ function resolvePriceListConfig(listOrId) {
   const visited = new Set();
   const chain = [];
   let divisor = 1;
+  let ownDivisor = 1; // solo el margen propio de ESTA lista (primer eslabon)
   let rootBase = "minorista";
   let cur = row;
   while (cur) {
@@ -1292,18 +1293,29 @@ function resolvePriceListConfig(listOrId) {
     const m = Number(cur.markup_percent) || 0;
     const d = 1 - m / 100;
     if (d > 0) divisor *= d; // margen invalido (>=100): se ignora, igual que computeEffectivePrice
+    if (visited.size === 1) ownDivisor = d > 0 ? d : 1;
     rootBase = cur.base_level || "minorista";
     if (!cur.base_list_id) break;
     const parent = db.prepare(selectSql).get(Number(cur.base_list_id));
     if (!parent) break; // padre borrado: cae al base_level denormalizado de esta lista
     cur = parent;
   }
+  // Margen efectivo de la cadena SIN el eslabon propio = el de la lista padre.
+  // Sirve para el snapshot del "costo del vendedor" (vendedor_cost_unit): con
+  // listas encadenadas, lo que gana el vendedor es SOLO su margen propio, no la
+  // diferencia contra la raiz. Ej: vip -> BC (-2%) -> Suc_Leon (6%): el costo de
+  // una venta a Suc_Leon es el precio de BC, asi la comision da 6% exacto.
+  // Sin padre (lista basada en un nivel) queda 0 -> costo = precio raiz (igual
+  // que antes del encadenamiento).
+  const parentDivisor = ownDivisor > 0 ? divisor / ownDivisor : divisor;
   return {
     listId: row.id,
     name: row.name,
     base_level: rootBase,
     column: priceColumnForBaseLevel(rootBase),
     markup_percent: 100 * (1 - divisor), // % efectivo equivalente de toda la cadena
+    own_markup_percent: 100 * (1 - ownDivisor), // margen propio de esta lista
+    parent_markup_percent: 100 * (1 - parentDivisor), // efectivo de la lista padre
     chain: chain,
   };
 }
@@ -1347,10 +1359,27 @@ function getEffectivePriceConfig(userId, level) {
         listId: row.id,
         column: r.column,
         markup_percent: r.markup_percent,
+        // Margen de la lista PADRE: define el costo del vendedor (ver
+        // costUnitFromBase). 0 si la lista se basa en un nivel.
+        cost_markup_percent: r.parent_markup_percent || 0,
       };
     }
   }
   return { kind: "level", column: priceColumnFor(level) };
+}
+
+// Snapshot del "costo del vendedor" (order_items.vendedor_cost_unit) para un
+// producto, dada la config de precios del cliente. Es el precio de la lista
+// PADRE (o el precio base de la raiz si la lista no esta encadenada), de modo
+// que la comision del vendedor = precio_venta - costo = su margen propio.
+// Devuelve null si el cliente no tiene lista personalizada (sin comision).
+function costUnitFromBase(basePrice, config) {
+  if (!config || config.kind !== "list") return null;
+  const p = Number(basePrice) || 0;
+  const m = Number(config.cost_markup_percent) || 0;
+  const denom = 1 - m / 100;
+  if (denom <= 0) return round2(p);
+  return round2(p / denom);
 }
 
 // Calcula el precio efectivo aplicando margen sobre venta (siempre entero).
@@ -2474,9 +2503,10 @@ app.post("/api/orders", requireLogin, (req, res) => {
     if (!p || p.stock <= 0) continue;
     const unitPrice = computeEffectivePrice(p.base_price, cfg);
     const subtotal = round2(unitPrice * qty);
-    // Si el cliente tenia lista personalizada, base_price es el "costo" del vendedor.
-    // Si no, el costo es el mismo precio que el de venta -> guardamos NULL.
-    const costUnit = cfg.kind === "list" ? round2(Number(p.base_price) || 0) : null;
+    // Si el cliente tenia lista personalizada, el "costo" del vendedor es el
+    // precio de la lista padre (o el base de la raiz si no esta encadenada).
+    // Si no hay lista, el costo es el mismo precio de venta -> guardamos NULL.
+    const costUnit = costUnitFromBase(p.base_price, cfg);
     total += subtotal;
     lines.push({
       product_id: p.id, product_code: p.code, product_name: p.name,
@@ -3209,7 +3239,7 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
       let costUnit = null;
       if (getCostPrice && it.product_id) {
         const cp = getCostPrice.get(it.product_id);
-        if (cp && cp.base_price != null) costUnit = Math.round(Number(cp.base_price));
+        if (cp && cp.base_price != null) costUnit = Math.round(costUnitFromBase(cp.base_price, orderCfg));
       }
       ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, disc, sub, costUnit);
       if (it.product_id) {
@@ -3308,7 +3338,7 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     let costUnit = null;
     if (getCostPrice) {
       const cp = getCostPrice.get(productId);
-      costUnit = cp ? round2(Number(cp.base_price) || 0) : null;
+      costUnit = cp ? costUnitFromBase(cp.base_price, cfg) : null;
     }
     total += subtotal;
     lines.push({ product_id: productId, product_code: productCode, product_name: productName,
@@ -4589,9 +4619,20 @@ app.get("/api/admin/price-lists/:id/preview", requireAdmin, (req, res) => {
   list.effective_markup_percent = Math.round(effMarkup * 100) / 100;
   list.effective_base_level = cfg.base_level;
   list.chain = cfg.chain; // nombres de la cadena, de esta lista hacia la raiz
+  // Si la lista esta encadenada, el "costo" real de la venta es el precio de la
+  // lista PADRE (no el de la raiz): sobre ese precio se calcula la comision del
+  // vendedor (= ganancia propia de esta lista). Lo devolvemos como parent_price
+  // para que el preview lo muestre y no confunda.
+  const parentMarkup = cfg.parent_markup_percent || 0;
+  list.parent_name = (cfg.chain && cfg.chain.length > 1) ? cfg.chain[1] : null;
+  list.parent_markup_percent = Math.round(parentMarkup * 100) / 100;
+  list.own_markup_percent = Math.round((cfg.own_markup_percent || 0) * 100) / 100;
   const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
   const products = db.prepare(
     "SELECT p.id, p.code, p.name, p." + col + " AS base_price," +
+    "       CASE WHEN (1 - ? / 100.0) > 0" +
+    "            THEN CAST(ROUND(p." + col + " / (1 - ? / 100.0)) AS INTEGER)" +
+    "            ELSE p." + col + " END AS parent_price," +
     "       CASE WHEN (1 - ? / 100.0) > 0" +
     "            THEN CAST(ROUND(p." + col + " / (1 - ? / 100.0)) AS INTEGER)" +
     "            ELSE p." + col + " END AS effective_price," +
@@ -4599,7 +4640,7 @@ app.get("/api/admin/price-lists/:id/preview", requireAdmin, (req, res) => {
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  WHERE p.active = 1 AND p.stock > 0" +
     "  ORDER BY c.sort_order, c.name, p.name LIMIT ?"
-  ).all(effMarkup, effMarkup, limit);
+  ).all(parentMarkup, parentMarkup, effMarkup, effMarkup, limit);
   res.json({ list: list, products: products });
 });
 
@@ -8424,6 +8465,19 @@ app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, requireSectionForAd
   const userIdForOrder = budget.client_id || budget.vendedor_id || u.id;
   const debitAccount = !!budget.client_id;
 
+  // Snapshot del costo del vendedor (vendedor_cost_unit) para poder calcular su
+  // comision, igual que en POST /api/orders y PUT /api/admin/orders/:id/items.
+  // Sin cliente real (consumidor final) o sin lista personalizada -> NULL.
+  const cliLevelForCost = budget.client_id
+    ? (db.prepare("SELECT level FROM users WHERE id = ?").get(budget.client_id) || {}).level || 1
+    : null;
+  const costCfg = budget.client_id
+    ? getEffectivePriceConfig(budget.client_id, cliLevelForCost)
+    : { kind: "level" };
+  const getCostPriceInv = costCfg.kind === "list"
+    ? db.prepare("SELECT " + costCfg.column + " AS base_price FROM products WHERE id = ?")
+    : null;
+
   let orderId;
   try {
     db.transaction(() => {
@@ -8444,12 +8498,17 @@ app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, requireSectionForAd
       orderId = r.lastInsertRowid;
 
       const insItem = db.prepare(
-        "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal)" +
-        " VALUES (?,?,?,?,?,?,?,?)"
+        "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal, vendedor_cost_unit)" +
+        " VALUES (?,?,?,?,?,?,?,?,?)"
       );
       for (const it of items) {
+        let costUnit = null;
+        if (getCostPriceInv && it.product_id) {
+          const cp = getCostPriceInv.get(it.product_id);
+          if (cp && cp.base_price != null) costUnit = costUnitFromBase(cp.base_price, costCfg);
+        }
         insItem.run(orderId, it.product_id || null, it.product_code, it.product_name,
-                    it.quantity, it.unit_price, it.discount_percent || 0, it.subtotal);
+                    it.quantity, it.unit_price, it.discount_percent || 0, it.subtotal, costUnit);
         // Stock YA fue descontado al crear el presupuesto (stock_discounted=1).
         // No se vuelve a descontar aqui para evitar doble descuento.
       }
