@@ -1558,6 +1558,17 @@ Caso real de Sergio: lista **BC** = vip con −2% (cliente grande con precio pre
 - Los reportes de ventas usan `COALESCE(vendedor_cost_unit, p.cost)` como "costo": para clientes con lista, ese costo es el precio de la lista padre (antes era el de la raíz), así que la "ganancia" de esos reportes cambia de valor. Inconsistencia preexistente (mezcla costo-del-negocio con costo-del-vendedor), no se tocó.
 **Preview de listas encadenadas mejorado (mismo día — `admin.js?v=20260730a`)**: el preview mostraba "PRECIO BASE" = precio de la raíz (vip $3.832), lo que hacía parecer que el 6% no se aplicaba. Ahora, cuando la lista está encadenada, el endpoint `/api/admin/price-lists/:id/preview` devuelve además `parent_price` (precio de la lista padre, calculado con `parent_markup_percent`) + `parent_name`/`own_markup_percent`, y el modal muestra **tres columnas**: "Precio vip" (raíz, gris) · "Precio BC" (padre, gris) · "Precio cliente", con los headers rotulados por nombre real. Se agregó una línea explicativa: "La comisión del vendedor es la ganancia propia (6%): se calcula sobre el precio de BC, no sobre el de vip". Para listas NO encadenadas el preview queda idéntico (2 columnas).
 
+### Filtro "Precio" de Productos con listas personalizadas (30 julio 2026 — `admin.js?v=20260730b`)
+
+El select **Precio** de la pestaña Productos solo ofrecía los 5 niveles base + Costo + Todos; no había forma de ver la tabla con los precios de una lista creada (BC, Suc_Leon…).
+
+- `admin.js` **`fillPriceViewSelect()`**: agrega un optgroup "Listas de precios" con las listas **activas** (`value="list:<id>"`). Se llama desde `bootstrap()` tras cargar productos (solo admin) porque `ensurePriceListsLoaded()` es async; al terminar re-aplica la preferencia guardada en localStorage (que pudo no existir como `<option>` cuando corrió `applyPrefsToControls`).
+- **`priceViewListCfg()`** (resuelve la cadena con `plResolveClientCfg`) + **`priceViewListPrice(p, cfg)`** (`round(base/(1−ef/100))`). `curListCfg` se calcula UNA vez por render en `renderProducts()` y lo lee `rowHtml`.
+- **Columna extra** `<th id="th-listprice" hidden>` (en `admin.html`, después de Público): se muestra con el nombre de la lista cuando hay una elegida, y cada fila agrega `<td class="num cell-money cell-listprice">` con el precio calculado en negrita. No es ordenable (es un valor calculado, no una columna de la DB). El colspan del "Sin resultados" suma 1 cuando la columna está visible.
+- **Mobile**: la celda de tarjeta (`cardPriceHtml`) muestra el nombre de la lista como label y su precio. La columna nueva lleva `cell-money`, que el CSS mobile ya oculta.
+- La clase `pv-*` de la tabla usa `list:` → `list-` (los dos puntos rompen el selector CSS). El handler del select ya no duplica esa lógica: delega en `renderProducts()`.
+- Verificado aislado en `/tmp` con la cadena real (Suc_Leon → $3.997, BC → $3.757, niveles → columnas normales, lista inexistente → cae a normal) y `node --check` OK.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

@@ -762,6 +762,9 @@
       state.isAdmin = (me.level === 99);
       state.products = prods;
       populateCategoryFilter(prods);
+      // El filtro "Precio" también ofrece las listas personalizadas. Se cargan
+      // aparte (async), por eso el select se completa después de las prefs.
+      if (state.isAdmin) fillPriceViewSelect();
       // Mostrar solo el nombre; si coincide con el rol (ej. usuario "Administrador"
       // con nivel "Administrador"), no repetir. El rol queda como tooltip.
       {
@@ -4501,15 +4504,24 @@
   function renderProducts() {
     // Reflejar la vista de precio activa en la tabla (para el layout de tarjeta).
     if (els.prodTable) {
+      const pvCls = String(state.priceView || "minorista").replace("list:", "list-");
       els.prodTable.className = els.prodTable.className.replace(/\bpv-\S+/g, "").trim();
-      els.prodTable.classList.add("pv-" + (state.priceView || "minorista"));
+      els.prodTable.classList.add("pv-" + pvCls);
+    }
+    // Columna extra con el precio de la lista personalizada elegida en el filtro
+    // "Precio". curListCfg lo lee rowHtml (se calcula una sola vez por render).
+    curListCfg = priceViewListCfg();
+    const thList = document.getElementById("th-listprice");
+    if (thList) {
+      thList.hidden = !curListCfg;
+      if (curListCfg) thList.textContent = curListCfg.name;
     }
     const list = (state.selectMode && state.showOnlySelected)
       ? state.productsFiltered.filter((p) => state.selectedIds.has(p.id))
       : state.productsFiltered;
     els.prodCount.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     if (!list.length) {
-      els.prodTbody.innerHTML = '<tr><td colspan="' + (state.selectMode ? 16 : 15) + '" class="muted">Sin resultados</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="' + ((state.selectMode ? 16 : 15) + (curListCfg ? 1 : 0)) + '" class="muted">Sin resultados</td></tr>';
       els.pageInfo.textContent = "Página 0 / 0";
       els.pagePrev.disabled = true;
       els.pageNext.disabled = true;
@@ -4545,6 +4557,40 @@
   // aparte (cell-cardprice) oculta en desktop; en mobile se ubica arriba a la
   // derecha. Con "todos" apila los 5 precios de venta (el costo solo si se pide
   // explícitamente).
+  var curListCfg = null; // lista elegida en el filtro Precio (la usa rowHtml)
+
+  // Agrega al filtro "Precio" un optgroup con las listas de precios activas,
+  // para poder ver la tabla con los precios calculados de esa lista. Como las
+  // listas se cargan async, al terminar re-aplica la preferencia guardada (que
+  // pudo no existir como <option> cuando corrió applyPrefsToControls).
+  async function fillPriceViewSelect() {
+    const sel = els.filterPriceview;
+    if (!sel) return;
+    await ensurePriceListsLoaded();
+    const prev = sel.querySelector("optgroup[data-lists]");
+    if (prev) prev.remove();
+    const lists = (state.priceLists || []).filter((l) => l.active);
+    if (lists.length) {
+      const og = document.createElement("optgroup");
+      og.label = "Listas de precios";
+      og.setAttribute("data-lists", "1");
+      lists.forEach((l) => {
+        const o = document.createElement("option");
+        o.value = "list:" + l.id;
+        o.textContent = l.name;
+        og.appendChild(o);
+      });
+      sel.appendChild(og);
+    }
+    const p = loadPrefs();
+    if (p && p.priceView && p.priceView !== state.priceView &&
+        sel.querySelector('[value="' + p.priceView + '"]')) {
+      state.priceView = p.priceView;
+      sel.value = p.priceView;
+      renderProducts();
+    }
+  }
+
   var PRICE_VIEW_MAP = {
     costo:      ["Costo", "cost"],
     vip:        ["VIP", "price_vip"],
@@ -4553,8 +4599,33 @@
     minorista:  ["Minor.", "price_minorista"],
     publico:    ["Público", "price_publico"],
   };
+  // Si el filtro "Precio" tiene elegida una lista personalizada ("list:<id>"),
+  // devuelve su config resuelta (sigue la cadena de listas base). Null si el
+  // filtro está en un nivel base / costo / todos.
+  function priceViewListCfg() {
+    var pv = String(state.priceView || "");
+    if (pv.indexOf("list:") !== 0) return null;
+    var id = Number(pv.slice(5));
+    var pl = (state.priceLists || []).find(function (l) { return Number(l.id) === id; });
+    if (!pl) return null;
+    var c = plResolveClientCfg(pl);
+    return { id: pl.id, name: pl.name, column: c.column, markup: c.markup };
+  }
+  // Precio de un producto para esa lista: base / (1 - ganancia/100), entero.
+  function priceViewListPrice(p, cfg) {
+    var base = Number(p[cfg.column]) || 0;
+    var d = 1 - (Number(cfg.markup) || 0) / 100;
+    if (d <= 0) return base;
+    return Math.round(base / d);
+  }
+
   function cardPriceHtml(p) {
     var pv = state.priceView || "minorista";
+    var lcfg = priceViewListCfg();
+    if (lcfg) {
+      return '<span class="cp-line"><span class="cp-lbl">' + escapeHtml(lcfg.name) + '</span>' +
+             '<span class="cp-val">$' + fmtPriceNum(priceViewListPrice(p, lcfg)) + '</span></span>';
+    }
     if (pv === "todos") {
       return ["minorista", "publico", "mayorista", "revendedor", "vip"].map(function(k) {
         var m = PRICE_VIEW_MAP[k];
@@ -4592,6 +4663,10 @@
       moneyCell(p, "price_mayorista") +
       moneyCell(p, "price_minorista") +
       moneyCell(p, "price_publico") +
+      (curListCfg
+        ? '<td class="num cell-money cell-listprice"><strong>' +
+          fmtPriceNum(priceViewListPrice(p, curListCfg)) + '</strong></td>'
+        : "") +
       '<td class="cell-activo"><span class="cell-active-badge' + (p.active ? " active" : "") + '">' + (p.active ? "Sí" : "No") + '</span></td>' +
       '<td class="num muted cell-bulto" title="Unidades por empaque de compra (caja/bulto)">' + (p.units_per_bulto > 1 && p.pack_unit !== "unidad" ? p.units_per_bulto + " u/" + (p.pack_unit === "caja" ? "caja" : "bulto") : "—") + '</td>' +
       '<td class="cell-adj">' +
@@ -4963,11 +5038,7 @@
   // No filtra la lista, solo re-renderiza con el precio elegido y guarda la pref.
   if (els.filterPriceview) els.filterPriceview.addEventListener("change", () => {
     state.priceView = els.filterPriceview.value || "minorista";
-    if (els.prodTable) {
-      els.prodTable.className = els.prodTable.className.replace(/\bpv-\S+/g, "").trim();
-      els.prodTable.classList.add("pv-" + state.priceView);
-    }
-    renderProducts();
+    renderProducts(); // ya actualiza la clase pv-* y la columna de lista
     savePrefs();
   });
   if (els.filterClear) els.filterClear.addEventListener("click", () => {
@@ -8025,6 +8096,12 @@
   function updateProductImageInState(productId, imageUrl) {
     const p = state.products.find((x) => x.id === productId);
     if (p) p.image_url = imageUrl;
+    // state.allProducts es otro cache (pickers, catálogo PDF, presupuestos):
+    // sin esto quedaba con la imagen vieja hasta recargar la página.
+    if (Array.isArray(state.allProducts)) {
+      const pa = state.allProducts.find((x) => x.id === productId);
+      if (pa) pa.image_url = imageUrl;
+    }
     const tr = els.prodTbody.querySelector('tr[data-id="' + productId + '"]');
     if (tr) {
       const btn = tr.querySelector('.prod-img-btn[data-act="edit-img"]');
