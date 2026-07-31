@@ -571,6 +571,7 @@
     // Listas de precios personalizadas
     priceLists: [],
     priceListsLoaded: false,
+    priceListsLite: false,       // true = listas cargadas desde /api/price-options (admin sin la sección "price-lists")
     // Cache de vendedores activos para los selects de "asignar vendedor"
     vendedoresActiveCache: [],
     // Orden tipo Excel de la tabla de Usuarios. El primero es la clave principal;
@@ -5430,7 +5431,25 @@
     try {
       state.priceLists = await api("/api/admin/price-lists");
       state.priceListsLoaded = true;
-    } catch (_) { state.priceLists = state.priceLists || []; }
+      state.priceListsLite = false;
+    } catch (_) {
+      // /api/admin/price-lists exige la sección "price-lists": un admin limitado
+      // a Pedidos recibía 403 y se quedaba sin las listas personalizadas, así que
+      // los pedidos de un cliente con lista propia salían al precio del nivel
+      // base. Caemos a /api/price-options, que no está gateado por sección y ya
+      // devuelve el % EFECTIVO y el nivel raíz de cada lista (sin base_list_id,
+      // el cálculo de precio da exactamente lo mismo).
+      state.priceLists = state.priceLists || [];
+      try {
+        var opts = await api("/api/price-options");
+        state.priceLists = ((opts && opts.lists) || []).map(function(l) {
+          return { id: l.id, name: l.name, base_level: l.base_level, base_list_id: null,
+                   markup_percent: Number(l.markup_percent) || 0, active: 1 };
+        });
+        state.priceListsLoaded = true;
+        state.priceListsLite = true;
+      } catch (_e) {}
+    }
   }
 
   // ---------- Descuentos por línea (compartido por Nuevo pedido y Editar items) ----------
@@ -5598,6 +5617,49 @@
     if (bar) { var dt = itemsDiscTotal(noItems); bar.textContent = dt > 0 ? "Descuento total: " + fmtPrice(dt) : ""; }
   }
 
+  // Lista de clientes (level 1-4 activos) para el selector de "Nuevo pedido".
+  //
+  // Fuente principal: /api/clients — NO /api/admin/users. /api/admin/users pasa
+  // por requireAdmin, que exige la sección "usuarios": un admin limitado (o un
+  // vendedor) recibía 403, el catch se lo tragaba y el select quedaba vacío o
+  // con lo poco que hubiera quedado en state.users (p. ej. un cliente recién
+  // creado desde este mismo modal) — de ahí el "solo me aparece un cliente".
+  // /api/clients acepta las secciones ventas/cuentas/pagos/pedidos/vendedores,
+  // así que cualquiera que pueda entrar a Pedidos lo puede consultar.
+  //
+  // Devuelve null si no se pudo obtener la lista (para poder avisar en pantalla).
+  async function noClientsList() {
+    function esCliente(u) { var l = Number(u.level); return l >= 1 && l <= 4; }
+    function ordenar(list) {
+      return list.slice().sort(function(a, b) {
+        return String(a.full_name || a.username || "")
+          .localeCompare(String(b.full_name || b.username || ""), "es");
+      });
+    }
+    await ensureOrderClients();
+    if (state.orderClientsLoaded) {
+      return ordenar((state.orderClients || []).filter(esCliente));
+    }
+    // Fallback: cache/endpoint de usuarios (solo si tenemos la sección).
+    try {
+      if (!(state.users && state.users.length)) {
+        state.users = await api("/api/admin/users");
+        state.usersLoaded = true;
+      }
+    } catch (_) {}
+    var list = (state.users || []).filter(function(u) { return esCliente(u) && u.active; });
+    if (!list.length) return null;
+    return ordenar(list);
+  }
+
+  // Busca un cliente por id en cualquiera de los dos caches.
+  function noFindClient(id) {
+    id = Number(id);
+    var c = (state.orderClients || []).find(function(u) { return Number(u.id) === id; });
+    if (!c) c = (state.users || []).find(function(u) { return Number(u.id) === id; });
+    return c || null;
+  }
+
   async function noOpenModal() {
     noItems = [];
     noDiscUnit = "percent";
@@ -5617,22 +5679,25 @@
     // Necesitamos las listas de precios para el selector y para calcular precios.
     await ensurePriceListsLoaded();
     // Poblar select de clientes (level 1-4 activos).
-    // Usa state.users si ya están cargados; si no, los carga ahora.
     if (els.noClient) {
       els.noClient.innerHTML = '<option value="">Consumidor final</option>';
-      try {
-        if (!(state.users && state.users.length)) {
-          state.users = await api("/api/admin/users");
-        }
-        var clients = (state.users || []).filter(function(u) { return Number(u.level) >= 1 && Number(u.level) <= 4 && u.active; });
-        clients.sort(function(a, b) { return (a.full_name || a.username).localeCompare(b.full_name || b.username); });
+      var clients = await noClientsList();
+      if (clients === null) {
+        // No se pudo obtener la lista: avisamos en el propio select en vez de
+        // dejarlo vacío en silencio (antes esto parecía "no hay clientes").
+        var warn = document.createElement("option");
+        warn.value = "";
+        warn.disabled = true;
+        warn.textContent = "⚠ No se pudieron cargar los clientes (recargá la página)";
+        els.noClient.appendChild(warn);
+      } else {
         clients.forEach(function(c) {
           var opt = document.createElement("option");
           opt.value = c.id;
           opt.textContent = c.full_name || c.username;
           els.noClient.appendChild(opt);
         });
-      } catch (_) {}
+      }
     }
     // Config de precio inicial = la del cliente seleccionado (o Consumidor final → minorista).
     noSyncPriceListToClient();
@@ -5644,7 +5709,7 @@
   function noSyncPriceListToClient() {
     var sel = "level:1";
     if (els.noClient && els.noClient.value) {
-      var client = (state.users || []).find(function(u) { return u.id === Number(els.noClient.value); });
+      var client = noFindClient(els.noClient.value);
       if (client) sel = orderDefaultSel(client.level, client.price_list_id);
     }
     fillOrderPriceListSelect(els.noPriceList, sel);
@@ -5785,10 +5850,17 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        // Agregar al cache de usuarios y al selector, y dejarlo seleccionado.
-        if (!state.users) state.users = [];
+        // Agregar a los caches de clientes y al selector, y dejarlo seleccionado.
+        // OJO: state.users acá queda PARCIAL si /api/admin/users nunca se pudo
+        // cargar (admin sin la sección "usuarios"). Por eso el selector de este
+        // modal se arma desde state.orderClients (/api/clients), no desde acá.
+        if (!Array.isArray(state.users)) state.users = [];
         state.users.unshift(out.user);
-        state.orderClientsLoaded = false; // refrescar el selector "Cliente" del detalle de pedido
+        if (!Array.isArray(state.orderClients)) state.orderClients = [];
+        state.orderClients.unshift({
+          id: out.user.id, username: out.user.username, full_name: out.user.full_name,
+          level: out.user.level, price_list_id: out.user.price_list_id || null,
+        });
         if (els.noClient) {
           var opt = document.createElement("option");
           opt.value = out.user.id;
@@ -10310,15 +10382,10 @@
     if (!els.payFormClient) return;
     const current = els.payFormClient.value;
     els.payFormClient.innerHTML = '<option value="">Seleccionar cliente…</option>';
-    // Usar la lista de usuarios si está cargada, o cargar los clientes
-    let clients = state.users.filter((u) => [1, 2, 3, 4].includes(Number(u.level)) && u.active);
-    if (!clients.length) {
-      try {
-        const all = await api("/api/admin/users");
-        clients = all.filter((u) => [1, 2, 3, 4].includes(Number(u.level)) && u.active);
-        if (!state.usersLoaded) { state.users = all; }
-      } catch (_) {}
-    }
+    // Mismo criterio que el selector de "Nuevo pedido": la fuente es /api/clients
+    // (accesible con la sección "pagos"); /api/admin/users exige "usuarios" y
+    // dejaba el select vacío en silencio para un admin limitado.
+    let clients = (await noClientsList()) || [];
     clients.sort((a, b) => (a.full_name || a.username || "").localeCompare(b.full_name || b.username || "", "es"));
     clients.forEach((u) => {
       const opt = document.createElement("option");
@@ -11172,14 +11239,12 @@
     // Poblar select de cliente (clientes activos level 1-4). Si se elige uno,
     // el catálogo usa su lista de precios efectiva automáticamente.
     if (els.catalogClientSelect) {
-      const allUsers = state.usersLoaded && state.users.length
-        ? state.users
-        : await api("/api/admin/users").catch(() => []);
+      // Igual que el selector de "Nuevo pedido": la fuente es /api/clients, que
+      // no exige la sección "usuarios" (antes un admin limitado veía el select vacío).
+      const clientesCat = (await noClientsList()) || [];
       els.catalogClientSelect.innerHTML =
         '<option value="">— Sin cliente (elegir lista manualmente) —</option>';
-      allUsers
-        .filter((u) => u.active && Number(u.level) >= 1 && Number(u.level) <= 4)
-        .sort((a, b) => (a.full_name || a.username || "").localeCompare(b.full_name || b.username || ""))
+      clientesCat
         .forEach((u) => {
           const o = document.createElement("option");
           o.value = u.id;

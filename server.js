@@ -1760,7 +1760,9 @@ app.get("/api/me", requireLogin, (req, res) => {
 
 // Lista de clientes (level 1-4) para que un vendedor (level 5) pueda elegir
 // a quién está atendiendo. Solo accesible por vendedores.
-app.get("/api/clients", requireLogin, requireAnySectionForAdmin(["ventas", "cuentas", "pagos", "pedidos", "vendedores"]), (req, res) => {
+// "productos" está en la lista porque el modal de Catálogo PDF (pestaña Productos)
+// permite generar el catálogo para un cliente puntual y necesita listarlos.
+app.get("/api/clients", requireLogin, requireAnySectionForAdmin(["ventas", "cuentas", "pagos", "pedidos", "vendedores", "productos"]), (req, res) => {
   const level = req.session.level;
   if (level !== 5 && level !== 99) {
     return res.status(403).json({ error: "Solo vendedores o admin" });

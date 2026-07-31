@@ -1602,6 +1602,23 @@ Pedido de Sergio: un botón que permita editar los productos desde la propia tab
 
 **🔴 Fix del select de categoría (mismo día — `admin.js?v=20260730e`)**: al entrar en modo edición TODAS las filas mostraban "— sin categoría —" aunque el producto tuviera una. Causa: `state.allCategories` se llena solo al abrir ciertos modales (modal de producto, bulk, etc.); al entrar en modo edición estaba vacío → el `<select>` no tenía `<option>` para preseleccionar (la tabla normal no lo necesita porque muestra `p.category_name` como texto). **Peor**: guardar así habría mandado `category_id: null` y borrado la categoría de cada fila tocada. Fix: `setEditMode` pasó a `async` y carga `/api/categories` antes de renderizar (con feedback "✏️ Cargando…" en el botón); además `editCellCat` agrega una `<option>` propia si el `category_id` del producto no está en el catálogo cargado (p. ej. categoría inactiva), usando `p.category_name`, para no perderla al guardar. Verificado aislado en `/tmp` (4 casos: cat normal preseleccionada, sin categoría, categoría fuera del catálogo, catálogo vacío).
 
+### 🔴 Fix: selectores de cliente vacíos para admins limitados (31 julio 2026 — `admin.js?v=20260731a`)
+
+Reporte de Sergio (3 veces, desde una PC de otra oficina): en /admin → Pedidos → **Nuevo pedido**, el selector "Cliente" mostraba un solo cliente (o ninguno), no todos.
+
+**Causa**: `noOpenModal` armaba el select desde `state.users`, que se llena con `GET /api/admin/users` → pasa por `requireAdmin` → exige la sección **"usuarios"**. Un admin limitado (ej. `admin_sections = "productos,pedidos"`, que es el perfil típico de una sucursal) o un vendedor recibe **403**; el `catch (_) {}` se lo tragaba y el select quedaba vacío en silencio. Peor: el "＋ Cliente" del propio modal hacía `state.users.unshift(out.user)`, y como `noOpenModal` solo refetcheaba `if (!state.users.length)`, a partir de ahí el select mostraba **solo ese cliente** — de ahí el "solo me aparece el de minorista". Es el MISMO patrón que se arregló el 27 may en `/ventas` (`vPopulateClients`), que quedó sin replicar en el admin.
+
+**Fix** (todo en `public/js/admin.js`):
+- Helper nuevo **`noClientsList()`**: fuente = `ensureOrderClients()` → **`/api/clients`** (gateado por ventas/cuentas/pagos/pedidos/vendedores/productos, así que cualquiera que entre a Pedidos lo puede leer) y devuelve level 1-4 activos con `level` + `price_list_id`. Fallback a `/api/admin/users` solo si `/api/clients` falla; devuelve **null** si no hay forma de obtener la lista.
+- El select muestra una opción deshabilitada **"⚠ No se pudieron cargar los clientes"** cuando da null (antes fallaba mudo).
+- `noSyncPriceListToClient` usa `noFindClient(id)` (busca en `orderClients` y en `users`), y el alta rápida de cliente empuja el nuevo a **ambos** caches (ya no contamina `state.users` como única fuente).
+- Mismo cambio en **`populatePayFormClients`** (modal Registrar pago) y en el **selector de cliente del Catálogo PDF**; para este último se agregó `"productos"` a las secciones permitidas de `GET /api/clients` en `server.js`.
+- **Bug hermano arreglado**: `ensurePriceListsLoaded()` pegaba a `/api/admin/price-lists` (sección "price-lists") → 403 para el mismo admin limitado → los pedidos de un cliente con lista personalizada salían **al precio del nivel base**. Ahora cae a **`/api/price-options`** (sin gating por sección), que ya devuelve el % **efectivo** y el nivel raíz; se mapea con `base_list_id: null` → el cálculo de precio da idéntico. Flag `state.priceListsLite`.
+
+**Regla general**: cualquier `catch (_) {}` alrededor de un fetch a `/api/admin/*` es un candidato a "se ve vacío y no se sabe por qué" para admins limitados. Si un dato lo necesita una pestaña, pedirlo por un endpoint accesible desde esa sección, no por el endpoint de otra.
+
+**Verificación**: `node --check` OK en `server.js` y `admin.js`; helper testeado aislado en `/tmp` (5 casos: 403 en users + `state.users` contaminado → devuelve los 3 clientes; fallback a users; ambos fallan → null; sin clientes → lista vacía; orden es-AR). En la DB local existe `testadmin` (level 99, `admin_sections="productos,pedidos"`), que reproduce el perfil. Pendiente: `git add/commit/push` + deploy Railway + Ctrl+F5 en la PC de la sucursal.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.
