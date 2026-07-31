@@ -1644,6 +1644,18 @@ A pedido de Sergio, revisión de todos los `catch {}` / `.catch(() => …)` / wr
 
 **Quedó fuera (no arreglado, documentado)**: no hay `window.onerror` global en el front — una excepción JS a mitad de un render deja la pantalla a medias sin mensaje. Sería el próximo paso natural de esta auditoría.
 
+### Fix visibilidad de categorías en "Ver cambios" (31 julio 2026 — solo `server.js`)
+
+Pregunta de Sergio: ¿el usuario que entra a "Ver cambios" solo ve los aumentos de las categorías que tiene permitidas? Sí (el filtro por `user_category_access` ya existía en `GET /api/price-changes`), pero la revisión encontró dos huecos y se cerraron.
+
+**Hueco 1 — el filtro usaba la sesión, no el cliente atendido**: `getUserAllowedCategoryIds(req.session.userId, level)` → un vendedor (level 5) atendiendo a un cliente con categorías restringidas veía **todas** las categorías (nivel 5 devuelve `null` = sin restricción), aunque los **precios** sí salían con la lista del cliente (esos usan `targetUserId`). Ahora usa `getUserAllowedCategoryIds(targetUserId, targetLevel)` → el vendedor ve exactamente lo que ve su cliente. Sin cliente seleccionado, `targetUserId` es el propio vendedor → sigue viendo todo.
+
+**Hueco 2 — no filtraba `categories.active`** (la card "Categorías visibles del catálogo" de Configuración): desactivar VERANO la sacaba del catálogo (`/api/categories` y `/api/products` filtran `COALESCE(c.active,1)=1`) pero sus productos seguían apareciendo en "Ver cambios". Ahora la query suma `COALESCE(c.active, 1) AS category_active` y se descartan las inactivas cuando `hideInactiveCats = level !== 99 || req.query.as_level != null || req.query.as_list_id != null` — misma regla que el `preview=1` de `/api/products` (11 jun): el admin ve todo, salvo que esté "viendo como" un nivel/lista (que es lo que manda `app.js` `openPriceChanges()` con `as_level`/`as_list_id`).
+
+Regla resultante: cliente 1-4 → solo sus categorías permitidas y activas; vendedor con cliente → lo mismo que ese cliente; vendedor sin cliente → todas las activas; admin → todo; admin en "ver como" → sin las desactivadas.
+
+**Verificación**: `node --check server.js` OK (mount NO stale); la query nueva corre contra copia de la DB local; 6 escenarios testeados aislados en `/tmp` (cliente restringido, cliente sin restricción, vendedor con/sin cliente, admin normal, admin ver-como) → todos OK. Sin cambios de frontend, no hace falta cache busting. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

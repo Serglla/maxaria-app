@@ -2226,8 +2226,16 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     });
   }
 
-  // Categorías permitidas para este usuario (null = ve todas)
-  const allowedCats = getUserAllowedCategoryIds(req.session.userId, level);
+  // Categorías permitidas para el cliente target (null = ve todas).
+  // Usamos targetUserId/targetLevel (no la sesión) para que el vendedor
+  // atendiendo a un cliente vea exactamente lo que ve ese cliente.
+  const allowedCats = getUserAllowedCategoryIds(targetUserId, targetLevel);
+  // Visibilidad global de categorías (categories.active): igual que /api/products,
+  // el admin ve todo salvo que esté "viendo como" un nivel/lista (as_level /
+  // as_list_id, que es el preview del catálogo). Productos sin categoría
+  // (c.active NULL) quedan visibles vía COALESCE.
+  const hideInactiveCats = level !== 99 ||
+    req.query.as_level != null || req.query.as_list_id != null;
   const rowsStmt = db.prepare(
     "SELECT pc.product_id, pc.code, pc.name, pc.is_new," +
     "       COALESCE(pc.is_reingreso, 0) AS is_reingreso," +
@@ -2235,6 +2243,7 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     "       pc." + cols.new + " AS new_price," +
     "       p.image_url, p.stock, p.active," +
     "       p.category_id," +
+    "       COALESCE(c.active, 1) AS category_active," +
     "       COALESCE(c.name, '') AS category_name" +
     "  FROM price_changes pc" +
     "  LEFT JOIN products p ON p.id = pc.product_id" +
@@ -2246,9 +2255,13 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
   const result = [];
   for (const u of updates) {
     let rows = rowsStmt.all(u.id);
-    // Filtrar por categorías permitidas si el usuario tiene restricción
+    // Filtrar por categorías permitidas si el cliente tiene restricción
     if (allowedCats !== null) {
       rows = rows.filter((r) => r.category_id != null && allowedCats.has(r.category_id));
+    }
+    // Filtrar categorías desactivadas globalmente
+    if (hideInactiveCats) {
+      rows = rows.filter((r) => Number(r.category_active) === 1);
     }
     const cambios = [];
     const nuevos = [];
