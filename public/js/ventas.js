@@ -188,13 +188,17 @@
   async function vLoadPriceOptions() {
     if (vState.priceOptionsLoaded) return;
     try {
-      const data = await fetch("/api/price-options").then((r) => r.ok ? r.json() : null);
+      const r = await fetch("/api/price-options");
+      if (!r.ok) throw new Error("Error " + r.status);
+      const data = await r.json();
       if (data) {
         vState.priceOptions = data;
         vState.priceOptionsLoaded = true;
         vBuildPriceListSelect();
       }
-    } catch (_) {}
+    } catch (err) {
+      vToast("No se pudieron cargar las listas de precios: " + (err.message || "error"), true);
+    }
   }
 
   function vBuildPriceListSelect() {
@@ -637,12 +641,20 @@
       // para vendedor tercerizado (solo sus clientes asignados). Tanto admin
       // como vendedores pueden consultarlo desde el rework de mayo 2026.
       const r = await fetch("/api/clients");
-      if (!r.ok) return;
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || ("Error " + r.status));
+      }
       const clients = await r.json();
       vState.clientsRaw = clients || [];
       vEls.client.innerHTML = '<option value="">Consumidor final</option>' +
         (clients || []).map((u) => '<option value="' + u.id + '">' + vEsc(u.full_name || u.username) + '</option>').join("");
-    } catch (_) {}
+    } catch (err) {
+      // Antes quedaba solo "Consumidor final" sin ninguna explicación.
+      vEls.client.innerHTML = '<option value="">Consumidor final</option>' +
+        '<option value="" disabled>⚠ No se pudo cargar la lista de clientes</option>';
+      vToast("No se pudieron cargar los clientes: " + (err.message || "error"), true);
+    }
   }
 
   // ── Modal "Crear cliente rápido" ──────────────────────────────────────────
@@ -969,11 +981,21 @@
       let url = "/api/products" + pq;
       // El admin ve también productos sin stock (para facturar a reponer).
       if (me.level === 99) url += (pq ? "&" : "?") + "include_no_stock=1";
-      const data = await fetch(url).then((r) => r.ok ? r.json() : []);
+      // Antes: si la respuesta no venia ok se guardaba [] y ADEMAS se marcaba
+      // productsLoaded = true, asi que el picker quedaba vacio y no reintentaba
+      // nunca mas. Ahora se avisa y se deja el flag en false para reintentar.
+      const r = await fetch(url);
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || ("Error " + r.status));
+      }
+      const data = await r.json();
       vState.allProducts = data || [];
       vState.productsLoaded = true;
       vState.pricedFor = vState.pricing;
-    } catch (_) {}
+    } catch (err) {
+      vToast("No se pudieron cargar los productos: " + (err.message || "error"), true);
+    }
   }
 
   function vRenderPicker(filter) {

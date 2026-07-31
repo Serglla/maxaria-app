@@ -572,6 +572,10 @@
     priceLists: [],
     priceListsLoaded: false,
     priceListsLite: false,       // true = listas cargadas desde /api/price-options (admin sin la sección "price-lists")
+    // false = el cache correspondiente NO se pudo cargar. El modal de edición de
+    // cliente los mira para no pisar con null la asignación existente.
+    priceListsCacheOk: false,
+    vendedoresCacheOk: false,
     // Cache de vendedores activos para los selects de "asignar vendedor"
     vendedoresActiveCache: [],
     // Orden tipo Excel de la tabla de Usuarios. El primero es la clave principal;
@@ -742,14 +746,17 @@
     return confirmModal(Object.assign({}, opts, { alert: true }));
   }
 
-  async function api(url, opts) {
+  // label (opcional): qué se estaba cargando, para que el aviso de permisos
+  // diga "No se pudieron cargar los proveedores: …" en vez de un genérico.
+  async function api(url, opts, label) {
     const res = await fetch(url, opts);
     if (res.status === 401) { location.href = "/login"; throw new Error("no auth"); }
     if (res.status === 403) {
       // No usar alert(): es bloqueante y congela el panel. Avisar con toast.
       let msg = "Acceso denegado a esa sección.";
       try { msg = (await res.clone().json()).error || msg; } catch (_) {}
-      try { showToast(msg); } catch (_) {}
+      if (label) msg = "No se pudieron cargar " + label + ": " + msg;
+      try { showToast(msg, "error"); } catch (_) {}
       throw new Error("forbidden");
     }
     if (!res.ok) {
@@ -757,6 +764,14 @@
       throw new Error(body.error || "Error " + res.status);
     }
     return res.json();
+  }
+
+  // Aviso visible cuando una lista no se pudo cargar. En los 403 no repetimos:
+  // api() ya mostró el toast con el detalle de la sección.
+  function warnLoadFail(what, err) {
+    if (err && err.message === "forbidden") return;
+    if (err && err.message === "no auth") return;
+    try { showToast("No se pudieron cargar " + what + ": " + ((err && err.message) || "error"), "error"); } catch (_) {}
   }
 
   // ---------- bootstrap ----------
@@ -1379,19 +1394,27 @@
       els.userTbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando…</td></tr>';
       // Cargamos usuarios + vendedores + listas de precios en paralelo:
       // los dos ultimos llenan los selects de las columnas nuevas.
+      // null = la llamada falló (403 por sección o red). Lo distinguimos de []
+      // porque el modal de edición usa esa diferencia para no desasignar nada.
       const [users, vendedores, priceLists] = await Promise.all([
-        api("/api/admin/users"),
-        api("/api/admin/vendedores").catch(() => []),
-        api("/api/admin/price-lists").catch(() => []),
+        api("/api/admin/users", null, "los usuarios"),
+        api("/api/admin/vendedores", null, "los vendedores").catch(() => null),
+        api("/api/admin/price-lists", null, "las listas de precios").catch(() => null),
       ]);
       state.users = users;
       state.usersLoaded = true;
+      state.vendedoresCacheOk = Array.isArray(vendedores);
+      state.priceListsCacheOk = Array.isArray(priceLists);
       state.vendedoresActiveCache = (vendedores || []).filter((v) => v.active);
-      state.priceLists = priceLists || [];
-      state.priceListsLoaded = true;
+      if (Array.isArray(priceLists)) {
+        state.priceLists = priceLists;
+        state.priceListsLoaded = true;
+        state.priceListsLite = false;
+      }
       // Cargar todas las categorias en cache para el modal de permisos
       if (!state.allCategories.length) {
-        try { state.allCategories = await api("/api/categories"); } catch (_) {}
+        try { state.allCategories = await api("/api/categories", null, "las categorías"); }
+        catch (err) { warnLoadFail("las categorías", err); }
       }
       renderUsers();
     } catch (e) {
@@ -1406,12 +1429,19 @@
   async function refreshUserSelects() {
     try {
       const [vendedores, priceLists] = await Promise.all([
-        api("/api/admin/vendedores").catch(() => state.vendedoresActiveCache),
-        api("/api/admin/price-lists").catch(() => state.priceLists),
+        api("/api/admin/vendedores", null, "los vendedores").catch(() => null),
+        api("/api/admin/price-lists", null, "las listas de precios").catch(() => null),
       ]);
-      state.vendedoresActiveCache = (vendedores || []).filter((v) => v.active);
-      state.priceLists = priceLists || [];
-      state.priceListsLoaded = true;
+      if (Array.isArray(vendedores)) {
+        state.vendedoresActiveCache = vendedores.filter((v) => v.active);
+        state.vendedoresCacheOk = true;
+      }
+      if (Array.isArray(priceLists)) {
+        state.priceLists = priceLists;
+        state.priceListsLoaded = true;
+        state.priceListsLite = false;
+        state.priceListsCacheOk = true;
+      }
       renderUsers();
     } catch (_) { /* silencioso: dejamos la tabla como esta */ }
   }
@@ -1744,12 +1774,33 @@
     els.ueFullName.value = u.full_name || "";
     els.uePricecfg.innerHTML = unifiedPriceOptsHtml(u);
     els.ueVendedor.innerHTML = vendedorOptsHtml(u.assigned_vendedor_id);
+    // Si el cache de vendedores / listas no se pudo cargar (403 por sección o
+    // error de red), esos selects quedan incompletos: guardarlos DESASIGNARÍA
+    // el vendedor o la lista del cliente sin que nadie se entere. Se bloquean
+    // y el submit no los manda.
+    var avisos = [];
+    els.ueVendedor.disabled = !state.vendedoresCacheOk;
+    if (!state.vendedoresCacheOk) {
+      els.ueVendedor.title = "No se pudo cargar la lista de vendedores: este campo no se va a modificar.";
+      avisos.push("vendedores");
+    } else { els.ueVendedor.title = ""; }
+    els.uePricecfg.disabled = !state.priceListsCacheOk;
+    if (!state.priceListsCacheOk) {
+      els.uePricecfg.title = "No se pudieron cargar las listas de precios: este campo no se va a modificar.";
+      avisos.push("listas de precios");
+    } else { els.uePricecfg.title = ""; }
     els.uePhone.value = u.phone || "";
     els.ueWhatsapp.value = u.whatsapp_number || "";
     els.ueEmail.value = u.email || "";
     els.ueActive.checked = !!u.active;
-    els.userEditMsg.textContent = "";
-    els.userEditMsg.className = "config-msg";
+    if (avisos.length) {
+      els.userEditMsg.textContent = "⚠ No se pudieron cargar " + avisos.join(" ni ") +
+        ". Esos campos quedan bloqueados para no borrar la asignación actual.";
+      els.userEditMsg.className = "config-msg err";
+    } else {
+      els.userEditMsg.textContent = "";
+      els.userEditMsg.className = "config-msg";
+    }
     els.userEditModal.hidden = false;
   }
 
@@ -1778,14 +1829,16 @@
       whatsapp_number: els.ueWhatsapp.value.trim(),
       email: els.ueEmail.value.trim(),
       active: els.ueActive.checked ? 1 : 0,
-      assigned_vendedor_id: els.ueVendedor.value || null,
     };
+    // Solo mandamos vendedor / lista si sus selects están completos (ver
+    // openUserEditModal): con el cache caído mandarían null y desasignarían.
+    if (!els.ueVendedor.disabled) body.assigned_vendedor_id = els.ueVendedor.value || null;
     // Solo mandamos el usuario si realmente cambió (evita pisarlo por accidente).
     const newUsername = els.ueUsername.value.trim().toLowerCase();
     if (newUsername && newUsername !== state.editUserOrigUsername) {
       body.username = newUsername;
     }
-    Object.assign(body, decodePriceCfg(els.uePricecfg.value));
+    if (!els.uePricecfg.disabled) Object.assign(body, decodePriceCfg(els.uePricecfg.value));
     els.userEditMsg.textContent = "Guardando…";
     els.userEditMsg.className = "config-msg";
     try {
@@ -1994,7 +2047,9 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        // Guardar el vendedor_price_level en el nuevo usuario
+        // Guardar el vendedor_price_level en el nuevo usuario. Si esto falla, el
+        // vendedor queda en Minorista (default) y vería costos equivocados: hay
+        // que avisarlo, antes se tragaba el error.
         if (body.vendedor_price_level && body.vendedor_price_level !== 1) {
           try {
             await api("/api/admin/users/" + out.user.id, {
@@ -2002,7 +2057,10 @@
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ vendedor_price_level: body.vendedor_price_level }),
             });
-          } catch (_) {}
+          } catch (err) {
+            showToast("El vendedor se creó, pero no se pudo guardar el nivel de costo (" +
+              err.message + "). Corregilo en la columna «Nivel de costo».", "error");
+          }
         }
         state.vendedoresLoaded = false; // forzar recarga
         await loadVendedores();
@@ -3789,13 +3847,19 @@
       els.deliveryFormMsg.textContent = "Guardando…";
       els.deliveryFormMsg.className = "config-msg";
       try {
-        await api("/api/orders/" + state.deliveryTargetOrderId + "/deliver", {
+        const outDeliv = await api("/api/orders/" + state.deliveryTargetOrderId + "/deliver", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
         els.deliveryModal.hidden = true;
         showToast("Entrega registrada para pedido #" + state.deliveryTargetOrderId);
+        // La comisión del vendedor sale como egreso de la caja del cobro. Si el
+        // cobro no tenía caja, el egreso no se pudo generar: antes pasaba mudo.
+        if (outDeliv && outDeliv.commission_warning) {
+          showToast("⚠ La comisión del vendedor (" + fmtPrice(outDeliv.commission_warning.amount || 0) +
+            ") no se imputó a ninguna caja: elegí la caja del cobro en la entrega.", "error");
+        }
         // Recargar pedidos y entregas para reflejar el nuevo estado (el pedido
         // pasa a "entregado" y sale de la cola "para entregar").
         state.ordersLoaded = false;
@@ -4852,7 +4916,8 @@
     // categoría —" aunque el producto tenga una asignada.
     if (on && (!state.allCategories || !state.allCategories.length)) {
       if (els.editBtn) { els.editBtn.disabled = true; els.editBtn.textContent = "✏️ Cargando…"; }
-      try { state.allCategories = await api("/api/categories"); } catch (_) { state.allCategories = []; }
+      try { state.allCategories = await api("/api/categories", null, "las categorías"); }
+      catch (err) { state.allCategories = []; warnLoadFail("las categorías", err); }
     }
     state.editMode = !!on;
     if (!on) state.editDirty.clear();
@@ -5120,7 +5185,8 @@
   async function openBulkModal() {
     if (!state.selectedIds.size) return;
     if (!state.allCategories || !state.allCategories.length) {
-      try { state.allCategories = await api("/api/categories"); } catch (_) {}
+      try { state.allCategories = await api("/api/categories", null, "las categorías"); }
+      catch (err) { warnLoadFail("las categorías", err); }
     }
     if (els.pbmCat) {
       els.pbmCat.innerHTML = (state.allCategories || [])
@@ -5306,10 +5372,10 @@
       showImportModal("Excel importado ✓", html, true);
       // Recargar productos para reflejar los cambios en la tabla
       try {
-        state.products = await api("/api/admin/products");
+        state.products = await api("/api/admin/products", null, "los productos");
         populateCategoryFilter(state.products);
         applyFilters();
-      } catch (_) {}
+      } catch (err) { warnLoadFail("los productos", err); }
     } catch (err) {
       showImportModal("No se pudo importar", '<p class="err">' + escapeHtml(err.message) + '</p>', true);
     } finally {
@@ -6074,9 +6140,9 @@
   async function ensureOrderClients() {
     if (state.orderClientsLoaded) return;
     try {
-      state.orderClients = await api("/api/clients");
+      state.orderClients = await api("/api/clients", null, "los clientes");
       state.orderClientsLoaded = true;
-    } catch (_) {}
+    } catch (err) { warnLoadFail("los clientes", err); }
   }
 
   async function toggleOrderDetail(card, orderId) {
@@ -7229,7 +7295,7 @@
       // stock ya descontado. Sin esto, el picker del pedido siguiente mostraba
       // el stock viejo (no reflejaba lo descontado por el pedido anterior).
       state.allProductsLoaded = false;
-    } catch (_) {}
+    } catch (err) { warnLoadFail("el stock actualizado de productos", err); }
   }
 
   function refreshOrderViews() {
@@ -8651,7 +8717,8 @@
       state.purchasesLoaded = true;
       // Cargar proveedores si no estaban
       if (!state.suppliersLoaded) {
-        try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+        try { state.suppliers = await api("/api/admin/suppliers", null, "los proveedores"); state.suppliersLoaded = true; }
+        catch (err) { warnLoadFail("los proveedores", err); }
       }
       populatePurchaseSupplierSelect();
       populatePurSupFilter();
@@ -8857,7 +8924,8 @@
       if (els.purchaseCreateForm) {
         const form = els.purchaseCreateForm;
         if (!state.suppliersLoaded) {
-          try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+          try { state.suppliers = await api("/api/admin/suppliers", null, "los proveedores"); state.suppliersLoaded = true; }
+        catch (err) { warnLoadFail("los proveedores", err); }
         }
         populatePurchaseSupplierSelect();
         const supSel = form.querySelector('[name="supplier_id"]');
@@ -8889,9 +8957,12 @@
   async function ensureAllProducts() {
     if (state.allProductsLoaded) return;
     try {
-      state.allProducts = await api("/api/admin/products");
+      state.allProducts = await api("/api/admin/products", null, "los productos");
       state.allProductsLoaded = true;
-    } catch (_) {}
+    } catch (err) {
+      // Antes fallaba mudo y el picker aparecía vacío, como si no hubiera stock.
+      warnLoadFail("los productos", err);
+    }
   }
 
   function recalcPurchaseTotal() {
@@ -9351,7 +9422,8 @@
       }
       // Cargar proveedores si no están
       if (!state.suppliersLoaded) {
-        try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+        try { state.suppliers = await api("/api/admin/suppliers", null, "los proveedores"); state.suppliersLoaded = true; }
+        catch (err) { warnLoadFail("los proveedores", err); }
       }
       populatePurchaseSupplierSelect();
       await ensureAllProducts();
@@ -9440,7 +9512,8 @@
       state.cotizaciones = await api("/api/admin/purchase-requests");
       state.cotizacionesLoaded = true;
       if (!state.suppliersLoaded) {
-        try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+        try { state.suppliers = await api("/api/admin/suppliers", null, "los proveedores"); state.suppliersLoaded = true; }
+        catch (err) { warnLoadFail("los proveedores", err); }
       }
       populatePcotSupFilter();
       renderCotizaciones();
@@ -9788,48 +9861,74 @@
     });
     // und/bulto change → guarda en item + en producto + re-render
     els.pcotItemsTbody.querySelectorAll(".pcot-upb-input").forEach((inp) => {
-      inp.addEventListener("change", () => {
+      inp.addEventListener("change", async () => {
         const i = Number(inp.dataset.cotIdx);
         const upb = Math.max(1, Number(inp.value) || 1);
+        const prevUpb = Number(state.cotizacionItems[i].units_per_bulto) || 1;
         state.cotizacionItems[i].units_per_bulto = upb;
         // Persistir en el producto del cache
         const pid = state.cotizacionItems[i].product_id;
+        const ap = pid ? (state.allProducts || []).find((p) => p.id === pid) : null;
+        const sp = pid ? (state.products || []).find((p) => p.id === pid) : null;
         if (pid) {
-          const ap = (state.allProducts || []).find((p) => p.id === pid);
           if (ap) ap.units_per_bulto = upb;
-          const sp = (state.products || []).find((p) => p.id === pid);
           if (sp) sp.units_per_bulto = upb;
-          // Guardar en el servidor
-          api("/api/admin/products/" + pid, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ units_per_bulto: upb }),
-          }).catch(() => {});
         }
         rerenderCotizacionPreservingFocus();
+        // Guardar en el servidor. Antes iba sin await y con catch vacío: si el
+        // PATCH fallaba (403 sin la sección "productos", red), la pantalla
+        // mostraba el valor nuevo pero el producto quedaba con el viejo.
+        if (pid) {
+          try {
+            await api("/api/admin/products/" + pid, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ units_per_bulto: upb }),
+            });
+          } catch (err) {
+            state.cotizacionItems[i].units_per_bulto = prevUpb;
+            if (ap) ap.units_per_bulto = prevUpb;
+            if (sp) sp.units_per_bulto = prevUpb;
+            showToast("No se pudo guardar und/bulto en el producto: " + err.message, "error");
+            rerenderCotizacionPreservingFocus();
+          }
+        }
       });
     });
     // empaque change → guarda en el item. "comprimido" es un modo de cotización a
     // nivel del item (no se persiste como pack del producto: un producto puede ser
     // por bulto Y cotizarse por comprimido). unidad/caja/bulto sí se persisten.
     els.pcotItemsTbody.querySelectorAll(".pcot-pack-input").forEach((sel) => {
-      sel.addEventListener("change", () => {
+      sel.addEventListener("change", async () => {
         const i = Number(sel.dataset.cotIdx);
         const pack = ["unidad", "caja", "bulto", "comprimido"].includes(sel.value) ? sel.value : "bulto";
+        const prevPack = state.cotizacionItems[i].pack_unit;
         state.cotizacionItems[i].pack_unit = pack;
         const pid = state.cotizacionItems[i].product_id;
-        if (pid && pack !== "comprimido") {
-          const ap = (state.allProducts || []).find((p) => p.id === pid);
+        const ap = pid ? (state.allProducts || []).find((p) => p.id === pid) : null;
+        const sp = pid ? (state.products || []).find((p) => p.id === pid) : null;
+        const persiste = pid && pack !== "comprimido";
+        if (persiste) {
           if (ap) ap.pack_unit = pack;
-          const sp = (state.products || []).find((p) => p.id === pid);
           if (sp) sp.pack_unit = pack;
-          api("/api/admin/products/" + pid, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pack_unit: pack }),
-          }).catch(() => {});
         }
         rerenderCotizacionPreservingFocus();
+        // Mismo criterio que und/bulto: si el guardado falla, se revierte y se avisa.
+        if (persiste) {
+          try {
+            await api("/api/admin/products/" + pid, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pack_unit: pack }),
+            });
+          } catch (err) {
+            state.cotizacionItems[i].pack_unit = prevPack;
+            if (ap) ap.pack_unit = prevPack;
+            if (sp) sp.pack_unit = prevPack;
+            showToast("No se pudo guardar el empaque en el producto: " + err.message, "error");
+            rerenderCotizacionPreservingFocus();
+          }
+        }
       });
     });
     // remove
@@ -9924,7 +10023,11 @@
       const [data] = await Promise.all([
         api("/api/admin/purchase-requests/" + id),
         ensureAllProducts(),
-        (!state.suppliersLoaded ? api("/api/admin/suppliers").then((s) => { state.suppliers = s; state.suppliersLoaded = true; }).catch(() => {}) : Promise.resolve()),
+        (!state.suppliersLoaded
+          ? api("/api/admin/suppliers", null, "los proveedores")
+              .then((s) => { state.suppliers = s; state.suppliersLoaded = true; })
+              .catch((err) => warnLoadFail("los proveedores", err))
+          : Promise.resolve()),
       ]);
       state.editingCotizacionId = id;
       state.cotizacionItems = (data.items || []).map((it) => {
@@ -9973,7 +10076,8 @@
       if (els.pcotConvertBtn)   els.pcotConvertBtn.hidden = true;
       renderCotizacionItems();
       if (!state.suppliersLoaded) {
-        try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+        try { state.suppliers = await api("/api/admin/suppliers", null, "los proveedores"); state.suppliersLoaded = true; }
+        catch (err) { warnLoadFail("los proveedores", err); }
       }
       populatePcotFormSupplier();
       await ensureAllProducts();
@@ -10015,7 +10119,8 @@
       if (els.pcotPickerCat) els.pcotPickerCat.value = "";
       // Poblar categorías
       if (!state.allCategories.length) {
-        try { state.allCategories = await api("/api/categories"); } catch (_) {}
+        try { state.allCategories = await api("/api/categories", null, "las categorías"); }
+        catch (err) { warnLoadFail("las categorías", err); }
       }
       if (els.pcotPickerCat) {
         const prev = els.pcotPickerCat.value;
@@ -10221,7 +10326,8 @@
           });
 
           if (!state.suppliersLoaded) {
-            try { state.suppliers = await api("/api/admin/suppliers"); state.suppliersLoaded = true; } catch (_) {}
+            try { state.suppliers = await api("/api/admin/suppliers", null, "los proveedores"); state.suppliersLoaded = true; }
+        catch (err) { warnLoadFail("los proveedores", err); }
           }
           if (!Array.isArray(state.suppliers)) state.suppliers = [];
           try { await ensureAllProducts(); } catch (_) {}
@@ -10486,6 +10592,10 @@
           state.payForOrder = null;
         }
         showToast("Pago registrado: " + fmtPrice(out.payment.amount));
+        if (out.commission_warning) {
+          showToast("⚠ La comisión del vendedor (" + fmtPrice(out.commission_warning.amount || 0) +
+            ") no se imputó a ninguna caja: elegí la caja al cobrar.", "error");
+        }
       } catch (err) {
         if (els.paymentCreateMsg) { els.paymentCreateMsg.textContent = err.message; els.paymentCreateMsg.className = "config-msg err"; }
       } finally {
@@ -11220,7 +11330,8 @@
 
     // Poblar categorías (checkboxes). Se refresca SIEMPRE el cache: el flag
     // "active" (visibilidad global, Configuración) pudo cambiar en esta sesión.
-    try { state.allCategories = await api("/api/categories"); } catch (_) {}
+    try { state.allCategories = await api("/api/categories", null, "las categorías"); }
+    catch (err) { warnLoadFail("las categorías", err); }
     if (els.catalogCatsLoading) els.catalogCatsLoading.remove();
     els.catalogCatsWrap.innerHTML = "";
     state.allCategories.forEach((c) => {

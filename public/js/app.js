@@ -235,7 +235,14 @@
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ client_id: saved.id }),
-                }).catch(() => {});
+                }).then(function(r) {
+                  // Si el server no toma el cliente, los precios que se ven NO son
+                  // los de ese cliente. Antes fallaba mudo; ahora al menos queda en
+                  // consola (la barra del vendedor muestra el estado real igual).
+                  if (!r.ok) console.warn("[vendedor] no se pudo restaurar el cliente seleccionado:", r.status);
+                }).catch(function(e) {
+                  console.warn("[vendedor] no se pudo restaurar el cliente seleccionado:", e && e.message);
+                });
               }
             }
           } catch (_) {}

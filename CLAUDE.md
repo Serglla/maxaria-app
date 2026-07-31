@@ -1619,6 +1619,31 @@ Reporte de Sergio (3 veces, desde una PC de otra oficina): en /admin → Pedidos
 
 **Verificación**: `node --check` OK en `server.js` y `admin.js`; helper testeado aislado en `/tmp` (5 casos: 403 en users + `state.users` contaminado → devuelve los 3 clientes; fallback a users; ambos fallan → null; sin clientes → lista vacía; orden es-AR). En la DB local existe `testadmin` (level 99, `admin_sections="productos,pedidos"`), que reproduce el perfil. Pendiente: `git add/commit/push` + deploy Railway + Ctrl+F5 en la PC de la sucursal.
 
+### Auditoría de errores tragados en silencio (31 julio 2026 — `admin.js?v=20260731b`, `ventas.js?v=20260731b`)
+
+A pedido de Sergio, revisión de todos los `catch {}` / `.catch(() => …)` / writes fire-and-forget de `server.js`, `admin.js`, `app.js` y `ventas.js`. Se encontraron 15 casos reales y se arreglaron los tres grupos.
+
+**🔴 Pérdida de datos**
+- **Modal "Editar cliente" desasignaba vendedor y lista** (`admin.js`): `loadUsers` traía vendedores/listas con `.catch(() => [])`; si esos endpoints fallaban (403 por sección o red) los selects quedaban vacíos y el submit mandaba `assigned_vendedor_id: null` + `price_list_id: null`, con toast de éxito. Ahora los fetch devuelven **null** en vez de `[]`, hay flags `state.vendedoresCacheOk` / `state.priceListsCacheOk`, `openUserEditModal` **deshabilita** esos selects y muestra un aviso, y el submit solo manda el campo si el select no está deshabilitado.
+- **Cotizaciones: und/bulto y empaque se guardaban a ciegas** (`admin.js`): los PATCH al producto iban sin `await` y con `.catch(() => {})`. Ahora se espera la respuesta, y si falla se **revierte** el valor en los caches + item y se avisa por toast.
+- **Crear vendedor**: el PATCH de `vendedor_price_level` estaba en un `catch (_) {}` → el vendedor quedaba en Minorista viendo costos equivocados. Ahora avisa que hay que corregirlo en "Nivel de costo".
+- **`POST /api/admin/catalog/pdf`**: única ruta `async` del server y **sin try/catch**. Express 4 no manda las promesas rechazadas al error handler → el request quedaba colgado y el navegador en "Generando…" para siempre. Ahora responde 500 (o corta el stream si `headersSent`) y loguea el stack.
+
+**🟠 Pantallas vacías sin explicación (misma familia del bug del selector de clientes)**
+- **Lectura compartida entre secciones** (`server.js`): mapa nuevo `SHARED_READ_SECTIONS` aplicado dentro de `requireAdmin`. Un **GET** a una sección ajena se permite si el admin tiene alguna de las secciones que la necesitan: `productos` ← pedidos/ventas/compras/recepcion/armado/entregas/price-lists; `proveedores` ← compras/recepcion/gastos; `vendedores` ← pedidos/ventas/entregas/reportes/actividad/cuentas/pagos/usuarios; `price-lists` ← pedidos/ventas/usuarios/productos. Escribir sigue exigiendo la sección propia, y **`usuarios` queda afuera a propósito** (expone `plain_password`; para listar clientes está `/api/clients`).
+- `api(url, opts, label)` acepta una etiqueta: el toast de 403 ahora dice "No se pudieron cargar los proveedores: …" en vez de un genérico. Helper nuevo `warnLoadFail(what, err)` para los errores que no son 403 (red, 500). Aplicado en `ensureAllProducts`, los 6 loaders de proveedores y los de categorías.
+- **`/ventas`**: `vLoadProducts` guardaba `[]` **y marcaba `productsLoaded = true`** cuando la respuesta no venía ok → picker vacío que no reintentaba nunca; ahora avisa y deja el flag en false. `vLoadPriceOptions` y el loader de clientes también avisan (este último además deja una opción "⚠ No se pudo cargar la lista de clientes").
+
+**🟡 Rastro / auditoría**
+- `console.error` en los catch de historial: `logActivity`, `recordManualPriceChange`, `logCostChange`, `logStockMovement` (PATCH producto, bulk-update y compras). Antes un fallo dejaba un agujero en historial de stock / inflación / cambios de precio sin una sola línea de log.
+- `syncVendorCommissionEgreso` devolvía `undefined` y salía mudo cuando ningún cobro tenía caja → la comisión quedaba sin descontar de la caja. Ahora devuelve `{warning, amount}`, loguea un `console.warn`, y **`/api/orders/:id/deliver` y `/api/admin/payments` lo devuelven como `commission_warning`**; el panel muestra el aviso al registrar la entrega o el cobro.
+
+**Regla**: un `catch (_) {}` alrededor de un fetch a `/api/admin/*` es un candidato a "se ve vacío y no se sabe por qué"; y un write sin `await` es un candidato a "lo cambié y no se guardó". Si un dato lo necesita una pestaña, pedirlo por un endpoint accesible desde esa sección.
+
+**Verificación**: `node --check` OK en `server.js`, `admin.js` y `ventas.js` (mount no stale). Tests aislados en `/tmp`: 11 casos del enforcement con lectura compartida (solo-pedidos lee productos pero no los edita ni ve usuarios; solo-compras lee proveedores pero no los crea; superadmin pasa; administradores sigue bloqueada) y 3 del armado del body del modal de cliente (cache caído → no manda los campos). Pendiente: `git add/commit/push` + deploy Railway + Ctrl+F5.
+
+**Quedó fuera (no arreglado, documentado)**: no hay `window.onerror` global en el front — una excepción JS a mitad de un render deja la pantalla a medias sin mensaje. Sería el próximo paso natural de esta auditoría.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

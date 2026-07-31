@@ -765,7 +765,7 @@ function logActivity(req, event, detail) {
     db.prepare(
       "INSERT INTO activity_log (user_id, username, event, detail, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(req.session.userId, req.session.username || null, event, detail || null, ip, ua);
-  } catch (_) {}
+  } catch (e) { console.error("[activity_log] no se pudo registrar el evento", event, "-", e.message); }
 }
 
 // Helper: genera el proximo numero de presupuesto en formato 0001-00000001.
@@ -1479,6 +1479,19 @@ function sectionForAdminRequest(p) {
   return null;
 }
 
+// Secciones que se pueden LEER (solo GET) desde otras secciones que las
+// necesitan para trabajar. Sin esto, un admin limitado a Pedidos abria el picker
+// de productos vacio (403 silencioso), o uno limitado a Compras no veia ningun
+// proveedor. Es solo lectura: para crear/editar sigue haciendo falta la seccion
+// propia. "usuarios" queda AFUERA a proposito (expone datos sensibles); para
+// listar clientes esta /api/clients.
+const SHARED_READ_SECTIONS = {
+  productos:     ["pedidos", "ventas", "compras", "recepcion", "armado", "entregas", "price-lists"],
+  proveedores:   ["compras", "recepcion", "gastos"],
+  vendedores:    ["pedidos", "ventas", "entregas", "reportes", "actividad", "cuentas", "pagos", "usuarios"],
+  "price-lists": ["pedidos", "ventas", "usuarios", "productos"],
+};
+
 // Permisos efectivos de un usuario level 99: { isSuperadmin, sections:Set }.
 function getAdminPerms(userId) {
   const row = db.prepare("SELECT is_superadmin, admin_sections FROM users WHERE id = ?").get(userId) || {};
@@ -1515,7 +1528,12 @@ function requireAdmin(req, res, next) {
       return res.status(403).json({ error: "Solo el superadmin puede gestionar administradores" });
     }
     if (section && !perms.sections.has(section)) {
-      return res.status(403).json({ error: "Sin permiso para esta sección" });
+      // Lectura compartida: un GET a una seccion ajena se permite si el admin
+      // tiene alguna de las secciones que la necesitan para trabajar.
+      const shared = req.method === "GET" ? (SHARED_READ_SECTIONS[section] || null) : null;
+      if (!shared || !shared.some((s) => perms.sections.has(s))) {
+        return res.status(403).json({ error: "Sin permiso para esta sección" });
+      }
     }
   }
   next();
@@ -3679,15 +3697,18 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
 
   if (touchesPrice && before) {
     const after = db.prepare("SELECT " + priceCols + " FROM products WHERE id = ?").get(id);
-    try { recordManualPriceChange(id, before, after); } catch (_) {}
+    try { recordManualPriceChange(id, before, after); }
+    catch (e) { console.error("[historial] price_changes producto", id, "-", e.message); }
   }
   if (touchesCost && costBefore) {
     const costAfter = db.prepare("SELECT cost FROM products WHERE id = ?").get(id);
-    try { logCostChange(id, costBefore.cost, costAfter.cost, "manual", null, costBefore.stock); } catch (_) {}
+    try { logCostChange(id, costBefore.cost, costAfter.cost, "manual", null, costBefore.stock); }
+    catch (e) { console.error("[historial] cost_changes producto", id, "-", e.message); }
   }
   if (touchesStock && stockBefore) {
     const delta = Math.round((Number(vals[cols.indexOf("stock")]) || 0) - (Number(stockBefore.stock) || 0));
-    try { logStockMovement(id, "ajuste", delta, null, "Edición manual del producto (modal Editar producto)", req.session.userId); } catch (_) {}
+    try { logStockMovement(id, "ajuste", delta, null, "Edición manual del producto (modal Editar producto)", req.session.userId); }
+    catch (e) { console.error("[historial] stock_movements producto", id, "-", e.message); }
   }
 
   res.json({ ok: true, id: id });
@@ -3808,9 +3829,9 @@ app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
                 req.session.userId
               );
             }
-          } catch (_) {}
+          } catch (e) { console.error("[historial] bulk-update producto", id, "-", e.message); }
         } else failed++;
-      } catch (_) { failed++; }
+      } catch (e) { failed++; console.error("[bulk-update] producto", id, "-", e.message); }
     }
   });
   run();
@@ -5358,9 +5379,18 @@ function syncVendorCommissionEgreso(orderId, cajaHint, registeredBy) {
     const pc = db.prepare("SELECT caja_id FROM payments WHERE order_id = ? AND caja_id IS NOT NULL ORDER BY id DESC LIMIT 1").get(orderId);
     if (pc && pc.caja_id) cajaId = pc.caja_id;
   }
-  if (!cajaId) return;                              // sin caja no se puede representar el egreso
+  if (!cajaId) {
+    // Sin caja no se puede representar el egreso. Antes se salia mudo y la
+    // comision quedaba dentro de la caja sin descontar; ahora queda el aviso en
+    // el log y el endpoint lo devuelve para que el panel lo muestre.
+    console.warn("[comision] pedido", orderId, ": $" + payable + " de comision sin imputar (ningun cobro tiene caja)");
+    return { warning: "sin_caja", amount: payable };
+  }
   const caja = db.prepare("SELECT id FROM cash_accounts WHERE id = ?").get(cajaId);
-  if (!caja) return;
+  if (!caja) {
+    console.warn("[comision] pedido", orderId, ": caja", cajaId, "inexistente, comision $" + payable + " sin imputar");
+    return { warning: "caja_invalida", amount: payable };
+  }
   const v = db.prepare("SELECT full_name, username FROM users WHERE id = ?").get(order.assigned_vendedor_id);
   const vname = (v && (v.full_name || v.username)) || ("Vendedor #" + order.assigned_vendedor_id);
   db.prepare(
@@ -5492,6 +5522,7 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
   const rindeNeto = !!(vendorRow && vendorRow.is_tercerizado && orderCommission > 0);
 
   let deliveryId;
+  let comisionAviso = null;   // {warning, amount} si la comisión no se pudo imputar a una caja
   db.transaction(() => {
     if (existing) {
       if (deliveredAtSql) {
@@ -5660,7 +5691,7 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     if (rindeNeto) {
       db.prepare("DELETE FROM cash_movements WHERE source = 'comision' AND related_id = ?").run(id);
     } else {
-      syncVendorCommissionEgreso(id, cajaEfectivo ? cajaEfectivo.id : (cajaTransfer ? cajaTransfer.id : null), req.session.userId);
+      comisionAviso = syncVendorCommissionEgreso(id, cajaEfectivo ? cajaEfectivo.id : (cajaTransfer ? cajaTransfer.id : null), req.session.userId) || null;
     }
   })();
 
@@ -5669,6 +5700,8 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     discount_type: discountType, discount_value: discountType ? discountValue : null,
     discount_amount: discountAmount,
     net_total: Math.max(0, (Number(order.total) || 0) - discountAmount),
+    // Presente solo si la comisión del vendedor no se pudo imputar a una caja.
+    commission_warning: comisionAviso,
   });
 });
 
@@ -5782,7 +5815,8 @@ function applyPurchaseCostUpdate(productId, newCostRaw, policy, purchaseId) {
   // Historial de costos para el reporte de inflacion. IMPORTANTE: los callers
   // llaman esta funcion ANTES de sumar el stock de la compra, asi el stock
   // registrado es el que habia comprado al costo viejo (revalorizacion exacta).
-  try { logCostChange(productId, oldCost, newCost, "compra", purchaseId || null); } catch (_) {}
+  try { logCostChange(productId, oldCost, newCost, "compra", purchaseId || null); }
+  catch (e) { console.error("[historial] cost_changes (compra) producto", productId, "-", e.message); }
   if (oldCost > 0 && newCost > 0) {
     // Mantener margen: cada precio de venta se mueve en la misma proporción.
     const ratio = newCost / oldCost;
@@ -5804,7 +5838,8 @@ function applyPurchaseCostUpdate(productId, newCostRaw, policy, purchaseId) {
     const after = db.prepare(
       "SELECT price_minorista, price_revendedor, price_mayorista, price_vip, price_publico FROM products WHERE id = ?"
     ).get(productId);
-    try { recordManualPriceChange(productId, before, after); } catch (_) {}
+    try { recordManualPriceChange(productId, before, after); }
+    catch (e) { console.error("[historial] price_changes (compra) producto", productId, "-", e.message); }
   } else {
     // Sin costo previo no se puede mantener margen: solo seteamos el costo.
     db.prepare("UPDATE products SET cost = ? WHERE id = ?").run(newCost, productId);
@@ -6630,6 +6665,7 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
   }
 
   let paymentId;
+  let comisionAvisoPago = null;   // {warning, amount} si la comisión no se pudo imputar a una caja
   db.transaction(() => {
     const r = db.prepare(
       "INSERT INTO payments (user_id, amount, method, reference, notes, caja_id, order_id, registered_by, created_at)" +
@@ -6674,7 +6710,7 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
       }
     }
     // Egreso automático de la comisión del vendedor (la caja queda en lo tuyo).
-    if (orderId) syncVendorCommissionEgreso(orderId, cajaId, req.session.userId);
+    if (orderId) comisionAvisoPago = syncVendorCommissionEgreso(orderId, cajaId, req.session.userId) || null;
   })();
 
   const payment = db.prepare(
@@ -6685,6 +6721,7 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
     ok: true, payment: payment,
     discount_type: discountType, discount_value: discountType ? discountValue : null,
     discount_amount: discountAmount,
+    commission_warning: comisionAvisoPago,
   });
 });
 
@@ -7776,7 +7813,13 @@ app.get("/api/budgets/:id/pdf", requireVendedorOrAdmin, requireSectionForAdmin("
   });
 });
 
+// OJO: es la unica ruta async del server. Express 4 NO manda las promesas
+// rechazadas al error handler: sin este try/catch, cualquier excepcion (pdfkit,
+// sharp, una imagen rota) dejaba el request colgado y el navegador en
+// "Generando..." para siempre. Ahora se responde 500 (o se corta el stream si
+// los headers ya salieron) y queda el error en los logs.
 app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
+ try {
   const body = req.body || {};
   const pConf = body.priceConfig || {};
   const categoryIds = (Array.isArray(body.categoryIds) && body.categoryIds.length > 0)
@@ -8204,6 +8247,11 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
      .text(totalProds + " productos · Generado " + hoy, MX, PH - 24, { width: UW, align: "center" });
 
   try { doc.end(); } catch (_) {}
+ } catch (err) {
+   console.error("[catalog/pdf] error generando el catalogo:", err && err.stack ? err.stack : err);
+   if (res.headersSent) { try { res.end(); } catch (_) {} return; }
+   res.status(500).json({ error: "No se pudo generar el catalogo: " + ((err && err.message) || "error desconocido") });
+ }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
