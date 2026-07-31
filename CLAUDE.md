@@ -1569,6 +1569,18 @@ El select **Precio** de la pestaña Productos solo ofrecía los 5 niveles base +
 - La clase `pv-*` de la tabla usa `list:` → `list-` (los dos puntos rompen el selector CSS). El handler del select ya no duplica esa lógica: delega en `renderProducts()`.
 - Verificado aislado en `/tmp` con la cadena real (Suc_Leon → $3.997, BC → $3.757, niveles → columnas normales, lista inexistente → cae a normal) y `node --check` OK.
 
+### Rótulo "comisión" vs "precio final" en Listas de precios (30 julio 2026 — `admin.js?v=20260730d`)
+
+Sergio preguntó qué significaba el hint "ef. 3.1% s/vip" debajo del % en la tabla de Listas. Los números estaban bien (es el % efectivo combinado de la cadena: `1,02 × 0,95 = 0,969` → 3,1%) pero el rótulo competía visualmente con el % propio y hacía dudar de cuál era la comisión. Tras el fix del snapshot (mismo día), **la comisión es siempre el % propio**; el efectivo es solo informativo.
+
+- `plRowHtml` (`admin.js`): el hint pasó de `ef. X% s/<raíz>` a dos líneas — **`comisión s/<lista padre>`** + **`precio final: <raíz> +X%`** — con `title` explicativo completo ("La comisión del vendedor es el 5% sobre el precio de BC. El precio final queda 3,1% arriba del precio vip."). El signo se arma con `+` explícito para valores ≥ 0.
+- `admin.html`: el `<th>` de la columna pasó a **"Ganancia % (comisión)"** con tooltip, y el párrafo explicativo del tab aclara que ese % **es la comisión** y que el hint de abajo solo describe dónde queda el precio final respecto del nivel raíz.
+- Listas NO encadenadas (sin `base_list_id`) siguen sin hint.
+
+### Fix cache de imagen de producto (30 julio 2026 — `admin.js`)
+
+`updateProductImageInState` (modal de imagen del admin) actualizaba solo `state.products`; `state.allProducts` (cache que usan los pickers de pedidos/compras/cotizaciones, el catálogo PDF y los presupuestos) quedaba con la imagen vieja hasta recargar la página. Ahora actualiza los dos. Nota: el síntoma que reportó Sergio ("cargué la imagen y en el catálogo dice Sin foto") no se pudo reproducir sin datos de producción — el endpoint `GET /api/products` sí devuelve `image_url` y el SW pide ese endpoint siempre a la red (network-first + `no-store`), así que "Sin foto" solo aparece si el producto llega sin `image_url`.
+
 ### Modo edición de la tabla de Productos con guardado único (30 julio 2026 — `admin.js?v=20260730c`, `styles.css?v=20260730c`)
 
 Pedido de Sergio: un botón que permita editar los productos desde la propia tabla y **un solo botón para guardar todo**. Decisiones (AskUserQuestion): campos = **nombre, categoría, costo, stock y activo**; el cambio de stock queda registrado **como ajuste con nota automática**; se entra con un **botón "✏️ Editar tabla"** en la barra de herramientas.
@@ -1587,6 +1599,8 @@ Pedido de Sergio: un botón que permita editar los productos desde la propia tab
 - **Mobile**: la fila en modo edición deja el layout de tarjeta de 5 columnas y pasa a una columna con etiqueta arriba de cada campo (`data-label` + `::before`), mostrando también costo y activo (que la tarjeta normal oculta). Inputs a 16px para evitar el zoom de iOS.
 
 **Verificación**: `node --check` OK (server + admin.js), llaves del CSS balanceadas, lógica de detección de cambios testeada aislada en `/tmp` (7 casos: nombre con espacios = sin cambio, costo mismo valor, ida y vuelta del stock, patch final, negativo → 0, categoría vacía → null) y el guardado simulado con Python sqlite3 sobre copia de la DB (stock 206→210 deja `stock_movements` con `qty_before+delta==qty_after`, y `cost_changes` con el stock previo al cambio).
+
+**🔴 Fix del select de categoría (mismo día — `admin.js?v=20260730e`)**: al entrar en modo edición TODAS las filas mostraban "— sin categoría —" aunque el producto tuviera una. Causa: `state.allCategories` se llena solo al abrir ciertos modales (modal de producto, bulk, etc.); al entrar en modo edición estaba vacío → el `<select>` no tenía `<option>` para preseleccionar (la tabla normal no lo necesita porque muestra `p.category_name` como texto). **Peor**: guardar así habría mandado `category_id: null` y borrado la categoría de cada fila tocada. Fix: `setEditMode` pasó a `async` y carga `/api/categories` antes de renderizar (con feedback "✏️ Cargando…" en el botón); además `editCellCat` agrega una `<option>` propia si el `category_id` del producto no está en el catálogo cargado (p. ej. categoría inactiva), usando `p.category_name`, para no perderla al guardar. Verificado aislado en `/tmp` (4 casos: cat normal preseleccionada, sin categoría, categoría fuera del catálogo, catálogo vacío).
 
 ### Próximos pasos pendientes (en orden)
 

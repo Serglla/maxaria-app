@@ -3107,9 +3107,18 @@
   function plRowHtml(pl) {
     const selectedRef = pl.base_list_id ? ("list:" + pl.base_list_id) : pl.base_level;
     const baseOpts = plBaseOptsHtml(selectedRef, pl.id);
-    // Para listas encadenadas mostramos el % efectivo combinado de la cadena.
+    // Listas encadenadas: el % de la columna es la COMISIÓN (ganancia propia,
+    // sobre el precio de la lista padre); debajo se aclara cómo queda el precio
+    // final respecto de la raíz de la cadena (dato informativo, no es comisión).
     const effHint = pl.base_list_id && pl.effective_markup_percent != null
-      ? '<div class="muted" style="font-size:11px;white-space:nowrap">ef. ' + pl.effective_markup_percent + '% s/' + escapeHtml(pl.effective_base_level || "") + '</div>'
+      ? '<div class="muted" style="font-size:11px;white-space:nowrap"' +
+        ' title="La comisión del vendedor es el ' + (Number(pl.markup_percent) || 0) +
+        '% sobre el precio de ' + escapeHtml(pl.base_list_name || "la lista base") +
+        '. El precio final queda ' + pl.effective_markup_percent + '% arriba del precio ' +
+        escapeHtml(pl.effective_base_level || "") + '.">' +
+        'comisión s/' + escapeHtml(pl.base_list_name || "base") + '<br>' +
+        'precio final: ' + escapeHtml(pl.effective_base_level || "") +
+        (pl.effective_markup_percent >= 0 ? " +" : " ") + pl.effective_markup_percent + '%</div>'
       : '';
     const inUse = (pl.users_count || 0) > 0;
     const hasDeps = (pl.dependents_count || 0) > 0;
@@ -4659,9 +4668,15 @@
   }
   function editCellCat(p) {
     const cur = editVal(p, "category_id");
-    const opts = (state.allCategories || [])
+    const cats = state.allCategories || [];
+    let opts = cats
       .map((c) => '<option value="' + c.id + '"' + (Number(cur) === Number(c.id) ? " selected" : "") + '>' + escapeHtml(c.name) + '</option>')
       .join("");
+    // Si la categoría del producto no está en el catálogo cargado (p. ej. quedó
+    // inactiva), la agregamos igual para no perderla al guardar.
+    if (cur != null && cur !== "" && !cats.some((c) => Number(c.id) === Number(cur))) {
+      opts = '<option value="' + cur + '" selected>' + escapeHtml(p.category_name || ("Categoría " + cur)) + '</option>' + opts;
+    }
     return '<td class="cell-cat cell-edit" data-label="Categoría"><select class="tbl-edit tbl-edit-cat" data-id="' + p.id + '" data-field="category_id">' +
       '<option value=""' + (cur == null || cur === "" ? " selected" : "") + '>— sin categoría —</option>' + opts + '</select></td>';
   }
@@ -4830,7 +4845,14 @@
     updateEditCount();
   });
 
-  function setEditMode(on) {
+  async function setEditMode(on) {
+    // El select de categoría necesita el catálogo completo; si todavía no se
+    // cargó (solo lo piden algunos modales), las filas saldrían con "— sin
+    // categoría —" aunque el producto tenga una asignada.
+    if (on && (!state.allCategories || !state.allCategories.length)) {
+      if (els.editBtn) { els.editBtn.disabled = true; els.editBtn.textContent = "✏️ Cargando…"; }
+      try { state.allCategories = await api("/api/categories"); } catch (_) { state.allCategories = []; }
+    }
     state.editMode = !!on;
     if (!on) state.editDirty.clear();
     if (els.editBar) els.editBar.hidden = !on;

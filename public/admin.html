@@ -1360,8 +1360,9 @@
         Luego se asigna a un cliente desde la pestaña <strong>Usuarios</strong> (columna "Lista de precios").
         El precio que ve el cliente es <code>base / (1 − ganancia/100)</code>, redondeado, de modo que
         <em>precio_venta − ganancia% = precio_base</em>. Ej: base $1000 con 10% → vende a $1111 (gana $111 limpios).
-        Con base en otra lista, el % se aplica sobre el precio de esa lista (puede ser negativo, ej: "SuperVip" = lista Vip con −2%);
-        la columna Ganancia muestra debajo el % <em>efectivo</em> combinado de la cadena.
+        Con base en otra lista, el % se aplica sobre el precio de esa lista (puede ser negativo, ej: "SuperVip" = lista Vip con −2%)
+        y <strong>ese % es la comisión</strong> que cobra el vendedor. Debajo, la columna Ganancia aclara cuánto queda el
+        <em>precio final</em> respecto del nivel raíz de la cadena (dato informativo, no es la comisión).
       </p>
       <div class="admin-table-wrap">
         <table class="admin-table" id="pl-table">
@@ -1369,7 +1370,7 @@
             <tr>
               <th>Nombre</th>
               <th>Lista base</th>
-              <th class="num">Ganancia %</th>
+              <th class="num" title="Ganancia limpia del vendedor sobre el precio final. En listas encadenadas es la comisión, calculada sobre el precio de la lista base.">Ganancia % <span class="muted" style="font-weight:600;text-transform:none">(comisión)</span></th>
               <th>Activa</th>
               <th class="num">Clientes</th>
               <th>Notas</th>
@@ -3574,6 +3575,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260730c"></script>
+  <script src="/js/admin.js?v=20260730e"></script>
 </body>
 </html>
