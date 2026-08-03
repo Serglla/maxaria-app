@@ -7449,17 +7449,23 @@
       String(d.getMonth() + 1).padStart(2, "0") + "-" +
       String(d.getDate()).padStart(2, "0");
     const now = new Date();
-    let from;
+    // El rango cubre el período COMPLETO, no "hasta hoy": "Este mes" va del 1 al
+    // último día del mes y "Esta semana" de lunes a domingo. Que el Hasta quede
+    // en el futuro no molesta (no hay ventas después de hoy) y evita que una
+    // entrega cargada tarde se vea recién al día siguiente.
+    let from, to;
     if (range === "today") {
-      from = now;
+      from = now; to = now;
     } else if (range === "week") {
       const dow = (now.getDay() + 6) % 7; // lunes = 0
       from = new Date(now); from.setDate(now.getDate() - dow);
+      to = new Date(from); to.setDate(from.getDate() + 6); // domingo
     } else { // month
       from = new Date(now.getFullYear(), now.getMonth(), 1);
+      to = new Date(now.getFullYear(), now.getMonth() + 1, 0); // último día del mes
     }
     els.ventasFrom.value = ymd(from);
-    els.ventasTo.value = ymd(now);
+    els.ventasTo.value = ymd(to);
   }
 
   async function loadVentasOrders() {

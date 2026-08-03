@@ -61,6 +61,40 @@ if (!SESSION_SECRET || INSECURE_SECRETS.has(SESSION_SECRET)) {
 }
 const WHATSAPP_NUMBER = (process.env.WHATSAPP_NUMBER || "").replace(/[^0-9]/g, "");
 
+// ---- ZONA HORARIA DEL NEGOCIO -------------------------------------------
+// Los timestamps se guardan en UTC (datetime('now') de SQLite y toISOString()
+// del frontend), pero los cortes de dia que le importan al usuario ("hoy",
+// "este mes", los filtros Desde/Hasta) estan definidos en HORA LOCAL.
+// Sin convertir, una entrega registrada a las 21:06 del 02/08 en Argentina
+// (= 03/08 00:06 UTC) caia fuera del filtro "hasta 02/08" y desaparecia de
+// Ventas hasta el dia siguiente.
+//
+// TZ_OFFSET_HOURS: horas a sumarle al UTC para obtener la hora local.
+// Argentina = -3. Configurable por env por si se despliega en otra zona.
+// (El server en Railway corre en UTC, por eso 'localtime' de SQLite NO sirve.)
+const TZ_OFFSET_HOURS = (() => {
+  const raw = process.env.TZ_OFFSET_HOURS;
+  const n = raw == null || raw === "" ? -3 : Number(raw);
+  if (!Number.isFinite(n) || n < -14 || n > 14) {
+    console.warn("[server] TZ_OFFSET_HOURS invalido (" + raw + "), uso -3 (Argentina).");
+    return -3;
+  }
+  return n;
+})();
+// Modificador para las funciones de fecha de SQLite. Se interpola en SQL, por
+// eso se arma desde un Number ya validado (nunca desde el string crudo).
+const TZ_SQL = "'" + (TZ_OFFSET_HOURS >= 0 ? "+" : "") + TZ_OFFSET_HOURS + " hours'";
+// Dia local (YYYY-MM-DD) de una columna/expresion de timestamp UTC.
+const localDay = (expr) => "date(" + expr + ", " + TZ_SQL + ")";
+// Mes local (YYYY-MM) de una columna/expresion de timestamp UTC.
+const localMonth = (expr) => "strftime('%Y-%m', " + expr + ", " + TZ_SQL + ")";
+// "Ahora" corrido a hora local: sirve para armar los parametros YYYY-MM-DD del
+// lado JS con los mismos cortes de dia que usan las queries. Se leen con los
+// getters UTC (getUTCDate, etc.) porque el Date ya viene desplazado.
+const nowLocal = () => new Date(Date.now() + TZ_OFFSET_HOURS * 3600000);
+// Dia local de hoy (o de un Date ya desplazado) como YYYY-MM-DD.
+const localDayIso = (d) => (d || nowLocal()).toISOString().slice(0, 10);
+
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "maxaria.db");
 
 // Detecta si la DB esta dentro del checkout del proyecto. En hosting tipo
@@ -1108,7 +1142,8 @@ const recordManualPriceChange = db.transaction((productId, before, after) => {
   const bucket = db.prepare(
     "SELECT id FROM price_updates" +
     " WHERE source = 'manual'" +
-    "   AND date(created_at, 'localtime') = date('now', 'localtime')" +
+    // 'localtime' de SQLite no sirve: el server corre en UTC. Offset explicito.
+    "   AND " + localDay("created_at") + " = " + localDay("'now'") +
     " ORDER BY id DESC LIMIT 1"
   ).get();
   let updateId;
@@ -2684,7 +2719,10 @@ app.get("/api/admin/ventas", requireAdmin, (req, res) => {
   const { from, to } = req.query;
   const where = ["o.status = 'entregado'", "COALESCE(o.is_unified,0) = 0"];
   const params = [];
-  const dateExpr = "date(COALESCE(d.delivered_at, o.created_at))";
+  // Dia LOCAL de la entrega (los timestamps son UTC; from/to vienen en hora
+  // local desde el panel). Sin esto, una entrega de las 21:06 hora argentina
+  // cae en el dia UTC siguiente y se filtra fuera del rango elegido.
+  const dateExpr = localDay("COALESCE(d.delivered_at, o.created_at)");
   if (from) { where.push(dateExpr + " >= ?"); params.push(from); }
   if (to)   { where.push(dateExpr + " <= ?"); params.push(to); }
   const sql =
@@ -4782,24 +4820,33 @@ app.get("/api/admin/earnings/:vendedorId", requireAdmin, (req, res) => {
 // Si falta alguno, se aplica un default razonable (ultimos 30 dias).
 // Las fechas se comparan contra orders.created_at en formato ISO
 // (la columna ya viene con CURRENT_TIMESTAMP que es comparable lexico).
+// Los dias que elige el usuario son LOCALES, pero created_at/delivered_at estan
+// en UTC. Devolvemos los limites ya convertidos a UTC (from/to, para el BETWEEN)
+// y ademas los dias locales crudos (fromDay/toDay, para mostrar y para calcular
+// la ventana anterior). Sin la conversion, los pedidos de las ultimas horas del
+// dia local caian en el dia siguiente y quedaban fuera del rango.
+function localDayBoundToUtc(day, end) {
+  const base = Date.parse(day + (end ? "T23:59:59Z" : "T00:00:00Z"));
+  return new Date(base - TZ_OFFSET_HOURS * 3600000).toISOString().slice(0, 19).replace("T", " ");
+}
 function parseActivityRange(req) {
-  function toIso(v, end) {
-    if (!v || typeof v !== "string") return null;
-    const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!m) return null;
-    return end ? (v + " 23:59:59") : (v + " 00:00:00");
+  function day(v) {
+    return (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : null;
   }
-  let from = toIso(req.query.from, false);
-  let to = toIso(req.query.to, true);
-  if (!from) {
-    const d = new Date();
-    d.setDate(d.getDate() - 30);
-    from = d.toISOString().slice(0, 10) + " 00:00:00";
+  let fromDay = day(req.query.from);
+  let toDay = day(req.query.to);
+  if (!fromDay) {
+    const d = nowLocal();
+    d.setUTCDate(d.getUTCDate() - 30);
+    fromDay = d.toISOString().slice(0, 10);
   }
-  if (!to) {
-    to = new Date().toISOString().slice(0, 10) + " 23:59:59";
-  }
-  return { from: from, to: to };
+  if (!toDay) toDay = localDayIso();
+  return {
+    from: localDayBoundToUtc(fromDay, false),
+    to: localDayBoundToUtc(toDay, true),
+    fromDay: fromDay,
+    toDay: toDay,
+  };
 }
 
 // Ventana anterior equivalente: misma cantidad de días que [from, to], pero
@@ -4815,9 +4862,14 @@ function previousActivityWindow(from, to) {
   prevTo.setUTCDate(prevTo.getUTCDate() - 1);
   const prevFrom = new Date(fromDate);
   prevFrom.setUTCDate(prevFrom.getUTCDate() - days);
+  const prevFromDay = prevFrom.toISOString().slice(0, 10);
+  const prevToDay = prevTo.toISOString().slice(0, 10);
   return {
-    from: prevFrom.toISOString().slice(0, 10) + " 00:00:00",
-    to: prevTo.toISOString().slice(0, 10) + " 23:59:59",
+    // Limites en UTC (para el BETWEEN) + dias locales (para mostrar).
+    from: localDayBoundToUtc(prevFromDay, false),
+    to: localDayBoundToUtc(prevToDay, true),
+    fromDay: prevFromDay,
+    toDay: prevToDay,
   };
 }
 
@@ -4871,7 +4923,7 @@ app.get("/api/admin/activity/clients", requireAdmin, (req, res) => {
     "   AND COALESCE(oa.orders_count,0) > 0" +
     " ORDER BY oa.total_sold DESC, u.username"
   ).all(range.from, range.to);
-  res.json({ from: range.from, to: range.to, rows: rows });
+  res.json({ from: range.fromDay, to: range.toDay, rows: rows });
 });
 
 // Detalle de pedidos de un cliente puntual en el rango.
@@ -4900,7 +4952,7 @@ app.get("/api/admin/activity/clients/:userId", requireAdmin, (req, res) => {
     " GROUP BY o.id" +
     " ORDER BY o.created_at DESC"
   ).all(uid, range.from, range.to);
-  res.json({ cliente: cliente, from: range.from, to: range.to, orders: orders });
+  res.json({ cliente: cliente, from: range.fromDay, to: range.toDay, orders: orders });
 });
 
 // ----- Ranking de productos por ganancia -----
@@ -4934,7 +4986,8 @@ app.get("/api/admin/activity/products-ranking", requireAdmin, (req, res) => {
 
   // Período anterior equivalente (misma cantidad de días, terminando el día
   // antes de 'from') para calcular la variación de ventas por producto.
-  const prev = previousActivityWindow(range.from, range.to);
+  // Se calcula sobre los dias LOCALES (no sobre los limites ya pasados a UTC).
+  const prev = previousActivityWindow(range.fromDay, range.toDay);
   const prevRows = db.prepare(
     "SELECT oi.product_id AS product_id," +
     "       SUM(oi.quantity) AS units_sold," +
@@ -4955,8 +5008,9 @@ app.get("/api/admin/activity/products-ranking", requireAdmin, (req, res) => {
     r.prev_total_sold = p ? (Number(p.total_sold) || 0) : 0;
   }
   res.json({
-    from: range.from, to: range.to,
-    prev_from: prev.from, prev_to: prev.to,
+    // Se devuelven los dias locales (lo que el usuario eligio y espera ver).
+    from: range.fromDay, to: range.toDay,
+    prev_from: prev.fromDay, prev_to: prev.toDay,
     rows: rows,
   });
 });
@@ -5146,7 +5200,7 @@ app.get("/api/admin/activity/monthly", requireAdmin, (req, res) => {
 
   // Pedidos no cancelados, no unificados, agregados por mes con sus items
   const orderRows = db.prepare(
-    "SELECT strftime('%Y-%m', o.created_at) AS month," +
+    "SELECT " + localMonth("o.created_at") + " AS month," +
     "       COUNT(DISTINCT o.id) AS orders_count," +
     "       SUM(CASE WHEN o.status='entregado' THEN 1 ELSE 0 END) AS delivered_count," +
     "       SUM(o.total) AS gross_sales," +
@@ -5161,7 +5215,7 @@ app.get("/api/admin/activity/monthly", requireAdmin, (req, res) => {
   // Costo + ganancia agregados por mes desde order_items (con snapshot o
   // fallback a products.cost). Excluye cancelados y unificados.
   const itemRows = db.prepare(
-    "SELECT strftime('%Y-%m', o.created_at) AS month," +
+    "SELECT " + localMonth("o.created_at") + " AS month," +
     "       SUM(COALESCE(oi.vendedor_cost_unit, p.cost, 0) * oi.quantity) AS cost_total," +
     "       SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS net_earning" +
     "  FROM order_items oi" +
@@ -5186,7 +5240,7 @@ app.get("/api/admin/activity/monthly", requireAdmin, (req, res) => {
 
   // Cobranzas (pagos recibidos de clientes)
   const payRows = db.prepare(
-    "SELECT strftime('%Y-%m', created_at) AS month," +
+    "SELECT " + localMonth("created_at") + " AS month," +
     "       COUNT(*) AS payments_count," +
     "       SUM(amount) AS payments_total" +
     "  FROM payments" +
@@ -8674,8 +8728,8 @@ app.get("/api/admin/reports/inflation", requireAdmin, (req, res) => {
   const { from, to } = req.query;
   const where = [];
   const params = [];
-  if (from) { where.push("date(cc.created_at) >= ?"); params.push(String(from)); }
-  if (to)   { where.push("date(cc.created_at) <= ?"); params.push(String(to)); }
+  if (from) { where.push(localDay("cc.created_at") + " >= ?"); params.push(String(from)); }
+  if (to)   { where.push(localDay("cc.created_at") + " <= ?"); params.push(String(to)); }
   const wStr = where.length ? " WHERE " + where.join(" AND ") : "";
 
   const rows = db.prepare(
@@ -8796,8 +8850,10 @@ app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
   const where = ["COALESCE(o.is_unified,0) = 0"];
   const params = [];
 
-  if (from)        { where.push("date(o.created_at) >= ?"); params.push(from); }
-  if (to)          { where.push("date(o.created_at) <= ?"); params.push(to); }
+  // from/to llegan como dia LOCAL desde el panel -> comparar contra el dia
+  // local del timestamp (que esta en UTC), no contra el dia UTC crudo.
+  if (from)        { where.push(localDay("o.created_at") + " >= ?"); params.push(from); }
+  if (to)          { where.push(localDay("o.created_at") + " <= ?"); params.push(to); }
   if (client_id)   { where.push("o.user_id = ?");           params.push(Number(client_id)); }
   if (vendedor_id) { where.push("(o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"); params.push(Number(vendedor_id), Number(vendedor_id)); }
   if (status === "entregado") {
@@ -8833,8 +8889,8 @@ app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
   const cobros = (() => {
     const cp = [];
     const cw = [];
-    if (from) { cw.push("date(created_at) >= ?"); cp.push(from); }
-    if (to)   { cw.push("date(created_at) <= ?"); cp.push(to); }
+    if (from) { cw.push(localDay("created_at") + " >= ?"); cp.push(from); }
+    if (to)   { cw.push(localDay("created_at") + " <= ?"); cp.push(to); }
     const q = "SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt FROM payments" +
               (cw.length ? " WHERE " + cw.join(" AND ") : "");
     return db.prepare(q).get(...cp);
@@ -8844,8 +8900,8 @@ app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
   const compras = (() => {
     const cp = [];
     const cw = [];
-    if (from) { cw.push("date(created_at) >= ?"); cp.push(from); }
-    if (to)   { cw.push("date(created_at) <= ?"); cp.push(to); }
+    if (from) { cw.push(localDay("created_at") + " >= ?"); cp.push(from); }
+    if (to)   { cw.push(localDay("created_at") + " <= ?"); cp.push(to); }
     const q = "SELECT COALESCE(SUM(total_cost),0) AS total, COUNT(*) AS cnt FROM purchase_orders" +
               (cw.length ? " WHERE " + cw.join(" AND ") : "");
     return db.prepare(q).get(...cp);
@@ -8898,7 +8954,7 @@ app.get("/api/admin/reports/monthly-history", requireAdmin, (req, res) => {
 
   // Pedidos + ganancia por mes (mismo criterio que /reports/sales default: sin cancelados ni unificados)
   db.prepare(
-    "SELECT strftime('%Y-%m', o.created_at) AS ym," +
+    "SELECT " + localMonth("o.created_at") + " AS ym," +
     "       COUNT(DISTINCT o.id) AS orders," +
     "       SUM(CASE WHEN o.status='entregado' THEN 1 ELSE 0 END) AS entregados," +
     "       COALESCE(SUM(o.total),0) AS ventas," +
@@ -8909,7 +8965,7 @@ app.get("/api/admin/reports/monthly-history", requireAdmin, (req, res) => {
     "     SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS earning_total" +
     "   FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id GROUP BY oi.order_id" +
     " ) oi_agg ON oi_agg.order_id = o.id" +
-    " WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0 AND date(o.created_at) >= ?" +
+    " WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0 AND " + localDay("o.created_at") + " >= ?" +
     " GROUP BY ym"
   ).all(fromYm).forEach((r) => {
     const t = byYm[r.ym];
@@ -8918,8 +8974,8 @@ app.get("/api/admin/reports/monthly-history", requireAdmin, (req, res) => {
 
   // Cobros por mes
   db.prepare(
-    "SELECT strftime('%Y-%m', created_at) AS ym, COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt" +
-    " FROM payments WHERE date(created_at) >= ? GROUP BY ym"
+    "SELECT " + localMonth("created_at") + " AS ym, COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt" +
+    " FROM payments WHERE " + localDay("created_at") + " >= ? GROUP BY ym"
   ).all(fromYm).forEach((r) => {
     const t = byYm[r.ym];
     if (t) { t.cobros = r.total; t.cobros_cnt = r.cnt; }
@@ -8927,8 +8983,8 @@ app.get("/api/admin/reports/monthly-history", requireAdmin, (req, res) => {
 
   // Compras por mes
   db.prepare(
-    "SELECT strftime('%Y-%m', created_at) AS ym, COALESCE(SUM(total_cost),0) AS total, COUNT(*) AS cnt" +
-    " FROM purchase_orders WHERE date(created_at) >= ? GROUP BY ym"
+    "SELECT " + localMonth("created_at") + " AS ym, COALESCE(SUM(total_cost),0) AS total, COUNT(*) AS cnt" +
+    " FROM purchase_orders WHERE " + localDay("created_at") + " >= ? GROUP BY ym"
   ).all(fromYm).forEach((r) => {
     const t = byYm[r.ym];
     if (t) { t.compras = r.total; t.compras_cnt = r.cnt; }
@@ -8942,8 +8998,10 @@ function rptCategoryWhere(query) {
   const { from, to, client_id, vendedor_id, status } = query;
   const where = ["COALESCE(o.is_unified,0) = 0"];
   const params = [];
-  if (from)        { where.push("date(o.created_at) >= ?"); params.push(from); }
-  if (to)          { where.push("date(o.created_at) <= ?"); params.push(to); }
+  // from/to llegan como dia LOCAL desde el panel -> comparar contra el dia
+  // local del timestamp (que esta en UTC), no contra el dia UTC crudo.
+  if (from)        { where.push(localDay("o.created_at") + " >= ?"); params.push(from); }
+  if (to)          { where.push(localDay("o.created_at") + " <= ?"); params.push(to); }
   if (client_id)   { where.push("o.user_id = ?");           params.push(Number(client_id)); }
   if (vendedor_id) { where.push("(o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)"); params.push(Number(vendedor_id), Number(vendedor_id)); }
   if (status === "entregado") {
@@ -9019,8 +9077,8 @@ app.get("/api/admin/stock-adjustments", requireAdmin, (req, res) => {
   const where = [];
   const params = [];
   if (product_id) { where.push("sa.product_id=?"); params.push(Number(product_id)); }
-  if (from)       { where.push("date(sa.created_at)>=?"); params.push(from); }
-  if (to)         { where.push("date(sa.created_at)<=?"); params.push(to); }
+  if (from)       { where.push(localDay("sa.created_at") + ">=?"); params.push(from); }
+  if (to)         { where.push(localDay("sa.created_at") + "<=?"); params.push(to); }
   const wStr = where.length ? " WHERE " + where.join(" AND ") : "";
   const rows = db.prepare(
     "SELECT sa.*, u.username AS registered_by_username" +
@@ -9046,8 +9104,8 @@ app.get("/api/admin/products/:id/stock-history", requireAdmin, (req, res) => {
   const { from, to, type } = req.query;
   const where = ["sm.product_id = ?"];
   const params = [id];
-  if (from) { where.push("date(sm.created_at) >= ?"); params.push(from); }
-  if (to)   { where.push("date(sm.created_at) <= ?"); params.push(to); }
+  if (from) { where.push(localDay("sm.created_at") + " >= ?"); params.push(from); }
+  if (to)   { where.push(localDay("sm.created_at") + " <= ?"); params.push(to); }
   if (type) { where.push("sm.type = ?"); params.push(type); }
   const rows = db.prepare(
     "SELECT sm.*, u.username AS registered_by_username, u.full_name AS registered_by_name" +
@@ -9067,8 +9125,8 @@ app.get("/api/admin/stock-movements", requireAdmin, (req, res) => {
   const { from, to, type } = req.query;
   const where = [];
   const params = [];
-  if (from) { where.push("date(sm.created_at) >= ?"); params.push(from); }
-  if (to)   { where.push("date(sm.created_at) <= ?"); params.push(to); }
+  if (from) { where.push(localDay("sm.created_at") + " >= ?"); params.push(from); }
+  if (to)   { where.push(localDay("sm.created_at") + " <= ?"); params.push(to); }
   if (type) { where.push("sm.type = ?"); params.push(type); }
   const wStr = where.length ? " WHERE " + where.join(" AND ") : "";
   const rows = db.prepare(
@@ -9374,7 +9432,7 @@ app.delete("/api/admin/caja/movements/:id", requireAdmin, (req, res) => {
 app.get("/api/admin/dashboard/debt-history", requireAdmin, (req, res) => {
   // Movimientos agrupados por mes (YYYY-MM), todos los clientes juntos
   const rows = db.prepare(
-    "SELECT strftime('%Y-%m', created_at) AS month," +
+    "SELECT " + localMonth("created_at") + " AS month," +
     "       SUM(CASE WHEN type='debit'  THEN amount ELSE 0 END) AS monthly_debit," +
     "       SUM(CASE WHEN type='credit' THEN amount ELSE 0 END) AS monthly_credit" +
     "  FROM account_movements" +
@@ -9406,16 +9464,20 @@ app.get("/api/admin/dashboard/debt-history", requireAdmin, (req, res) => {
 });
 
 app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
-  const now = new Date();
-  const todayIso  = now.toISOString().slice(0, 10);
+  // Todos los cortes ("hoy", "esta semana", "este mes") en HORA LOCAL: nowLocal()
+  // ya viene desplazado, por eso se leen con los getters UTC. Antes se usaba
+  // toISOString() del UTC crudo -> despues de las 21hs argentinas el dashboard
+  // ya contaba el dia siguiente.
+  const now = nowLocal();
+  const todayIso  = localDayIso(now);
   const monthIso  = todayIso.slice(0, 7); // YYYY-MM
   const prevMonth = (() => {
-    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
   })();
   const weekStart = (() => {
     const d = new Date(now);
-    d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // lunes
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // lunes
     return d.toISOString().slice(0, 10);
   })();
 
@@ -9423,28 +9485,28 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
   const salesToday = db.prepare(
     "SELECT COUNT(*) AS cnt, COALESCE(SUM(total),0) AS total" +
     " FROM orders WHERE status != 'cancelado' AND COALESCE(is_unified,0)=0" +
-    " AND date(created_at)=?"
+    " AND " + localDay("created_at") + "=?"
   ).get(todayIso);
 
   // Ventas esta semana
   const salesWeek = db.prepare(
     "SELECT COUNT(*) AS cnt, COALESCE(SUM(total),0) AS total" +
     " FROM orders WHERE status != 'cancelado' AND COALESCE(is_unified,0)=0" +
-    " AND date(created_at) >= ?"
+    " AND " + localDay("created_at") + " >= ?"
   ).get(weekStart);
 
   // Ventas mes actual
   const salesMonth = db.prepare(
     "SELECT COUNT(*) AS cnt, COALESCE(SUM(total),0) AS total" +
     " FROM orders WHERE status != 'cancelado' AND COALESCE(is_unified,0)=0" +
-    " AND strftime('%Y-%m', created_at)=?"
+    " AND " + localMonth("created_at") + "=?"
   ).get(monthIso);
 
   // Ventas mes anterior
   const salesPrevMonth = db.prepare(
     "SELECT COALESCE(SUM(total),0) AS total" +
     " FROM orders WHERE status != 'cancelado' AND COALESCE(is_unified,0)=0" +
-    " AND strftime('%Y-%m', created_at)=?"
+    " AND " + localMonth("created_at") + "=?"
   ).get(prevMonth);
 
   // Pedidos activos por estado
@@ -9457,20 +9519,20 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
   // Cobros del mes: pagos manuales + lo cobrado en entregas (efectivo + transferencia)
   const cobrosMonth = db.prepare(
     "SELECT COALESCE(SUM(t),0) AS total, COUNT(*) AS cnt FROM (" +
-    "  SELECT amount AS t FROM payments WHERE strftime('%Y-%m',created_at)=?" +
+    "  SELECT amount AS t FROM payments WHERE " + localMonth("created_at") + "=?" +
     "  UNION ALL" +
     "  SELECT (efectivo_amount + transferencia_amount) AS t" +
-    "  FROM deliveries WHERE strftime('%Y-%m',delivered_at)=? AND (efectivo_amount+transferencia_amount)>0" +
+    "  FROM deliveries WHERE " + localMonth("delivered_at") + "=? AND (efectivo_amount+transferencia_amount)>0" +
     ")"
   ).get(monthIso, monthIso);
 
   // Cobros hoy: pagos manuales + lo cobrado en entregas de hoy
   const cobrosToday = db.prepare(
     "SELECT COALESCE(SUM(t),0) AS total FROM (" +
-    "  SELECT amount AS t FROM payments WHERE date(created_at)=?" +
+    "  SELECT amount AS t FROM payments WHERE " + localDay("created_at") + "=?" +
     "  UNION ALL" +
     "  SELECT (efectivo_amount + transferencia_amount) AS t" +
-    "  FROM deliveries WHERE date(delivered_at)=? AND (efectivo_amount+transferencia_amount)>0" +
+    "  FROM deliveries WHERE " + localDay("delivered_at") + "=? AND (efectivo_amount+transferencia_amount)>0" +
     ")"
   ).get(todayIso, todayIso);
 
@@ -9526,7 +9588,7 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     "SELECT COUNT(DISTINCT d.order_id) AS cnt" +
     " FROM deliveries d" +
     " JOIN orders o ON o.id = d.order_id" +
-    " WHERE COALESCE(o.is_unified,0)=0 AND date(d.delivered_at)=?"
+    " WHERE COALESCE(o.is_unified,0)=0 AND " + localDay("d.delivered_at") + "=?"
   ).get(todayIso);
 
   // Clientes inactivos: clientes (level 1-4) activos que no ingresan hace

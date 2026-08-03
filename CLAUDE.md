@@ -1656,6 +1656,30 @@ Regla resultante: cliente 1-4 → solo sus categorías permitidas y activas; ven
 
 **Verificación**: `node --check server.js` OK (mount NO stale); la query nueva corre contra copia de la DB local; 6 escenarios testeados aislados en `/tmp` (cliente restringido, cliente sin restricción, vendedor con/sin cliente, admin normal, admin ver-como) → todos OK. Sin cambios de frontend, no hace falta cache busting. Pendiente: `git add/commit/push` + deploy Railway (en disco local).
 
+### 🔴 Fix zona horaria: los cortes de día se hacían en UTC (2 agosto 2026 — `admin.js?v=20260802a`)
+
+Reporte de Sergio: los pedidos #239 y #240 aparecían en Entregas con fecha 02/08/2026 09:06 p. m. pero **no** en la pestaña Ventas filtrando "Este mes".
+
+**Causa**: `deliveries.delivered_at` (y `created_at` de todo) se guarda en **UTC** (`admin.js` manda `toISOString()`; SQLite usa `datetime('now')`), pero el panel muestra y filtra en **hora local** (`formatDate` hace `new Date(s + "Z")`, los presets de fecha usan getters locales). El filtro comparaba `date(delivered_at)` (día UTC) contra un `to` que era el día local. Una entrega de las 21:06 del 02/08 en Argentina = `2026-08-03 00:06` UTC → `'2026-08-03' <= '2026-08-02'` falso → se filtraba fuera. **Toda operación registrada después de las 21:00 hora argentina caía en el día siguiente.** El bug era sistémico: Ventas, Reportes, Dashboard ("hoy"/"este mes"), Inflación, Actividad, historial de stock.
+
+**Helper nuevo en `server.js`** (arriba de todo, junto a las constantes de env):
+- `TZ_OFFSET_HOURS` — horas a sumarle al UTC para obtener la hora local. Default **-3** (Argentina), configurable por env `TZ_OFFSET_HOURS`, validado como Number entre -14 y 14 (nunca se interpola el string crudo en SQL).
+- `TZ_SQL` = `'-3 hours'`, `localDay(expr)` = `date(expr, TZ_SQL)`, `localMonth(expr)` = `strftime('%Y-%m', expr, TZ_SQL)`.
+- `nowLocal()` = Date corrido al huso local (leer con getters **UTC**: `getUTCDate`, etc.) y `localDayIso(d)` = YYYY-MM-DD local. Sirven para armar los parámetros del lado JS con el mismo corte de día que la query.
+- **`'localtime'` de SQLite NO sirve**: Railway corre el proceso en UTC, así que `date('now','localtime')` == `date('now')`. Por eso el offset explícito. (Se corrigió el bucket diario de `recordManualPriceChange`, que usaba `'localtime'`.)
+
+**Aplicado en**: `/api/admin/ventas` (el caso reportado), `/api/admin/reports/sales` + `by-category` + cobros/compras del período + gráfico mensual, `/api/admin/dashboard` (todayIso/weekStart/prevMonth ahora locales + ventas hoy/semana/mes/mes anterior + cobros hoy/mes + entregados hoy), `debt-history`, `/api/admin/reports/inflation`, `stock-adjustments`, historial de `stock_movements` (los 2 endpoints), `activity/monthly` y `parseActivityRange`.
+
+**`parseActivityRange` reescrito**: ahora devuelve `{from, to}` ya convertidos a **UTC** (para el `BETWEEN` contra timestamps) más `{fromDay, toDay}` con los **días locales** (para mostrar y para `previousActivityWindow`). Helper `localDayBoundToUtc(day, end)`. Los endpoints de Actividad devuelven en el JSON los días locales (el front hace `.slice(0,10)`, si le mandabas el bound UTC del fin de día se corría un día).
+
+**NO se tocó** (a propósito): `expenses.expense_date` y `cash_movements.movement_date` son **fechas puras** (`YYYY-MM-DD`, sin hora) — aplicarles `-3 hours` las tiraría al día anterior. Tampoco `purchase_orders.received_at` (es mixto: a veces timestamp, a veces fecha del form) ni el `julianday('now')` de clientes inactivos (es una diferencia de tiempo, no un corte de día). Los `DEFAULT (date('now'))` del schema quedan en UTC (cambiarlos no tendría efecto sobre tablas ya creadas).
+
+**Bonus pedido por Sergio**: los presets de período de la pestaña Ventas cubrían "hasta hoy" en vez del período completo. `setVentasRangeDates` ahora arma **"Este mes" = día 1 al último día del mes** y **"Esta semana" = lunes a domingo** (que el Hasta quede en el futuro no molesta y evita que una entrega cargada tarde se vea recién al día siguiente). Reportes ya usaba el mes completo.
+
+**Verificación**: `node --check` OK en server.js y admin.js (mount NO stale). Caso real reproducido en `/tmp` con sqlite3: con el `date()` viejo el filtro 01/08→02/08 devolvía `[235, 300]` (faltaban 239 y 240, y encima colaba una entrega del 31/07 23:30); con el nuevo devuelve `[235, 239, 240]`. Helpers JS testeados (bound inicio/fin del día local, "hoy" local a las 21:06 = 02/08 y no 03/08, lunes de la semana, mes anterior). Las 8 queries modificadas más críticas se ejecutaron contra copia de la DB local → sin errores de sintaxis.
+
+**Pendiente**: `git add/commit/push` + deploy Railway + Ctrl+F5. Los datos históricos no se migran (no hace falta: lo que cambia es cómo se leen, no cómo se guardan) — después del deploy los pedidos "perdidos" aparecen solos en el día correcto.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.
