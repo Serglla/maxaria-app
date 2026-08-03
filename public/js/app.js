@@ -89,6 +89,8 @@
     // null = aún no eligió cliente (catálogo sin precios).
     vendedorClient: null,
     clients: [], // lista de usuarios (level 1-4) cargada para vendedores
+    // "Tu pedido habitual" + recordatorios de recompra del cliente target.
+    suggestions: null,
   };
 
   function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -269,6 +271,8 @@
       if (me.level >= 1 && me.level <= 4) {
         api("/api/my-notifications").then(notifyOrderUpdates).catch(() => {});
       }
+      // "Tu pedido habitual" (no bloquea el render del catálogo).
+      loadSuggestions();
       _lastCatalogRefresh = Date.now();
     } catch (e) { console.error(e); }
   }
@@ -469,9 +473,124 @@
     } else {
       els.grid.innerHTML = list.map((p) => cardHtml(p)).join("");
     }
+    // El bloque "pedido habitual" solo se muestra en la vista limpia (sin
+    // búsqueda ni filtro de categoría), así que se re-evalúa en cada render.
+    renderSuggestions();
     // Event delegation: un solo handler en la grilla maneja add/inc/dec
     // de TODOS los cards. Asi no hay que re-bindear handlers cada
     // vez que se vuelve a renderizar la accion de un card.
+  }
+
+  // ----- Tu pedido habitual + recordatorio de recompra -----
+  // El catálogo deja de ser una lista pasiva: arriba de la grilla aparecen los
+  // productos que este cliente pide siempre (con su cantidad típica) y un aviso
+  // cuando se le pasó el ciclo con el que suele reponer algo. Todo sale de sus
+  // propios pedidos (GET /api/my-suggestions).
+  const SUGG_LS_KEY = "maxaria_sugg_hidden";
+
+  async function loadSuggestions() {
+    const el = document.getElementById("suggestions");
+    if (!el || !state.me) return;
+    const lvl = Number(state.me.level);
+    const esCliente = lvl >= 1 && lvl <= 4;
+    const vendedorConCliente = lvl === 5 && !!state.vendedorClient;
+    if (!esCliente && !vendedorConCliente) { el.hidden = true; return; }
+    try {
+      state.suggestions = await api("/api/my-suggestions");
+    } catch (_) {
+      el.hidden = true; return;
+    }
+    renderSuggestions();
+  }
+
+  function suggHidden() {
+    try { return localStorage.getItem(SUGG_LS_KEY) === "1"; } catch (_) { return false; }
+  }
+
+  function renderSuggestions() {
+    const el = document.getElementById("suggestions");
+    if (!el) return;
+    const s = state.suggestions;
+    // Se muestra solo en la vista limpia: si el usuario está buscando o filtró
+    // una categoría, estorba.
+    const vistaLimpia = state.cat === "all" && !state.query;
+    if (!s || !vistaLimpia || (!s.habitual.length && !s.recompra.length)) { el.hidden = true; return; }
+
+    const quien = state.vendedorClient ? escapeHtml(state.vendedorClient.name) : "Tu";
+    const titulo = state.vendedorClient ? "Lo que suele pedir " + quien : "Tu pedido habitual";
+    let html = "";
+
+    // Recordatorios de recompra (los más atrasados primero).
+    s.recompra.slice(0, 3).forEach(function(r) {
+      html +=
+        '<div class="sugg-remind">' +
+          '<span class="sugg-remind-icon" aria-hidden="true">🔔</span>' +
+          '<div class="sugg-remind-text">' +
+            "<strong>Hace " + r.days_since + " días que no " +
+              (state.vendedorClient ? "pide " : "pedís ") + escapeHtml(r.name) + "</strong>" +
+            "<span>Suele reponerlo cada " + r.cycle_days + " días</span>" +
+          "</div>" +
+          '<button class="sugg-add-btn" data-sugg-add="' + r.product_id + '" data-qty="' + r.qty + '">Agregar ' + r.qty + "</button>" +
+        "</div>";
+    });
+
+    if (s.habitual.length && !suggHidden()) {
+      html +=
+        '<div class="sugg-box">' +
+          '<div class="sugg-head">' +
+            "<span>" + titulo + "</span>" +
+            '<div class="sugg-head-actions">' +
+              '<button class="sugg-all-btn" id="sugg-add-all" type="button">Agregar todo</button>' +
+              '<button class="sugg-hide-btn" id="sugg-hide" type="button" title="Ocultar esta sección">✕</button>' +
+            "</div>" +
+          "</div>" +
+          '<div class="sugg-list">' +
+            s.habitual.map(function(h) {
+              return '<div class="sugg-item">' +
+                '<div class="sugg-item-main">' +
+                  '<div class="sugg-item-name">' + escapeHtml(h.name) + "</div>" +
+                  '<div class="sugg-item-meta">Lo pidió ' + h.times_ordered + " de sus últimos " + h.of_orders + " pedidos</div>" +
+                "</div>" +
+                '<span class="sugg-item-price">' + fmtPrice(h.price) + "</span>" +
+                '<button class="sugg-add-btn" data-sugg-add="' + h.product_id + '" data-qty="' + h.qty + '">+ ' + h.qty + "</button>" +
+              "</div>";
+            }).join("") +
+          "</div>" +
+        "</div>";
+    }
+
+    if (!html) { el.hidden = true; return; }
+    el.innerHTML = html;
+    el.hidden = false;
+
+    el.querySelectorAll("[data-sugg-add]").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        const id = Number(btn.dataset.suggAdd);
+        const qty = Math.max(1, Number(btn.dataset.qty) || 1);
+        const actual = state.cart.get(id);
+        setQty(id, (actual ? actual.qty : 0) + qty);
+        btn.textContent = "✓ Agregado";
+        btn.disabled = true;
+      });
+    });
+    const allBtn = document.getElementById("sugg-add-all");
+    if (allBtn) {
+      allBtn.addEventListener("click", function() {
+        s.habitual.forEach(function(h) {
+          const actual = state.cart.get(h.product_id);
+          if (!actual) setQty(h.product_id, h.qty);
+        });
+        allBtn.textContent = "✓ Agregados";
+        allBtn.disabled = true;
+      });
+    }
+    const hideBtn = document.getElementById("sugg-hide");
+    if (hideBtn) {
+      hideBtn.addEventListener("click", function() {
+        try { localStorage.setItem(SUGG_LS_KEY, "1"); } catch (_) {}
+        renderSuggestions();
+      });
+    }
   }
 
   // ----- Flujo vendedor: selección de cliente -----
@@ -599,6 +718,9 @@
       renderVendedorBar();
       renderCategories();
       renderProducts();
+      // El "pedido habitual" es del cliente elegido: se recarga al cambiarlo.
+      state.suggestions = null;
+      loadSuggestions();
     }
     try {
       // navigator.onLine es poco confiable (true con WiFi sin internet),

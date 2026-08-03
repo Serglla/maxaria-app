@@ -86,9 +86,12 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 2) Resto de APIs, auth y health → siempre red, nunca cache
+  // 2) Resto de APIs, auth y health → siempre red, nunca cache.
+  // /c/<token> es el link de acceso directo del cliente: crea la sesión y
+  // redirige, así que NUNCA debe servirse ni guardarse desde el cache.
   if (
     url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/c/") ||
     url.pathname === "/login" ||
     url.pathname === "/logout" ||
     url.pathname === "/healthz"

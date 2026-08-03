@@ -3,6 +3,7 @@
  */
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const express = require("express");
 const session = require("express-session");
 const helmet = require("helmet");
@@ -514,6 +515,11 @@ try { db.exec("ALTER TABLE products ADD COLUMN units_per_bulto INTEGER NOT NULL 
 // Empaque en que el proveedor cotiza/pide el producto: 'unidad' | 'caja' | 'bulto'.
 // units_per_bulto = unidades por ese empaque (ej. Migral: pack_unit='caja', 10 u/caja).
 try { db.exec("ALTER TABLE products ADD COLUMN pack_unit TEXT NOT NULL DEFAULT 'bulto'"); } catch (_) {}
+// ACCESO POR LINK: token unico por cliente para entrar sin contraseña. NULL =
+// sin link generado. UNIQUE para que no haya colisiones (el indice se crea
+// aparte porque ALTER TABLE no admite UNIQUE inline).
+try { db.exec("ALTER TABLE users ADD COLUMN access_token TEXT"); } catch (_) {}
+try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_access_token ON users(access_token) WHERE access_token IS NOT NULL"); } catch (_) {}
 // MARGENES: objetivo de margen sobre venta (%). NULL = hereda del objetivo de
 // la categoria y, si tampoco tiene, del global (settings.margin_target_default).
 try { db.exec("ALTER TABLE products ADD COLUMN margin_target REAL"); } catch (_) {}
@@ -1732,6 +1738,42 @@ app.post("/logout", (req, res) => {
   req.session.destroy(() => { res.clearCookie("maxaria.sid"); res.json({ ok: true }); });
 });
 
+// ----- Acceso por link (sin contraseña) -----
+// El cliente no quiere acordarse de un usuario y una clave: se le manda por
+// WhatsApp un link con un token largo y entra directo a SU catalogo, con sus
+// precios. Criterio de seguridad (decidido con Sergio): equivale a mandarle el
+// catalogo PDF con sus precios. El token es revocable desde Usuarios, solo
+// aplica a clientes (level 1-4) activos, y NO da acceso al panel admin.
+// Rate limit por IP reusando el contador de /login para que no se pueda
+// enumerar tokens a fuerza bruta.
+function genAccessToken() {
+  return crypto.randomBytes(24).toString("base64url"); // 32 chars, ~192 bits
+}
+app.get("/c/:token", (req, res) => {
+  const ip = req.ip || "?";
+  if (!loginRateOk(ip)) return res.status(429).send("Demasiados intentos. Esperá unos minutos.");
+  const token = String(req.params.token || "").trim();
+  const user = token.length >= 20
+    ? db.prepare(
+        "SELECT id, username, full_name, level, active, vendedor_price_level" +
+        "  FROM users WHERE access_token = ?"
+      ).get(token)
+    : null;
+  // Solo clientes: un token de vendedor/admin no habilita el panel.
+  if (!user || !user.active || !(user.level >= 1 && user.level <= 4)) {
+    loginRateFail(ip);
+    return res.status(404).sendFile(path.join(__dirname, "public", "login.html"));
+  }
+  loginAttempts.delete(ip);
+  db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").run(user.id);
+  req.session.userId = user.id;
+  req.session.username = user.username;
+  req.session.level = user.level;
+  req.session.fullName = user.full_name;
+  logActivity(req, "login", { via: "link" });
+  res.redirect("/catalogo");
+});
+
 app.get("/", (req, res) => {
   if (req.session && req.session.userId) return res.redirect("/catalogo");
   res.redirect("/login");
@@ -2530,6 +2572,135 @@ app.get("/api/products", requireLogin, (req, res) => {
   }
   sql += "  ORDER BY c.sort_order, c.name, p.name";
   res.json(db.prepare(sql).all(...params));
+});
+
+// GET /api/my-suggestions — "lo que suele comprar" + recordatorio de recompra.
+// Convierte el catalogo de lista pasiva en algo que propone: arriba de la
+// grilla se muestran los productos que ESTE cliente pide siempre, con su
+// cantidad habitual precargada, y se avisa cuando se le paso el ciclo con el
+// que suele reponer algo. Todo sale de sus propios pedidos; no hay dato nuevo.
+//
+// El "cliente target" es el mismo que resuelve /api/products: el usuario
+// logueado, o el cliente que el vendedor tiene seleccionado.
+const SUGG_MAX_ORDERS = 12;   // ultimos N pedidos que se miran
+const SUGG_MAX_ITEMS = 12;    // productos en "tu pedido habitual"
+const SUGG_MIN_ORDERS = 2;    // aparecer en al menos N pedidos para sugerirlo
+const SUGG_MIN_CYCLES = 3;    // compras necesarias para estimar el ciclo
+app.get("/api/my-suggestions", requireLogin, (req, res) => {
+  let targetId = req.session.userId;
+  let targetLevel = req.session.level;
+  if (req.session.level === 5) {
+    if (!req.session.vendedorClientId) return res.json({ habitual: [], recompra: [] });
+    targetId = req.session.vendedorClientId;
+    targetLevel = req.session.vendedorClientLevel;
+  }
+  // El admin no tiene "pedido habitual" propio; para no romper el catalogo
+  // devolvemos vacio salvo que este atendiendo (no aplica hoy).
+  if (Number(targetLevel) === 99) return res.json({ habitual: [], recompra: [] });
+
+  // Ultimos N pedidos reales del cliente (sin cancelados ni unificados).
+  const orders = db.prepare(
+    "SELECT id, created_at FROM orders" +
+    " WHERE user_id = ? AND status != 'cancelado' AND COALESCE(is_unified,0) = 0" +
+    " ORDER BY created_at DESC LIMIT ?"
+  ).all(targetId, SUGG_MAX_ORDERS);
+  if (!orders.length) return res.json({ habitual: [], recompra: [] });
+  const orderIds = orders.map((o) => o.id);
+  const ph = orderIds.map(() => "?").join(",");
+
+  // Frecuencia y cantidad tipica por producto en esos pedidos.
+  const items = db.prepare(
+    "SELECT oi.product_id AS pid, oi.order_id, oi.quantity, o.created_at" +
+    "  FROM order_items oi JOIN orders o ON o.id = oi.order_id" +
+    " WHERE oi.order_id IN (" + ph + ") AND oi.product_id IS NOT NULL"
+  ).all(...orderIds);
+  if (!items.length) return res.json({ habitual: [], recompra: [] });
+
+  const byProduct = new Map();
+  for (const it of items) {
+    let e = byProduct.get(it.pid);
+    if (!e) { e = { orders: new Set(), qtys: [], dates: [] }; byProduct.set(it.pid, e); }
+    e.orders.add(it.order_id);
+    e.qtys.push(Number(it.quantity) || 0);
+    e.dates.push(String(it.created_at));
+  }
+
+  // Precio y visibilidad exactamente como los ve el cliente en el catalogo.
+  const cfg = getEffectivePriceConfig(targetId, targetLevel);
+  const pe = priceSqlExpr(cfg, "p");
+  const allowedIds = getUserAllowedCategoryIds(targetId, targetLevel);
+  const pids = Array.from(byProduct.keys());
+  const pph = pids.map(() => "?").join(",");
+  let psql =
+    "SELECT p.id, p.code, p.name, p.image_url, p.stock, p.category_id," +
+    "       c.name AS category_name, " + pe.expr + " AS price" +
+    "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
+    " WHERE p.active = 1 AND p.stock > 0 AND COALESCE(c.active,1) = 1" +
+    "   AND p.id IN (" + pph + ")";
+  const pparams = [...pe.params, ...pids];
+  if (allowedIds !== null && allowedIds.size > 0) {
+    psql += " AND p.category_id IN (" + Array.from(allowedIds).map(() => "?").join(",") + ")";
+    pparams.push(...Array.from(allowedIds));
+  } else if (allowedIds !== null && allowedIds.size === 0) {
+    return res.json({ habitual: [], recompra: [] });
+  }
+  const prods = new Map();
+  for (const p of db.prepare(psql).all(...pparams)) prods.set(p.id, p);
+
+  const median = (arr) => {
+    const a = arr.slice().sort((x, y) => x - y);
+    const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+  };
+  const daysAgo = (iso) => {
+    const t = Date.parse(String(iso).replace(" ", "T") + "Z");
+    return Number.isFinite(t) ? Math.floor((Date.now() - t) / 86400000) : null;
+  };
+
+  const habitual = [];
+  const recompra = [];
+  for (const [pid, e] of byProduct.entries()) {
+    const p = prods.get(pid);
+    if (!p) continue; // sin stock, inactivo o fuera de sus categorias
+    const timesOrdered = e.orders.size;
+    const qty = Math.max(1, Math.round(median(e.qtys)));
+    if (timesOrdered >= SUGG_MIN_ORDERS) {
+      habitual.push({
+        product_id: p.id, code: p.code, name: p.name, image_url: p.image_url,
+        price: p.price, stock: p.stock, category_name: p.category_name,
+        qty: qty, times_ordered: timesOrdered, of_orders: orders.length,
+      });
+    }
+    // Ciclo de recompra: promedio de dias entre compras consecutivas. Se avisa
+    // cuando paso 1.15x ese ciclo desde la ultima vez (margen para no molestar
+    // al que compra puntual).
+    const dates = Array.from(new Set(e.dates)).sort();
+    if (dates.length >= SUGG_MIN_CYCLES) {
+      let sum = 0;
+      for (let i = 1; i < dates.length; i++) {
+        const a = Date.parse(dates[i - 1].replace(" ", "T") + "Z");
+        const b = Date.parse(dates[i].replace(" ", "T") + "Z");
+        sum += (b - a) / 86400000;
+      }
+      const cycle = Math.round(sum / (dates.length - 1));
+      const since = daysAgo(dates[dates.length - 1]);
+      if (cycle >= 3 && since != null && since > cycle * 1.15) {
+        recompra.push({
+          product_id: p.id, code: p.code, name: p.name,
+          price: p.price, qty: qty, cycle_days: cycle, days_since: since,
+        });
+      }
+    }
+  }
+
+  habitual.sort((a, b) => b.times_ordered - a.times_ordered || a.name.localeCompare(b.name, "es"));
+  // Los mas atrasados primero (mas dias de más sobre su ciclo).
+  recompra.sort((a, b) => (b.days_since - b.cycle_days) - (a.days_since - a.cycle_days));
+  res.json({
+    habitual: habitual.slice(0, SUGG_MAX_ITEMS),
+    recompra: recompra.slice(0, 5),
+    orders_analyzed: orders.length,
+  });
 });
 
 // ----- Pedidos -----
@@ -4012,6 +4183,7 @@ app.get("/api/admin/users", requireAdmin, (req, res) => {
     "SELECT u.id, u.username, u.full_name, u.phone, u.whatsapp_number, u.email, u.plain_password," +
     "       u.level, u.active, u.created_at, u.last_login_at," +
     "       u.assigned_vendedor_id, u.price_list_id, u.vendedor_price_level, u.is_tercerizado," +
+    "       u.access_token," +
     "       (SELECT COUNT(*) FROM activity_log a WHERE a.user_id = u.id AND a.event = 'login') AS login_count," +
     "       (SELECT MAX(a.created_at) FROM activity_log a WHERE a.user_id = u.id) AS last_activity_at" +
     "  FROM users u ORDER BY u.level DESC, u.username"
@@ -4246,6 +4418,35 @@ app.post("/api/admin/users/:id/reset-password", requireAdmin, (req, res) => {
     return res.status(400).json({ error: "La contrasena debe tener al menos 6 caracteres" });
   const hash = bcrypt.hashSync(password, 10);
   db.prepare("UPDATE users SET password_hash = ?, plain_password = ? WHERE id = ?").run(hash, password, id);
+  res.json({ ok: true });
+});
+
+// Link de acceso directo (sin contraseña) para un cliente. POST genera uno
+// nuevo (invalida el anterior); DELETE lo revoca. Solo clientes level 1-4:
+// vendedores y admins entran siempre con usuario y clave.
+app.post("/api/admin/users/:id/access-link", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const u = db.prepare("SELECT id, level, full_name, username FROM users WHERE id = ?").get(id);
+  if (!u) return res.status(404).json({ error: "Usuario no encontrado" });
+  if (!(u.level >= 1 && u.level <= 4)) {
+    return res.status(400).json({ error: "El link de acceso es solo para clientes" });
+  }
+  let token = null;
+  for (let i = 0; i < 5 && !token; i++) {
+    const cand = genAccessToken();
+    try {
+      db.prepare("UPDATE users SET access_token = ? WHERE id = ?").run(cand, id);
+      token = cand;
+    } catch (_) { /* colision del UNIQUE: reintenta */ }
+  }
+  if (!token) return res.status(500).json({ error: "No se pudo generar el link" });
+  logActivity(req, "access_link", { user_id: id });
+  res.json({ ok: true, token: token, path: "/c/" + token });
+});
+app.delete("/api/admin/users/:id/access-link", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID invalido" });
+  db.prepare("UPDATE users SET access_token = NULL WHERE id = ?").run(id);
   res.json({ ok: true });
 });
 
@@ -10100,6 +10301,10 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // lunes
     return d.toISOString().slice(0, 10);
   })();
+  // Ventanas para "clientes en riesgo": ultimos 30 dias vs los 90 previos.
+  const dayBack = (n) => new Date(now.getTime() - n * 86400000).toISOString().slice(0, 10);
+  const todayIso30 = dayBack(30);
+  const todayIso120 = dayBack(120);
 
   // Ventas hoy
   const salesToday = db.prepare(
@@ -10211,6 +10416,53 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     " WHERE COALESCE(o.is_unified,0)=0 AND " + localDay("d.delivered_at") + "=?"
   ).get(todayIso);
 
+  // Clientes en riesgo: los que venian comprando y AFLOJARON. No se mide por
+  // login (un cliente puede no entrar nunca y comprarte todas las semanas por
+  // el vendedor) sino por compra: lo facturado en los ultimos 30 dias contra
+  // el promedio mensual de los 90 anteriores. Solo clientes con historial
+  // (compraron al menos 2 veces en la ventana previa) para no marcar a los
+  // nuevos ni a los esporadicos.
+  const riskRows = db.prepare(
+    "WITH win AS (" +
+    "  SELECT o.user_id AS uid," +
+    "    SUM(CASE WHEN " + localDay("o.created_at") + " >= ? THEN o.total ELSE 0 END) AS recent_total," +
+    "    COUNT(DISTINCT CASE WHEN " + localDay("o.created_at") + " >= ? THEN o.id END) AS recent_orders," +
+    "    SUM(CASE WHEN " + localDay("o.created_at") + " < ? THEN o.total ELSE 0 END) AS prev_total," +
+    "    COUNT(DISTINCT CASE WHEN " + localDay("o.created_at") + " < ? THEN o.id END) AS prev_orders," +
+    "    MAX(o.created_at) AS last_order_at" +
+    "  FROM orders o" +
+    "  WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
+    "    AND " + localDay("o.created_at") + " >= ?" +
+    "  GROUP BY o.user_id" +
+    ")" +
+    "SELECT u.id, u.full_name, u.username, u.phone, u.whatsapp_number," +
+    "       w.recent_total, w.recent_orders, w.prev_total, w.prev_orders, w.last_order_at," +
+    "       v.full_name AS vendedor_name" +
+    "  FROM win w" +
+    "  JOIN users u ON u.id = w.uid" +
+    "  LEFT JOIN users v ON v.id = u.assigned_vendedor_id" +
+    " WHERE u.level BETWEEN 1 AND 4 AND u.active = 1 AND w.prev_orders >= 2"
+  ).all(todayIso30, todayIso30, todayIso30, todayIso30, todayIso120);
+  const clientsAtRisk = [];
+  for (const r of riskRows) {
+    // El tramo previo son 90 dias = 3 meses -> promedio mensual.
+    const prevMonthly = (Number(r.prev_total) || 0) / 3;
+    const recent = Number(r.recent_total) || 0;
+    if (prevMonthly <= 0) continue;
+    const dropPct = Math.round((1 - recent / prevMonthly) * 100);
+    if (dropPct < 40) continue; // caida significativa
+    clientsAtRisk.push({
+      id: r.id, full_name: r.full_name, username: r.username,
+      phone: r.whatsapp_number || r.phone || null,
+      vendedor_name: r.vendedor_name || null,
+      recent_total: Math.round(recent), recent_orders: r.recent_orders,
+      prev_monthly: Math.round(prevMonthly), prev_orders: r.prev_orders,
+      drop_pct: Math.min(100, dropPct),
+      last_order_at: r.last_order_at,
+    });
+  }
+  clientsAtRisk.sort((a, b) => (b.prev_monthly - b.recent_total) - (a.prev_monthly - a.recent_total));
+
   // Clientes inactivos: clientes (level 1-4) activos que no ingresan hace
   // más de N días (default 30) o que nunca ingresaron. days_inactive = NULL
   // significa "nunca ingresó". Ordena primero los que nunca entraron y luego
@@ -10244,6 +10496,7 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     topDeudores,
     inactiveClients,
     inactiveDays,
+    clientsAtRisk: clientsAtRisk.slice(0, 12),
   });
 });
 

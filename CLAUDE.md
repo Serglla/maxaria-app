@@ -1744,6 +1744,35 @@ Segunda feature del análisis de producto. Diagnóstico previo sobre la base rea
 
 **Pendiente**: `git add/commit/push` + deploy Railway. El estado 🟡 "costo subió, precio no" empieza a marcar recién cuando haya `cost_changes` acumulados (la tabla es de junio y solo mide hacia adelante).
 
+### Catálogo que vende solo: pedido habitual, recompra, link de acceso y clientes en riesgo (2 agosto 2026 — `app.js?v=20260802d`, `admin.js?v=20260802d`, `styles.css?v=20260802d`)
+
+Tercera feature del análisis de producto. El catálogo dejaba de ser una lista pasiva: ahora propone. Todo sale de los pedidos que el sistema ya guardaba.
+
+**1. `GET /api/my-suggestions` (requireLogin)** — "lo que suele comprar" + recordatorio de recompra del **cliente target** (el usuario logueado, o el cliente que el vendedor tiene seleccionado; admin devuelve vacío).
+- Mira los **últimos 12 pedidos** no cancelados ni unificados del cliente.
+- `habitual`: productos que aparecen en **≥ 2** de esos pedidos, con **cantidad típica = mediana** de lo pedido, ordenados por frecuencia (máx. 12). Solo productos activos, con stock, de sus categorías permitidas, y con el **precio efectivo del cliente** (`getEffectivePriceConfig` + `priceSqlExpr`) — o sea, respeta listas encadenadas.
+- `recompra`: con **≥ 3** compras del producto se calcula el ciclo (promedio de días entre compras consecutivas); se avisa si pasó **1,15× el ciclo** desde la última. Ordenado por atraso. Máx. 5.
+- Constantes arriba del endpoint: `SUGG_MAX_ORDERS`, `SUGG_MAX_ITEMS`, `SUGG_MIN_ORDERS`, `SUGG_MIN_CYCLES`.
+
+**2. Catálogo (`app.js` + `index.html` + `styles.css`)** — bloque `#suggestions` arriba de la grilla:
+- Tarjetas ámbar de recompra ("Hace 41 días que no pedís Alikal · suele reponerlo cada 28") con botón "Agregar N".
+- Caja "Tu pedido habitual" (para el vendedor: "Lo que suele pedir <cliente>") con cantidad típica por producto, botón **Agregar todo** y una ✕ que la oculta (`localStorage: maxaria_sugg_hidden`).
+- **Solo se muestra en la vista limpia** (`cat === "all"` y sin búsqueda): `renderProducts()` llama a `renderSuggestions()` en cada render, así desaparece al filtrar. Al cambiar de cliente (`applyClientLocally`) se recarga.
+- Los botones usan `setQty(id, actual + qty)` — mismo camino que el resto del carrito, respeta el tope de stock.
+
+**3. Link de acceso sin contraseña (decidido con Sergio: sí, sin vencimiento)**
+- Schema: `users.access_token TEXT` + índice UNIQUE parcial (`WHERE access_token IS NOT NULL`).
+- `GET /c/:token` — valida el token, exige **cliente level 1-4 activo**, crea la sesión y redirige a `/catalogo`. Pasa por el **rate limit de `/login`** (10 fallidos por IP / 15 min) para que no se puedan enumerar tokens; token de 24 bytes (~192 bits, 32 chars base64url) generado con `crypto.randomBytes`. Un token de vendedor/admin no habilita nada (solo se emiten para clientes).
+- `POST /api/admin/users/:id/access-link` genera (reintenta ante colisión del UNIQUE) y `DELETE` revoca. `GET /api/admin/users` devuelve `access_token`.
+- **`shareUserAccess` reescrito**: para clientes arma el mensaje de WhatsApp con el **link directo** (lo genera si no existe) en vez de usuario + contraseña; para vendedores/admins sigue con credenciales. Botón nuevo **🚫 Revocar link** en el modal de usuario (visible solo si tiene token).
+- `sw.js`: `/c/` agregado a las rutas que **nunca** pasan por cache (crea sesión y redirige).
+
+**4. Clientes en riesgo (Dashboard)** — se mide por **compra, no por login** (un cliente puede no entrar nunca y comprar todas las semanas por el vendedor). CTE en `/api/admin/dashboard`: facturado de los últimos 30 días vs el **promedio mensual de los 90 anteriores**; se listan los que cayeron **≥ 40%**, exigiendo `prev_orders >= 2` (no marca nuevos ni esporádicos). Tabla nueva al lado de "Clientes inactivos", con el vendedor asignado y el nombre linkeado a `wa.me` para llamarlo.
+
+**Verificación**: `node --check` OK en server.js, admin.js, app.js y sw.js (mount no stale). Simulación completa del cálculo en `/tmp` con 10 pedidos sintéticos: ordena por frecuencia (9/10, 8/10, 6/10), cantidad típica por mediana, **excluye** lo comprado una sola vez y lo que no tiene stock, y detecta el atraso de recompra (ciclo 14d, 17 días sin pedir). Query de clientes en riesgo y unicidad del token validadas contra copia de la DB.
+
+**Pendiente**: `git add/commit/push` + deploy Railway. Nota: el pedido habitual necesita al menos 2 pedidos por cliente para mostrar algo, y la recompra 3 compras del mismo producto — arranca fuerte con los clientes viejos y va apareciendo solo con los nuevos.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

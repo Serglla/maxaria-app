@@ -198,6 +198,7 @@
     ueResetBtn: document.getElementById("ue-reset-btn"),
     ueCatsBtn: document.getElementById("ue-cats-btn"),
     ueShareBtn: document.getElementById("ue-share-btn"),
+    ueRevokeBtn: document.getElementById("ue-revoke-btn"),
     // Administradores (solo superadmin)
     adminsTbody: document.getElementById("admins-tbody"),
     adminCreateBtn: document.getElementById("admin-create-btn"),
@@ -1247,9 +1248,37 @@
           }).join("");
         }
       }
+
+      // Clientes en riesgo: se mide por COMPRA, no por login. Un cliente puede
+      // no entrar nunca y comprarte todas las semanas por el vendedor.
+      const rtbody = document.getElementById("dash-risk-tbody");
+      if (rtbody) {
+        const risk = d.clientsAtRisk || [];
+        if (!risk.length) {
+          rtbody.innerHTML = '<tr><td colspan="3" class="muted">Ningún cliente aflojó su compra 👍</td></tr>';
+        } else {
+          rtbody.innerHTML = risk.map((c) => {
+            const wa = (c.phone || "").replace(/\D/g, "");
+            const name = escapeHtml(c.full_name || c.username) +
+              (c.vendedor_name ? '<div class="repo-prod-meta">' + escapeHtml(c.vendedor_name) + "</div>" : "");
+            const link = wa
+              ? '<a href="https://wa.me/' + wa + '" target="_blank" rel="noopener" title="Escribirle por WhatsApp">' + name + "</a>"
+              : name;
+            return "<tr><td>" + link + "</td>" +
+              '<td class="num muted small">' + fmtMoneyShort(c.prev_monthly) + " → " + fmtMoneyShort(c.recent_total) + "</td>" +
+              '<td class="num"><strong class="text-danger">−' + c.drop_pct + "%</strong></td></tr>";
+          }).join("");
+        }
+      }
     } catch (e) {
       console.error("Dashboard error:", e);
     }
+  }
+  function fmtMoneyShort(n) {
+    const v = Math.round(Number(n) || 0);
+    return v >= 1000000 ? "$" + (v / 1000000).toFixed(1) + "M"
+      : v >= 1000 ? "$" + Math.round(v / 1000) + "k"
+      : "$" + v;
   }
 
   // ── Gráfico de deuda total mes a mes ──────────────────────────────────────
@@ -1712,24 +1741,55 @@
     setTimeout(() => els.userResetForm.querySelector('[name="password"]').focus(), 50);
   }
 
-  // Compartir acceso por WhatsApp (mensaje con link + credenciales).
-  function shareUserAccess(u) {
+  // Compartir acceso por WhatsApp. Para CLIENTES manda el link directo (entra
+  // sin contraseña): es la fricción que más pedidos costaba. Si todavía no
+  // tiene link, se genera en el momento. Para vendedores/admins sigue con
+  // usuario y contraseña.
+  async function shareUserAccess(u) {
     if (!u) return;
     const appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
     const origin = location.origin;
-    const hasPass = u.plain_password && u.plain_password !== "—";
+    const esCliente = Number(u.level) >= 1 && Number(u.level) <= 4;
     let msg = "¡Hola" + (u.full_name ? " " + u.full_name : "") + "! 👋\n\n";
-    msg += "Te damos acceso al catálogo de " + appName + ".\n";
-    msg += "Ingresá desde: " + origin + "\n\n";
-    msg += "👤 Usuario: " + u.username + "\n";
-    if (hasPass) msg += "🔑 Contraseña: " + u.plain_password + "\n";
-    msg += "\nDesde ahí podés ver los productos y armar tu pedido. ¡Cualquier duda, escribinos!";
+    let okMsg = "";
+
+    if (esCliente) {
+      let token = u.access_token;
+      if (!token) {
+        try {
+          const out = await api("/api/admin/users/" + u.id + "/access-link", { method: "POST" });
+          token = out.token;
+          u.access_token = token;
+          const inState = (state.users || []).find((x) => x.id === u.id);
+          if (inState) inState.access_token = token;
+        } catch (e) {
+          showToast("No se pudo generar el link: " + e.message, "err");
+          return;
+        }
+      }
+      msg += "Este es tu catálogo de " + appName + " con tus precios:\n";
+      msg += origin + "/c/" + token + "\n\n";
+      msg += "Entrás directo desde ese link, sin usuario ni contraseña. Guardalo en tu teléfono.\n";
+      msg += "Ahí podés ver los productos, ver lo que solés pedir y armar tu pedido. ¡Cualquier duda, escribinos!";
+      okMsg = "Link de acceso listo · mensaje copiado";
+    } else {
+      const hasPass = u.plain_password && u.plain_password !== "—";
+      msg += "Te damos acceso a " + appName + ".\n";
+      msg += "Ingresá desde: " + origin + "\n\n";
+      msg += "👤 Usuario: " + u.username + "\n";
+      if (hasPass) msg += "🔑 Contraseña: " + u.plain_password + "\n";
+      if (!hasPass) {
+        showToast("⚠️ Sin contraseña guardada: usá 'Reset pass' y volvé a compartir", "err");
+        return;
+      }
+      okMsg = "Abriendo WhatsApp con el acceso · mensaje copiado";
+    }
+
     if (navigator.clipboard) { try { navigator.clipboard.writeText(msg); } catch (_) {} }
     const waNum = (u.whatsapp_number || "").replace(/\D/g, "");
     window.open("https://wa.me/" + waNum + "?text=" + encodeURIComponent(msg), "_blank", "noopener");
-    showToast(hasPass
-      ? (waNum ? "Abriendo WhatsApp con el acceso · mensaje copiado" : "Sin WhatsApp del cliente: elegí el contacto · mensaje copiado")
-      : "⚠️ Sin contraseña guardada: usá 'Reset pass' y volvé a compartir", hasPass ? "ok" : "err");
+    showToast(waNum ? okMsg : "Sin WhatsApp del cliente: elegí el contacto · mensaje copiado");
+    if (els.ueRevokeBtn && state.editUserId === u.id) els.ueRevokeBtn.hidden = !u.access_token;
   }
 
   async function openCatsModal(userId, username) {
@@ -1773,6 +1833,8 @@
     els.ueUsername.hidden = true;
     els.ueUsername.value = u.username || "";
     els.uePasswordText.textContent = u.plain_password || "—";
+    // "Revocar link" solo si ya tiene uno generado.
+    if (els.ueRevokeBtn) els.ueRevokeBtn.hidden = !u.access_token;
     els.ueFullName.value = u.full_name || "";
     els.uePricecfg.innerHTML = unifiedPriceOptsHtml(u);
     els.ueVendedor.innerHTML = vendedorOptsHtml(u.assigned_vendedor_id);
@@ -1873,6 +1935,27 @@
     const u = state.users.find((x) => x.id === state.editUserId);
     if (u) shareUserAccess(u);
   });
+  // Revocar el link de acceso directo: el que lo tenga deja de entrar.
+  if (els.ueRevokeBtn) {
+    els.ueRevokeBtn.addEventListener("click", async () => {
+      const u = state.users.find((x) => x.id === state.editUserId);
+      if (!u) return;
+      const ok = await confirmModal({
+        title: "Revocar link de acceso",
+        message: "El link que le mandaste a " + (u.full_name || u.username) + " va a dejar de funcionar.\n\n" +
+          "Va a tener que entrar con usuario y contraseña, o pedirte un link nuevo.",
+        confirmText: "Revocar",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await api("/api/admin/users/" + u.id + "/access-link", { method: "DELETE" });
+        u.access_token = null;
+        els.ueRevokeBtn.hidden = true;
+        showToast("Link revocado");
+      } catch (e) { showToast("Error: " + e.message, "err"); }
+    });
+  }
   // "Editar" usuario: reemplaza el texto por el campo editable. Recién acá
   // aparece el input, así el gestor de contraseñas no lo autocompleta al abrir.
   els.ueUsernameEdit.addEventListener("click", () => {
