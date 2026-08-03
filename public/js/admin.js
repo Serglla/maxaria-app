@@ -1377,6 +1377,7 @@
       if (tab === "cotizaciones") loadCotizaciones();
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
       if (tab === "recepcion") loadRecepcion(); // siempre recargar (cambia con compras nuevas)
+      if (tab === "reposicion") loadReposicion(); // siempre recargar (depende de ventas y stock del momento)
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas") { state.accountsLoaded = false; loadAccounts(); } // siempre recargar (refleja entregas/cobros nuevos)
@@ -7824,6 +7825,322 @@
     });
   }
 
+  // ---------- Reposición sugerida ----------
+  // "Qué comprar y cuánto": cruza la venta real de la ventana contra el stock,
+  // lo que ya viene en camino y la demora de cada proveedor. El server hace el
+  // cálculo; acá se muestra agrupado por proveedor y se puede ajustar la
+  // cantidad antes de mandarlo a una cotización.
+  const repoEls = {
+    panel: document.getElementById("tab-reposicion"),
+    supplier: document.getElementById("repo-supplier"),
+    urgencia: document.getElementById("repo-urgencia"),
+    search: document.getElementById("repo-search"),
+    reload: document.getElementById("repo-reload"),
+    kpis: document.getElementById("repo-kpis"),
+    explain: document.getElementById("repo-explain"),
+    groups: document.getElementById("repo-groups"),
+    configBtn: document.getElementById("repo-config-btn"),
+    configModal: document.getElementById("repo-config-modal"),
+    configForm: document.getElementById("repo-config-form"),
+  };
+  // qty: unidades elegidas por producto (arranca en el sugerido). sel: tildados.
+  const repoState = { data: null, qty: new Map(), sel: new Set(), suppliersFilled: false };
+
+  const repoMoney = (n) => "$ " + Math.round(Number(n) || 0).toLocaleString("es-AR");
+  const REPO_URG = {
+    quebrado: { label: "SIN STOCK", cls: "repo-u-quebrado" },
+    critico:  { label: "CRÍTICO",   cls: "repo-u-critico" },
+    reponer:  { label: "REPONER",   cls: "repo-u-reponer" },
+  };
+
+  async function loadReposicion() {
+    if (!repoEls.groups) return;
+    repoEls.groups.innerHTML = '<p class="muted">Calculando…</p>';
+    const qs = [];
+    if (repoEls.supplier && repoEls.supplier.value) qs.push("supplier_id=" + encodeURIComponent(repoEls.supplier.value));
+    if (repoEls.urgencia && repoEls.urgencia.value) qs.push("urgencia=" + encodeURIComponent(repoEls.urgencia.value));
+    try {
+      repoState.data = await api("/api/admin/reposicion" + (qs.length ? "?" + qs.join("&") : ""), null, "la reposición");
+    } catch (e) {
+      repoEls.groups.innerHTML = '<p class="muted">Error: ' + escapeHtml(e.message) + "</p>";
+      return;
+    }
+    // Al recalcular se resetean cantidades y selección (los sugeridos cambiaron).
+    repoState.qty = new Map();
+    repoState.sel = new Set();
+    (repoState.data.groups || []).forEach((g) => g.items.forEach((it) => {
+      repoState.qty.set(it.product_id, it.sugerido_unidades);
+      repoState.sel.add(it.product_id);
+    }));
+    repoFillSuppliers();
+    renderReposicion();
+  }
+
+  // El select de proveedores se llena con los que aparecen en la sugerencia.
+  function repoFillSuppliers() {
+    if (!repoEls.supplier || repoState.suppliersFilled) return;
+    const seen = new Map();
+    (repoState.data.groups || []).forEach((g) => { if (g.supplier_id) seen.set(g.supplier_id, g.supplier_name); });
+    if (!seen.size) return;
+    const prev = repoEls.supplier.value;
+    repoEls.supplier.innerHTML = '<option value="">Todos los proveedores</option>' +
+      Array.from(seen.entries()).sort((a, b) => String(a[1]).localeCompare(String(b[1]), "es"))
+        .map(([id, name]) => '<option value="' + id + '">' + escapeHtml(name) + "</option>").join("");
+    if (prev) repoEls.supplier.value = prev;
+    repoState.suppliersFilled = true;
+  }
+
+  function repoKpiHtml(label, value, sub, cls) {
+    return '<div class="dash-kpi ' + (cls || "") + '">' +
+      '<div class="dash-kpi-label">' + label + "</div>" +
+      '<div class="dash-kpi-value">' + value + "</div>" +
+      (sub ? '<div class="dash-kpi-sub">' + sub + "</div>" : "") + "</div>";
+  }
+
+  function renderReposicion() {
+    const d = repoState.data;
+    if (!d) return;
+    const t = d.totals || {};
+    if (repoEls.kpis) {
+      repoEls.kpis.innerHTML =
+        repoKpiHtml("Sin stock", fmtNum(t.quebrados), "productos que se venden y están en 0", "dash-kpi-danger") +
+        repoKpiHtml("Críticos", fmtNum(t.criticos), "no alcanzan hasta que llegue el pedido", "dash-kpi-warn") +
+        repoKpiHtml("A reponer", fmtNum(t.reponer), "por debajo del punto de pedido", "dash-kpi-accent") +
+        repoKpiHtml("Compra sugerida", repoMoney(t.estimado), "a costo actual", "dash-kpi-good") +
+        (t.venta_perdida > 0 ? repoKpiHtml("Venta perdida estimada", repoMoney(t.venta_perdida), "por los días sin stock", "dk-orange") : "");
+    }
+    if (repoEls.explain) {
+      const c = d.config || {};
+      repoEls.explain.innerHTML =
+        "Demanda calculada sobre los últimos <strong>" + c.windowDays + " días</strong> (los últimos " +
+        c.recentDays + " pesan el doble). Se sugiere comprar cuando el stock no cubre la <strong>demora del proveedor + " +
+        c.coverDays + " días</strong> de colchón, descontando lo que ya está pedido y sin recibir." +
+        (t.sin_venta_en_cero ? " <em>" + fmtNum(t.sin_venta_en_cero) + " productos están en 0 pero sin ventas en el período: no se sugieren.</em>" : "");
+    }
+
+    const q = (repoEls.search ? repoEls.search.value.trim().toLowerCase() : "");
+    const groups = (d.groups || []).map((g) => {
+      const items = q
+        ? g.items.filter((it) => (it.name || "").toLowerCase().includes(q) || String(it.code || "").toLowerCase().includes(q))
+        : g.items;
+      return Object.assign({}, g, { items: items });
+    }).filter((g) => g.items.length);
+
+    if (!groups.length) {
+      repoEls.groups.innerHTML = '<p class="muted">' +
+        (q ? "Ningún producto coincide con la búsqueda." : "No hay nada para reponer con los filtros actuales. 👌") + "</p>";
+      return;
+    }
+    repoEls.groups.innerHTML = groups.map(repoGroupHtml).join("");
+    repoWireGroups();
+  }
+
+  function repoGroupHtml(g) {
+    const key = g.supplier_id == null ? "none" : g.supplier_id;
+    const leadTxt = g.supplier_id == null
+      ? "sin compras registradas"
+      : "demora " + g.lead_time_days + " días (" +
+        (g.lead_source === "manual" ? "fijada a mano" : g.lead_source === "historico" ? "según su historial" : "por defecto") + ")";
+    const title = g.supplier_id == null
+      ? "⚠ Sin proveedor identificado"
+      : escapeHtml(g.supplier_name || "Proveedor #" + g.supplier_id);
+    return '<div class="repo-group" data-group="' + key + '">' +
+      '<div class="repo-group-head">' +
+        '<label class="repo-check-all"><input type="checkbox" class="repo-all" checked /> </label>' +
+        "<h4>" + title + '<span class="repo-lead">' + leadTxt + "</span></h4>" +
+        '<span class="repo-group-sum">' + g.items.length + (g.items.length === 1 ? " producto · " : " productos · ") +
+          '<strong class="repo-group-total">' + repoMoney(repoGroupTotal(g)) + "</strong></span>" +
+        (g.supplier_id == null
+          ? '<span class="muted small-cell">Cargá una compra de estos productos para que aprenda el proveedor</span>'
+          : '<button class="btn btn-primary btn-small repo-to-cot" type="button" data-supplier="' + g.supplier_id + '">→ Cotización</button>') +
+      "</div>" +
+      '<div class="admin-table-wrap"><table class="admin-table repo-table"><thead><tr>' +
+        "<th></th><th>Producto</th><th>Estado</th>" +
+        '<th class="num" title="Unidades que se venden por día (ponderado)">Venta/día</th>' +
+        '<th class="num" title="Días de stock que quedan al ritmo actual">Cobertura</th>' +
+        '<th class="num">Stock</th><th class="num" title="Ya pedido y sin recibir">En camino</th>' +
+        '<th class="num">Comprar</th><th class="num">Costo est.</th>' +
+      "</tr></thead><tbody>" + g.items.map((it) => repoItemHtml(it, g)).join("") + "</tbody></table></div>" +
+    "</div>";
+  }
+
+  function repoGroupTotal(g) {
+    return g.items.reduce((acc, it) => acc + (repoState.sel.has(it.product_id)
+      ? (repoState.qty.get(it.product_id) || 0) * (Number(it.cost) || 0) : 0), 0);
+  }
+
+  function repoItemHtml(it, g) {
+    const u = REPO_URG[it.urgencia] || REPO_URG.reponer;
+    const upb = Math.max(1, Number(it.units_per_bulto) || 1);
+    const unidades = repoState.qty.get(it.product_id) || 0;
+    const bultos = Math.round((unidades / upb) * 100) / 100;
+    const cover = it.cover_days == null
+      ? '<span class="muted">—</span>'
+      : (it.cover_days <= 0 ? '<strong class="text-danger">0 días</strong>' : it.cover_days + " días");
+    const packLabel = upb > 1 ? (it.pack_unit === "caja" ? "cajas" : "bultos") : "un.";
+    return '<tr class="repo-row" data-id="' + it.product_id + '">' +
+      '<td><input type="checkbox" class="repo-pick" ' + (repoState.sel.has(it.product_id) ? "checked" : "") + " /></td>" +
+      '<td><div class="repo-prod">' + escapeHtml(it.name || "") + "</div>" +
+        '<div class="repo-prod-meta">#' + escapeHtml(it.code || "") + " · " + escapeHtml(it.category_name || "Sin categoría") +
+        (it.supplier_source === "historico" && g.supplier_id ? " · proveedor deducido del historial" : "") + "</div></td>" +
+      '<td><span class="repo-chip ' + u.cls + '">' + u.label + "</span>" +
+        (it.days_out ? '<div class="repo-prod-meta">hace ' + it.days_out + " días sin stock</div>" : "") + "</td>" +
+      '<td class="num">' + (it.daily ? it.daily.toLocaleString("es-AR", { maximumFractionDigits: 2 }) : "—") + "</td>" +
+      '<td class="num">' + cover + "</td>" +
+      '<td class="num' + (it.stock <= 0 ? " text-danger" : "") + '">' + fmtNum(it.stock) + "</td>" +
+      '<td class="num">' + (it.en_camino ? fmtNum(it.en_camino) : '<span class="muted">—</span>') + "</td>" +
+      '<td class="num"><div class="repo-qty">' +
+        '<input type="text" inputmode="decimal" class="repo-qty-input" value="' + bultos + '" />' +
+        '<span class="repo-qty-unit">' + packLabel + "</span>" +
+        '<div class="repo-qty-eq">= <span class="repo-eq-val">' + fmtNum(unidades) + "</span> un.</div>" +
+      "</div></td>" +
+      '<td class="num"><strong class="repo-item-cost">' + repoMoney(unidades * (Number(it.cost) || 0)) + "</strong></td>" +
+    "</tr>";
+  }
+
+  // Busca el item en los datos crudos (no en el render filtrado).
+  function repoFindItem(pid) {
+    for (const g of (repoState.data && repoState.data.groups) || []) {
+      const it = g.items.find((x) => x.product_id === pid);
+      if (it) return { item: it, group: g };
+    }
+    return null;
+  }
+
+  // Actualiza en el lugar (sin re-render) para no perder el foco del input
+  // mientras se tipea: mismo criterio que el resto de los pickers.
+  function repoRefreshRow(tr, pid) {
+    const found = repoFindItem(pid);
+    if (!found) return;
+    const unidades = repoState.qty.get(pid) || 0;
+    const eq = tr.querySelector(".repo-eq-val");
+    if (eq) eq.textContent = fmtNum(unidades);
+    const cost = tr.querySelector(".repo-item-cost");
+    if (cost) cost.textContent = repoMoney(unidades * (Number(found.item.cost) || 0));
+    tr.classList.toggle("repo-row-off", !repoState.sel.has(pid));
+    const groupEl = tr.closest(".repo-group");
+    const totalEl = groupEl && groupEl.querySelector(".repo-group-total");
+    if (totalEl) totalEl.textContent = repoMoney(repoGroupTotal(found.group));
+  }
+
+  function repoWireGroups() {
+    repoEls.groups.querySelectorAll(".repo-group").forEach((groupEl) => {
+      const allCb = groupEl.querySelector(".repo-all");
+      if (allCb) {
+        allCb.addEventListener("change", () => {
+          groupEl.querySelectorAll(".repo-row").forEach((tr) => {
+            const pid = Number(tr.dataset.id);
+            const cb = tr.querySelector(".repo-pick");
+            if (cb) cb.checked = allCb.checked;
+            if (allCb.checked) repoState.sel.add(pid); else repoState.sel.delete(pid);
+            repoRefreshRow(tr, pid);
+          });
+        });
+      }
+      groupEl.addEventListener("change", (e) => {
+        const cb = e.target.closest(".repo-pick");
+        if (!cb) return;
+        const tr = cb.closest(".repo-row");
+        const pid = Number(tr.dataset.id);
+        if (cb.checked) repoState.sel.add(pid); else repoState.sel.delete(pid);
+        repoRefreshRow(tr, pid);
+      });
+      groupEl.addEventListener("input", (e) => {
+        const inp = e.target.closest(".repo-qty-input");
+        if (!inp) return;
+        const tr = inp.closest(".repo-row");
+        const pid = Number(tr.dataset.id);
+        const found = repoFindItem(pid);
+        if (!found) return;
+        const upb = Math.max(1, Number(found.item.units_per_bulto) || 1);
+        const bultos = recvParseNum(inp.value);
+        if (bultos == null) return; // texto a medio tipear: no tocar nada
+        repoState.qty.set(pid, Math.max(0, Math.round(bultos * upb)));
+        repoRefreshRow(tr, pid);
+      });
+      const btn = groupEl.querySelector(".repo-to-cot");
+      if (btn) btn.addEventListener("click", () => repoToCotizacion(Number(btn.dataset.supplier), groupEl, btn));
+    });
+  }
+
+  async function repoToCotizacion(supplierId, groupEl, btn) {
+    const items = [];
+    groupEl.querySelectorAll(".repo-row").forEach((tr) => {
+      const pid = Number(tr.dataset.id);
+      const qty = repoState.qty.get(pid) || 0;
+      if (repoState.sel.has(pid) && qty > 0) items.push({ product_id: pid, quantity: qty });
+    });
+    if (!items.length) { showToast("No hay productos tildados con cantidad", "err"); return; }
+    const found = repoFindItem(items[0].product_id);
+    const supName = found ? (found.group.supplier_name || "el proveedor") : "el proveedor";
+    const total = groupEl.querySelector(".repo-group-total");
+    const ok = await confirmModal({
+      title: "Pasar a cotización",
+      message: "Se va a crear una cotización en borrador para " + supName + " con " + items.length +
+        (items.length === 1 ? " producto" : " productos") + (total ? " por " + total.textContent : "") +
+        ".\n\nDespués la revisás en la pestaña Cotizaciones (podés ajustar precios) y de ahí pasa a Compra.",
+      confirmText: "Crear cotización",
+    });
+    if (!ok) return;
+    btn.disabled = true;
+    try {
+      const out = await api("/api/admin/reposicion/to-cotizacion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ supplier_id: supplierId, items: items }),
+      });
+      showToast("Cotización #" + out.request.id + " creada con " + out.items_added + " productos");
+      state.cotizacionesLoaded = false;
+      items.forEach((it) => repoState.sel.delete(it.product_id));
+      renderReposicion();
+    } catch (e) {
+      showToast("Error: " + e.message, "err");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  if (repoEls.reload) repoEls.reload.addEventListener("click", loadReposicion);
+  if (repoEls.supplier) repoEls.supplier.addEventListener("change", loadReposicion);
+  if (repoEls.urgencia) repoEls.urgencia.addEventListener("change", loadReposicion);
+  if (repoEls.search) repoEls.search.addEventListener("input", debounce(renderReposicion, 150));
+  if (repoEls.configBtn) {
+    repoEls.configBtn.addEventListener("click", () => {
+      const c = (repoState.data && repoState.data.config) || {};
+      const f = repoEls.configForm;
+      if (f) {
+        f.repo_window_days.value = c.windowDays || 60;
+        f.repo_recent_days.value = c.recentDays || 14;
+        f.repo_cover_days.value = c.coverDays != null ? c.coverDays : 15;
+        f.repo_lead_default.value = c.leadDefault || 7;
+      }
+      repoEls.configModal.hidden = false;
+    });
+  }
+  if (repoEls.configForm) {
+    repoEls.configForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(repoEls.configForm);
+      try {
+        await api("/api/admin/reposicion/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            repo_window_days: Number(fd.get("repo_window_days")),
+            repo_recent_days: Number(fd.get("repo_recent_days")),
+            repo_cover_days: Number(fd.get("repo_cover_days")),
+            repo_lead_default: Number(fd.get("repo_lead_default")),
+          }),
+        });
+        repoEls.configModal.hidden = true;
+        showToast("Parámetros guardados");
+        loadReposicion();
+      } catch (err) {
+        showToast("Error: " + err.message, "err");
+      }
+    });
+  }
+
   // ---------- Recepción: control de mercadería recibida ----------
   // Lista de compras con estado del control + checklist por compra (modal),
   // calcado del chequeo de armado: sync multi-dispositivo por polling, carga
@@ -8575,12 +8892,12 @@
 
   async function loadSuppliers() {
     try {
-      if (els.supTbody) els.supTbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando…</td></tr>';
+      if (els.supTbody) els.supTbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando…</td></tr>';
       state.suppliers = await api("/api/admin/suppliers");
       state.suppliersLoaded = true;
       renderSuppliers();
     } catch (e) {
-      if (els.supTbody) els.supTbody.innerHTML = '<tr><td colspan="6" class="muted">Error cargando proveedores</td></tr>';
+      if (els.supTbody) els.supTbody.innerHTML = '<tr><td colspan="7" class="muted">Error cargando proveedores</td></tr>';
     }
   }
 
@@ -8593,7 +8910,7 @@
     }
     if (els.supCount) els.supCount.textContent = list.length + (list.length === 1 ? " proveedor" : " proveedores");
     if (!list.length) {
-      els.supTbody.innerHTML = '<tr><td colspan="6" class="muted">Sin resultados</td></tr>';
+      els.supTbody.innerHTML = '<tr><td colspan="7" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.supTbody.innerHTML = list.map(supplierRowHtml).join("");
@@ -8606,6 +8923,9 @@
       '<td><input class="cell-input" data-field="phone" value="' + escapeHtml(s.phone || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="email" type="email" value="' + escapeHtml(s.email || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="notes" value="' + escapeHtml(s.notes || "") + '" /></td>' +
+      '<td class="num"><input class="cell-input" data-field="lead_time_days" type="number" min="1" max="120" style="width:64px;text-align:center"' +
+        ' value="' + (s.lead_time_days || "") + '" placeholder="auto"' +
+        ' title="Días que tarda en entregarte. Vacío = se calcula del historial de compras (lo usa Reposición)." /></td>' +
       '<td><label class="cell-toggle"><input type="checkbox" data-field="active"' + (s.active ? " checked" : "") + ' /><span></span></label></td>' +
     '</tr>';
   }
@@ -12305,13 +12625,30 @@
       allCats.map((c) => '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>').join("");
   }
 
+  // Proveedor fijo del producto (lo usa Reposición para agrupar la compra).
+  // Vacío = automático: se deduce del último proveedor que lo vendió.
+  async function epFillSuppliers() {
+    const sel = document.getElementById("ep-supplier");
+    if (!sel) return;
+    if (!Array.isArray(state.suppliers) || !state.suppliers.length) {
+      try { state.suppliers = await api("/api/admin/suppliers", null, "los proveedores"); } catch (_) { return; }
+    }
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">Automático (según historial)</option>' +
+      (state.suppliers || []).filter((s) => Number(s.active) === 1 || true)
+        .map((s) => '<option value="' + s.id + '">' + escapeHtml(s.name) + "</option>").join("");
+    if (prev) sel.value = prev;
+  }
+
   function openEditProdModal(p) {
     editProdId = p.id;
     // z-index normal; el flujo "crear gemelo" lo sube luego para apilarse
     // por encima del selector de Compras (z-index 1300).
     if (editProdModal) editProdModal.style.zIndex = "";
     epFillCategories();
+    epFillSuppliers();
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    set("ep-supplier",  p.supplier_id || "");
     set("ep-code",      p.code      || "");
     set("ep-name",      p.name      || "");
     set("ep-stock",          p.stock          || 0);
@@ -12391,6 +12728,7 @@
         stock_min:        Math.max(0, Math.round(Number(get("ep-stock-min")) || 0)),
         units_per_bulto:  Math.max(1, Number(get("ep-units-per-bulto")) || 1),
         pack_unit:        get("ep-pack-unit") || "bulto",
+        supplier_id:      get("ep-supplier") ? Number(get("ep-supplier")) : null,
         expiry_alert_months: (function(){ const n = Math.round(Number(get("ep-expiry-alert"))); return isFinite(n) && n >= 0 ? n : 3; })(),
         cost:             round2(Number(get("ep-cost")))       || 0,
         price_minorista:  parsePrice(get("ep-minorista")),

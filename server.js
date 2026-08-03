@@ -514,6 +514,14 @@ try { db.exec("ALTER TABLE products ADD COLUMN units_per_bulto INTEGER NOT NULL 
 // Empaque en que el proveedor cotiza/pide el producto: 'unidad' | 'caja' | 'bulto'.
 // units_per_bulto = unidades por ese empaque (ej. Migral: pack_unit='caja', 10 u/caja).
 try { db.exec("ALTER TABLE products ADD COLUMN pack_unit TEXT NOT NULL DEFAULT 'bulto'"); } catch (_) {}
+// REPOSICION: proveedor "oficial" del producto. NULL = se DERIVA del historial
+// de compras (el ultimo proveedor que lo vendio, via purchase_items). El campo
+// existe solo como override manual para casos en que el historico miente
+// (cambio de proveedor, compra de emergencia a otro).
+try { db.exec("ALTER TABLE products ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)"); } catch (_) {}
+// Dias de demora del proveedor entre que se le pide y llega. NULL = se calcula
+// del historico (promedio created_at -> received_at de sus ultimas compras).
+try { db.exec("ALTER TABLE suppliers ADD COLUMN lead_time_days INTEGER"); } catch (_) {}
 // Precio cotizado en pedidos de cotizacion (lo que responde el proveedor)
 try { db.exec("ALTER TABLE purchase_request_items ADD COLUMN unit_price INTEGER"); } catch (_) {}
 // Modo de empaque elegido en la cotizacion (por item, no se persiste en el producto):
@@ -1481,6 +1489,7 @@ const ADMIN_SECTIONS = [
   { key: "proveedores", label: "Proveedores" },
   { key: "compras",     label: "Compras" },
   { key: "recepcion",   label: "Recepción" },
+  { key: "reposicion",  label: "Reposición" },
   { key: "gastos",      label: "Gastos" },
   { key: "caja",        label: "Caja" },
   { key: "config",      label: "Configuración" },
@@ -1507,6 +1516,7 @@ function sectionForAdminRequest(p) {
   if (has("accounts"))    return "cuentas";
   if (has("suppliers"))   return "proveedores";
   if (has("reception"))   return "recepcion";
+  if (has("reposicion"))  return "reposicion";
   if (has("purchases"))   return "compras";
   if (has("expenses") || has("expense-categories")) return "gastos";
   if (has("caja"))        return "caja";
@@ -1521,8 +1531,8 @@ function sectionForAdminRequest(p) {
 // propia. "usuarios" queda AFUERA a proposito (expone datos sensibles); para
 // listar clientes esta /api/clients.
 const SHARED_READ_SECTIONS = {
-  productos:     ["pedidos", "ventas", "compras", "recepcion", "armado", "entregas", "price-lists"],
-  proveedores:   ["compras", "recepcion", "gastos"],
+  productos:     ["pedidos", "ventas", "compras", "recepcion", "armado", "entregas", "price-lists", "reposicion"],
+  proveedores:   ["compras", "recepcion", "gastos", "reposicion"],
   vendedores:    ["pedidos", "ventas", "entregas", "reportes", "actividad", "cuentas", "pagos", "usuarios"],
   "price-lists": ["pedidos", "ventas", "usuarios", "productos"],
 };
@@ -3564,7 +3574,8 @@ app.get("/api/admin/products", requireAdmin, (req, res) => {
     "SELECT p.id, p.code, p.category_id, c.name AS category_name, p.name," +
     "       p.cost, p.price_minorista, p.price_revendedor, p.price_mayorista," +
     "       p.price_vip, p.price_publico, p.stock, p.stock_min, p.active, p.image_url," +
-    "       p.units_per_bulto, p.pack_unit, COALESCE(p.expiry_alert_months, 3) AS expiry_alert_months" +
+    "       p.units_per_bulto, p.pack_unit, COALESCE(p.expiry_alert_months, 3) AS expiry_alert_months," +
+    "       p.supplier_id" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
     "  ORDER BY c.sort_order, c.name, p.name";
   res.json(db.prepare(sql).all());
@@ -3666,6 +3677,9 @@ const PRODUCT_EDITABLE = [
   "code", "name", "category_id", "cost", "price_minorista", "price_revendedor",
   "price_mayorista", "price_vip", "price_publico", "stock", "stock_min", "active",
   "image_url", "units_per_bulto", "pack_unit", "expiry_alert_months",
+  // Proveedor fijo del producto (override de la reposicion). NULL = se deduce
+  // del historial de compras.
+  "supplier_id",
 ];
 function coerceProductField(k, v) {
   if (k === "name") return String(v || "").trim().slice(0, 200);
@@ -3675,7 +3689,7 @@ function coerceProductField(k, v) {
   if (k === "pack_unit") return ["unidad", "caja", "bulto"].includes(String(v)) ? String(v) : "bulto";
   if (k === "units_per_bulto") return Math.max(1, Math.round(Number(v)) || 1);
   if (k === "expiry_alert_months") { const n = Math.round(Number(v)); return isFinite(n) && n >= 0 ? n : 3; }
-  if (k === "category_id") return (v == null || v === "" || Number(v) === 0) ? null : Math.round(Number(v));
+  if (k === "category_id" || k === "supplier_id") return (v == null || v === "" || Number(v) === 0) ? null : Math.round(Number(v));
   let n = Number(v); if (!isFinite(n)) n = 0;
   // Precios (costo + 5 niveles): 2 decimales. Stock / stock_min: enteros >= 0
   // (sin el clamp, el PATCH aceptaba stock negativo; el POST ya clampeaba).
@@ -5796,7 +5810,7 @@ app.get("/api/admin/deliveries", requireAdmin, (req, res) => {
 
 app.get("/api/admin/suppliers", requireAdmin, (req, res) => {
   const rows = db.prepare(
-    "SELECT id, name, contact, phone, email, notes, active, created_at" +
+    "SELECT id, name, contact, phone, email, notes, active, created_at, lead_time_days" +
     "  FROM suppliers ORDER BY name"
   ).all();
   res.json(rows);
@@ -5821,7 +5835,7 @@ app.patch("/api/admin/suppliers/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
   const b = req.body || {};
-  const allowed = ["name", "contact", "phone", "email", "notes", "active"];
+  const allowed = ["name", "contact", "phone", "email", "notes", "active", "lead_time_days"];
   const sets = [];
   const vals = [];
   for (const k of allowed) {
@@ -5830,6 +5844,15 @@ app.patch("/api/admin/suppliers/:id", requireAdmin, (req, res) => {
         const v = String(b.name || "").trim().slice(0, 200);
         if (!v) return res.status(400).json({ error: "El nombre es requerido" });
         sets.push("name = ?"); vals.push(v);
+      } else if (k === "lead_time_days") {
+        // Dias de demora fijados a mano. Vacio / 0 = volver a deducirlo del
+        // historial de compras (lo usa la Reposicion sugerida).
+        const raw = b.lead_time_days;
+        const n = (raw == null || raw === "") ? null : Math.round(Number(raw));
+        if (n != null && (!Number.isFinite(n) || n < 1 || n > 120)) {
+          return res.status(400).json({ error: "La demora debe estar entre 1 y 120 días" });
+        }
+        sets.push("lead_time_days = ?"); vals.push(n);
       } else if (k === "active") {
         sets.push("active = ?"); vals.push(b.active ? 1 : 0);
       } else {
@@ -6150,6 +6173,300 @@ app.delete("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     db.prepare("DELETE FROM purchase_orders WHERE id = ?").run(id);
   })();
   res.json({ ok: true, deleted: id, was_received: wasReceived, stock_reverted: stockReverted });
+});
+
+// ===== REPOSICION SUGERIDA (pestaña Reposicion) =====
+//
+// Responde "que comprar y cuanto" cruzando la venta REAL de los ultimos meses
+// contra el stock actual, lo que ya viene en camino y la demora del proveedor.
+// Todo se deriva de datos que el sistema ya tiene; no hay que cargar nada nuevo.
+//
+//   demanda_diaria   = venta ponderada de la ventana (pesa mas lo reciente)
+//   cobertura        = stock / demanda_diaria           -> "me quedan N dias"
+//   punto_de_pedido  = demanda_diaria x (lead_time + colchon)
+//   faltante         = punto_de_pedido - stock - en_camino
+//   sugerido         = ceil(faltante / units_per_bulto) bultos
+//
+// Decisiones (consensuadas con Sergio):
+//  - Ventana 60 dias, pero las ultimas 2 semanas pesan el doble: reacciona a
+//    cambios de tendencia sin volverse loco por una semana rara.
+//  - "Vendido" = todo pedido NO cancelado (un pedido pendiente ya es demanda
+//    real). Se excluyen los unificados del tercerizado para no contar doble.
+//  - Colchon global configurable (default 15 dias) por encima del lead time.
+const REPO_DEFAULTS = { window: 60, recent: 14, cover: 15, lead: 7 };
+function repoConfig() {
+  const num = (key, def, min, max) => {
+    const v = Number(getSetting(key, def));
+    if (!Number.isFinite(v)) return def;
+    return Math.min(max, Math.max(min, Math.round(v)));
+  };
+  const windowDays = num("repo_window_days", REPO_DEFAULTS.window, 7, 365);
+  return {
+    windowDays: windowDays,
+    // El tramo "reciente" nunca puede comerse toda la ventana.
+    recentDays: Math.min(num("repo_recent_days", REPO_DEFAULTS.recent, 3, 90), windowDays - 1),
+    coverDays: num("repo_cover_days", REPO_DEFAULTS.cover, 0, 180),
+    leadDefault: num("repo_lead_default", REPO_DEFAULTS.lead, 1, 120),
+  };
+}
+
+// Lead time real por proveedor: promedio de dias entre que se carga la compra y
+// se recibe, sobre las compras del ultimo año. suppliers.lead_time_days lo pisa
+// si esta seteado a mano. Devuelve Map(supplier_id -> { days, source }).
+function repoLeadTimes(cfg) {
+  const out = new Map();
+  const sinceUtc = localDayBoundToUtc(
+    new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10), false
+  );
+  const rows = db.prepare(
+    "SELECT supplier_id AS sid," +
+    "       AVG(julianday(received_at) - julianday(created_at)) AS avg_days," +
+    "       COUNT(*) AS n" +
+    "  FROM purchase_orders" +
+    " WHERE supplier_id IS NOT NULL AND received_at IS NOT NULL" +
+    "   AND created_at >= ?" +
+    " GROUP BY supplier_id"
+  ).all(sinceUtc);
+  for (const r of rows) {
+    const d = Math.round(Number(r.avg_days));
+    // Compra cargada y recibida el mismo dia -> 1 dia (no 0, que anularia el
+    // punto de pedido). Techo de 90 para que un dato sucio no dispare todo.
+    if (Number.isFinite(d)) out.set(r.sid, { days: Math.min(90, Math.max(1, d)), source: "historico", samples: r.n });
+  }
+  for (const s of db.prepare("SELECT id, lead_time_days FROM suppliers WHERE lead_time_days IS NOT NULL").all()) {
+    const d = Number(s.lead_time_days);
+    if (Number.isFinite(d) && d > 0) out.set(s.id, { days: Math.min(120, Math.round(d)), source: "manual" });
+  }
+  return out;
+}
+
+// GET /api/admin/reposicion — sugerencia de compra agrupada por proveedor.
+// Query: supplier_id (filtro), urgencia (quebrado|critico|reponer), incluir_todo.
+app.get("/api/admin/reposicion", requireAdmin, (req, res) => {
+  const cfg = repoConfig();
+  const oldDays = cfg.windowDays - cfg.recentDays;
+  const today = localDayIso();
+  const dayIso = (back) => new Date(Date.now() - back * 86400000).toISOString().slice(0, 10);
+  const windowStart = localDayBoundToUtc(dayIso(cfg.windowDays), false);
+  const recentStart = localDayBoundToUtc(dayIso(cfg.recentDays), false);
+
+  // Venta de la ventana, partida en tramo reciente / tramo viejo.
+  const sales = new Map();
+  for (const r of db.prepare(
+    "SELECT oi.product_id AS pid," +
+    "       SUM(CASE WHEN o.created_at >= ? THEN oi.quantity ELSE 0 END) AS q_recent," +
+    "       SUM(CASE WHEN o.created_at <  ? THEN oi.quantity ELSE 0 END) AS q_old," +
+    "       MAX(o.created_at) AS last_sold_at," +
+    "       COUNT(DISTINCT o.id) AS orders_count" +
+    "  FROM order_items oi" +
+    "  JOIN orders o ON o.id = oi.order_id" +
+    " WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
+    "   AND oi.product_id IS NOT NULL AND o.created_at >= ?" +
+    " GROUP BY oi.product_id"
+  ).all(recentStart, recentStart, windowStart)) sales.set(r.pid, r);
+
+  // Ya pedido y todavia no recibido: no hay que volver a comprarlo.
+  const incoming = new Map();
+  for (const r of db.prepare(
+    "SELECT pi.product_id AS pid, SUM(pi.quantity) AS qty" +
+    "  FROM purchase_items pi" +
+    "  JOIN purchase_orders po ON po.id = pi.purchase_order_id" +
+    " WHERE COALESCE(po.received,0) = 0 AND pi.product_id IS NOT NULL" +
+    " GROUP BY pi.product_id"
+  ).all()) incoming.set(r.pid, Number(r.qty) || 0);
+
+  // Proveedor derivado del historial: el ultimo que vendio ese producto.
+  const lastSupplier = new Map();
+  for (const r of db.prepare(
+    "SELECT pi.product_id AS pid, po.supplier_id AS sid, MAX(po.created_at) AS d" +
+    "  FROM purchase_items pi" +
+    "  JOIN purchase_orders po ON po.id = pi.purchase_order_id" +
+    " WHERE po.supplier_id IS NOT NULL AND pi.product_id IS NOT NULL" +
+    " GROUP BY pi.product_id"
+  ).all()) lastSupplier.set(r.pid, r.sid);
+
+  // Desde cuando esta en cero (para estimar venta perdida). Solo aplica a los
+  // que hoy estan sin stock; sale del historial de movimientos.
+  const outSince = new Map();
+  try {
+    for (const r of db.prepare(
+      "SELECT product_id AS pid, MAX(created_at) AS d FROM stock_movements" +
+      " WHERE qty_after <= 0 GROUP BY product_id"
+    ).all()) outSince.set(r.pid, r.d);
+  } catch (_) { /* tabla nueva: si no existe todavia, se omite la metrica */ }
+
+  const leads = repoLeadTimes(cfg);
+  const suppliers = new Map();
+  for (const s of db.prepare("SELECT id, name, active FROM suppliers").all()) suppliers.set(s.id, s);
+
+  const prods = db.prepare(
+    "SELECT p.id, p.code, p.name, p.stock, p.stock_min, p.cost, p.supplier_id," +
+    "       COALESCE(p.units_per_bulto,1) AS upb, COALESCE(p.pack_unit,'bulto') AS pack_unit," +
+    "       c.name AS category_name" +
+    "  FROM products p" +
+    "  LEFT JOIN categories c ON c.id = p.category_id" +
+    " WHERE p.active = 1"
+  ).all();
+
+  const filtSupplier = req.query.supplier_id ? Number(req.query.supplier_id) : null;
+  const filtUrgencia = String(req.query.urgencia || "").trim();
+  const groups = new Map();
+  const totals = { quebrados: 0, criticos: 0, reponer: 0, estimado: 0, sin_venta_en_cero: 0, venta_perdida: 0 };
+
+  for (const p of prods) {
+    const s = sales.get(p.id);
+    const qRecent = s ? Number(s.q_recent) || 0 : 0;
+    const qOld = s ? Number(s.q_old) || 0 : 0;
+    // Media ponderada: el tramo reciente pesa el doble que el viejo. Si el
+    // producto no existia / no se vendia antes, se usa solo lo reciente para no
+    // subestimar a un producto nuevo que arranco bien.
+    const rateRecent = qRecent / cfg.recentDays;
+    const rateOld = oldDays > 0 ? qOld / oldDays : 0;
+    const daily = qOld > 0 ? (2 * rateRecent + rateOld) / 3 : rateRecent;
+
+    const stock = Number(p.stock) || 0;
+    const enCamino = incoming.get(p.id) || 0;
+    const sid = p.supplier_id || lastSupplier.get(p.id) || null;
+    const lead = leads.get(sid) || { days: cfg.leadDefault, source: "default" };
+    const reorderPoint = daily * (lead.days + cfg.coverDays);
+    const falta = reorderPoint - stock - enCamino;
+
+    if (stock <= 0 && daily <= 0) { totals.sin_venta_en_cero++; continue; }
+    if (!(falta > 0)) continue; // stock suficiente: no se sugiere
+
+    const upb = Math.max(1, Number(p.upb) || 1);
+    const bultos = Math.ceil(falta / upb);
+    const unidades = bultos * upb;
+    const cover = daily > 0 ? stock / daily : null;
+
+    let urgencia = "reponer";
+    if (stock <= 0) urgencia = "quebrado";
+    else if (cover != null && cover < lead.days) urgencia = "critico";
+
+    // Venta perdida estimada: lo que se habria vendido en los dias sin stock.
+    let daysOut = null, lostUnits = 0;
+    if (stock <= 0 && outSince.has(p.id)) {
+      const since = new Date(String(outSince.get(p.id)).replace(" ", "T") + "Z");
+      const d = Math.floor((Date.now() - since.getTime()) / 86400000);
+      if (Number.isFinite(d) && d >= 0) { daysOut = Math.min(d, cfg.windowDays); lostUnits = daysOut * daily; }
+    }
+
+    if (filtSupplier && sid !== filtSupplier) continue;
+    if (filtUrgencia && urgencia !== filtUrgencia) continue;
+
+    const cost = Number(p.cost) || 0;
+    const estimado = Math.round(cost * unidades);
+    totals[urgencia === "quebrado" ? "quebrados" : urgencia === "critico" ? "criticos" : "reponer"]++;
+    totals.estimado += estimado;
+    totals.venta_perdida += Math.round(lostUnits * cost);
+
+    const key = sid == null ? "none" : String(sid);
+    if (!groups.has(key)) {
+      const sup = sid == null ? null : suppliers.get(sid);
+      groups.set(key, {
+        supplier_id: sid,
+        supplier_name: sup ? sup.name : null,
+        supplier_active: sup ? Number(sup.active) === 1 : null,
+        lead_time_days: lead.days,
+        lead_source: lead.source,
+        items: [],
+        estimado: 0,
+      });
+    }
+    const g = groups.get(key);
+    g.items.push({
+      product_id: p.id, code: p.code, name: p.name, category_name: p.category_name,
+      stock: stock, stock_min: Number(p.stock_min) || 0, cost: cost,
+      units_per_bulto: upb, pack_unit: p.pack_unit,
+      daily: Math.round(daily * 100) / 100,
+      cover_days: cover == null ? null : Math.round(cover * 10) / 10,
+      lead_time_days: lead.days,
+      en_camino: enCamino,
+      sugerido_unidades: unidades, sugerido_bultos: bultos,
+      costo_estimado: estimado,
+      urgencia: urgencia,
+      units_recent: qRecent, units_old: qOld,
+      orders_count: s ? s.orders_count : 0,
+      last_sold_at: s ? s.last_sold_at : null,
+      days_out: daysOut,
+      venta_perdida: Math.round(lostUnits * cost),
+      supplier_source: p.supplier_id ? "manual" : (sid ? "historico" : "sin_datos"),
+    });
+    g.estimado += estimado;
+  }
+
+  const orderUrg = { quebrado: 0, critico: 1, reponer: 2 };
+  const list = Array.from(groups.values());
+  for (const g of list) {
+    g.items.sort((a, b) => (orderUrg[a.urgencia] - orderUrg[b.urgencia]) || (b.costo_estimado - a.costo_estimado));
+  }
+  // Sin proveedor al final; el resto por monto estimado.
+  list.sort((a, b) => (a.supplier_id == null ? 1 : 0) - (b.supplier_id == null ? 1 : 0) || b.estimado - a.estimado);
+
+  res.json({ config: cfg, generated_at: today, totals: totals, groups: list });
+});
+
+// POST /api/admin/reposicion/config — parametros del calculo. Endpoint propio
+// (y no /api/admin/settings) para que un admin limitado a Compras/Reposicion
+// pueda ajustarlos sin necesitar la seccion Configuracion.
+app.post("/api/admin/reposicion/config", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const keys = {
+    repo_window_days: [7, 365],
+    repo_recent_days: [3, 90],
+    repo_cover_days: [0, 180],
+    repo_lead_default: [1, 120],
+  };
+  for (const k of Object.keys(keys)) {
+    if (!(k in b)) continue;
+    const v = Number(b[k]);
+    if (!Number.isFinite(v)) return res.status(400).json({ error: "Valor invalido en " + k });
+    const [min, max] = keys[k];
+    setSetting(k, String(Math.min(max, Math.max(min, Math.round(v)))));
+  }
+  res.json({ ok: true, config: repoConfig() });
+});
+
+// POST /api/admin/reposicion/to-cotizacion — arma una cotizacion (borrador) con
+// los productos elegidos. De ahi sigue el circuito que ya existe:
+// cotizacion -> compra -> recepcion -> stock.
+app.post("/api/admin/reposicion/to-cotizacion", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const supplier_id = Number(b.supplier_id) || null;
+  const items = Array.isArray(b.items) ? b.items : [];
+  if (!items.length) return res.status(400).json({ error: "Elegí al menos un producto" });
+  if (supplier_id && !db.prepare("SELECT id FROM suppliers WHERE id = ?").get(supplier_id)) {
+    return res.status(400).json({ error: "Proveedor inexistente" });
+  }
+  const getProd = db.prepare("SELECT id, code, name, cost, COALESCE(units_per_bulto,1) AS upb, COALESCE(pack_unit,'bulto') AS pack_unit FROM products WHERE id = ?");
+  const ins = db.prepare(
+    "INSERT INTO purchase_requests (supplier_id, notes, status, created_by) VALUES (?, ?, 'borrador', ?)"
+  );
+  const insItem = db.prepare(
+    "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity, unit_price, pack_mode, comprimidos_per_unit)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, NULL)"
+  );
+  const notes = String(b.notes || "Generada desde Reposición sugerida").trim().slice(0, 1000);
+  let newId = null, added = 0;
+  db.transaction(() => {
+    newId = ins.run(supplier_id, notes, req.session.userId || null).lastInsertRowid;
+    for (const it of items) {
+      const p = getProd.get(Number(it.product_id) || 0);
+      if (!p) continue;
+      const qty = Math.max(1, Math.round(Number(it.quantity) || 0));
+      // El empaque de la cotizacion sale del producto: si viene por bulto/caja,
+      // el modal de cotizacion ya muestra la equivalencia en unidades.
+      const pmode = p.upb > 1 ? (p.pack_unit === "caja" ? "caja" : "bulto") : "unidad";
+      insItem.run(newId, p.id, p.code, p.name, qty, Math.round(Number(p.cost) || 0) || null, pmode);
+      added++;
+    }
+  })();
+  if (!added) return res.status(400).json({ error: "Ningún producto válido" });
+  const created = db.prepare(
+    "SELECT pr.*, s.name AS supplier_name FROM purchase_requests pr" +
+    "  LEFT JOIN suppliers s ON s.id = pr.supplier_id WHERE pr.id = ?"
+  ).get(newId);
+  res.status(201).json({ ok: true, request: created, items_added: added });
 });
 
 // ===== Control de recepcion de mercaderia (pestaña Recepcion) =====

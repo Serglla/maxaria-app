@@ -1680,6 +1680,38 @@ Reporte de Sergio: los pedidos #239 y #240 aparecían en Entregas con fecha 02/0
 
 **Pendiente**: `git add/commit/push` + deploy Railway + Ctrl+F5. Los datos históricos no se migran (no hace falta: lo que cambia es cómo se leen, no cómo se guardan) — después del deploy los pedidos "perdidos" aparecen solos en el día correcto.
 
+### Reposición sugerida — "qué comprar y cuánto" (2 agosto 2026 — `admin.js?v=20260802b`, `styles.css?v=20260802b`)
+
+Feature nueva a partir de un análisis de producto pedido por Sergio. Objetivo: pasar de sistema de registro a sistema que dice qué hacer. Todo se deriva de datos que el sistema ya guardaba y no usaba.
+
+**Hueco encontrado**: `products` no tenía proveedor — sin eso no se puede agrupar la compra. Solución: se **deriva del historial** (`purchase_items` → `purchase_orders.supplier_id`: el último que vendió ese producto) y se agregó `products.supplier_id` solo como **override manual**. Funciona desde el día 1 sin cargar nada.
+
+**Schema** (migraciones idempotentes): `products.supplier_id` (NULL = deducido), `suppliers.lead_time_days` (NULL = se calcula del historial). Settings nuevos: `repo_window_days` (60), `repo_recent_days` (14), `repo_cover_days` (15), `repo_lead_default` (7). Sección nueva `reposicion` en `ADMIN_SECTIONS` + `sectionForAdminRequest` + lectura compartida de `productos`/`proveedores` (**los admins limitados NO la tienen**: el superadmin debe otorgarla).
+
+**Cálculo** (helpers `repoConfig()` y `repoLeadTimes()` en server.js):
+```
+demanda_diaria  = qOld > 0 ? (2·rateReciente + rateViejo)/3 : rateReciente
+cobertura       = stock / demanda_diaria
+punto_de_pedido = demanda_diaria × (lead_time + colchón)
+faltante        = punto_de_pedido − stock − en_camino
+sugerido        = ceil(faltante / units_per_bulto) bultos
+```
+- Decisiones consensuadas: ventana **60 días** con las últimas 2 semanas pesando **el doble** (validado: un producto que pasó de 1 a 5 u/día da 3,66 en vez de 1,92 del promedio plano); **"vendido" = todo pedido no cancelado** (excluye unificados); **colchón global 15 días** configurable.
+- `en_camino` = `purchase_items` de compras con `COALESCE(received,0)=0` (evita comprar dos veces lo mismo).
+- `lead_time` = promedio real `created_at → received_at` de las compras del último año del proveedor (acotado 1..90), pisado por `suppliers.lead_time_days` si está seteado; fallback `repo_lead_default`.
+- Urgencias: **quebrado** (stock 0 con demanda), **crítico** (cobertura < lead time), **reponer** (bajo el punto de pedido). Productos en 0 **sin ventas** en la ventana no se sugieren (se cuentan aparte en `sin_venta_en_cero`).
+- **Venta perdida estimada**: si está en 0 y hay `stock_movements`, `días_sin_stock × demanda × costo`. Es la métrica que justifica el módulo (hoy nadie la mide).
+
+**Endpoints**: `GET /api/admin/reposicion` (filtros `supplier_id`, `urgencia`; devuelve `config`, `totals` y `groups` por proveedor), `POST /api/admin/reposicion/to-cotizacion` (crea `purchase_requests` en borrador con los tildados → sigue el circuito cotización → compra → recepción), `POST /api/admin/reposicion/config` (parámetros; endpoint propio y no `/api/admin/settings` para que un admin de Compras pueda ajustarlos sin la sección Configuración).
+
+**Frontend**: pestaña **🔄 Reposición** en el sidebar (grupo Compras, antes de Cotizaciones). KPIs (sin stock / críticos / a reponer / compra sugerida / venta perdida), tarjeta por proveedor con su demora y total, tabla con venta/día, cobertura, stock, en camino y **cantidad editable en bultos** (equivalencia en unidades en vivo), botón **→ Cotización** por proveedor y modal ⚙ Parámetros. El input de cantidad usa `type="text"` + `recvParseNum` (es-AR) y actualiza **en el lugar** — no re-renderiza mientras se tipea (bug del teclado ya conocido). CSS `.repo-*` con vista de tarjetas en mobile.
+
+**Extras de la misma sesión**: selector de **Proveedor** en el modal Editar producto (override), columna **Demora** en la tabla de Proveedores (auto-save, vacío = automático), `supplier_id` agregado a `PRODUCT_EDITABLE` y a los GET de productos/proveedores. **Bug preexistente corregido**: el `<thead>` de Proveedores tenía 8 columnas (incluyendo "WhatsApp destino" y "Contraseña", que no existen en esa tabla) para filas de 6 celdas → todo corrido; ahora son 7 alineadas.
+
+**Verificación**: `node --check` OK (server.js y admin.js, mount no stale), llaves del CSS balanceadas, tags de la sección nueva balanceados. Lógica testeada aislada en `/tmp` con sqlite3: ponderación reciente, exclusión de cancelados y unificados, descuento de lo que viene en camino (un producto con 60 en camino deja de sugerirse), capital muerto sin sugerencia, agrupado por proveedor deducido vs fijado a mano, lead time histórico (6d) vs manual (20d). Las 6 queries del endpoint corren contra copia de la DB real (1542 productos) sin errores.
+
+**Pendiente**: `git add/commit/push` + deploy Railway. Al ser todo derivado, funciona apenas se deploya; la precisión mejora a medida que se cargan compras (aprende proveedor y demora).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.
