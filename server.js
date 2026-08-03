@@ -514,6 +514,10 @@ try { db.exec("ALTER TABLE products ADD COLUMN units_per_bulto INTEGER NOT NULL 
 // Empaque en que el proveedor cotiza/pide el producto: 'unidad' | 'caja' | 'bulto'.
 // units_per_bulto = unidades por ese empaque (ej. Migral: pack_unit='caja', 10 u/caja).
 try { db.exec("ALTER TABLE products ADD COLUMN pack_unit TEXT NOT NULL DEFAULT 'bulto'"); } catch (_) {}
+// MARGENES: objetivo de margen sobre venta (%). NULL = hereda del objetivo de
+// la categoria y, si tampoco tiene, del global (settings.margin_target_default).
+try { db.exec("ALTER TABLE products ADD COLUMN margin_target REAL"); } catch (_) {}
+try { db.exec("ALTER TABLE categories ADD COLUMN margin_target REAL"); } catch (_) {}
 // REPOSICION: proveedor "oficial" del producto. NULL = se DERIVA del historial
 // de compras (el ultimo proveedor que lo vendio, via purchase_items). El campo
 // existe solo como override manual para casos en que el historico miente
@@ -1490,6 +1494,7 @@ const ADMIN_SECTIONS = [
   { key: "compras",     label: "Compras" },
   { key: "recepcion",   label: "Recepción" },
   { key: "reposicion",  label: "Reposición" },
+  { key: "margenes",    label: "Márgenes" },
   { key: "gastos",      label: "Gastos" },
   { key: "caja",        label: "Caja" },
   { key: "config",      label: "Configuración" },
@@ -1517,6 +1522,7 @@ function sectionForAdminRequest(p) {
   if (has("suppliers"))   return "proveedores";
   if (has("reception"))   return "recepcion";
   if (has("reposicion"))  return "reposicion";
+  if (has("margins"))     return "margenes";
   if (has("purchases"))   return "compras";
   if (has("expenses") || has("expense-categories")) return "gastos";
   if (has("caja"))        return "caja";
@@ -3947,7 +3953,7 @@ app.get("/api/admin/settings", requireAdmin, (req, res) => {
 // con su flag active y cuantos productos activos tiene cada una.
 app.get("/api/admin/categories", requireAdmin, (req, res) => {
   const rows = db.prepare(
-    "SELECT c.id, c.name, c.active," +
+    "SELECT c.id, c.name, c.active, c.margin_target," +
     "       (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.active = 1) AS products_count" +
     "  FROM categories c ORDER BY c.sort_order, c.name"
   ).all();
@@ -6173,6 +6179,303 @@ app.delete("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     db.prepare("DELETE FROM purchase_orders WHERE id = ?").run(id);
   })();
   res.json({ ok: true, deleted: id, was_received: wasReceived, stock_reverted: stockReverted });
+});
+
+// ===== SALUD DE MARGENES (pestaña Margenes) =====
+//
+// Detecta los productos cuyo margen quedo por debajo del objetivo (tipicamente
+// porque subio el costo y el precio quedo viejo) y permite recomponerlos.
+//
+// Definiciones (consensuadas con Sergio):
+//  - MARGEN SOBRE VENTA: (precio - costo) / precio. OJO: no es el "Ganancia %"
+//    del modal de producto, que es markup sobre el COSTO (costo 100 + 30% =
+//    130 -> margen real 23%). Se muestran los dos para que no haya ambiguedad.
+//  - PRECIO DE REFERENCIA: el precio REAL promedio ponderado de lo que se
+//    vendio en la ventana (order_items). Ya trae aplicadas las listas de cada
+//    cliente, asi que es el margen real del negocio y no el teorico. Si el
+//    producto no se vendio, cae al nivel configurado (margin_ref_level).
+//  - OBJETIVO: products.margin_target -> categories.margin_target -> global.
+//  - RECOMPOSICION: se calcula el factor necesario sobre el precio real y se
+//    aplica ese MISMO factor a los 5 niveles, manteniendo la proporcion entre
+//    ellos (y por lo tanto la estructura de listas derivadas).
+const MARGIN_DEFAULTS = { target: 25, tolerance: 2, roundTo: 10, windowDays: 60, refLevel: "minorista" };
+function marginConfig() {
+  const num = (key, def, min, max) => {
+    const v = Number(getSetting(key, def));
+    if (!Number.isFinite(v)) return def;
+    return Math.min(max, Math.max(min, v));
+  };
+  const ref = String(getSetting("margin_ref_level", MARGIN_DEFAULTS.refLevel));
+  return {
+    target: num("margin_target_default", MARGIN_DEFAULTS.target, -50, 95),
+    tolerance: num("margin_tolerance", MARGIN_DEFAULTS.tolerance, 0, 30),
+    roundTo: Math.round(num("margin_round_to", MARGIN_DEFAULTS.roundTo, 1, 1000)),
+    windowDays: Math.round(num("margin_window_days", MARGIN_DEFAULTS.windowDays, 7, 365)),
+    refLevel: ["minorista", "revendedor", "mayorista", "vip", "publico"].includes(ref) ? ref : "minorista",
+  };
+}
+// Redondeo hacia arriba al multiplo pedido (precios prolijos sin perder margen).
+function roundUpTo(value, step) {
+  const s = Math.max(1, Number(step) || 1);
+  return Math.ceil((Number(value) || 0) / s) * s;
+}
+// Precio que deja el margen objetivo sobre la venta: p = costo / (1 - m/100).
+function priceForMargin(cost, marginPct) {
+  const m = Math.min(95, Number(marginPct) || 0);
+  const div = 1 - m / 100;
+  if (!(div > 0)) return null;
+  return (Number(cost) || 0) / div;
+}
+
+app.get("/api/admin/margins", requireAdmin, (req, res) => {
+  const cfg = marginConfig();
+  const windowStart = localDayBoundToUtc(
+    new Date(Date.now() - cfg.windowDays * 86400000).toISOString().slice(0, 10), false
+  );
+
+  // Precio REAL promedio ponderado + unidades vendidas en la ventana.
+  const sold = new Map();
+  for (const r of db.prepare(
+    "SELECT oi.product_id AS pid," +
+    "       SUM(oi.unit_price * oi.quantity) AS revenue," +
+    "       SUM(oi.quantity) AS units," +
+    "       SUM(CASE WHEN oi.unit_price < COALESCE(p.cost,0) THEN oi.quantity ELSE 0 END) AS units_below_cost," +
+    "       SUM(CASE WHEN oi.unit_price < COALESCE(p.cost,0)" +
+    "                THEN (COALESCE(p.cost,0) - oi.unit_price) * oi.quantity ELSE 0 END) AS loss_below_cost" +
+    "  FROM order_items oi" +
+    "  JOIN orders o ON o.id = oi.order_id" +
+    "  LEFT JOIN products p ON p.id = oi.product_id" +
+    " WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
+    "   AND oi.product_id IS NOT NULL AND o.created_at >= ?" +
+    " GROUP BY oi.product_id"
+  ).all(windowStart)) sold.set(r.pid, r);
+
+  // Ultimo cambio de costo y ultimo cambio de precio: si el costo se movio
+  // DESPUES del ultimo retoque de precio, el producto quedo desfasado.
+  const lastCost = new Map();
+  for (const r of db.prepare(
+    "SELECT product_id AS pid, MAX(created_at) AS d, COUNT(*) AS n FROM cost_changes GROUP BY product_id"
+  ).all()) lastCost.set(r.pid, r);
+  const lastPrice = new Map();
+  for (const r of db.prepare(
+    "SELECT pc.product_id AS pid, MAX(pu.created_at) AS d" +
+    "  FROM price_changes pc JOIN price_updates pu ON pu.id = pc.update_id" +
+    " WHERE pc.product_id IS NOT NULL GROUP BY pc.product_id"
+  ).all()) lastPrice.set(r.pid, r.d);
+
+  const refCol = "price_" + cfg.refLevel;
+  const prods = db.prepare(
+    "SELECT p.id, p.code, p.name, p.cost, p.stock, p.active, p.margin_target," +
+    "       p.price_minorista, p.price_revendedor, p.price_mayorista, p.price_vip, p.price_publico," +
+    "       p.category_id, c.name AS category_name, c.margin_target AS cat_target" +
+    "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
+    " WHERE p.active = 1"
+  ).all();
+
+  const filtEstado = String(req.query.estado || "").trim();
+  const filtCat = req.query.category_id ? Number(req.query.category_id) : null;
+  const rows = [];
+  const totals = {
+    perdida: 0, desfasado: 0, bajo: 0, ok: 0, arriba: 0,
+    sin_costo: 0, impacto: 0, units_below_cost: 0, loss_below_cost: 0,
+  };
+
+  for (const p of prods) {
+    const cost = Number(p.cost) || 0;
+    const s = sold.get(p.id);
+    const units = s ? Number(s.units) || 0 : 0;
+    const listPrice = Number(p[refCol]) || 0;
+    // Precio real de venta; si no se vendio en la ventana, el de lista.
+    const realPrice = s && units > 0 ? (Number(s.revenue) || 0) / units : listPrice;
+    if (cost <= 0) { totals.sin_costo++; continue; }
+    if (!(realPrice > 0)) continue;
+
+    const target = p.margin_target != null ? Number(p.margin_target)
+      : (p.cat_target != null ? Number(p.cat_target) : cfg.target);
+    const margin = ((realPrice - cost) / realPrice) * 100;
+    const markup = cost > 0 ? ((realPrice - cost) / cost) * 100 : 0;
+
+    const cc = lastCost.get(p.id);
+    const lp = lastPrice.get(p.id);
+    // Desfasado = hubo cambio de costo posterior al ultimo cambio de precio.
+    const desfasado = !!(cc && cc.d && (!lp || String(cc.d) > String(lp)));
+
+    let estado;
+    if (realPrice <= cost) estado = "perdida";
+    else if (margin < target - cfg.tolerance) estado = desfasado ? "desfasado" : "bajo";
+    else if (margin > target + Math.max(cfg.tolerance, 5)) estado = "arriba";
+    else estado = "ok";
+
+    const targetPrice = priceForMargin(cost, target);
+    const suggested = targetPrice == null ? null : roundUpTo(targetPrice, cfg.roundTo);
+    const factor = suggested && realPrice > 0 ? suggested / realPrice : 1;
+    // Plata en juego: lo que se habria facturado de mas en la ventana con el
+    // precio recompuesto. Es lo que ordena la tabla (impacto, no alfabetico).
+    const impacto = suggested && suggested > realPrice ? Math.round((suggested - realPrice) * units) : 0;
+
+    totals[estado]++;
+    if (estado === "perdida" || estado === "desfasado" || estado === "bajo") totals.impacto += impacto;
+    if (s) {
+      totals.units_below_cost += Number(s.units_below_cost) || 0;
+      totals.loss_below_cost += Math.round(Number(s.loss_below_cost) || 0);
+    }
+
+    if (filtEstado && estado !== filtEstado) continue;
+    if (filtCat && p.category_id !== filtCat) continue;
+
+    rows.push({
+      product_id: p.id, code: p.code, name: p.name,
+      category_id: p.category_id, category_name: p.category_name,
+      cost: cost, stock: Number(p.stock) || 0,
+      list_price: listPrice,
+      real_price: Math.round(realPrice * 100) / 100,
+      has_sales: units > 0,
+      units: units,
+      margin: Math.round(margin * 10) / 10,
+      markup: Math.round(markup * 10) / 10,
+      target: target,
+      target_source: p.margin_target != null ? "producto" : (p.cat_target != null ? "categoria" : "global"),
+      suggested_price: suggested,
+      factor: Math.round(factor * 10000) / 10000,
+      gap: Math.round((target - margin) * 10) / 10,
+      impacto: impacto,
+      estado: estado,
+      last_cost_change: cc ? cc.d : null,
+      last_price_change: lp || null,
+      units_below_cost: s ? Number(s.units_below_cost) || 0 : 0,
+      loss_below_cost: s ? Math.round(Number(s.loss_below_cost) || 0) : 0,
+      prices: {
+        minorista: Number(p.price_minorista) || 0,
+        revendedor: Number(p.price_revendedor) || 0,
+        mayorista: Number(p.price_mayorista) || 0,
+        vip: Number(p.price_vip) || 0,
+        publico: Number(p.price_publico) || 0,
+      },
+    });
+  }
+
+  rows.sort((a, b) => b.impacto - a.impacto || a.margin - b.margin);
+  res.json({ config: cfg, totals: totals, rows: rows.slice(0, 800), rows_total: rows.length });
+});
+
+// POST /api/admin/margins/apply — recompone precios. Recibe product_ids y
+// (opcional) target_price por item si el usuario ajusto el sugerido a mano.
+// El server recalcula todo: no confia en los numeros del cliente.
+app.post("/api/admin/margins/apply", requireAdmin, (req, res) => {
+  const cfg = marginConfig();
+  const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
+  if (!items.length) return res.status(400).json({ error: "Elegí al menos un producto" });
+
+  const windowStart = localDayBoundToUtc(
+    new Date(Date.now() - cfg.windowDays * 86400000).toISOString().slice(0, 10), false
+  );
+  const soldStmt = db.prepare(
+    "SELECT SUM(oi.unit_price * oi.quantity) AS revenue, SUM(oi.quantity) AS units" +
+    "  FROM order_items oi JOIN orders o ON o.id = oi.order_id" +
+    " WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
+    "   AND oi.product_id = ? AND o.created_at >= ?"
+  );
+  const prodStmt = db.prepare(
+    "SELECT p.*, c.margin_target AS cat_target FROM products p" +
+    "  LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ?"
+  );
+  const refCol = "price_" + cfg.refLevel;
+  const applied = [];
+
+  db.transaction(() => {
+    for (const it of items) {
+      const p = prodStmt.get(Number(it.product_id) || 0);
+      if (!p || Number(p.cost) <= 0) continue;
+      const s = soldStmt.get(p.id, windowStart) || {};
+      const units = Number(s.units) || 0;
+      const realPrice = units > 0 ? (Number(s.revenue) || 0) / units : (Number(p[refCol]) || 0);
+      if (!(realPrice > 0)) continue;
+
+      const target = p.margin_target != null ? Number(p.margin_target)
+        : (p.cat_target != null ? Number(p.cat_target) : cfg.target);
+      // Precio de venta objetivo: el que manda el usuario (si lo edito) o el
+      // que corresponde al objetivo de margen.
+      const manual = Number(it.target_price);
+      const goal = Number.isFinite(manual) && manual > 0
+        ? manual
+        : roundUpTo(priceForMargin(p.cost, target) || 0, cfg.roundTo);
+      if (!(goal > 0)) continue;
+      const factor = goal / realPrice;
+      if (!(factor > 0) || Math.abs(factor - 1) < 0.0001) continue;
+
+      // Mismo factor a los 5 niveles: mantiene la proporcion entre ellos (y la
+      // estructura de las listas derivadas, que se recalculan solas).
+      const before = {};
+      const cols = [], vals = [];
+      for (const lvl of ["minorista", "revendedor", "mayorista", "vip", "publico"]) {
+        const col = "price_" + lvl;
+        const old = Number(p[col]) || 0;
+        before[col] = old;
+        if (old > 0) { cols.push(col); vals.push(roundUpTo(old * factor, cfg.roundTo)); }
+      }
+      if (!cols.length) continue;
+      db.prepare("UPDATE products SET " + cols.map((c) => c + " = ?").join(", ") +
+        ", updated_at = datetime('now') WHERE id = ?").run(...vals, p.id);
+      const after = prodStmt.get(p.id);
+      // Queda en el historial de cambios de precio (drawer "Ver cambios" y
+      // reporte de inflacion), igual que una edicion manual.
+      try { recordManualPriceChange(p.id, p, after); } catch (e) { console.error("[margins] price change log:", e.message); }
+      applied.push({
+        product_id: p.id, code: p.code, name: p.name,
+        factor: Math.round(factor * 10000) / 10000,
+        before: before,
+        after: {
+          price_minorista: after.price_minorista, price_revendedor: after.price_revendedor,
+          price_mayorista: after.price_mayorista, price_vip: after.price_vip, price_publico: after.price_publico,
+        },
+      });
+    }
+  })();
+
+  if (!applied.length) return res.status(400).json({ error: "No hubo cambios para aplicar" });
+  logActivity(req, "margins_apply", { count: applied.length });
+  res.json({ ok: true, applied: applied.length, items: applied });
+});
+
+// POST /api/admin/margins/config — objetivo global, tolerancia, redondeo,
+// ventana, nivel de referencia y objetivos por categoria.
+app.post("/api/admin/margins/config", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const keys = {
+    margin_target_default: [-50, 95],
+    margin_tolerance: [0, 30],
+    margin_round_to: [1, 1000],
+    margin_window_days: [7, 365],
+  };
+  for (const k of Object.keys(keys)) {
+    if (!(k in b)) continue;
+    const v = Number(b[k]);
+    if (!Number.isFinite(v)) return res.status(400).json({ error: "Valor invalido en " + k });
+    const [min, max] = keys[k];
+    setSetting(k, String(Math.min(max, Math.max(min, k === "margin_target_default" || k === "margin_tolerance" ? v : Math.round(v)))));
+  }
+  if ("margin_ref_level" in b) {
+    const lvl = String(b.margin_ref_level);
+    if (!["minorista", "revendedor", "mayorista", "vip", "publico"].includes(lvl)) {
+      return res.status(400).json({ error: "Nivel de referencia invalido" });
+    }
+    setSetting("margin_ref_level", lvl);
+  }
+  // Objetivos por categoria: { "3": 30, "5": null } (null = hereda el global).
+  if (b.category_targets && typeof b.category_targets === "object") {
+    const upd = db.prepare("UPDATE categories SET margin_target = ? WHERE id = ?");
+    db.transaction(() => {
+      for (const [cid, raw] of Object.entries(b.category_targets)) {
+        const id = Number(cid);
+        if (!id) continue;
+        if (raw == null || raw === "") { upd.run(null, id); continue; }
+        const v = Number(raw);
+        if (!Number.isFinite(v) || v < -50 || v > 95) continue;
+        upd.run(v, id);
+      }
+    })();
+  }
+  res.json({ ok: true, config: marginConfig() });
 });
 
 // ===== REPOSICION SUGERIDA (pestaña Reposicion) =====

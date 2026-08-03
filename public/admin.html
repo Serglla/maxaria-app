@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260802b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260802c" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -71,6 +71,9 @@
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="price-lists" type="button">
             <span class="admin-sidebar-item-icon">🏷️</span>Listas de precios
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="margenes" type="button">
+            <span class="admin-sidebar-item-icon">📈</span>Márgenes
           </button>
         </div>
 
@@ -1621,6 +1624,105 @@
         </table>
       </div>
     </section>
+
+    <!-- ===== TAB SALUD DE MÁRGENES ===== -->
+    <section class="tab-panel" id="tab-margenes" hidden>
+      <div class="admin-toolbar">
+        <select id="mg-estado" class="admin-select" title="Filtrar por estado">
+          <option value="">Todos los estados</option>
+          <option value="perdida">🔴 A pérdida</option>
+          <option value="desfasado">🟡 Costo subió, precio no</option>
+          <option value="bajo">🟠 Bajo objetivo</option>
+          <option value="ok">🟢 En objetivo</option>
+          <option value="arriba">🔵 Arriba del objetivo</option>
+        </select>
+        <select id="mg-cat" class="admin-select" title="Filtrar por categoría">
+          <option value="">Todas las categorías</option>
+        </select>
+        <input type="search" id="mg-search" class="admin-search" placeholder="Buscar producto o código..." autocomplete="off" />
+        <span class="admin-spacer"></span>
+        <button class="btn btn-ghost btn-tool" id="mg-config-btn" type="button" title="Objetivo de margen, redondeo y ventana">⚙ Objetivos</button>
+        <button class="btn btn-ghost" id="mg-reload" type="button" title="Recalcular">↺ Actualizar</button>
+      </div>
+      <div class="dash-kpi-row" id="mg-kpis"></div>
+      <p class="muted" id="mg-explain" style="margin:0 0 10px"></p>
+      <div class="bulk-bar" id="mg-sel-bar" hidden>
+        <span id="mg-sel-count">0 seleccionados</span>
+        <span class="admin-spacer"></span>
+        <button class="btn btn-ghost btn-small" id="mg-sel-none" type="button">Limpiar</button>
+        <button class="btn btn-primary btn-small" id="mg-apply-btn" type="button">💲 Recomponer precios</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table mg-table" id="mg-table">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="mg-check-all" title="Seleccionar todo lo visible" /></th>
+              <th>Producto</th>
+              <th>Estado</th>
+              <th class="num">Costo</th>
+              <th class="num" title="Promedio ponderado de lo que realmente cobraste en la ventana">Precio real</th>
+              <th class="num" title="(precio − costo) / precio">Margen</th>
+              <th class="num">Objetivo</th>
+              <th class="num" title="Precio que deja el margen objetivo, redondeado">Sugerido</th>
+              <th class="num" title="Unidades vendidas en la ventana">Unid.</th>
+              <th class="num" title="Lo que habrías facturado de más en la ventana con el precio recompuesto">Plata en juego</th>
+            </tr>
+          </thead>
+          <tbody id="mg-tbody"><tr><td colspan="10" class="muted">Calculando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Modal: objetivos de margen -->
+    <div class="admin-modal" id="mg-config-modal" hidden>
+      <div class="admin-modal-box" style="max-width:620px">
+        <div class="admin-modal-head">
+          <h3>Objetivos de margen</h3>
+          <button class="admin-modal-x" type="button" data-close="mg-config-modal">✕</button>
+        </div>
+        <form id="mg-config-form" class="user-form">
+          <p class="muted" style="margin:0 0 8px">
+            El margen se mide <strong>sobre la venta</strong>: (precio − costo) / precio.
+            Un costo de $100 con objetivo 25% da un precio de $133 (no $125).
+          </p>
+          <label>Objetivo general (%)
+            <input type="number" name="margin_target_default" min="-50" max="95" step="0.5" class="admin-input" />
+          </label>
+          <label>Tolerancia (puntos)
+            <input type="number" name="margin_tolerance" min="0" max="30" step="0.5" class="admin-input" />
+            <small class="muted">Cuánto puede alejarse del objetivo antes de marcarlo como fuera de rango.</small>
+          </label>
+          <label>Redondear el precio sugerido a
+            <select name="margin_round_to" class="admin-input">
+              <option value="1">Sin redondeo</option>
+              <option value="10">$10</option>
+              <option value="50">$50</option>
+              <option value="100">$100</option>
+            </select>
+          </label>
+          <label>Ventana de venta (días)
+            <input type="number" name="margin_window_days" min="7" max="365" step="1" class="admin-input" />
+            <small class="muted">Sobre cuántos días se promedia el precio real de venta.</small>
+          </label>
+          <label>Precio de referencia si no hubo ventas
+            <select name="margin_ref_level" class="admin-input">
+              <option value="minorista">Minorista</option>
+              <option value="revendedor">Revendedor</option>
+              <option value="mayorista">Mayorista</option>
+              <option value="vip">VIP</option>
+              <option value="publico">Público</option>
+            </select>
+          </label>
+          <div class="prod-section-title">Objetivo por categoría</div>
+          <p class="muted" style="margin:0 0 6px">Vacío = usa el objetivo general.</p>
+          <div id="mg-cat-targets" class="mg-cat-targets"></div>
+          <div class="admin-modal-foot">
+            <button class="btn btn-ghost" type="button" data-close="mg-config-modal">Cancelar</button>
+            <button class="btn btn-primary" type="submit">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <!-- ===== TAB REPOSICIÓN SUGERIDA ===== -->
     <section class="tab-panel" id="tab-reposicion" hidden>
@@ -3637,6 +3739,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260802b"></script>
+  <script src="/js/admin.js?v=20260802c"></script>
 </body>
 </html>

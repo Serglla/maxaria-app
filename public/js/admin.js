@@ -1378,6 +1378,7 @@
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
       if (tab === "recepcion") loadRecepcion(); // siempre recargar (cambia con compras nuevas)
       if (tab === "reposicion") loadReposicion(); // siempre recargar (depende de ventas y stock del momento)
+      if (tab === "margenes") loadMargenes(); // siempre recargar (depende de costos y ventas del momento)
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas") { state.accountsLoaded = false; loadAccounts(); } // siempre recargar (refleja entregas/cobros nuevos)
@@ -7824,6 +7825,265 @@
       }
     });
   }
+
+  // ---------- Salud de márgenes ----------
+  // Detecta productos con el margen caído (típicamente porque subió el costo y
+  // el precio quedó viejo) y permite recomponerlos en lote. El margen se mide
+  // SOBRE LA VENTA y contra el precio REAL promedio del período, así que ya
+  // tiene aplicadas las listas de cada cliente.
+  const mgEls = {
+    estado: document.getElementById("mg-estado"),
+    cat: document.getElementById("mg-cat"),
+    search: document.getElementById("mg-search"),
+    reload: document.getElementById("mg-reload"),
+    kpis: document.getElementById("mg-kpis"),
+    explain: document.getElementById("mg-explain"),
+    tbody: document.getElementById("mg-tbody"),
+    checkAll: document.getElementById("mg-check-all"),
+    selBar: document.getElementById("mg-sel-bar"),
+    selCount: document.getElementById("mg-sel-count"),
+    selNone: document.getElementById("mg-sel-none"),
+    applyBtn: document.getElementById("mg-apply-btn"),
+    configBtn: document.getElementById("mg-config-btn"),
+    configModal: document.getElementById("mg-config-modal"),
+    configForm: document.getElementById("mg-config-form"),
+    catTargets: document.getElementById("mg-cat-targets"),
+  };
+  const mgState = { data: null, sel: new Set(), catsFilled: false };
+  const MG_ESTADO = {
+    perdida:   { label: "🔴 A PÉRDIDA", cls: "mg-e-perdida", tip: "El precio está por debajo del costo" },
+    desfasado: { label: "🟡 COSTO SUBIÓ", cls: "mg-e-desfasado", tip: "El costo cambió después del último ajuste de precio" },
+    bajo:      { label: "🟠 BAJO", cls: "mg-e-bajo", tip: "Margen por debajo del objetivo" },
+    ok:        { label: "🟢 EN OBJETIVO", cls: "mg-e-ok", tip: "" },
+    arriba:    { label: "🔵 ARRIBA", cls: "mg-e-arriba", tip: "Margen por encima del objetivo" },
+  };
+
+  async function loadMargenes() {
+    if (!mgEls.tbody) return;
+    mgEls.tbody.innerHTML = '<tr><td colspan="10" class="muted">Calculando…</td></tr>';
+    const qs = [];
+    if (mgEls.estado && mgEls.estado.value) qs.push("estado=" + encodeURIComponent(mgEls.estado.value));
+    if (mgEls.cat && mgEls.cat.value) qs.push("category_id=" + encodeURIComponent(mgEls.cat.value));
+    try {
+      mgState.data = await api("/api/admin/margins" + (qs.length ? "?" + qs.join("&") : ""), null, "los márgenes");
+    } catch (e) {
+      mgEls.tbody.innerHTML = '<tr><td colspan="10" class="muted">Error: ' + escapeHtml(e.message) + "</td></tr>";
+      return;
+    }
+    mgState.sel = new Set();
+    mgFillCats();
+    renderMargenes();
+  }
+
+  function mgFillCats() {
+    if (!mgEls.cat || mgState.catsFilled) return;
+    const seen = new Map();
+    (mgState.data.rows || []).forEach((r) => { if (r.category_id) seen.set(r.category_id, r.category_name); });
+    if (!seen.size) return;
+    const prev = mgEls.cat.value;
+    mgEls.cat.innerHTML = '<option value="">Todas las categorías</option>' +
+      Array.from(seen.entries()).sort((a, b) => String(a[1]).localeCompare(String(b[1]), "es"))
+        .map(([id, n]) => '<option value="' + id + '">' + escapeHtml(n) + "</option>").join("");
+    if (prev) mgEls.cat.value = prev;
+    mgState.catsFilled = true;
+  }
+
+  function renderMargenes() {
+    const d = mgState.data;
+    if (!d || !mgEls.tbody) return;
+    const t = d.totals || {};
+    if (mgEls.kpis) {
+      mgEls.kpis.innerHTML =
+        repoKpiHtml("A pérdida", fmtNum(t.perdida), "se venden por debajo del costo", "dash-kpi-danger") +
+        repoKpiHtml("Costo subió, precio no", fmtNum(t.desfasado), "esperando que traslades el aumento", "dash-kpi-warn") +
+        repoKpiHtml("Bajo objetivo", fmtNum(t.bajo), "margen por debajo del target", "dk-orange") +
+        repoKpiHtml("Plata en juego", repoMoney(t.impacto), "por período, si recomponés todo", "dash-kpi-good") +
+        (t.loss_below_cost > 0
+          ? repoKpiHtml("Vendido bajo costo", repoMoney(t.loss_below_cost), fmtNum(t.units_below_cost) + " unidades en el período", "dash-kpi-danger")
+          : "");
+    }
+    if (mgEls.explain) {
+      const c = d.config || {};
+      mgEls.explain.innerHTML =
+        "Margen sobre venta contra el <strong>precio real promedio</strong> de los últimos " + c.windowDays +
+        " días (si el producto no se vendió, se usa el precio " + c.refLevel + "). Objetivo general <strong>" +
+        c.target + "%</strong> ± " + c.tolerance + " puntos. Al recomponer se sube <strong>todos los niveles con el mismo factor</strong>" +
+        " y se redondea a $" + c.roundTo + "; las listas derivadas se recalculan solas." +
+        (t.sin_costo ? " <em>" + fmtNum(t.sin_costo) + " productos sin costo cargado quedan afuera del análisis.</em>" : "");
+    }
+
+    const q = (mgEls.search ? mgEls.search.value.trim().toLowerCase() : "");
+    let list = d.rows || [];
+    if (q) list = list.filter((r) => (r.name || "").toLowerCase().includes(q) || String(r.code || "").toLowerCase().includes(q));
+    if (!list.length) {
+      mgEls.tbody.innerHTML = '<tr><td colspan="10" class="muted">Sin productos para este filtro.</td></tr>';
+      mgUpdateSelBar();
+      return;
+    }
+    mgEls.tbody.innerHTML = list.map(mgRowHtml).join("");
+    mgUpdateSelBar();
+  }
+
+  function mgRowHtml(r) {
+    const e = MG_ESTADO[r.estado] || MG_ESTADO.ok;
+    const canFix = r.suggested_price && r.suggested_price > r.real_price;
+    const marginCls = r.margin < 0 ? "text-danger" : (r.gap > 0 ? "text-warn" : "");
+    return '<tr class="mg-row" data-id="' + r.product_id + '">' +
+      "<td>" + (canFix ? '<input type="checkbox" class="mg-pick"' + (mgState.sel.has(r.product_id) ? " checked" : "") + " />" : "") + "</td>" +
+      '<td><div class="repo-prod">' + escapeHtml(r.name || "") + "</div>" +
+        '<div class="repo-prod-meta">#' + escapeHtml(r.code || "") + " · " + escapeHtml(r.category_name || "Sin categoría") +
+        (r.has_sales ? "" : " · sin ventas en el período") + "</div></td>" +
+      '<td><span class="repo-chip ' + e.cls + '" title="' + escapeHtml(e.tip) + '">' + e.label + "</span></td>" +
+      '<td class="num">' + repoMoney(r.cost) + "</td>" +
+      '<td class="num">' + repoMoney(r.real_price) + "</td>" +
+      '<td class="num ' + marginCls + '"><strong>' + r.margin.toLocaleString("es-AR", { maximumFractionDigits: 1 }) + "%</strong>" +
+        '<div class="repo-prod-meta">markup ' + r.markup.toLocaleString("es-AR", { maximumFractionDigits: 0 }) + "%</div></td>" +
+      '<td class="num">' + r.target + "%" +
+        (r.target_source !== "global" ? '<div class="repo-prod-meta">' + r.target_source + "</div>" : "") + "</td>" +
+      '<td class="num">' + (r.suggested_price ? "<strong>" + repoMoney(r.suggested_price) + "</strong>" : '<span class="muted">—</span>') + "</td>" +
+      '<td class="num">' + (r.units ? fmtNum(Math.round(r.units)) : '<span class="muted">—</span>') + "</td>" +
+      '<td class="num">' + (r.impacto > 0 ? '<strong class="text-good">' + repoMoney(r.impacto) + "</strong>" : '<span class="muted">—</span>') + "</td>" +
+    "</tr>";
+  }
+
+  function mgUpdateSelBar() {
+    if (!mgEls.selBar) return;
+    const n = mgState.sel.size;
+    mgEls.selBar.hidden = n === 0;
+    if (mgEls.selCount) mgEls.selCount.textContent = n + (n === 1 ? " producto seleccionado" : " productos seleccionados");
+  }
+
+  if (mgEls.tbody) {
+    mgEls.tbody.addEventListener("change", (e) => {
+      const cb = e.target.closest(".mg-pick");
+      if (!cb) return;
+      const id = Number(cb.closest(".mg-row").dataset.id);
+      if (cb.checked) mgState.sel.add(id); else mgState.sel.delete(id);
+      mgUpdateSelBar();
+    });
+  }
+  if (mgEls.checkAll) {
+    mgEls.checkAll.addEventListener("change", () => {
+      mgEls.tbody.querySelectorAll(".mg-row").forEach((tr) => {
+        const cb = tr.querySelector(".mg-pick");
+        if (!cb) return;
+        cb.checked = mgEls.checkAll.checked;
+        const id = Number(tr.dataset.id);
+        if (cb.checked) mgState.sel.add(id); else mgState.sel.delete(id);
+      });
+      mgUpdateSelBar();
+    });
+  }
+  if (mgEls.selNone) {
+    mgEls.selNone.addEventListener("click", () => {
+      mgState.sel = new Set();
+      if (mgEls.checkAll) mgEls.checkAll.checked = false;
+      mgEls.tbody.querySelectorAll(".mg-pick").forEach((cb) => { cb.checked = false; });
+      mgUpdateSelBar();
+    });
+  }
+
+  if (mgEls.applyBtn) {
+    mgEls.applyBtn.addEventListener("click", async () => {
+      const ids = Array.from(mgState.sel);
+      if (!ids.length) return;
+      const rows = (mgState.data.rows || []).filter((r) => mgState.sel.has(r.product_id));
+      const ganancia = rows.reduce((a, r) => a + (r.impacto || 0), 0);
+      const detalle = rows.slice(0, 8).map((r) =>
+        "· " + r.name + ": " + repoMoney(r.real_price) + " → " + repoMoney(r.suggested_price) +
+        " (margen " + r.margin.toFixed(1) + "% → " + r.target + "%)"
+      ).join("\n") + (rows.length > 8 ? "\n… y " + (rows.length - 8) + " más" : "");
+      const ok = await confirmModal({
+        title: "Recomponer precios",
+        message: "Se van a actualizar " + ids.length + (ids.length === 1 ? " producto" : " productos") +
+          ".\n\n" + detalle +
+          "\n\nSe suben los 5 niveles con el mismo factor (se mantiene la proporción entre ellos) y las listas derivadas se recalculan solas." +
+          (ganancia > 0 ? "\n\nImpacto estimado: " + repoMoney(ganancia) + " por período." : "") +
+          "\n\nQueda registrado en el historial de cambios de precio.",
+        confirmText: "Aplicar",
+      });
+      if (!ok) return;
+      mgEls.applyBtn.disabled = true;
+      try {
+        const out = await api("/api/admin/margins/apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: ids.map((id) => ({ product_id: id })) }),
+        });
+        showToast(out.applied + (out.applied === 1 ? " precio recompuesto" : " precios recompuestos"));
+        state.productsLoaded = false;
+        state.allProductsLoaded = false;
+        refreshProductsCache();
+        loadMargenes();
+      } catch (err) {
+        showToast("Error: " + err.message, "err");
+      } finally {
+        mgEls.applyBtn.disabled = false;
+      }
+    });
+  }
+
+  if (mgEls.configBtn) {
+    mgEls.configBtn.addEventListener("click", async () => {
+      const c = (mgState.data && mgState.data.config) || {};
+      const f = mgEls.configForm;
+      if (f) {
+        f.margin_target_default.value = c.target != null ? c.target : 25;
+        f.margin_tolerance.value = c.tolerance != null ? c.tolerance : 2;
+        f.margin_round_to.value = String(c.roundTo || 10);
+        f.margin_window_days.value = c.windowDays || 60;
+        f.margin_ref_level.value = c.refLevel || "minorista";
+      }
+      // Objetivos por categoría (vacío = hereda el general).
+      if (mgEls.catTargets) {
+        mgEls.catTargets.innerHTML = '<p class="muted">Cargando categorías…</p>';
+        try {
+          const cats = await api("/api/admin/categories", null, "las categorías");
+          mgEls.catTargets.innerHTML = cats.map((c2) =>
+            '<label class="mg-cat-row"><span>' + escapeHtml(c2.name) + "</span>" +
+            '<input type="number" class="admin-input mg-cat-input" data-cat="' + c2.id + '" min="-50" max="95" step="0.5"' +
+            ' value="' + (c2.margin_target != null ? c2.margin_target : "") + '" placeholder="general" /></label>'
+          ).join("");
+        } catch (_) {
+          mgEls.catTargets.innerHTML = '<p class="muted">No se pudieron cargar las categorías.</p>';
+        }
+      }
+      mgEls.configModal.hidden = false;
+    });
+  }
+  if (mgEls.configForm) {
+    mgEls.configForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(mgEls.configForm);
+      const cats = {};
+      (mgEls.catTargets ? mgEls.catTargets.querySelectorAll(".mg-cat-input") : []).forEach((inp) => {
+        cats[inp.dataset.cat] = inp.value === "" ? null : Number(inp.value);
+      });
+      try {
+        await api("/api/admin/margins/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            margin_target_default: Number(fd.get("margin_target_default")),
+            margin_tolerance: Number(fd.get("margin_tolerance")),
+            margin_round_to: Number(fd.get("margin_round_to")),
+            margin_window_days: Number(fd.get("margin_window_days")),
+            margin_ref_level: fd.get("margin_ref_level"),
+            category_targets: cats,
+          }),
+        });
+        mgEls.configModal.hidden = true;
+        showToast("Objetivos guardados");
+        loadMargenes();
+      } catch (err) {
+        showToast("Error: " + err.message, "err");
+      }
+    });
+  }
+  if (mgEls.reload) mgEls.reload.addEventListener("click", loadMargenes);
+  if (mgEls.estado) mgEls.estado.addEventListener("change", loadMargenes);
+  if (mgEls.cat) mgEls.cat.addEventListener("change", loadMargenes);
+  if (mgEls.search) mgEls.search.addEventListener("input", debounce(renderMargenes, 150));
 
   // ---------- Reposición sugerida ----------
   // "Qué comprar y cuánto": cruza la venta real de la ventana contra el stock,

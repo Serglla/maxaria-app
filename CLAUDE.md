@@ -1712,6 +1712,38 @@ sugerido        = ceil(faltante / units_per_bulto) bultos
 
 **Pendiente**: `git add/commit/push` + deploy Railway. Al ser todo derivado, funciona apenas se deploya; la precisión mejora a medida que se cargan compras (aprende proveedor y demora).
 
+### Salud de márgenes — detectar y recomponer precios desfasados (2 agosto 2026 — `admin.js?v=20260802c`, `styles.css?v=20260802c`)
+
+Segunda feature del análisis de producto. Diagnóstico previo sobre la base real (1542 activos): **99,5% tiene costo cargado**, margen minorista promedio **23,8%** con mucha dispersión (599 productos entre 10-20%, 653 entre 20-30%, 208 entre 30-40%) y 3 productos con precio ≤ costo. El problema no es que los precios estén mal, es que **cada producto quedó en un margen distinto según cuándo le tocó el último aumento**.
+
+**Definiciones (consensuadas con Sergio)**
+- **Margen sobre venta**: `(precio − costo) / precio`. ⚠️ NO es el "Ganancia %" del modal de producto, que es **markup sobre el costo** (costo 100 + 30% = 130 → margen real 23%). La tabla muestra los dos para que no haya ambigüedad; el objetivo se fija en margen.
+- **Precio de referencia = precio REAL de venta**: promedio ponderado de `order_items` de la ventana (60 días, configurable). Ya trae aplicadas las listas de cada cliente → es el margen real del negocio, no el teórico. Si el producto no se vendió, cae a `settings.margin_ref_level` (default minorista).
+- **Objetivo**: `products.margin_target` → `categories.margin_target` → `settings.margin_target_default` (25%).
+- **Recomposición**: `factor = precio_objetivo / precio_real` aplicado a los **5 niveles** (mantiene la proporción entre ellos y por lo tanto la estructura de listas derivadas, que se recalculan solas). Redondeo hacia arriba a $10.
+
+**Schema** (migraciones idempotentes): `products.margin_target REAL`, `categories.margin_target REAL`. Settings: `margin_target_default`, `margin_tolerance` (2), `margin_round_to` (10), `margin_window_days` (60), `margin_ref_level`. Sección nueva `margenes` en `ADMIN_SECTIONS` + `sectionForAdminRequest` (`/api/admin/margins` → margenes).
+
+**Estados** (helpers `marginConfig()`, `roundUpTo()`, `priceForMargin()` en server.js):
+- 🔴 **perdida**: precio ≤ costo.
+- 🟡 **desfasado**: margen bajo objetivo **y** hay un `cost_changes` posterior al último `price_changes` (join `price_changes` → `price_updates.created_at`). Es el corazón del módulo: cruza los dos historiales que ya se venían llenando y señala exactamente qué productos quedaron atrás de un aumento de costo.
+- 🟠 **bajo**: bajo objetivo sin cambio de costo reciente.
+- 🟢 **ok** / 🔵 **arriba** (fuera por encima, tolerancia ampliada a 5 puntos).
+
+**Orden por impacto en pesos**, no alfabético: `unidades_vendidas × (precio_sugerido − precio_real)`. Un producto de alta rotación con 3 puntos perdidos pesa más que uno que se vende dos veces.
+
+**Endpoints**: `GET /api/admin/margins` (filtros estado/categoría; devuelve config, totals y hasta 800 filas), `POST /api/admin/margins/apply` (**el server recalcula todo**, no confía en los números del cliente; acepta `target_price` por item si el usuario editó el sugerido; loguea con `recordManualPriceChange` → queda en "Ver cambios" y en el reporte de inflación), `POST /api/admin/margins/config` (globales + `category_targets`). `GET /api/admin/categories` devuelve `margin_target`.
+
+**Venta bajo costo**: el mismo GET calcula, sobre la ventana, unidades y pérdida de los `order_items` cuyo `unit_price < products.cost` actual. Va como KPI ("Vendido bajo costo: $X, N unidades"). Hoy eso pasaba invisible.
+
+**Frontend**: pestaña **📈 Márgenes** (grupo Catálogo, junto a Listas de precios). KPIs, tabla con selección múltiple, barra contextual "💲 Recomponer precios" con confirmación que detalla producto por producto (precio viejo → nuevo, margen actual → objetivo) y el impacto estimado. Modal ⚙ Objetivos con los parámetros globales + grilla de objetivo por categoría (vacío = hereda). Vista de tarjetas en mobile.
+
+**Verificación**: `node --check` OK, CSS balanceado, tags de la sección balanceados. Cálculo completo simulado contra la copia de la DB real: los 3 productos a pérdida detectados, el orden por impacto funciona, los productos sin ventas caen al precio de lista, y la recomposición deja el margen final dentro de ±1,5 puntos del objetivo manteniendo la proporción entre niveles (validado en 3 productos con margen <15%).
+
+**Ojo al calibrar**: con objetivo 25% sobre esa base quedan ~851 productos "bajo objetivo" (porque el promedio real es 23,8%). El primer paso al usarlo es ajustar el objetivo general y los de categoría a lo que Sergio realmente quiere ganar, sino la lista es demasiado larga para accionar.
+
+**Pendiente**: `git add/commit/push` + deploy Railway. El estado 🟡 "costo subió, precio no" empieza a marcar recién cuando haya `cost_changes` acumulados (la tabla es de junio y solo mide hacia adelante).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.
