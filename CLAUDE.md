@@ -1773,6 +1773,36 @@ Tercera feature del análisis de producto. El catálogo dejaba de ser una lista 
 
 **Pendiente**: `git add/commit/push` + deploy Railway. Nota: el pedido habitual necesita al menos 2 pedidos por cliente para mostrar algo, y la recompra 3 compras del mismo producto — arranca fuerte con los clientes viejos y va apareciendo solo con los nuevos.
 
+### Notificaciones push a administradores (2 agosto 2026 — `admin.js?v=20260802e`, `styles.css?v=20260802e`, `sw.js`)
+
+Pedido de Sergio: aviso real (del sistema operativo, con la app cerrada) cuando entra un pedido. Decisiones (AskUserQuestion): destinatarios = **admins con sección Pedidos + el vendedor asignado al cliente**; eventos = **pedido nuevo** y **producto sin stock con demanda**.
+
+**Dependencia nueva**: `web-push ^3.6.7` (JS puro, sin binarios nativos → no da los problemas de sharp/better-sqlite3 entre Windows y Railway). **Hay que correr `npm install`**; si falta, el `try/catch` del require deja `PUSH_READY=false`, el server arranca igual y el botón del panel no aparece.
+
+**Claves VAPID autogeneradas**: al primer arranque se generan y se guardan en `settings` (`vapid_public_key` / `vapid_private_key`) — cero configuración. ⚠️ Si se pierde la base, las suscripciones viejas dejan de servir y hay que reactivar el aviso en cada dispositivo. `PUSH_CONTACT` (env, opcional) define el mailto del VAPID.
+
+**Schema**: tabla `push_subscriptions` (user_id, `endpoint UNIQUE`, p256dh, auth, user_agent, created_at, last_ok_at). El UNIQUE + `ON CONFLICT DO UPDATE` hace que reactivar en el mismo dispositivo no duplique y que un dispositivo compartido se reasigne al último usuario.
+
+**Helpers en server.js** (arriba, junto a getSetting):
+- `sendPushTo(userIds, {title, body, url, tag})` — envía a todos los dispositivos de esos usuarios. **Nunca lanza**: un fallo de push no puede romper la operación que lo disparó. Las suscripciones muertas (404/410) se borran solas; el resto de errores queda en el log.
+- `adminsForOrders()` — level 99 activos que sean superadmin o tengan la sección `pedidos`.
+- `notifyNewOrder(orderId, actorUserId)` — arma el aviso con cliente, total e items; suma el `assigned_vendedor_id`; **excluye al que creó el pedido**.
+- `notifyStockOut(productIds)` — de los productos tocados, avisa los que quedaron en 0 **y tuvieron ventas en los últimos 30 días** (un producto sin demanda en cero no es noticia). Dedupe en memoria de 24 h por producto (`stockOutNotified`); si el server reinicia, a lo sumo se repite un aviso.
+
+**Disparadores**: `POST /api/orders` (catálogo), `POST /api/admin/orders`, `POST /api/budgets/:id/invoice` (presupuesto facturado) para el pedido nuevo; y el quiebre de stock en esos dos más `PATCH /api/orders/:id` (a entregado) y `POST /api/orders/:id/deliver`. En los dos últimos se acumulan los `product_id` en un array `touchedProducts` **declarado fuera de la transacción** y se avisa después del commit.
+
+**Endpoints**: `GET /api/push/public-key` (devuelve `{enabled, key}`), `POST /api/push/subscribe`, `POST /api/push/unsubscribe`, `POST /api/push/test` (aviso de prueba al propio usuario). Todos `requireLogin` — los vendedores también pueden activarlo.
+
+**Frontend**: botón `#push-btn` en el topbar del admin (oculto si el navegador o el server no soportan push). Clic = activar/desactivar; **Ctrl/Cmd + clic con los avisos activos = mandarse una prueba**. Al activar pide permiso, hace `pushManager.subscribe` con la clave VAPID y manda la suscripción; se autoenvía un aviso de confirmación. Verde cuando está activo (`.push-on`). El SW ya se registraba en `/admin` vía `pwa.js`.
+
+**`sw.js`**: handlers `push` (muestra la notificación con icono, vibración y tag) y `notificationclick` (enfoca una pestaña abierta de la app o abre `/admin`).
+
+**Limitaciones a tener presentes** (avisadas a Sergio): en **iOS ≥ 16.4 solo funciona con la PWA instalada** en la pantalla de inicio (límite de Apple); Android y escritorio andan directo. El permiso lo da **cada persona en cada dispositivo**, no se puede activar por ellos. Quien no lo active sigue viendo la campana del panel, que no cambió.
+
+**Verificación**: `node --check` OK en server.js, admin.js y sw.js. `web-push` instalado en `/tmp` y probado con `generateRequestDetails` (hace todo menos la red): payload cifrado en `aes128gcm` (141 bytes) y header `Authorization: vapid t=...` correctos con los mismos parámetros que usa el server (TTL 3600, urgency high). Upsert por endpoint, reasignación de dispositivo compartido, borrado por 410 y selección de admins validados con sqlite3 sobre copia de la DB.
+
+**Pendiente**: `npm install` en Windows (por `web-push`), `git add/commit/push` + deploy Railway. Después: entrar a /admin, tocar "🔕 Activar avisos" en cada dispositivo desde el que quieras recibirlos.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.

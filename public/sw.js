@@ -10,7 +10,7 @@
  * Versionar CACHE_VERSION fuerza la invalidación de caches viejos al hacer deploy.
  */
 
-const CACHE_VERSION = "maxaria-v4";
+const CACHE_VERSION = "maxaria-v6";
 const STATIC_CACHE  = CACHE_VERSION + "-static";
 const PAGES_CACHE   = CACHE_VERSION + "-pages";
 const IMAGES_CACHE  = CACHE_VERSION + "-images";
@@ -169,4 +169,44 @@ async function staleWhileRevalidate(req, cacheName) {
 // ---------- mensaje desde la página para forzar update ----------
 self.addEventListener("message", (event) => {
   if (event.data === "SKIP_WAITING") self.skipWaiting();
+});
+
+// ---------- notificaciones push ----------
+// El server manda un JSON { title, body, url, tag }. El navegador entrega el
+// evento aunque la app esté cerrada (en iOS solo si la PWA está instalada).
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (_) {
+    data = { body: event.data ? event.data.text() : "" };
+  }
+  const title = data.title || "Maxaria";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || "",
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      tag: data.tag || "maxaria",
+      renotify: true,
+      vibrate: [80, 40, 80],
+      data: { url: data.url || "/admin" },
+    })
+  );
+});
+
+// Al tocar la notificación: enfocar una pestaña ya abierta de la app o abrir
+// una nueva en la URL del aviso.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || "/admin";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if (c.url.includes(target) && "focus" in c) return c.focus();
+      }
+      for (const c of list) {
+        if ("navigate" in c && "focus" in c) return c.navigate(target).then(() => c.focus());
+      }
+      return self.clients.openWindow(target);
+    })
+  );
 });

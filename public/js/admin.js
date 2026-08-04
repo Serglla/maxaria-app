@@ -854,6 +854,10 @@
     // entregar (recibidos por el catálogo/vendedores y todavía sin entregar).
     if (state.isAdmin) notifyPendingOrders();
     if (state.isAdmin) notifInit();
+    // Botón de avisos push (se muestra solo si el navegador y el server lo
+    // soportan). Los vendedores también pueden activarlo: reciben los pedidos
+    // de sus clientes.
+    pushInit();
   }
 
   // ---------- Centro de notificaciones (campana del header) ----------
@@ -7905,6 +7909,110 @@
         showToast("Error: " + err.message, "error");
       } finally {
         pickEls.applyBtn.disabled = false;
+      }
+    });
+  }
+
+  // ---------- Notificaciones push ----------
+  // Aviso real del sistema operativo cuando entra un pedido (o se quiebra el
+  // stock de algo que se vende). El permiso lo da cada persona en su
+  // dispositivo: el botón del topbar hace subscribe/unsubscribe.
+  //
+  // iOS >= 16.4 solo funciona con la PWA instalada en la pantalla de inicio
+  // (limitación de Apple). En Android y escritorio anda directo.
+  const pushBtn = document.getElementById("push-btn");
+  const pushState = { supported: false, key: null, sub: null };
+
+  function pushCanWork() {
+    return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  }
+  function urlBase64ToUint8Array(base64String) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function pushRenderBtn() {
+    if (!pushBtn) return;
+    const on = !!pushState.sub;
+    pushBtn.textContent = on ? "🔔 Avisos activos" : "🔕 Activar avisos";
+    pushBtn.classList.toggle("push-on", on);
+    pushBtn.title = on
+      ? "Recibís avisos en este dispositivo. Clic para desactivarlos (o para mandarte una prueba con Ctrl+clic)."
+      : "Recibir un aviso en este dispositivo cuando entre un pedido";
+  }
+  async function pushInit() {
+    if (!pushBtn || !pushCanWork()) return;
+    try {
+      const info = await api("/api/push/public-key");
+      if (!info.enabled || !info.key) return; // server sin web-push instalado
+      pushState.supported = true;
+      pushState.key = info.key;
+      const reg = await navigator.serviceWorker.ready;
+      pushState.sub = await reg.pushManager.getSubscription();
+      pushBtn.hidden = false;
+      pushRenderBtn();
+    } catch (_) { /* sin push: el panel sigue igual, con la campana */ }
+  }
+  async function pushEnable() {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") {
+      alertModal(perm === "denied"
+        ? "Los avisos están bloqueados para este sitio. Habilitalos desde la configuración del navegador (candado en la barra de direcciones) y volvé a intentar."
+        : "No se activaron los avisos.");
+      return;
+    }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(pushState.key),
+    });
+    const raw = sub.toJSON();
+    await api("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint: raw.endpoint, keys: raw.keys }),
+    });
+    pushState.sub = sub;
+    pushRenderBtn();
+    showToast("Avisos activados en este dispositivo");
+    try { await api("/api/push/test", { method: "POST" }); } catch (_) {}
+  }
+  async function pushDisable() {
+    const endpoint = pushState.sub ? pushState.sub.endpoint : null;
+    try { if (pushState.sub) await pushState.sub.unsubscribe(); } catch (_) {}
+    if (endpoint) {
+      try {
+        await api("/api/push/unsubscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: endpoint }),
+        });
+      } catch (_) {}
+    }
+    pushState.sub = null;
+    pushRenderBtn();
+    showToast("Avisos desactivados en este dispositivo");
+  }
+  if (pushBtn) {
+    pushBtn.addEventListener("click", async (e) => {
+      pushBtn.disabled = true;
+      try {
+        // Ctrl/Cmd + clic con los avisos activos = mandarse una prueba.
+        if (pushState.sub && (e.ctrlKey || e.metaKey)) {
+          await api("/api/push/test", { method: "POST" });
+          showToast("Aviso de prueba enviado");
+        } else if (pushState.sub) {
+          await pushDisable();
+        } else {
+          await pushEnable();
+        }
+      } catch (err) {
+        showToast("Error: " + err.message, "err");
+      } finally {
+        pushBtn.disabled = false;
       }
     });
   }

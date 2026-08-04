@@ -515,6 +515,24 @@ try { db.exec("ALTER TABLE products ADD COLUMN units_per_bulto INTEGER NOT NULL 
 // Empaque en que el proveedor cotiza/pide el producto: 'unidad' | 'caja' | 'bulto'.
 // units_per_bulto = unidades por ese empaque (ej. Migral: pack_unit='caja', 10 u/caja).
 try { db.exec("ALTER TABLE products ADD COLUMN pack_unit TEXT NOT NULL DEFAULT 'bulto'"); } catch (_) {}
+// PUSH: suscripciones de notificaciones del navegador (una por dispositivo).
+// endpoint es la URL unica que da el push service del browser -> UNIQUE para
+// que reinstalar/reactivar no duplique. Al fallar el envio con 404/410 la fila
+// se borra sola (suscripcion muerta).
+db.exec(
+  "CREATE TABLE IF NOT EXISTS push_subscriptions (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  user_id INTEGER NOT NULL REFERENCES users(id)," +
+  "  endpoint TEXT NOT NULL UNIQUE," +
+  "  p256dh TEXT NOT NULL," +
+  "  auth TEXT NOT NULL," +
+  "  user_agent TEXT," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))," +
+  "  last_ok_at TEXT" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);"
+);
+
 // ACCESO POR LINK: token unico por cliente para entrar sin contraseña. NULL =
 // sin link generado. UNIQUE para que no haya colisiones (el indice se crea
 // aparte porque ALTER TABLE no admite UNIQUE inline).
@@ -938,6 +956,158 @@ function setSetting(key, value) {
     "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now')) " +
     "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
   ).run(key, value == null ? null : String(value));
+}
+
+// ===== NOTIFICACIONES PUSH =====
+// Aviso real del sistema operativo (suena el celular con la app cerrada). El
+// navegador entrega una "subscription" por dispositivo, que se guarda y se usa
+// para firmar el envio con VAPID.
+//
+// Limitaciones a tener presentes:
+//  - iOS >= 16.4 SOLO con la PWA instalada en la pantalla de inicio (limite de
+//    Apple, no del codigo). Android y escritorio funcionan directo.
+//  - El permiso lo da cada persona en cada dispositivo; no se puede activar
+//    por ellos desde el panel.
+// Quien no active el push sigue viendo la campana del panel, que no cambio.
+let webpush = null;
+let PUSH_READY = false;
+try {
+  webpush = require("web-push");
+  // Las claves VAPID se generan UNA vez y quedan en settings: sin config
+  // manual. Ojo: si se pierden (base nueva) las suscripciones viejas dejan de
+  // servir y hay que volver a activar el aviso en cada dispositivo.
+  let pub = getSetting("vapid_public_key", null);
+  let priv = getSetting("vapid_private_key", null);
+  if (!pub || !priv) {
+    const keys = webpush.generateVAPIDKeys();
+    pub = keys.publicKey; priv = keys.privateKey;
+    setSetting("vapid_public_key", pub);
+    setSetting("vapid_private_key", priv);
+    console.log("[push] claves VAPID generadas y guardadas en settings");
+  }
+  const contact = process.env.PUSH_CONTACT || "mailto:admin@maxaria.local";
+  webpush.setVapidDetails(contact, pub, priv);
+  PUSH_READY = true;
+} catch (e) {
+  console.warn("[push] deshabilitado (" + e.message + "). Corré npm install para activarlo.");
+}
+function pushPublicKey() { return PUSH_READY ? getSetting("vapid_public_key", null) : null; }
+
+// Envia una notificacion a TODOS los dispositivos de los usuarios indicados.
+// Las suscripciones muertas (404/410) se borran solas. No lanza: un fallo de
+// push nunca puede romper la operacion que lo disparo (crear un pedido, etc.).
+function sendPushTo(userIds, payload) {
+  if (!PUSH_READY) return;
+  const ids = Array.from(new Set((userIds || []).map(Number).filter(Boolean)));
+  if (!ids.length) return;
+  const ph = ids.map(() => "?").join(",");
+  let subs = [];
+  try {
+    subs = db.prepare(
+      "SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id IN (" + ph + ")"
+    ).all(...ids);
+  } catch (e) { console.error("[push] leyendo suscripciones:", e.message); return; }
+  if (!subs.length) return;
+  const body = JSON.stringify(payload);
+  const del = db.prepare("DELETE FROM push_subscriptions WHERE id = ?");
+  const ok = db.prepare("UPDATE push_subscriptions SET last_ok_at = datetime('now') WHERE id = ?");
+  for (const s of subs) {
+    webpush.sendNotification(
+      { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+      body,
+      { TTL: 3600, urgency: "high" }
+    ).then(() => {
+      try { ok.run(s.id); } catch (_) {}
+    }).catch((err) => {
+      const code = err && err.statusCode;
+      if (code === 404 || code === 410) {
+        try { del.run(s.id); } catch (_) {}
+      } else {
+        console.error("[push] envio fallido (" + code + "):", err && err.message);
+      }
+    });
+  }
+}
+
+// Admins que deben enterarse de los pedidos: superadmin siempre, y los admins
+// comunes que tengan la seccion "pedidos" habilitada.
+function adminsForOrders() {
+  try {
+    return db.prepare(
+      "SELECT id, is_superadmin, admin_sections FROM users WHERE level = 99 AND active = 1"
+    ).all().filter((u) =>
+      Number(u.is_superadmin) === 1 ||
+      String(u.admin_sections || "").split(",").map((s) => s.trim()).includes("pedidos")
+    ).map((u) => u.id);
+  } catch (e) { console.error("[push] admins:", e.message); return []; }
+}
+
+// Aviso de PEDIDO NUEVO: a los admins que ven Pedidos y al vendedor asignado
+// al cliente. Nunca al que lo creo (ya lo sabe). Se llama despues de que el
+// pedido esta commiteado; si algo falla, solo queda en el log.
+function notifyNewOrder(orderId, actorUserId) {
+  if (!PUSH_READY) return;
+  try {
+    const o = db.prepare(
+      "SELECT o.id, o.total, o.assigned_vendedor_id," +
+      "       COALESCE(u.full_name, u.username) AS client_name," +
+      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS items" +
+      "  FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?"
+    ).get(orderId);
+    if (!o) return;
+    const targets = adminsForOrders();
+    if (o.assigned_vendedor_id) targets.push(o.assigned_vendedor_id);
+    const ids = targets.filter((id) => Number(id) !== Number(actorUserId));
+    sendPushTo(ids, {
+      title: "Pedido nuevo · " + o.client_name,
+      body: "$" + Math.round(o.total).toLocaleString("es-AR") + " · " + o.items +
+        (o.items === 1 ? " producto" : " productos"),
+      url: "/admin",
+      tag: "order-" + o.id,
+    });
+  } catch (e) { console.error("[push] notifyNewOrder:", e.message); }
+}
+
+// Aviso de QUIEBRE DE STOCK: producto que llega a 0 y se venia vendiendo. Se
+// avisa una vez por producto por dia (dedupe en memoria; si el server
+// reinicia, a lo sumo se repite un aviso).
+const stockOutNotified = new Map(); // product_id -> timestamp
+function notifyStockOut(productIds) {
+  if (!PUSH_READY) return;
+  const ids = Array.from(new Set((productIds || []).map(Number).filter(Boolean)));
+  if (!ids.length) return;
+  const now = Date.now();
+  const fresh = ids.filter((id) => {
+    const t = stockOutNotified.get(id);
+    return !t || now - t > 24 * 3600 * 1000;
+  });
+  if (!fresh.length) return;
+  try {
+    const ph = fresh.map(() => "?").join(",");
+    const since = localDayBoundToUtc(
+      new Date(now - 30 * 86400000).toISOString().slice(0, 10), false
+    );
+    // Solo los que quedaron en 0 Y tuvieron ventas en el ultimo mes: un
+    // producto sin demanda en cero no es noticia.
+    const rows = db.prepare(
+      "SELECT p.id, p.name," +
+      "       (SELECT COALESCE(SUM(oi.quantity),0) FROM order_items oi" +
+      "          JOIN orders o ON o.id = oi.order_id" +
+      "         WHERE oi.product_id = p.id AND o.status != 'cancelado'" +
+      "           AND COALESCE(o.is_unified,0) = 0 AND o.created_at >= ?) AS sold" +
+      "  FROM products p WHERE p.active = 1 AND p.stock <= 0 AND p.id IN (" + ph + ")"
+    ).all(since, ...fresh).filter((r) => Number(r.sold) > 0);
+    if (!rows.length) return;
+    for (const r of rows) stockOutNotified.set(r.id, now);
+    const names = rows.map((r) => r.name).slice(0, 3).join(", ");
+    sendPushTo(adminsForOrders(), {
+      title: rows.length === 1 ? "Se quedó sin stock" : "Se quedaron sin stock (" + rows.length + ")",
+      body: names + (rows.length > 3 ? " y " + (rows.length - 3) + " más" : "") +
+        " · se venía vendiendo",
+      url: "/admin",
+      tag: "stockout",
+    });
+  } catch (e) { console.error("[push] notifyStockOut:", e.message); }
 }
 
 // ─── Reconstruccion historica de stock_movements (22 jul 2026) ────────────────
@@ -1736,6 +1906,49 @@ app.post("/login", (req, res) => {
 app.post("/logout", (req, res) => {
   logActivity(req, "logout", null);
   req.session.destroy(() => { res.clearCookie("maxaria.sid"); res.json({ ok: true }); });
+});
+
+// ----- Suscripción a notificaciones push -----
+// La clave publica VAPID la necesita el navegador para suscribirse.
+app.get("/api/push/public-key", requireLogin, (req, res) => {
+  res.json({ enabled: PUSH_READY, key: pushPublicKey() });
+});
+app.post("/api/push/subscribe", requireLogin, (req, res) => {
+  if (!PUSH_READY) return res.status(503).json({ error: "Push no disponible en el servidor" });
+  const s = req.body || {};
+  const endpoint = String(s.endpoint || "").trim();
+  const keys = s.keys || {};
+  if (!endpoint || !keys.p256dh || !keys.auth) {
+    return res.status(400).json({ error: "Suscripción inválida" });
+  }
+  // Un mismo endpoint puede reasignarse a otro usuario (dispositivo compartido).
+  db.prepare(
+    "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent)" +
+    " VALUES (?, ?, ?, ?, ?)" +
+    " ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id," +
+    "   p256dh = excluded.p256dh, auth = excluded.auth, user_agent = excluded.user_agent"
+  ).run(req.session.userId, endpoint, String(keys.p256dh), String(keys.auth),
+        String(req.headers["user-agent"] || "").slice(0, 300));
+  res.json({ ok: true });
+});
+app.post("/api/push/unsubscribe", requireLogin, (req, res) => {
+  const endpoint = String((req.body || {}).endpoint || "").trim();
+  if (endpoint) db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").run(endpoint);
+  res.json({ ok: true });
+});
+// Aviso de prueba al propio usuario (boton "Probar" del panel).
+app.post("/api/push/test", requireLogin, (req, res) => {
+  if (!PUSH_READY) return res.status(503).json({ error: "Push no disponible" });
+  const n = db.prepare("SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id = ?")
+    .get(req.session.userId).n;
+  if (!n) return res.status(400).json({ error: "Este dispositivo todavía no está suscripto" });
+  sendPushTo([req.session.userId], {
+    title: getAppName(),
+    body: "Los avisos están activados en este dispositivo ✓",
+    url: "/admin",
+    tag: "test",
+  });
+  res.json({ ok: true, devices: n });
 });
 
 // ----- Acceso por link (sin contraseña) -----
@@ -2824,6 +3037,9 @@ app.post("/api/orders", requireLogin, (req, res) => {
   })();
 
   logActivity(req, "pedido", "Pedido #" + orderId + " · $" + total + " · " + lines.length + " items");
+  // Aviso push a los admins y al vendedor del cliente (no bloquea la respuesta).
+  notifyNewOrder(orderId, req.session.userId);
+  notifyStockOut(lines.map((l) => l.product_id));
   res.json({ ok: true, order: { id: orderId, total: total, items: lines.length } });
 });
 
@@ -3289,6 +3505,9 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
     "SELECT id FROM budgets WHERE order_id = ? LIMIT 1"
   ).get(id);
   const stockCurrentlyOut = anyLinkedBudget ? !!linkedBudgetForOrder : !!order.stock_discounted;
+  // Productos que descontaron stock en esta operación: se revisan después del
+  // commit para avisar por push si alguno quedó en cero teniendo demanda.
+  const touchedProducts = [];
 
   db.transaction(() => {
     db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
@@ -3306,6 +3525,7 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
           if (it.product_id) {
             updStock.run(it.quantity, it.product_id);
             logStockMovement(it.product_id, "venta", -it.quantity, id, "Pedido #" + id + " entregado", req.session.userId);
+            touchedProducts.push(it.product_id);
           }
         }
       }
@@ -3392,6 +3612,7 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
     }
   })();
 
+  notifyStockOut(touchedProducts);
   res.json({ ok: true, id: id, status: status });
 });
 
@@ -3523,6 +3744,8 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
     "FROM orders o LEFT JOIN users u ON u.id = o.user_id " +
     "LEFT JOIN users v ON v.id = o.assigned_vendedor_id WHERE o.id = ?"
   ).get(result);
+  notifyNewOrder(result, req.session.userId);
+  notifyStockOut(items.map((i) => Number(i.product_id)));
   res.json(order);
 });
 
@@ -5811,6 +6034,9 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
 
   let deliveryId;
   let comisionAviso = null;   // {warning, amount} si la comisión no se pudo imputar a una caja
+  // Productos que descontaron stock acá: se revisan tras el commit para el
+  // aviso push de quiebre.
+  const touchedProducts = [];
   db.transaction(() => {
     if (existing) {
       if (deliveredAtSql) {
@@ -5866,6 +6092,7 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
           if (it.product_id) {
             updStock.run(it.quantity, it.product_id);
             logStockMovement(it.product_id, "entrega", -it.quantity, id, "Pedido #" + id + " entregado", req.session.userId);
+            touchedProducts.push(it.product_id);
           }
         }
       }
@@ -5983,6 +6210,7 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     }
   })();
 
+  notifyStockOut(touchedProducts);
   res.json({
     ok: true, delivery_id: deliveryId, order_id: id,
     discount_type: discountType, discount_value: discountType ? discountValue : null,
@@ -9481,6 +9709,8 @@ app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, requireSectionForAd
     return res.status(500).json({ error: e.message });
   }
 
+  // El presupuesto facturado entra al circuito como pedido: mismo aviso.
+  notifyNewOrder(orderId, req.session.userId);
   res.json({ ok: true, order_id: orderId, debited: debitAccount });
 });
 

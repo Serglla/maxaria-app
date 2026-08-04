@@ -6001,6 +6001,13 @@ html.in-modal .ventas-wrap {
 .vt-rent-neg { color: #b91c1c; }
 .vt-rent small { font-weight: 600; opacity: 0.8; }
 
+/* ── Botón de avisos push (topbar del admin) ─────────────────────────── */
+#push-btn.push-on {
+  border-color: #16a34a;
+  background: rgba(22, 163, 74, .15);
+  color: #bbf7d0;
+}
+
 /* ── Catálogo: pedido habitual + recompra ────────────────────────────── */
 .suggestions { margin: 0 0 14px; display: flex; flex-direction: column; gap: 10px; }
 .sugg-remind {
