@@ -831,6 +831,11 @@
             btn.style.display = "none";
           }
         });
+        // Acciones exclusivas del superadmin dentro de una pestaña (hoy: la
+        // descarga de la base en Control de stock).
+        document.querySelectorAll(".superadmin-only").forEach((el) => {
+          el.hidden = !isSuper;
+        });
         // Aterrizar en la primera pestaña visible permitida.
         const landing = isSuper
           ? Array.from(els.tabBtns).find((b) => b.dataset.tab === "dashboard")
@@ -1412,6 +1417,7 @@
       if (tab === "recepcion") loadRecepcion(); // siempre recargar (cambia con compras nuevas)
       if (tab === "reposicion") loadReposicion(); // siempre recargar (depende de ventas y stock del momento)
       if (tab === "margenes") loadMargenes(); // siempre recargar (depende de costos y ventas del momento)
+      if (tab === "control-stock") loadStockControl(); // siempre recargar (chequeos en vivo)
       if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas") { state.accountsLoaded = false; loadAccounts(); } // siempre recargar (refleja entregas/cobros nuevos)
@@ -7247,11 +7253,16 @@
 
       const deliverBtn = card.querySelector(".btn-deliver");
       if (deliverBtn) {
-        deliverBtn.addEventListener("click", (e) => {
+        deliverBtn.addEventListener("click", async (e) => {
           e.stopPropagation();
           const orderId = Number(deliverBtn.dataset.id);
           const hasDelivery = deliverBtn.dataset.hasDelivery === "1";
           const orderObj = list.find((o) => o.id === orderId);
+          // Chequeo de armado con diferencias sin confirmar: si se entrega así,
+          // sale lo armado pero se descuenta lo pedido. Avisar antes de cobrar.
+          if (orderObj && orderObj.status !== "entregado" && !hasDelivery) {
+            if (!(await pickPendingGuard(orderObj))) return;
+          }
           let existingDelivery = null;
           if (hasDelivery && orderObj) {
             existingDelivery = {
@@ -7287,6 +7298,10 @@
           // items sin armar (cantidad 0), confirmar antes de pasar a Entregas.
           if (to === "listo") {
             const ord = list.find((x) => x.id === orderId) || {};
+            // 1) Cantidades armadas distintas a las pedidas y sin confirmar: si
+            //    pasa así, se entrega lo armado y se descuenta lo pedido.
+            if (!(await pickPendingGuard(ord))) return;
+            // 2) Chequeo empezado pero incompleto (items sin controlar).
             const started = Number(ord.pick_started) || 0;
             const ptot = Number(ord.pick_total) || 0;
             if (started > 0 && started < ptot) {
@@ -7695,12 +7710,57 @@
       pickState.items.every((i) => Number(i.pick_checked) === 1);
   }
 
+  // Guard de "chequeo sin confirmar": se llama antes de pasar a Entregas y antes
+  // de registrar la entrega. Si hay cantidades armadas distintas a las pedidas y
+  // sin aplicar, sale lo armado del depósito pero el sistema descuenta lo pedido
+  // → el stock queda mal. Devuelve true si se puede seguir; false si el usuario
+  // eligió abrir el chequeo para confirmarlo (se aborta la acción en curso).
+  async function pickPendingGuard(order) {
+    const o = order || {};
+    if (!o.id || !Number(o.pick_pending)) return true;
+
+    const qty = (n) => {
+      const v = Number(n) || 0;
+      return Number.isInteger(v) ? String(v) : String(v).replace(".", ",");
+    };
+    let detalle = "";
+    try {
+      const data = await api("/api/admin/picks/" + o.id);
+      const diffs = (data.items || []).filter(
+        (i) => Number(i.pick_checked) === 1 && Number(i.picked_qty) !== Number(i.quantity)
+      );
+      if (!diffs.length) { o.pick_pending = 0; return true; } // ya lo confirmaron
+      o.pick_pending = diffs.length;
+      detalle = diffs.slice(0, 8).map((i) =>
+        "· " + (i.product_name || "") + ": pedido " + qty(i.quantity) + " → armado " +
+        (Number(i.picked_qty) === 0 ? "sin stock (se quita del pedido)" : qty(i.picked_qty))
+      ).join("\n");
+      if (diffs.length > 8) detalle += "\n· … y " + (diffs.length - 8) + " más";
+    } catch (_) { /* sin detalle: igual conviene avisar */ }
+
+    const abrir = await confirmModal({
+      title: "Chequeo de armado sin confirmar",
+      message:
+        "Pedido #" + o.id + ": hay cantidades armadas distintas a las pedidas que todavía no se aplicaron.\n\n" +
+        (detalle ? detalle + "\n\n" : "") +
+        "Si seguís sin confirmar, sale del depósito lo armado pero el sistema descuenta lo pedido: el stock te va a quedar mal.",
+      confirmText: "Abrir el chequeo",
+      cancelText: "Seguir igual",
+    });
+    if (abrir) { openPickModal(o.id); return false; }
+    return true;
+  }
+
   // El botón de confirmación aparece cuando hay diferencias para aplicar o
   // cuando el chequeo está completo (todos controlados, aunque sin cambios).
   function pickUpdateApplyBtn() {
     if (!pickEls.applyBtn) return;
     const n = pickPendingChanges().length;
     const complete = pickAllChecked();
+    // Mantener en sync el contador que usa el guard de "sin confirmar" (el server
+    // lo manda en /api/orders, pero acá cambia en vivo mientras se arma).
+    const ord = (state.orders || []).find((x) => x.id === pickState.orderId);
+    if (ord) ord.pick_pending = n;
     pickEls.applyBtn.hidden = n === 0 && !complete;
     pickEls.applyBtn.textContent = n > 0
       ? "✅ Confirmar chequeo (" + n + " cambio" + (n === 1 ? "" : "s") + ")"
@@ -10473,8 +10533,59 @@
     return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0+$/, "").replace(/\.$/, "").replace(".", ",");
   }
 
+  // ---- Orden de los items de la cotización (clic en Cód. / Producto) ----
+  // Se ordena el ARRAY fuente (state.cotizacionItems), no una copia: los inputs
+  // se referencian por índice del array (data-cot-idx), así que reordenar la
+  // copia rompería la edición. Como se re-aplica en cada render, los productos
+  // que se agreguen después caen en su lugar. El orden también es el que sale
+  // en el export al proveedor y el que se guarda.
+  var cotSort = { key: null, dir: "asc" };
+
+  function cotSortVal(it, key) {
+    if (key === "code") {
+      const c = String(it.product_code || "");
+      const n = Number(c);
+      return Number.isFinite(n) && c.trim() !== "" ? n : c.toUpperCase();
+    }
+    return String(it.product_name || "").trim().toUpperCase();
+  }
+
+  function applyCotSort() {
+    if (!cotSort.key) return;
+    const mul = cotSort.dir === "desc" ? -1 : 1;
+    state.cotizacionItems.sort((a, b) => {
+      const va = cotSortVal(a, cotSort.key), vb = cotSortVal(b, cotSort.key);
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * mul;
+      return String(va).localeCompare(String(vb), "es") * mul;
+    });
+  }
+
+  function updateCotSortHeaders() {
+    document.querySelectorAll("th.pcot-sort").forEach((th) => {
+      const ar = th.querySelector(".pcot-sort-ar");
+      if (!ar) return;
+      const key = th.dataset.cotSort;
+      ar.textContent = cotSort.key === key ? (cotSort.dir === "asc" ? "▲" : "▼") : "⇅";
+      ar.style.opacity = cotSort.key === key ? "1" : ".35";
+      ar.style.fontSize = "10px";
+      th.style.cursor = "pointer";
+      th.style.userSelect = "none";
+    });
+  }
+
+  document.querySelectorAll("th.pcot-sort").forEach((th) => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.cotSort;
+      if (cotSort.key === key) cotSort.dir = cotSort.dir === "asc" ? "desc" : "asc";
+      else { cotSort.key = key; cotSort.dir = "asc"; }
+      renderCotizacionItems();
+    });
+  });
+
   function renderCotizacionItems() {
     if (!els.pcotItemsTbody) return;
+    applyCotSort();
+    updateCotSortHeaders();
     if (!state.cotizacionItems.length) {
       els.pcotItemsTbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:12px;text-align:center">Sin productos. Usá "+ Agregar productos".</td></tr>';
       if (els.pcotItemsTfoot) els.pcotItemsTfoot.innerHTML = "";
@@ -12072,6 +12183,259 @@
         }
         renderAccounts();
       });
+    });
+  }
+
+  // ================= CONTROL DE STOCK =================
+  // Conteo físico cíclico (cada N días, producto sorteado por rotación) +
+  // chequeos de consistencia de la base. El stock del sistema NO se muestra
+  // antes de contar: si lo ves primero, contás condicionado.
+  const scEls = {
+    card: document.getElementById("sc-count-card"),
+    checks: document.getElementById("sc-checks"),
+    histTbody: document.getElementById("sc-history-tbody"),
+    stats: document.getElementById("sc-stats"),
+    reload: document.getElementById("sc-reload"),
+    configBtn: document.getElementById("sc-config-btn"),
+    configModal: document.getElementById("sc-config-modal"),
+    configForm: document.getElementById("sc-config-form"),
+    configDays: document.getElementById("sc-config-days"),
+    configMsg: document.getElementById("sc-config-msg"),
+    downloadBtn: document.getElementById("sc-download-btn"),
+  };
+  const scState = { data: null, revealed: false };
+
+  const SC_CHECK_META = {
+    entregados_sin_descuento: {
+      t: "Pedidos entregados que no descontaron stock",
+      d: "Se entregaron pero el stock nunca bajó: es faltante puro.",
+      row: (r) => "Pedido #" + r.id + " · " + (r.cliente || "") + " · " + (r.dia || "") + " · " + fmtPrice(r.total),
+    },
+    presupuestos_colgados: {
+      t: "Presupuestos con mercadería reservada hace +30 días",
+      d: "Descontaron stock al crearse y nunca se facturaron ni cancelaron.",
+      row: (r) => (r.number || "#" + r.id) + " · " + (r.client_name || "") + " · " + (r.status || "") + " · " + (r.dia || ""),
+    },
+    armado_sin_confirmar: {
+      t: "Armados con diferencias sin confirmar",
+      d: "Se armó una cantidad distinta a la pedida y no se aplicó al pedido.",
+      row: (r) => "Pedido #" + r.id + " · " + (r.cliente || "") + " · " + r.items + " item(s) · " + (r.status || ""),
+    },
+    stock_negativo: {
+      t: "Productos con stock negativo",
+      d: "Siempre es un error de contabilidad de stock.",
+      row: (r) => (r.code || "") + " · " + (r.name || "") + " → " + r.stock,
+    },
+    productos_duplicados: {
+      t: "Productos duplicados por nombre",
+      d: "Si vendés uno y el stock está en el otro, el desvío no cierra nunca.",
+      row: (r) => (r.nombre || "") + " · códigos " + (r.codigos || "") + " · stock total " + r.stock_total,
+    },
+    vendido_sin_movimiento: {
+      t: "Vendidos sin ningún movimiento de salida",
+      d: "Salieron en pedidos entregados del último mes pero no hay descuento registrado.",
+      row: (r) => (r.code || "") + " · " + (r.name || "") + " · vendido " + r.vendido + " · stock " + r.stock,
+    },
+  };
+
+  async function loadStockControl() {
+    if (!scEls.card) return;
+    scEls.card.innerHTML = '<p class="muted" style="margin:0">Cargando…</p>';
+    try {
+      scState.data = await api("/api/admin/stock-control");
+      scState.revealed = false;
+      renderStockControl();
+    } catch (err) {
+      scEls.card.innerHTML = '<p class="muted" style="margin:0">Error: ' + escapeHtml(err.message) + "</p>";
+    }
+  }
+
+  function renderStockControl() {
+    const d = scState.data || {};
+    const due = d.due || {};
+    const p = d.current;
+    const days = (d.config && d.config.days) || 10;
+
+    // --- tarjeta del conteo ---
+    if (!p) {
+      scEls.card.innerHTML =
+        '<p class="muted" style="margin:0">Todavía no hay productos con ventas para sortear. ' +
+        "Cuando haya movimiento, acá te va a proponer uno.</p>";
+    } else {
+      const estado = due.due
+        ? '<span class="sc-badge sc-badge-due">Toca contar</span>'
+        : '<span class="sc-badge sc-badge-ok">Al día · faltan ' + due.days_left + " día(s)</span>";
+      scEls.card.innerHTML =
+        '<div class="sc-count-head">' +
+          "<div><span class='sc-kicker'>Control físico · cada " + days + " días</span>" +
+          "<h3 class='sc-prod'>" + escapeHtml(p.name || "") + "</h3>" +
+          "<p class='muted' style='margin:2px 0 0;font-size:12.5px'>Código " + escapeHtml(String(p.code || "—")) +
+          (p.last_count ? " · último control " + formatDate(p.last_count) : " · nunca se controló") + "</p></div>" +
+          "<div>" + estado + "</div>" +
+        "</div>" +
+        '<div class="sc-count-body">' +
+          '<label class="sc-count-lbl">¿Cuántas unidades contaste?' +
+            '<input type="number" id="sc-counted" min="0" step="1" inputmode="numeric" placeholder="0" />' +
+          "</label>" +
+          '<label class="sc-count-lbl sc-count-note">Nota (opcional)' +
+            '<input type="text" id="sc-note" maxlength="200" placeholder="ej: contado con Juan, faltaba una caja abierta" />' +
+          "</label>" +
+          '<button class="btn btn-primary" id="sc-save-btn" type="button">Registrar conteo</button>' +
+          '<button class="btn btn-ghost btn-small" id="sc-skip-btn" type="button" title="Sortear otro producto">🎲 Otro producto</button>' +
+        "</div>" +
+        '<p class="sc-expected" id="sc-expected">' +
+          (scState.revealed
+            ? "El sistema dice: <b>" + p.stock + "</b> unidades."
+            : '<a href="#" id="sc-reveal">Ver lo que dice el sistema</a> ' +
+              '<span class="muted">(mejor contá primero: ver el número antes condiciona el conteo)</span>') +
+        "</p>";
+
+      const rev = document.getElementById("sc-reveal");
+      if (rev) rev.addEventListener("click", (e) => {
+        e.preventDefault(); scState.revealed = true; renderStockControl();
+      });
+      const saveBtn = document.getElementById("sc-save-btn");
+      if (saveBtn) saveBtn.addEventListener("click", () => saveStockCount(p));
+      const skipBtn = document.getElementById("sc-skip-btn");
+      if (skipBtn) skipBtn.addEventListener("click", async () => {
+        skipBtn.disabled = true;
+        try {
+          const out = await api("/api/admin/stock-control/skip", { method: "POST" });
+          scState.data.current = out.current;
+          scState.revealed = false;
+          renderStockControl();
+        } catch (err) { showToast("Error: " + err.message, "error"); skipBtn.disabled = false; }
+      });
+    }
+
+    // --- chequeos ---
+    const checks = d.checks || {};
+    scEls.checks.innerHTML = Object.keys(SC_CHECK_META).map((key) => {
+      const meta = SC_CHECK_META[key];
+      const c = checks[key] || { n: 0, items: [] };
+      const bad = c.n > 0;
+      return '<div class="sc-check ' + (bad ? "sc-check-bad" : "sc-check-ok") + '">' +
+        '<div class="sc-check-head">' +
+          "<span class='sc-check-ico'>" + (bad ? "⚠" : "✔") + "</span>" +
+          "<span class='sc-check-t'>" + escapeHtml(meta.t) + "</span>" +
+          "<span class='sc-check-n'>" + (bad ? c.n : "OK") + "</span>" +
+        "</div>" +
+        "<p class='sc-check-d'>" + escapeHtml(meta.d) + "</p>" +
+        (bad
+          ? "<ul class='sc-check-list'>" +
+            c.items.map((r) => "<li>" + escapeHtml(meta.row(r)) + "</li>").join("") +
+            (c.n > c.items.length ? "<li class='muted'>… y " + (c.n - c.items.length) + " más</li>" : "") +
+            "</ul>"
+          : "") +
+        "</div>";
+    }).join("");
+
+    // --- historial ---
+    const hist = d.history || [];
+    scEls.histTbody.innerHTML = hist.length
+      ? hist.map((h) => {
+          const diff = Number(h.diff) || 0;
+          const cls = diff === 0 ? "sc-diff-ok" : diff > 0 ? "sc-diff-up" : "sc-diff-down";
+          return "<tr>" +
+            "<td>" + formatDate(h.created_at) + "</td>" +
+            "<td>" + escapeHtml(h.name || "(producto borrado)") +
+              (h.code ? " <span class='muted'>" + escapeHtml(h.code) + "</span>" : "") + "</td>" +
+            '<td class="num">' + h.expected_qty + "</td>" +
+            '<td class="num">' + h.counted_qty + "</td>" +
+            '<td class="num"><span class="' + cls + '">' + (diff > 0 ? "+" : "") + diff + "</span></td>" +
+            "<td>" + escapeHtml(h.counted_by_name || "") + "</td>" +
+            "<td>" + escapeHtml(h.note || "") + "</td>" +
+          "</tr>";
+        }).join("")
+      : '<tr><td colspan="7" class="muted">Todavía no se registró ningún control.</td></tr>';
+
+    const st = d.stats || {};
+    scEls.stats.textContent = st.total
+      ? "· " + st.total + " control(es), " + (st.con_diferencia || 0) + " con diferencia"
+      : "";
+  }
+
+  async function saveStockCount(prod) {
+    const inp = document.getElementById("sc-counted");
+    const noteInp = document.getElementById("sc-note");
+    const btn = document.getElementById("sc-save-btn");
+    if (!inp) return;
+    const val = inp.value.trim();
+    if (val === "" || !(Number(val) >= 0)) {
+      showToast("Cargá cuántas unidades contaste", "error");
+      inp.focus();
+      return;
+    }
+    if (btn) btn.disabled = true;
+    try {
+      const out = await api("/api/admin/stock-control/count", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product_id: prod.id,
+          counted_qty: Number(val),
+          note: noteInp ? noteInp.value.trim() : "",
+        }),
+      });
+      const diff = Number(out.diff) || 0;
+      await alertModal({
+        title: diff === 0 ? "✔ Cerró perfecto" : "Diferencia encontrada",
+        message: (prod.name || "") + "\n\n" +
+          "Sistema: " + out.expected + "\nContado: " + out.counted + "\n" +
+          (diff === 0
+            ? "\nSin diferencia. Queda registrado."
+            : "Diferencia: " + (diff > 0 ? "+" : "") + diff + "\n\n" +
+              "Se ajustó el stock a lo contado y quedó el movimiento en el historial del producto." +
+              (diff < 0 ? "\n\nFaltan unidades: mirá los chequeos de abajo para ver si hay alguna venta sin descontar." : "")),
+      });
+      // El ajuste cambió stock: invalidar la tabla de Productos.
+      refreshProductsCache();
+      loadStockControl();
+    } catch (err) {
+      showToast("Error: " + err.message, "error");
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  if (scEls.reload) scEls.reload.addEventListener("click", loadStockControl);
+
+  if (scEls.configBtn) {
+    scEls.configBtn.addEventListener("click", () => {
+      const days = (scState.data && scState.data.config && scState.data.config.days) || 10;
+      scEls.configDays.value = days;
+      scEls.configMsg.textContent = "";
+      scEls.configMsg.className = "config-msg";
+      scEls.configModal.hidden = false;
+    });
+  }
+  if (scEls.configForm) {
+    scEls.configForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const days = Number(scEls.configDays.value);
+      if (!(days >= 1 && days <= 180)) {
+        scEls.configMsg.textContent = "Tiene que ser entre 1 y 180 días.";
+        scEls.configMsg.className = "config-msg err";
+        return;
+      }
+      try {
+        await api("/api/admin/stock-control/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ days: days }),
+        });
+        scEls.configModal.hidden = true;
+        showToast("Control cada " + days + " días");
+        loadStockControl();
+      } catch (err) {
+        scEls.configMsg.textContent = err.message;
+        scEls.configMsg.className = "config-msg err";
+      }
+    });
+  }
+  if (scEls.downloadBtn) {
+    scEls.downloadBtn.addEventListener("click", () => {
+      showToast("Preparando la copia…");
+      window.location.href = "/api/admin/db-download";
     });
   }
 

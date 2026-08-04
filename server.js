@@ -3,6 +3,7 @@
  */
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const crypto = require("crypto");
 const express = require("express");
 const session = require("express-session");
@@ -701,6 +702,27 @@ db.exec(
   "CREATE INDEX IF NOT EXISTS idx_stock_mov_date ON stock_movements(created_at);"
 );
 
+// ===== CONTROL DE STOCK (conteo fisico ciclico) =====
+// Cada N dias (settings.stock_control_days, default 10) el sistema sortea un
+// producto de alta rotacion y pide contarlo fisicamente. Lo contado se compara
+// con lo que dice el sistema; si difiere se genera el ajuste. Cada control
+// queda registrado para no repetir siempre los mismos productos.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS stock_counts (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  product_id INTEGER NOT NULL REFERENCES products(id)," +
+  "  expected_qty INTEGER NOT NULL DEFAULT 0," + // lo que decia el sistema
+  "  counted_qty INTEGER NOT NULL DEFAULT 0," +  // lo contado fisicamente
+  "  diff INTEGER NOT NULL DEFAULT 0," +         // counted - expected
+  "  adjusted INTEGER NOT NULL DEFAULT 0," +     // 1 = se aplico el ajuste
+  "  note TEXT," +
+  "  counted_by INTEGER REFERENCES users(id)," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_stock_counts_product ON stock_counts(product_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_stock_counts_date ON stock_counts(created_at);"
+);
+
 // Registra un movimiento de stock. Llamar DESPUES de aplicar el UPDATE de
 // products.stock correspondiente (lee el stock ya actualizado como qty_after).
 // delta = 0 no se loguea (no hubo cambio real).
@@ -1029,16 +1051,23 @@ function sendPushTo(userIds, payload) {
   }
 }
 
-// Admins que deben enterarse de los pedidos: superadmin siempre, y los admins
-// comunes que tengan la seccion "pedidos" habilitada.
-function adminsForOrders() {
+// Admins de una seccion: superadmin siempre, y los admins comunes que la tengan.
+function adminsForSection(section) {
   try {
     return db.prepare(
       "SELECT id, is_superadmin, admin_sections FROM users WHERE level = 99 AND active = 1"
     ).all().filter((u) =>
       Number(u.is_superadmin) === 1 ||
-      String(u.admin_sections || "").split(",").map((s) => s.trim()).includes("pedidos")
+      String(u.admin_sections || "").split(",").map((s) => s.trim()).includes(section)
     ).map((u) => u.id);
+  } catch (e) { console.error("[push] admins:", e.message); return []; }
+}
+
+// Admins que deben enterarse de los pedidos: superadmin siempre, y los admins
+// comunes que tengan la seccion "pedidos" habilitada.
+function adminsForOrders() {
+  try {
+    return adminsForSection("pedidos");
   } catch (e) { console.error("[push] admins:", e.message); return []; }
 }
 
@@ -1671,6 +1700,7 @@ const ADMIN_SECTIONS = [
   { key: "recepcion",   label: "Recepción" },
   { key: "reposicion",  label: "Reposición" },
   { key: "margenes",    label: "Márgenes" },
+  { key: "control-stock", label: "Control de stock" },
   { key: "gastos",      label: "Gastos" },
   { key: "caja",        label: "Caja" },
   { key: "config",      label: "Configuración" },
@@ -1699,6 +1729,7 @@ function sectionForAdminRequest(p) {
   if (has("reception"))   return "recepcion";
   if (has("reposicion"))  return "reposicion";
   if (has("margins"))     return "margenes";
+  if (has("stock-control")) return "control-stock";
   if (has("purchases"))   return "compras";
   if (has("expenses") || has("expense-categories")) return "gastos";
   if (has("caja"))        return "caja";
@@ -3094,7 +3125,14 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "       (SELECT COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END),0) FROM account_movements am WHERE am.order_id = o.id) AS amount_paid," +
       "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS pick_total," +
       "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.pick_checked,0) = 1) AS pick_done," +
-      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.pick_checked,0) = 1) AS pick_started" +
+      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id AND COALESCE(oi.pick_checked,0) = 1) AS pick_started," +
+      // Items controlados en el armado con cantidad distinta a la pedida y SIN
+      // confirmar todavia: si el pedido avanza asi, se entrega lo armado pero se
+      // descuenta lo pedido (el stock queda mal). El panel avisa antes de
+      // pasar a Entregas y antes de registrar la entrega.
+      "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id" +
+      "          AND COALESCE(oi.pick_checked,0) = 1" +
+      "          AND COALESCE(oi.picked_qty,0) != oi.quantity) AS pick_pending" +
       "  FROM orders o" +
       "  JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
@@ -6688,6 +6726,318 @@ function priceForMargin(cost, marginPct) {
   if (!(div > 0)) return null;
   return (Number(cost) || 0) / div;
 }
+
+// ===============================================================
+// CONTROL DE STOCK: conteo fisico ciclico + chequeos de consistencia
+// ===============================================================
+// La idea: cada N dias (default 10) contar fisicamente UN producto de alta
+// rotacion (sorteado, priorizando los que hace mas tiempo no se controlan) y
+// comparar contra lo que dice el sistema. En paralelo, un set de queries busca
+// inconsistencias estructurales que explican los desvios (ventas que no
+// descontaron, presupuestos con mercaderia reservada para siempre, armados sin
+// confirmar, stock negativo, productos duplicados).
+
+function stockControlConfig() {
+  return {
+    days: Math.max(1, Number(getSetting("stock_control_days", 10)) || 10),
+    last_at: getSetting("stock_control_last_at", null),      // YYYY-MM-DD local
+    product_id: Number(getSetting("stock_control_product_id", 0)) || null,
+  };
+}
+
+// Fecha (dia local) en la que vence el proximo control.
+function stockControlDue(cfg) {
+  if (!cfg.last_at) return { due_at: localDayIso(), due: true, days_left: 0 };
+  const base = new Date(String(cfg.last_at) + "T00:00:00Z");
+  base.setUTCDate(base.getUTCDate() + cfg.days);
+  const dueAt = base.toISOString().slice(0, 10);
+  const today = localDayIso();
+  const diffDays = Math.round((base - new Date(today + "T00:00:00Z")) / 86400000);
+  return { due_at: dueAt, due: dueAt <= today, days_left: Math.max(0, diffDays) };
+}
+
+// Universo de alta rotacion: los 60 productos activos con mas unidades vendidas
+// en los ultimos 60 dias (pedidos no cancelados, sin contar unificados).
+function stockControlCandidates() {
+  return db.prepare(
+    "SELECT p.id, p.code, p.name, p.stock, p.cost," +
+    "       COALESCE(v.units,0) AS units_sold," +
+    "       (SELECT MAX(sc.created_at) FROM stock_counts sc WHERE sc.product_id = p.id) AS last_count" +
+    "  FROM products p" +
+    "  JOIN (SELECT oi.product_id AS pid, SUM(oi.quantity) AS units" +
+    "          FROM order_items oi JOIN orders o ON o.id = oi.order_id" +
+    "         WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
+    "           AND " + localDay("o.created_at") + " >= " + localDay("'now', '-60 days'") +
+    "         GROUP BY oi.product_id) v ON v.pid = p.id" +
+    " WHERE p.active = 1" +
+    " ORDER BY v.units DESC LIMIT 60"
+  ).all();
+}
+
+// Sorteo: de ese universo, se ordena por "hace mas tiempo que no se cuenta"
+// (nunca contado primero) y se elige al azar entre los 12 primeros. Asi rota
+// entre productos que importan sin repetir siempre el mismo.
+function pickStockControlProduct(excludeId) {
+  let cands = stockControlCandidates();
+  if (!cands.length) return null;
+  if (excludeId && cands.length > 1) cands = cands.filter((c) => c.id !== Number(excludeId));
+  cands.sort((a, b) => {
+    const la = a.last_count || "", lb = b.last_count || "";
+    if (la === lb) return (b.units_sold || 0) - (a.units_sold || 0);
+    if (!la) return -1;
+    if (!lb) return 1;
+    return la < lb ? -1 : 1;
+  });
+  const pool = cands.slice(0, Math.min(12, cands.length));
+  return pool[Math.floor(Math.random() * pool.length)] || null;
+}
+
+function stockControlCurrent(cfg) {
+  let prod = null;
+  if (cfg.product_id) {
+    prod = db.prepare(
+      "SELECT p.id, p.code, p.name, p.stock, p.cost," +
+      "       (SELECT MAX(sc.created_at) FROM stock_counts sc WHERE sc.product_id = p.id) AS last_count" +
+      "  FROM products p WHERE p.id = ? AND p.active = 1"
+    ).get(cfg.product_id) || null;
+  }
+  if (!prod) {
+    prod = pickStockControlProduct(null);
+    if (prod) setSetting("stock_control_product_id", prod.id);
+  }
+  return prod;
+}
+
+// Chequeos de consistencia. Cada uno devuelve { n, items } con hasta 10 casos.
+function stockConsistencyChecks() {
+  const q = (sql) => {
+    try { return db.prepare(sql).all(); }
+    catch (e) { console.error("[stock-check]", e.message); return []; }
+  };
+  const wrap = (rows) => ({ n: rows.length, items: rows.slice(0, 10) });
+
+  // 1) Pedidos entregados que nunca descontaron stock.
+  const entregadosSinDescuento = q(
+    "SELECT o.id, o.total, " + localDay("o.created_at") + " AS dia," +
+    "       COALESCE(u.full_name, u.username) AS cliente" +
+    "  FROM orders o LEFT JOIN users u ON u.id = o.user_id" +
+    " WHERE o.status = 'entregado' AND COALESCE(o.stock_discounted,0) = 0" +
+    "   AND COALESCE(o.is_unified,0) = 0 AND o.unified_parent_id IS NULL" +
+    " ORDER BY o.id DESC LIMIT 50"
+  );
+
+  // 2) Presupuestos que descontaron stock y quedaron colgados +30 dias
+  //    (ni facturados ni cancelados): mercaderia reservada para siempre.
+  const presupuestosColgados = q(
+    "SELECT b.id, b.number, b.client_name, b.total, b.status, " + localDay("b.created_at") + " AS dia" +
+    "  FROM budgets b" +
+    " WHERE COALESCE(b.stock_discounted,0) = 1 AND b.status NOT IN ('cancelado','facturado')" +
+    "   AND b.order_id IS NULL" +
+    "   AND " + localDay("b.created_at") + " < " + localDay("'now', '-30 days'") +
+    " ORDER BY b.id DESC LIMIT 50"
+  );
+
+  // 3) Armado con cantidades distintas a las pedidas, sin confirmar.
+  const armadoSinConfirmar = q(
+    "SELECT o.id, o.status, COUNT(*) AS items," +
+    "       COALESCE(u.full_name, u.username) AS cliente" +
+    "  FROM orders o JOIN order_items oi ON oi.order_id = o.id" +
+    "  LEFT JOIN users u ON u.id = o.user_id" +
+    " WHERE o.status NOT IN ('entregado','cancelado')" +
+    "   AND COALESCE(oi.pick_checked,0) = 1 AND COALESCE(oi.picked_qty,0) != oi.quantity" +
+    " GROUP BY o.id ORDER BY o.id DESC LIMIT 50"
+  );
+
+  // 4) Stock negativo: siempre es un error de contabilidad de stock.
+  const stockNegativo = q(
+    "SELECT id, code, name, stock FROM products WHERE stock < 0 ORDER BY stock ASC LIMIT 50"
+  );
+
+  // 5) Productos activos duplicados por nombre: el clasico "vendo uno y el otro
+  //    queda con stock para siempre".
+  const duplicados = q(
+    "SELECT UPPER(TRIM(name)) AS nombre, COUNT(*) AS n," +
+    "       GROUP_CONCAT(code, ' / ') AS codigos," +
+    "       SUM(stock) AS stock_total" +
+    "  FROM products WHERE active = 1" +
+    " GROUP BY UPPER(TRIM(name)) HAVING COUNT(*) > 1" +
+    " ORDER BY n DESC, stock_total DESC LIMIT 50"
+  );
+
+  // 6) Vendido en los ultimos 30 dias sin NINGUN movimiento de salida en el
+  //    log: candidato a "se entrego y no se descconto". Solo mira desde que
+  //    existe el log de movimientos (22/7/2026), sino da falsos positivos.
+  const vendidoSinMovimiento = q(
+    "SELECT p.id, p.code, p.name, p.stock, SUM(oi.quantity) AS vendido" +
+    "  FROM order_items oi" +
+    "  JOIN orders o ON o.id = oi.order_id" +
+    "  JOIN products p ON p.id = oi.product_id" +
+    " WHERE o.status = 'entregado' AND COALESCE(o.is_unified,0) = 0" +
+    "   AND " + localDay("o.created_at") + " >= " + localDay("'now', '-30 days'") +
+    "   AND NOT EXISTS (SELECT 1 FROM stock_movements sm" +
+    "                    WHERE sm.product_id = p.id AND sm.delta < 0" +
+    "                      AND " + localDay("sm.created_at") + " >= " + localDay("'now', '-30 days'") + ")" +
+    " GROUP BY p.id ORDER BY vendido DESC LIMIT 50"
+  );
+
+  return {
+    entregados_sin_descuento: wrap(entregadosSinDescuento),
+    presupuestos_colgados:    wrap(presupuestosColgados),
+    armado_sin_confirmar:     wrap(armadoSinConfirmar),
+    stock_negativo:           wrap(stockNegativo),
+    productos_duplicados:     wrap(duplicados),
+    vendido_sin_movimiento:   wrap(vendidoSinMovimiento),
+  };
+}
+
+app.get("/api/admin/stock-control", requireAdmin, (req, res) => {
+  const cfg = stockControlConfig();
+  const due = stockControlDue(cfg);
+  const current = stockControlCurrent(cfg);
+  const history = db.prepare(
+    "SELECT sc.id, sc.product_id, sc.expected_qty, sc.counted_qty, sc.diff, sc.adjusted," +
+    "       sc.note, sc.created_at, p.code, p.name," +
+    "       COALESCE(u.full_name, u.username) AS counted_by_name" +
+    "  FROM stock_counts sc" +
+    "  LEFT JOIN products p ON p.id = sc.product_id" +
+    "  LEFT JOIN users u ON u.id = sc.counted_by" +
+    " ORDER BY sc.id DESC LIMIT 30"
+  ).all();
+  const stats = db.prepare(
+    "SELECT COUNT(*) AS total," +
+    "       SUM(CASE WHEN diff != 0 THEN 1 ELSE 0 END) AS con_diferencia" +
+    "  FROM stock_counts"
+  ).get() || { total: 0, con_diferencia: 0 };
+  res.json({
+    config: { days: cfg.days, last_at: cfg.last_at },
+    due: due,
+    current: current,
+    checks: stockConsistencyChecks(),
+    history: history,
+    stats: stats,
+  });
+});
+
+// Registrar el conteo fisico. Si lo contado difiere, ajusta el stock y deja
+// rastro en stock_adjustments + stock_movements (igual que un ajuste manual).
+app.post("/api/admin/stock-control/count", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const productId = Number(b.product_id);
+  const counted = Number(b.counted_qty);
+  const note = String(b.note || "").trim() || null;
+  if (!productId) return res.status(400).json({ error: "Producto invalido" });
+  if (!Number.isFinite(counted) || counted < 0) {
+    return res.status(400).json({ error: "La cantidad contada tiene que ser un número mayor o igual a 0" });
+  }
+  const prod = db.prepare("SELECT id, code, name, stock FROM products WHERE id = ?").get(productId);
+  if (!prod) return res.status(404).json({ error: "Producto no encontrado" });
+
+  const expected = Number(prod.stock) || 0;
+  const countedInt = Math.round(counted);
+  const diff = countedInt - expected;
+  let countId;
+  db.transaction(() => {
+    if (diff !== 0) {
+      db.prepare("UPDATE products SET stock = ? WHERE id = ?").run(countedInt, productId);
+      db.prepare(
+        "INSERT INTO stock_adjustments (product_id, product_code, product_name, type," +
+        "  qty_before, qty_change, qty_after, reason, registered_by)" +
+        " VALUES (?, ?, ?, 'inventario', ?, ?, ?, ?, ?)"
+      ).run(productId, prod.code || "", prod.name || "", expected, diff, countedInt,
+        "Control físico de stock" + (note ? " · " + note : ""), req.session.userId);
+      logStockMovement(productId, "ajuste", diff, null,
+        "Control físico de stock" + (note ? " · " + note : ""), req.session.userId);
+    }
+    const r = db.prepare(
+      "INSERT INTO stock_counts (product_id, expected_qty, counted_qty, diff, adjusted, note, counted_by)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(productId, expected, countedInt, diff, diff !== 0 ? 1 : 0, note, req.session.userId);
+    countId = r.lastInsertRowid;
+  })();
+
+  // Cierra el ciclo: la proxima fecha se cuenta desde hoy y se sortea el
+  // siguiente producto (excluyendo el recien contado).
+  setSetting("stock_control_last_at", localDayIso());
+  const next = pickStockControlProduct(productId);
+  setSetting("stock_control_product_id", next ? next.id : "");
+  setSetting("stock_control_notified_at", "");
+
+  logActivity(req, "stock", "Control físico · " + (prod.name || "") +
+    " · sistema " + expected + " / contado " + countedInt +
+    (diff === 0 ? " · sin diferencia" : " · diferencia " + (diff > 0 ? "+" : "") + diff));
+
+  res.json({
+    ok: true, id: countId, expected: expected, counted: countedInt, diff: diff,
+    adjusted: diff !== 0, next: next,
+    due: stockControlDue(stockControlConfig()),
+  });
+});
+
+// Sortear otro producto (el actual no se puede contar ahora).
+app.post("/api/admin/stock-control/skip", requireAdmin, (req, res) => {
+  const cfg = stockControlConfig();
+  const next = pickStockControlProduct(cfg.product_id);
+  setSetting("stock_control_product_id", next ? next.id : "");
+  res.json({ ok: true, current: next });
+});
+
+// Cambiar cada cuantos dias toca el control.
+app.post("/api/admin/stock-control/config", requireAdmin, (req, res) => {
+  const days = Number((req.body || {}).days);
+  if (!Number.isFinite(days) || days < 1 || days > 180) {
+    return res.status(400).json({ error: "Los días tienen que estar entre 1 y 180" });
+  }
+  setSetting("stock_control_days", Math.round(days));
+  res.json({ ok: true, days: Math.round(days) });
+});
+
+// Recordatorio del control: cada 6 h revisa si vencio el ciclo y manda UN
+// aviso por dia a los admins con la seccion "control-stock". El flag
+// stock_control_notified_at se limpia al registrar un conteo, asi el proximo
+// vencimiento vuelve a avisar.
+function stockControlReminderTick() {
+  try {
+    const cfg = stockControlConfig();
+    if (!stockControlDue(cfg).due) return;
+    const today = localDayIso();
+    if (getSetting("stock_control_notified_at", "") === today) return;
+    const prod = stockControlCurrent(cfg);
+    if (!prod) return;
+    setSetting("stock_control_notified_at", today);
+    sendPushTo(adminsForSection("control-stock"), {
+      title: getAppName() + " · control de stock",
+      body: "Toca contar: " + (prod.name || "") + (prod.code ? " (" + prod.code + ")" : "") +
+            ". Contá las unidades y cargalas en Control de stock.",
+      url: "/admin",
+      tag: "stock-control",
+    });
+  } catch (e) { console.error("[stock-control] recordatorio:", e.message); }
+}
+const stockCtrlBoot = setTimeout(stockControlReminderTick, 60 * 1000);
+if (stockCtrlBoot.unref) stockCtrlBoot.unref();
+const stockCtrlTimer = setInterval(stockControlReminderTick, 6 * 60 * 60 * 1000);
+if (stockCtrlTimer.unref) stockCtrlTimer.unref();
+
+// Descarga de la base completa (SOLO superadmin). Usa la API de backup de
+// SQLite, que copia en caliente y consistente (no sirve copiar el archivo a
+// mano con el server escribiendo). El archivo temporal se borra al terminar.
+app.get("/api/admin/db-download", requireAdmin, async (req, res) => {
+  if (!getAdminPerms(req.session.userId).isSuperadmin) {
+    return res.status(403).json({ error: "Solo el superadmin puede descargar la base" });
+  }
+  const tmp = path.join(os.tmpdir(), "maxaria-" + Date.now() + ".db");
+  try {
+    await db.backup(tmp);
+    logActivity(req, "sistema", "Descarga de la base de datos");
+    res.download(tmp, "maxaria-" + localDayIso() + ".db", () => {
+      fs.unlink(tmp, () => {});
+    });
+  } catch (e) {
+    console.error("[db-download]", e.message);
+    fs.unlink(tmp, () => {});
+    if (!res.headersSent) res.status(500).json({ error: "No se pudo generar la copia: " + e.message });
+  }
+});
 
 app.get("/api/admin/margins", requireAdmin, (req, res) => {
   const cfg = marginConfig();

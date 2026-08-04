@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260802e" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260804d" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -82,6 +82,9 @@
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="margenes" type="button">
             <span class="admin-sidebar-item-icon">📈</span>Márgenes
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="control-stock" type="button">
+            <span class="admin-sidebar-item-icon">🧮</span>Control de stock
           </button>
         </div>
 
@@ -1648,6 +1651,67 @@
       </div>
     </section>
 
+    <!-- ===== TAB CONTROL DE STOCK ===== -->
+    <section class="tab-panel" id="tab-control-stock" hidden>
+      <div class="admin-toolbar">
+        <strong style="font-size:16px">🧮 Control de stock</strong>
+        <span class="admin-spacer"></span>
+        <button class="btn btn-ghost btn-tool" id="sc-config-btn" type="button" title="Cada cuántos días toca el control">⚙ Cada cuántos días</button>
+        <button class="btn btn-ghost btn-tool superadmin-only" id="sc-download-btn" type="button" hidden title="Descargar una copia de la base para auditarla">⬇ Descargar base</button>
+        <button class="btn btn-ghost" id="sc-reload" type="button" title="Actualizar">↺ Actualizar</button>
+      </div>
+
+      <!-- Conteo físico del ciclo -->
+      <div class="sc-count-card" id="sc-count-card">
+        <p class="muted" style="margin:0">Cargando…</p>
+      </div>
+
+      <!-- Chequeos de consistencia -->
+      <h4 class="sc-h4">🔎 Chequeos de la base</h4>
+      <p class="muted" style="margin:0 0 8px;font-size:12.5px">
+        Buscan las causas típicas de que el stock no cierre. Verde = nada para revisar.
+      </p>
+      <div id="sc-checks" class="sc-checks"><p class="muted">Cargando…</p></div>
+
+      <!-- Historial de controles -->
+      <h4 class="sc-h4">📋 Controles hechos <span class="muted" id="sc-stats" style="font-weight:400;font-size:12.5px"></span></h4>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="sc-history-table" style="min-width:0">
+          <thead><tr>
+            <th style="width:110px">Fecha</th>
+            <th>Producto</th>
+            <th style="text-align:right;width:90px">Sistema</th>
+            <th style="text-align:right;width:90px">Contado</th>
+            <th style="text-align:right;width:100px">Diferencia</th>
+            <th style="width:150px">Quién</th>
+            <th>Nota</th>
+          </tr></thead>
+          <tbody id="sc-history-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Modal: cada cuántos días toca el control -->
+    <div class="admin-modal" id="sc-config-modal" hidden>
+      <div class="admin-modal-box" style="max-width:420px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
+        <h3>Frecuencia del control</h3>
+        <form id="sc-config-form" class="user-form">
+          <label>Cada cuántos días toca contar un producto
+            <input type="number" id="sc-config-days" min="1" max="180" step="1" required />
+          </label>
+          <p class="muted" style="font-size:12px;margin:0">
+            El día que vence, el sistema sortea un producto de alta rotación y te avisa por notificación.
+          </p>
+          <p id="sc-config-msg" class="config-msg"></p>
+          <div class="admin-modal-foot">
+            <button type="button" class="btn" data-close>Cancelar</button>
+            <button type="submit" class="btn btn-primary">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <!-- ===== TAB SALUD DE MÁRGENES ===== -->
     <section class="tab-panel" id="tab-margenes" hidden>
       <div class="admin-toolbar">
@@ -3002,7 +3066,8 @@
           <div style="overflow-x:auto">
           <table class="admin-table" style="min-width:0;width:100%">
             <thead><tr>
-              <th style="width:42px">Cód.</th><th>Producto</th>
+              <th style="width:42px" class="pcot-sort" id="pcot-th-code" data-cot-sort="code" title="Clic para ordenar por código">Cód. <span class="pcot-sort-ar"></span></th>
+              <th class="pcot-sort" id="pcot-th-name" data-cot-sort="name" title="Clic para ordenar por nombre de producto">Producto <span class="pcot-sort-ar"></span></th>
               <th style="text-align:right;width:90px">Costo act.</th>
               <th style="text-align:right;width:58px" title="Stock actual del producto">Stock</th>
               <th style="text-align:right;width:100px" title="Precio que te cotiza el proveedor, en el empaque de cada producto (por caja/bulto/unidad)">Precio cotiz.</th>
@@ -3791,6 +3856,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260804a"></script>
+  <script src="/js/admin.js?v=20260804d"></script>
 </body>
 </html>
