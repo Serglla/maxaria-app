@@ -41,6 +41,7 @@
           </div>
         </div>
         <button id="push-btn" class="btn btn-ghost" type="button" hidden title="Recibir un aviso en este dispositivo cuando entre un pedido">🔕 Activar avisos</button>
+        <button id="mypass-btn" class="btn btn-ghost" type="button" title="Cambiar mi contraseña">🔑 Clave</button>
         <a class="btn btn-ghost" href="/catalogo">Catálogo</a>
         <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
       </div>
@@ -2292,6 +2293,34 @@
     </div>
   </div>
 
+  <!-- Modal cambiar MI contraseña (cualquier nivel, incluido el superadmin) -->
+  <div class="admin-modal" id="mypass-modal" hidden>
+    <div class="admin-modal-box">
+      <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
+      <h3>Cambiar mi contraseña</h3>
+      <p class="muted" id="mypass-who"></p>
+      <form id="mypass-form" class="user-form" autocomplete="off">
+        <label>Contraseña actual
+          <input type="password" name="current_password" required autocomplete="current-password" />
+        </label>
+        <label>Contraseña nueva <span class="muted">mínimo 8 caracteres</span>
+          <input type="password" name="new_password" required autocomplete="new-password" minlength="8" />
+        </label>
+        <label>Repetir la nueva
+          <input type="password" name="new_password2" required autocomplete="new-password" minlength="8" />
+        </label>
+        <label class="mypass-show" style="flex-direction:row;align-items:center;gap:8px;font-weight:600">
+          <input type="checkbox" id="mypass-show" style="width:auto" /> <span>Ver contraseñas</span>
+        </label>
+        <p id="mypass-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary">Cambiar contraseña</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal resetear contraseña de un administrador -->
   <div class="admin-modal" id="admin-reset-modal" hidden>
     <div class="admin-modal-box">
@@ -3762,6 +3791,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260802e"></script>
+  <script src="/js/admin.js?v=20260804a"></script>
 </body>
 </html>

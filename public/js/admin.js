@@ -12075,6 +12075,85 @@
     });
   }
 
+  // ---------- cambiar mi contraseña ----------
+  // Sirve para cualquier nivel que entre al panel, incluido el superadmin (que
+  // a propósito no se puede resetear desde la pestaña Administradores).
+  const mypassEls = {
+    btn: document.getElementById("mypass-btn"),
+    modal: document.getElementById("mypass-modal"),
+    form: document.getElementById("mypass-form"),
+    who: document.getElementById("mypass-who"),
+    msg: document.getElementById("mypass-msg"),
+    show: document.getElementById("mypass-show"),
+  };
+
+  function mypassSetType(t) {
+    if (!mypassEls.form) return;
+    mypassEls.form.querySelectorAll("input[data-pass]").forEach((i) => { i.type = t; });
+  }
+
+  if (mypassEls.btn && mypassEls.modal && mypassEls.form) {
+    mypassEls.form
+      .querySelectorAll('input[type="password"]')
+      .forEach((i) => { i.dataset.pass = "1"; });
+
+    mypassEls.btn.addEventListener("click", () => {
+      mypassEls.form.reset();
+      if (mypassEls.show) mypassEls.show.checked = false;
+      mypassSetType("password");
+      mypassEls.msg.textContent = "";
+      mypassEls.msg.className = "config-msg";
+      const u = state.me || {};
+      mypassEls.who.textContent = u.username
+        ? "Usuario: " + u.username + (u.fullName ? " · " + u.fullName : "")
+        : "";
+      mypassEls.modal.hidden = false;
+      const first = mypassEls.form.querySelector('input[name="current_password"]');
+      if (first) setTimeout(() => first.focus(), 50);
+    });
+
+    if (mypassEls.show) {
+      mypassEls.show.addEventListener("change", () => {
+        mypassSetType(mypassEls.show.checked ? "text" : "password");
+      });
+    }
+
+    mypassEls.form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = mypassEls.form.querySelector('button[type="submit"]');
+      if (btn && btn.disabled) return;
+      const fd = new FormData(mypassEls.form);
+      const current = String(fd.get("current_password") || "");
+      const next = String(fd.get("new_password") || "");
+      const next2 = String(fd.get("new_password2") || "");
+
+      const fail = (m) => {
+        mypassEls.msg.textContent = m;
+        mypassEls.msg.className = "config-msg err";
+      };
+      if (next.length < 8) return fail("La contraseña nueva debe tener al menos 8 caracteres.");
+      if (next !== next2) return fail("Las dos contraseñas nuevas no coinciden.");
+      if (next === current) return fail("La contraseña nueva tiene que ser distinta de la actual.");
+
+      if (btn) btn.disabled = true;
+      mypassEls.msg.textContent = "Cambiando…";
+      mypassEls.msg.className = "config-msg";
+      try {
+        await api("/api/me/password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ current_password: current, new_password: next }),
+        });
+        mypassEls.modal.hidden = true;
+        showToast("Contraseña cambiada. Usala en el próximo ingreso.", "ok");
+      } catch (err) {
+        fail(err.message || "No se pudo cambiar la contraseña");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+  }
+
   // ---------- logout ----------
   els.logoutBtn.addEventListener("click", async () => {
     try { await fetch("/logout", { method: "POST" }); }

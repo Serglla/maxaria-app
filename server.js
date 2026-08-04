@@ -2002,6 +2002,39 @@ app.get("/api/app-info", (req, res) => {
   res.json({ app_name: getAppName() });
 });
 
+// Cambiar la PROPIA contrasena (cualquier nivel, incluido el superadmin, que
+// no puede resetearse desde la pestana Administradores a proposito).
+// Pide la clave actual, asi una sesion abierta ajena no alcanza para cambiarla.
+// Reusa el contador por IP de /login para frenar el tanteo de la clave actual.
+app.post("/api/me/password", requireLogin, (req, res) => {
+  const ip = req.ip || "?";
+  if (!loginRateOk(ip)) {
+    return res.status(429).json({ error: "Demasiados intentos. Esperá unos minutos." });
+  }
+  const b = req.body || {};
+  const current = String(b.current_password || "");
+  const next = String(b.new_password || "");
+  if (!current) return res.status(400).json({ error: "Falta la contraseña actual" });
+  if (next.length < 8) return res.status(400).json({ error: "La contraseña nueva debe tener al menos 8 caracteres" });
+  if (next === current) return res.status(400).json({ error: "La contraseña nueva tiene que ser distinta de la actual" });
+
+  const me = db.prepare("SELECT id, password_hash FROM users WHERE id = ?").get(req.session.userId);
+  if (!me) return res.status(404).json({ error: "Usuario no encontrado" });
+  if (!bcrypt.compareSync(current, me.password_hash || "")) {
+    loginRateFail(ip);
+    logActivity(req, "password_change_fail", null);
+    return res.status(403).json({ error: "La contraseña actual no es correcta" });
+  }
+
+  const hash = bcrypt.hashSync(next, 10);
+  // plain_password queda en NULL: mostrar una clave desactualizada en el panel
+  // es peor que no mostrar ninguna (y el campo esta pendiente de eliminarse).
+  db.prepare("UPDATE users SET password_hash = ?, plain_password = NULL WHERE id = ?").run(hash, me.id);
+  loginAttempts.delete(ip);
+  logActivity(req, "password_change", null);
+  res.json({ ok: true });
+});
+
 app.get("/api/me", requireLogin, (req, res) => {
   const level = req.session.level;
   const globalWa = getSetting("whatsapp_number", WHATSAPP_NUMBER || null);
