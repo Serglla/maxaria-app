@@ -10277,6 +10277,17 @@ app.delete("/api/admin/reports/inflation/:id", requireAdmin, (req, res) => {
 
 // ===== REPORTES DE VENTAS =====
 
+// Ganancia NETA del negocio por línea de pedido:
+//   (precio de venta - costo real del producto)  MENOS  la comisión del vendedor.
+// La comisión existe solo cuando el cliente tiene lista personalizada (vendedor_cost_unit
+// no nulo) y vale (unit_price - vendedor_cost_unit). Restándola a la ganancia bruta queda:
+//   con lista  -> (vendedor_cost_unit - p.cost)   ; sin lista -> (unit_price - p.cost)
+// Ej. pedido #222: ganancia bruta $256.069 - comisión $72.401 = $183.668 (neta real de Sergio).
+const NET_EARNING_EXPR =
+  "CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+  " THEN (oi.vendedor_cost_unit - COALESCE(p.cost,0))" +
+  " ELSE (oi.unit_price - COALESCE(p.cost,0)) END * oi.quantity";
+
 // GET /api/admin/reports/sales — pedidos con KPIs del período
 // Params: from, to, client_id, vendedor_id, status (default: todos menos cancelado)
 app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
@@ -10312,8 +10323,8 @@ app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
     " JOIN users u ON u.id = o.user_id" +
     " LEFT JOIN (" +
     "   SELECT oi.order_id," +
-    "     SUM(COALESCE(oi.vendedor_cost_unit, p.cost, 0) * oi.quantity) AS cost_total," +
-    "     SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS earning_total" +
+    "     SUM(COALESCE(p.cost,0) * oi.quantity) AS cost_total," +
+    "     SUM(" + NET_EARNING_EXPR + ") AS earning_total" +
     "   FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id GROUP BY oi.order_id" +
     " ) oi_agg ON oi_agg.order_id = o.id" +
     wStr
@@ -10354,8 +10365,8 @@ app.get("/api/admin/reports/sales", requireAdmin, (req, res) => {
     " LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
     " LEFT JOIN (" +
     "   SELECT oi.order_id," +
-    "     SUM(COALESCE(oi.vendedor_cost_unit, p.cost, 0) * oi.quantity) AS cost_total," +
-    "     SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS earning_total," +
+    "     SUM(COALESCE(p.cost,0) * oi.quantity) AS cost_total," +
+    "     SUM(" + NET_EARNING_EXPR + ") AS earning_total," +
     "     SUM(oi.quantity) AS items_count" +
     "   FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id GROUP BY oi.order_id" +
     " ) oi_agg ON oi_agg.order_id = o.id" +
@@ -10396,7 +10407,7 @@ app.get("/api/admin/reports/monthly-history", requireAdmin, (req, res) => {
     " FROM orders o" +
     " LEFT JOIN (" +
     "   SELECT oi.order_id," +
-    "     SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS earning_total" +
+    "     SUM(" + NET_EARNING_EXPR + ") AS earning_total" +
     "   FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id GROUP BY oi.order_id" +
     " ) oi_agg ON oi_agg.order_id = o.id" +
     " WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0 AND " + localDay("o.created_at") + " >= ?" +
@@ -10458,7 +10469,7 @@ app.get("/api/admin/reports/by-category", requireAdmin, (req, res) => {
     "       COALESCE(SUM(oi.quantity),0) AS unidades," +
     "       COUNT(DISTINCT o.id) AS pedidos," +
     "       COALESCE(SUM(oi.subtotal),0) AS ventas," +
-    "       COALESCE(SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity),0) AS ganancia" +
+    "       COALESCE(SUM(" + NET_EARNING_EXPR + "),0) AS ganancia" +
     " FROM order_items oi" +
     " JOIN orders o ON o.id = oi.order_id" +
     " JOIN users u ON u.id = o.user_id" +
@@ -10482,7 +10493,7 @@ app.get("/api/admin/reports/by-category/:categoryId/products", requireAdmin, (re
     "       MAX(oi.product_name) AS name," +
     "       COALESCE(SUM(oi.quantity),0) AS unidades," +
     "       COALESCE(SUM(oi.subtotal),0) AS ventas," +
-    "       COALESCE(SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity),0) AS ganancia" +
+    "       COALESCE(SUM(" + NET_EARNING_EXPR + "),0) AS ganancia" +
     " FROM order_items oi" +
     " JOIN orders o ON o.id = oi.order_id" +
     " JOIN users u ON u.id = o.user_id" +
