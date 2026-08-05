@@ -10920,6 +10920,16 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
     return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
   })();
+  // Comparacion justa de "este mes" vs el anterior: se toma el mes anterior HASTA
+  // EL MISMO DIA DEL MES que hoy (si hoy es 4, compara 1-4 de este mes contra 1-4
+  // del anterior), no el mes anterior completo. Si el mes anterior no llega a ese
+  // dia (ej: hoy 31, febrero), se corta en su ultimo dia.
+  const monthDay = now.getUTCDate();
+  const prevMonthCut = (() => {
+    const daysInPrev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).getUTCDate();
+    const dd = Math.min(monthDay, daysInPrev);
+    return prevMonth + "-" + String(dd).padStart(2, "0");
+  })();
   const weekStart = (() => {
     const d = new Date(now);
     d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // lunes
@@ -10951,12 +10961,12 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     " AND " + localMonth("created_at") + "=?"
   ).get(monthIso);
 
-  // Ventas mes anterior
+  // Ventas mes anterior — solo hasta el mismo dia del mes (comparable con el mes actual)
   const salesPrevMonth = db.prepare(
     "SELECT COALESCE(SUM(total),0) AS total" +
     " FROM orders WHERE status != 'cancelado' AND COALESCE(is_unified,0)=0" +
-    " AND " + localMonth("created_at") + "=?"
-  ).get(prevMonth);
+    " AND " + localMonth("created_at") + "=? AND " + localDay("created_at") + " <= ?"
+  ).get(prevMonth, prevMonthCut);
 
   // Pedidos activos por estado
   const activeOrders = db.prepare(
@@ -11107,7 +11117,7 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     salesToday:     { total: salesToday.total,     cnt: salesToday.cnt },
     salesWeek:      { total: salesWeek.total,      cnt: salesWeek.cnt },
     salesMonth:     { total: salesMonth.total,     cnt: salesMonth.cnt },
-    salesPrevMonth: { total: salesPrevMonth.total },
+    salesPrevMonth: { total: salesPrevMonth.total, days: monthDay },
     activeOrders,
     cobrosMonth:    { total: cobrosMonth.total, cnt: cobrosMonth.cnt },
     cobrosToday:    { total: cobrosToday.total },

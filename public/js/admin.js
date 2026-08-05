@@ -1173,7 +1173,7 @@
         let vs = "";
         if (prev > 0) {
           const pct = Math.round(((curr - prev) / prev) * 100);
-          vs = (pct >= 0 ? "▲ " : "▼ ") + Math.abs(pct) + "% vs mes anterior";
+          vs = (pct >= 0 ? "▲ " : "▼ ") + Math.abs(pct) + "% vs mes ant. (mismos días)";
         } else {
           vs = d.salesMonth.cnt + " pedido(s)";
         }
@@ -8016,6 +8016,22 @@
       pushRenderBtn();
     } catch (_) { /* sin push: el panel sigue igual, con la campana */ }
   }
+  // Traduce el error técnico del navegador a algo accionable para el usuario.
+  function pushFriendlyError(err) {
+    const m = (err && err.message) || String(err || "");
+    if (/different applicationServerKey/i.test(m)) {
+      return "Había una suscripción vieja en este dispositivo. Cerrá y volvé a abrir la app (o refrescá con Ctrl+F5) y probá activar de nuevo.";
+    }
+    if (/push service|Registration failed|AbortError/i.test(m)) {
+      return "El navegador no pudo registrarse en el servicio de avisos de Google. " +
+        "Suele pasar en Brave o con extensiones de privacidad/bloqueadores, o si la red bloquea Google. " +
+        "Probá en Chrome sin bloqueadores (o desde otra red). En el celular, instalá primero la app en la pantalla de inicio.";
+    }
+    if (/denied|permission/i.test(m)) {
+      return "Los avisos están bloqueados para este sitio. Habilitalos desde el candado de la barra de direcciones.";
+    }
+    return m;
+  }
   async function pushEnable() {
     const perm = await Notification.requestPermission();
     if (perm !== "granted") {
@@ -8025,10 +8041,22 @@
       return;
     }
     const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(pushState.key),
-    });
+    const appKey = urlBase64ToUint8Array(pushState.key);
+    const opts = { userVisibleOnly: true, applicationServerKey: appKey };
+    let sub;
+    try {
+      sub = await reg.pushManager.subscribe(opts);
+    } catch (err) {
+      // El subscribe falla si ya hay una suscripción con OTRA clave VAPID (p.ej. la
+      // base se recreó y se regeneraron las claves). Limpiamos la vieja y reintentamos.
+      try {
+        const old = await reg.pushManager.getSubscription();
+        if (old) await old.unsubscribe();
+        sub = await reg.pushManager.subscribe(opts);
+      } catch (err2) {
+        throw new Error(pushFriendlyError(err2));
+      }
+    }
     const raw = sub.toJSON();
     await api("/api/push/subscribe", {
       method: "POST",
