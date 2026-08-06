@@ -1803,6 +1803,50 @@ Pedido de Sergio: aviso real (del sistema operativo, con la app cerrada) cuando 
 
 **Pendiente**: `npm install` en Windows (por `web-push`), `git add/commit/push` + deploy Railway. Después: entrar a /admin, tocar "🔕 Activar avisos" en cada dispositivo desde el que quieras recibirlos.
 
+### 🔴 Fix push (dependencia nunca instalada) + tablas legibles en celular y tablet (5 agosto 2026 — `admin.js?v=20260805c`, `styles.css?v=20260805c`)
+
+Sergio: "el push de las notificaciones no funciona" + "que las vistas en Android, celular o tablet queden mejor diseñadas para que sean más fáciles de leer". Sesión de recorrido + fixes. Verificado con el server local corriendo (`npm run start:plain`) y el navegador del preview a 375px y 768px.
+
+**🔴 Causa raíz del push: `web-push` estaba en `package.json` pero NUNCA en `package-lock.json`**
+- El "Pendiente: `npm install` en Windows (por web-push)" que quedó anotado el 2 de agosto **nunca se ejecutó**. Sin ese `npm install`, el lock jamás incorporó la dependencia.
+- Railway instala desde el **lock**, así que el módulo no llegaba al server → el `try/catch` del `require("web-push")` dejaba `PUSH_READY = false` → `/api/push/public-key` devolvía `enabled:false` → `pushInit()` hacía `return` silencioso → **el botón "Activar avisos" quedaba `hidden` para siempre**. Ningún error visible en ningún lado: por eso parecía que la feature no existía.
+- Fix: `npm install` (el lock sumó `web-push` + deps: jwa, jws, http_ece, https-proxy-agent, asn1.js…; **134 inserciones, 0 borrados** — ninguna versión existente se movió, deploy seguro).
+- Verificado en vivo: el server arranca con `[push] claves VAPID generadas y guardadas en settings`, `/api/push/public-key` responde `{enabled:true, key:"BDl6…"}` y el botón se muestra. El código de push, el SW y los disparadores ya estaban bien — **solo faltaba la dependencia**.
+- **Regla**: agregar una dependencia a `package.json` sin correr `npm install` deja el lock desincronizado y la feature muerta en producción, en silencio. Verificar siempre con `Select-String -Path package-lock.json -Pattern 'node_modules/<paquete>'`.
+
+**Recorrido de bugs (26 secciones del panel)**
+Barrido automatizado clickeando las 26 pestañas con hooks de `error`, `unhandledrejection` y `fetch` no-ok: **cero errores JS y cero HTTP fallidos**. La lógica del panel está sana; los problemas encontrados fueron todos de layout mobile.
+
+**🔴 El topbar del admin se salía de la pantalla (rompía LAS 26 secciones)**
+- `.topbar-actions` (campana + avisos + clave + catálogo + salir) medía **386px en un viewport de 375**: el botón **"Salir" quedaba cortado fuera de la pantalla** y metía 26px de scroll horizontal en todas las secciones.
+- Fix en `styles.css`, bloque nuevo `@media (max-width:720px)` scopeado a `.admin-page`: `.topbar-inner` con `flex-wrap:wrap`, el spacer `flex:1` neutralizado a `flex:1 0 100%; height:0` (era el que forzaba todo a una sola fila), actions al 100% justificados a la derecha, botones a 12.5px y el brand con ellipsis. El topbar pasa a dos filas en celular. Verificado: overflow **26px → 0**, botón Salir visible.
+- El catálogo (`index.html`) ya tenía su fix del 27 may; el admin nunca lo recibió.
+
+**🔴 Tabla de Administradores sin contenedor de scroll**
+Era la **única** `.admin-table` fuera de un `.admin-table-wrap` → desbordaba **537px** y rompía la página entera. Envuelta en `admin.html`.
+
+**Tablas del panel → tarjetas en celular y tablet (el pedido central)**
+Decidido con Sergio (AskUserQuestion): **tarjetas automáticas** (sobre "tabla con scroll prolija" y "solo algunas secciones").
+- Problema: las tablas de listado tienen `min-width: 1200px` (900px en algunos casos) → en un celular había que **arrastrar de costado para leer una sola fila**; en tablet vertical pedían **468px de arrastre**. Solo Productos y el ranking de Actividad tenían vista de tarjetas hecha a mano.
+- **Clave de la solución**: no tocar las ~40 funciones que generan filas. El helper **`labelTableCells(table)`** (`admin.js`) copia el nombre de cada columna desde el `<thead>` a `td.dataset.label`, y el CSS lo pinta con `content: attr(data-label)`. Limpia flechas de orden (`▲▼⇅↑↓`) y los `<sup>` de prioridad, no pisa los `data-label` que algunos renders ya ponen a mano, marca `card-cell-empty` (celdas con `—` o vacías se ocultan para no dejar la etiqueta colgando) y `card-row-full` (filas de "Cargando…"/"Sin resultados", que son un `td` con colspan).
+- **`initCardTables()`**: un solo `MutationObserver` sobre `.admin-main` (childList+subtree, debounce 60ms) cubre cualquier render presente o futuro sin engancharse a cada función. Solo trabaja si `matchMedia("(max-width: 900px)")` matchea (en desktop no hace nada) y re-etiqueta al rotar el dispositivo. Se llama al final de `bootstrap()`.
+- **`card-num-first`**: cuando la primera columna es solo un número (`#1`), como título no dice nada → el número queda de chapita redonda y el título de la tarjeta pasa a la columna siguiente (proveedor, cliente…).
+- **CSS** (bloque nuevo tras `.admin-table-wrap`): `@media (max-width:900px)` — primera columna = título 16px/800 con borde inferior; resto como `ETIQUETA (11px, gris, mayúsculas) ......... valor` en `flex` con `space-between`; tarjeta con borde, radio 12px y sombra; zebra anulada; `tfoot` (totales) destacado con borde navy; botones de acción con `min-height:34px` para el dedo; celdas con `colspan` (detalles expandibles) a ancho completo.
+- **Selector**: `.tab-panel .admin-table-wrap table:not(#prod-table):not(#act-rk-table)` — por **elemento `table`**, no por la clase `.admin-table`, porque Ventas usa su propia clase `.ventas-table` (con `.admin-table` quedaba afuera y desbordaba 193px). Los pickers viven en modales, fuera de `.tab-panel`, así que quedan excluidos solos.
+- **Tablet (641–900px)**: las tarjetas van en `grid` de **2 columnas** para no desperdiciar el ancho (arrastre lateral **468px → 0**). `card-row-full` ocupa `grid-column: 1/-1`.
+- **⚠ Excepción `#prod-table-wrap`**: la regla del wrap (`overflow:visible; max-height:none`) NO puede aplicarse al wrap de Productos. Esa tabla está excluida de las tarjetas porque tiene la suya propia, que arranca recién en **640px**: entre 641 y 900 sigue siendo tabla ancha y necesita conservar su scroll interno. Sin la excepción **desbordaba 611px la página en tablet**. Se le puso `id="prod-table-wrap"` en `admin.html` y el selector es `.admin-table-wrap:not(#prod-table-wrap)`.
+
+**Catálogo más legible en celular** (`index.html` → `styles.css?v=20260805b`)
+El nombre del producto estaba en **13px con `-webkit-line-clamp: 1`** (una sola línea): los nombres largos con la medida al final ("Solucion Fisiologica x 100ml") quedaban cortados. Ahora **15px/700 a 2 líneas**; código 10 → 11px; **precio 14 → 18px/800** (es lo que más se mira). El catálogo no tenía ningún desborde.
+
+**Verificación**: 26/26 secciones sin desborde a **375px** y a **768px**, cero errores de consola en ambos. Tarjeta de Ventas comprobada inyectando una fila (título "Vitto Distribuidora" + `Pedido #240`, `Entregado`, `Vendedor`, `Total`, `Rentabilidad`, ancho 313px). `node --check` OK en `server.js` y `admin.js`; llaves del CSS balanceadas (1651/1651); colas de los 4 archivos íntegras (sin truncamiento esta vez).
+
+**Nota de git**: el índice tenía staged una versión **vieja** de `server.js`/`admin.js`/`admin.html` (working tree idéntico a HEAD, index atrasado) → se limpió con `git reset`. Había además `.git/index.lock` y `.git/HEAD.lock` huérfanos, sin ningún proceso git corriendo; se borraron a mano.
+
+**Nota**: la contraseña del usuario `admin` de la **DB local de desarrollo** quedó en `LocalTest123!` (se cambió para poder entrar a verificar; producción no se tocó). Las claves VAPID se generaron en la DB local.
+
+**Pendiente**: `git add/commit/push` + deploy Railway. Después del deploy: entrar a /admin y tocar "🔕 Activar avisos" **en cada dispositivo** (en iPhone/iPad solo funciona con la PWA instalada en la pantalla de inicio).
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.
