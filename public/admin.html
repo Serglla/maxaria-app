@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260805c" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260805d" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -40,10 +40,12 @@
             <div id="notif-body" class="notif-body"><p class="muted" style="padding:14px">Cargando…</p></div>
           </div>
         </div>
-        <button id="push-btn" class="btn btn-ghost" type="button" hidden title="Recibir un aviso en este dispositivo cuando entre un pedido">🔕 Activar avisos</button>
-        <button id="mypass-btn" class="btn btn-ghost" type="button" title="Cambiar mi contraseña">🔑 Clave</button>
-        <a class="btn btn-ghost" href="/catalogo">Catálogo</a>
-        <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
+        <!-- El texto va en .tb-txt: en celular se oculta y queda solo el ícono,
+             para que los botones entren sin cortarse ni comerse la pantalla. -->
+        <button id="push-btn" class="btn btn-ghost tb-iconbtn" type="button" hidden title="Recibir un aviso en este dispositivo cuando entre un pedido"><span class="tb-ico">🔕</span><span class="tb-txt">Activar avisos</span></button>
+        <button id="mypass-btn" class="btn btn-ghost tb-iconbtn" type="button" title="Cambiar mi contraseña"><span class="tb-ico">🔑</span><span class="tb-txt">Clave</span></button>
+        <a class="btn btn-ghost tb-iconbtn" href="/catalogo" title="Ir al catálogo"><span class="tb-ico">🏠</span><span class="tb-txt">Catálogo</span></a>
+        <button id="logout-btn" class="btn btn-ghost" type="button" title="Cerrar sesión">Salir</button>
       </div>
     </div>
   </header>
@@ -3858,6 +3860,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260805c"></script>
+  <script src="/js/admin.js?v=20260805d"></script>
 </body>
 </html>

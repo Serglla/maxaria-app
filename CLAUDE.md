@@ -1803,7 +1803,7 @@ Pedido de Sergio: aviso real (del sistema operativo, con la app cerrada) cuando 
 
 **Pendiente**: `npm install` en Windows (por `web-push`), `git add/commit/push` + deploy Railway. Después: entrar a /admin, tocar "🔕 Activar avisos" en cada dispositivo desde el que quieras recibirlos.
 
-### 🔴 Fix push (dependencia nunca instalada) + tablas legibles en celular y tablet (5 agosto 2026 — `admin.js?v=20260805c`, `styles.css?v=20260805c`)
+### 🔴 Fix push (dependencia nunca instalada) + tablas legibles en celular y tablet (5 agosto 2026 — `admin.js?v=20260805d`, `styles.css?v=20260805d`)
 
 Sergio: "el push de las notificaciones no funciona" + "que las vistas en Android, celular o tablet queden mejor diseñadas para que sean más fáciles de leer". Sesión de recorrido + fixes. Verificado con el server local corriendo (`npm run start:plain`) y el navegador del preview a 375px y 768px.
 
@@ -1819,8 +1819,16 @@ Barrido automatizado clickeando las 26 pestañas con hooks de `error`, `unhandle
 
 **🔴 El topbar del admin se salía de la pantalla (rompía LAS 26 secciones)**
 - `.topbar-actions` (campana + avisos + clave + catálogo + salir) medía **386px en un viewport de 375**: el botón **"Salir" quedaba cortado fuera de la pantalla** y metía 26px de scroll horizontal en todas las secciones.
-- Fix en `styles.css`, bloque nuevo `@media (max-width:720px)` scopeado a `.admin-page`: `.topbar-inner` con `flex-wrap:wrap`, el spacer `flex:1` neutralizado a `flex:1 0 100%; height:0` (era el que forzaba todo a una sola fila), actions al 100% justificados a la derecha, botones a 12.5px y el brand con ellipsis. El topbar pasa a dos filas en celular. Verificado: overflow **26px → 0**, botón Salir visible.
+- Fix en `styles.css`, bloque nuevo `@media (max-width:720px)` scopeado a `.admin-page`: `.topbar-inner` con `flex-wrap:wrap`, el spacer `flex:1` neutralizado a `flex:1 0 100%; height:0` (era el que forzaba todo a una sola fila), actions al 100% justificados a la derecha y el brand con ellipsis. Verificado: overflow **26px → 0**, botón Salir visible.
 - El catálogo (`index.html`) ya tenía su fix del 27 may; el admin nunca lo recibió.
+
+**🔴 Segunda vuelta del topbar (captura de Sergio desde el celular): altura fija + botones a ícono**
+Sergio mandó una foto del celular real: "activar avisos, clave, catálogo me queda cortado". Dos problemas encadenados que el primer fix no cubría:
+- **`.topbar-inner` tiene `height: 56px` FIJO** (además de `min-height`). Al pasar a dos filas, el contenido **se desbordaba del encabezado y quedaba montado sobre el contenido de la página** — en la captura se ve "Salir" pisando la tarjeta verde "CON STOCK". Medido: `logout-btn.bottom = 76` contra `topbar.bottom = 56`. Fix: `height:auto; min-height:0` dentro del media de 720px (el topbar crece a 86px y el contenido arranca justo debajo, sin solape). **Ojo**: cualquier cosa que se agregue al topbar tiene que respetar esto, la altura fija sigue vigente en desktop.
+- Los 5 controles sumaban **355px en una pantalla de 360**, así que aunque wrapearan se comían tres filas de pantalla. Fix: en ≤720px se muestra **solo el ícono**. El texto de cada botón se envolvió en `<span class="tb-txt">` (oculto en mobile) y el emoji en `<span class="tb-ico">`; los tres botones llevan la clase **`tb-iconbtn`** (42×36px, cuadrado y cómodo para el dedo). **"Salir" conserva el texto** por ser la acción más buscada; a Catálogo se le puso 🏠. El `title` de cada uno explica cuál es.
+- **`pushRenderBtn()` (admin.js) hubo que adaptarlo**: hacía `pushBtn.textContent = "🔕 Activar avisos"`, lo que **borraba los spans** y devolvía el botón largo apenas cambiaba de estado. Ahora escribe `.tb-ico` y `.tb-txt` por separado (con fallback a textContent si no encuentra los spans).
+- Se evitó `:has()` a propósito (no existe en Android/Chrome viejos): el botón cuadrado se selecciona por la clase `tb-iconbtn`.
+- Resultado a 360px: los 5 controles entran en una sola fila, `overflow: 0`, sin desborde del topbar. Desktop intacto (topbar 56px, texto visible, tablas normales).
 
 **🔴 Tabla de Administradores sin contenedor de scroll**
 Era la **única** `.admin-table` fuera de un `.admin-table-wrap` → desbordaba **537px** y rompía la página entera. Envuelta en `admin.html`.

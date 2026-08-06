@@ -8075,7 +8075,16 @@
   function pushRenderBtn() {
     if (!pushBtn) return;
     const on = !!pushState.sub;
-    pushBtn.textContent = on ? "🔔 Avisos activos" : "🔕 Activar avisos";
+    // Ícono y texto separados: en celular el CSS oculta .tb-txt y deja solo el
+    // ícono (con textContent se perdían los spans y el botón volvía a ser largo).
+    const ico = pushBtn.querySelector(".tb-ico");
+    const txt = pushBtn.querySelector(".tb-txt");
+    if (ico && txt) {
+      ico.textContent = on ? "🔔" : "🔕";
+      txt.textContent = on ? "Avisos activos" : "Activar avisos";
+    } else {
+      pushBtn.textContent = on ? "🔔 Avisos activos" : "🔕 Activar avisos";
+    }
     pushBtn.classList.toggle("push-on", on);
     pushBtn.title = on
       ? "Recibís avisos en este dispositivo. Clic para desactivarlos (o para mandarte una prueba con Ctrl+clic)."
