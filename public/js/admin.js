@@ -863,6 +863,84 @@
     // soportan). Los vendedores también pueden activarlo: reciben los pedidos
     // de sus clientes.
     pushInit();
+    // En celular las tablas se leen como tarjetas (ver styles.css).
+    initCardTables();
+  }
+
+  // ---------- Tablas legibles en celular ----------
+  // Las tablas del panel miden 900-1200px: en un celular había que arrastrar de
+  // costado para leer una fila. El CSS las convierte en tarjetas "ETIQUETA →
+  // valor", pero necesita saber el nombre de cada columna en cada <td>.
+  // En vez de tocar las ~40 funciones que generan filas, el nombre se copia
+  // solo desde el <thead> a data-label. Corre únicamente en pantallas chicas.
+  const CARD_TABLE_SKIP = { "prod-table": 1, "act-rk-table": 1 };
+  const cardMq = window.matchMedia("(max-width: 900px)");
+
+  function labelTableCells(table) {
+    if (!table || CARD_TABLE_SKIP[table.id]) return;
+    const head = table.tHead && table.tHead.rows.length ? table.tHead.rows[0] : null;
+    if (!head) return;
+    // Las columnas ordenables traen flechas (▲ ▼ ⇅) y un <sup> con el orden de
+    // prioridad: eso no va en la etiqueta de la tarjeta.
+    const names = Array.from(head.cells).map((th) => {
+      const c = th.cloneNode(true);
+      c.querySelectorAll("sup").forEach((s) => s.remove());
+      return (c.textContent || "").replace(/[▲▼⇅↑↓]/g, "").replace(/\s+/g, " ").trim();
+    });
+    for (const body of table.tBodies) {
+      for (const tr of body.rows) {
+        // "Cargando…" / "Sin resultados": un solo td que ocupa toda la fila
+        if (tr.cells.length === 1 && tr.cells[0].colSpan > 1) {
+          tr.classList.add("card-row-full");
+          continue;
+        }
+        tr.classList.remove("card-row-full");
+        // Cuando la primera columna es solo un número ("#1"), como título de la
+        // tarjeta no dice nada: el número queda de chapita y el título pasa a
+        // la columna siguiente (proveedor, cliente, etc.).
+        const first = (tr.cells[0].textContent || "").trim();
+        tr.classList.toggle(
+          "card-num-first",
+          tr.cells.length > 2 && first.length <= 6 && /^#?\d+$/.test(first)
+        );
+        for (let i = 0; i < tr.cells.length; i++) {
+          const td = tr.cells[i];
+          // No pisar los data-label que ya pone el render a mano
+          if (td.dataset.label === undefined && names[i]) td.dataset.label = names[i];
+          // Celda sin dato: se oculta para no dejar la etiqueta colgando sola
+          const txt = (td.textContent || "").trim();
+          td.classList.toggle(
+            "card-cell-empty",
+            i > 0 && (txt === "" || txt === "—" || txt === "-") && !td.children.length
+          );
+        }
+      }
+    }
+  }
+
+  function relabelVisibleTables() {
+    if (!cardMq.matches) return;
+    const panel = document.querySelector(".tab-panel:not([hidden])");
+    const scope = panel || document;
+    // Cualquier tabla de listado, no solo las que usan la clase .admin-table
+    // (Ventas, por ejemplo, tiene la suya propia).
+    scope.querySelectorAll(".admin-table-wrap table").forEach(labelTableCells);
+  }
+
+  function initCardTables() {
+    relabelVisibleTables();
+    const main = document.querySelector(".admin-main") || document.body;
+    let pending = null;
+    // Un observer para todo el panel: cubre cualquier render (incluidas las
+    // tablas que se crean después) sin engancharse a cada función.
+    new MutationObserver(() => {
+      if (!cardMq.matches || pending) return;
+      pending = setTimeout(() => { pending = null; relabelVisibleTables(); }, 60);
+    }).observe(main, { childList: true, subtree: true });
+    // Al rotar el teléfono o pasar a pantalla chica
+    const onChange = () => relabelVisibleTables();
+    if (cardMq.addEventListener) cardMq.addEventListener("change", onChange);
+    else if (cardMq.addListener) cardMq.addListener(onChange);
   }
 
   // ---------- Centro de notificaciones (campana del header) ----------

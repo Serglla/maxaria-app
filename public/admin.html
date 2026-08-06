@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260804d" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260805c" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -435,7 +435,7 @@
         </span>
       </div>
 
-      <div class="admin-table-wrap">
+      <div class="admin-table-wrap" id="prod-table-wrap">
         <table class="admin-table" id="prod-table">
           <thead>
             <tr>
@@ -759,16 +759,18 @@
         Creá usuarios que entran al panel con permisos limitados a las secciones que elijas.
         Solo vos (superadmin) ves esta sección y podés gestionarlos.
       </p>
-      <table class="admin-table" id="admins-table">
-        <thead>
-          <tr>
-            <th>Usuario</th><th>Nombre</th><th>Secciones</th><th>Activo</th><th></th>
-          </tr>
-        </thead>
-        <tbody id="admins-tbody">
-          <tr><td colspan="5" class="muted">Cargando…</td></tr>
-        </tbody>
-      </table>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="admins-table">
+          <thead>
+            <tr>
+              <th>Usuario</th><th>Nombre</th><th>Secciones</th><th>Activo</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="admins-tbody">
+            <tr><td colspan="5" class="muted">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <!-- ===== TAB VENDEDORES ===== -->
@@ -3856,6 +3858,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260804e"></script>
+  <script src="/js/admin.js?v=20260805c"></script>
 </body>
 </html>
