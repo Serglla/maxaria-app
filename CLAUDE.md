@@ -1907,6 +1907,28 @@ El nombre del producto estaba en **13px con `-webkit-line-clamp: 1`** (una sola 
 - **Nota**: un producto con `category_id` NULL quedaría fuera para un cliente restringido (fail-closed). Hoy no hay ninguno (verificado: 0 en la base).
 - Verificado con sqlite3 sobre copia de la DB, 4 escenarios: cliente restringido con carrito mixto → solo pasa el permitido; carrito solo con prohibido → vacío (400); admin → pasan los dos; cliente sin restricción → pasan los dos. `node --check` OK.
 
+### Panel de cobranza en Cuentas + remito sin precios para depósito (7 agosto 2026 — `admin.js?v=20260807b`, `styles.css?v=20260807a`)
+
+**Panel de cobranza (pestaña Cuentas)**
+El `scripts/debt-reminder.js` existía desde hace tiempo pero **nunca se ejecutaba**: no estaba en `package.json` ni agendado. Además lee la base **local**, así que corrido desde Windows daría los deudores de la DB de desarrollo, no los de producción. Sergio eligió verlo **en la sección de Cuentas** (no push, no dashboard), con corte de **+30 días**.
+- `admin.html`: `<div id="acc-cobranza" class="acc-cobranza" hidden>` entre los KPIs y la toolbar de `#tab-cuentas`.
+- `admin.js`: módulo nuevo antes de `accSortedFiltered` — `ACC_COBRANZA_DIAS = 30`, `accWaNumber(a)` (prioriza `whatsapp_number` sobre `phone`, exige ≥8 dígitos), `accCobranzaList()` (balance < 0 y `days_overdue >= 30`, ordenado por antigüedad) y `renderCobranza()`. Se llama desde `renderAccounts()`, así que se recalcula con cada carga/filtro. Si no hay deudores vencidos el panel queda `hidden`.
+- Por cada cliente: nombre, monto adeudado, días, botón **💬 WhatsApp** (link `wa.me` con mensaje precargado usando `state.me.app_name`) y **💵 Cobrar** (reusa `openPaymentForAccount`). Marca ⚠️ a los que superan `credit_limit`.
+- `server.js` `GET /api/admin/accounts`: se agregaron `phone` y `whatsapp_number` al SELECT y al objeto de respuesta (sin eso no hay con qué armar el link).
+- `package.json`: `npm run debt-reminder`.
+- **No existe disparo automático** — hay que entrar al panel. La versión proactiva quedó como pendiente opcional (ver lista).
+
+**Remito sin precios ("de depósito")**
+Pedido de Sergio: "un presupuesto con las cantidades de los productos que entrego pero sin los precios".
+- `buildRemitoPdf()` (server.js) acepta **`hidePrices`**. Con el flag: columnas `CÓD · PRODUCTO · CANT. · CONTROL` (casillero vacío para tildar al cargar), filas más altas (22pt) y cantidad en 11pt, sin P. Unit./Desc./Precio/Subtotal, **"SIN VALORES"** donde iba el TOTAL, y al pie líneas de firma **Preparó · Entregó · Recibí conforme**. El camino normal quedó intacto (las columnas de importe van en ancho 0 y `anyDisc` se fuerza a false).
+- `GET /api/admin/orders/:id/pdf?precios=0` activa el flag y le agrega `" - remito"` al nombre del archivo.
+- `printOrderRemito(order, hidePrices)` (admin.js) hace lo mismo en la versión HTML de impresión, con CSS propio (`.col-control`, `.chk`, `.firmas`, `.sin-valores`).
+- Botones nuevos en el detalle del pedido: **📦 Imprimir depósito** (HTML, impresión directa) y **📄 PDF depósito** (descarga/compartir). Los dos existentes ("🖨 Imprimir remito" y "📤 Compartir") siguen con precios, sin cambios. La llamada de la línea ~7480 pasa `undefined` → comportamiento viejo.
+
+**Verificación**: se generaron los PDFs **de verdad** con pdfkit en el sandbox (extrayendo `buildRemitoPdf` con `sed` y ejecutándola con un stream a archivo, ya que `server.js` no se puede importar por el binding Windows de better-sqlite3) y se decodificó el texto de los content streams (pdfkit escribe hex dentro de `TJ`, no `(...) Tj`): la variante con precios conserva `$3.649,50` y `TOTAL: $60.993,00`; la variante sin precios **no contiene ningún `$`** y sí `CONTROL`, `SIN VALORES` y las tres firmas. Lo mismo para el HTML de impresión, con stubs de `escapeHtml`/`printHtml`/`state` — probado también con un ítem con descuento para asegurar que no se cuele un importe por la rama `anyDisc`. `node --check` OK, llaves del CSS balanceadas.
+
+**No verificado visualmente**: en Cowork no se puede levantar el server (better-sqlite3 es binario Windows), así que el aspecto del panel y del remito impreso los tiene que mirar Sergio con Ctrl+F5.
+
 **Pendiente**: `git add/commit/push` + deploy Railway.
 
 ### Próximos pasos pendientes (en orden)
@@ -1914,12 +1936,11 @@ El nombre del producto estaba en **13px con `-webkit-line-clamp: 1`** (una sola 
 1. **🟡 Hardening del informe del 27 may**: ~~rate limit login~~ y ~~path traversal~~ (9 jun), ~~validación de categorías en POST /api/orders~~ (7 ago). Queda solo la **race condition de `nextBudgetNumber`**, que el 7 ago se determinó que **no puede ocurrir hoy**: `app.post("/api/budgets")` no es `async`, `better-sqlite3` es síncrono y Node single-threaded → no hay yield entre el SELECT del último número y el INSERT. Solo se vuelve real con **más de una réplica** compartiendo el SQLite. Si algún día se escala horizontalmente, mover `nextBudgetNumber()` dentro de la transacción + retry ante violación del UNIQUE.
 2. **Enforcement server-side de categorías del cliente en el catálogo PDF**: `POST /api/admin/catalog/pdf` (server.js:9320) NO llama a `getUserAllowedCategoryIds` — cuando `priceConfig.type==="client"` habría que intersectar `categoryIds` con las categorías permitidas del cliente. El front ya lo hereda; esto es defensa extra contra JS cacheado.
 3. **Decisión sobre `plain_password`**: sigue en la DB (10 referencias en server.js). Eliminar el campo y, para mostrar la pass al admin al crear usuario, devolverla solo en la respuesta JSON de ese POST (sin persistir).
-4. **Remito PDF sin precios para depósito**: el remito PDF **con** precios ya existe (`buildRemitoPdf`, server.js:9033). Falta la variante sin importes — sería un query param en `GET /api/admin/orders/:id/pdf` (hoy no acepta ninguno).
-5. **Agendar `scripts/debt-reminder.js`**: el script existe y tiene `getDebtors()`, pero **no está en los `scripts` de package.json** ni agendado en ningún lado. Falta el `npm run` + la tarea programada.
-6. **Partir `admin.js` / `server.js`** (deuda técnica, medida por Graphify el 7 ago): cohesión 0.038 en `admin.js`, 0.059 en `api`, 0.066 en `app.js`. Las 50 comunidades del grafo son el mapa de corte. **Ojo**: no es mover texto — `admin.js` es UN IIFE gigante con closure compartido (`state`, `els`, `api()`), así que hay que resolver cómo se comunican los módulos, el orden de los `<script>`, `PRECACHE_URLS` del SW y el cache busting. Conviene un piloto con un módulo aislado (Inflación o Gastos) antes de tocar el resto.
-7. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias. Verificado 7 ago: no hay Dockerfile ni docker-compose en el repo.
-8. **Backups externos automáticos**: rclone a B2/S3/Drive. Verificado 7 ago: sin implementar.
-9. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`. Verificado 7 ago: sin implementar (no hay `app_logo` / `brand_color` / `logo_url`).
+4. **Aviso automático de cobranza** (opcional): el 7 ago se hizo el **panel de cobranza en la pestaña Cuentas** (ver más arriba) y se agregó `npm run debt-reminder`. Lo que NO existe es un disparo automático — hoy hay que entrar al panel para verlo. Si se quiere aviso proactivo, la infra de push ya está (`sendPushTo`, `adminsForSection`): sería un job diario en `server.js` usando `nowLocal()`/`TZ_OFFSET_HOURS`, con guarda de idempotencia para que un restart de Railway no lo mande dos veces.
+5. **Partir `admin.js` / `server.js`** (deuda técnica, medida por Graphify el 7 ago): cohesión 0.038 en `admin.js`, 0.059 en `api`, 0.066 en `app.js`. Las 50 comunidades del grafo son el mapa de corte. **Ojo**: no es mover texto — `admin.js` es UN IIFE gigante con closure compartido (`state`, `els`, `api()`), así que hay que resolver cómo se comunican los módulos, el orden de los `<script>`, `PRECACHE_URLS` del SW y el cache busting. Conviene un piloto con un módulo aislado (Inflación o Gastos) antes de tocar el resto.
+6. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias. Verificado 7 ago: no hay Dockerfile ni docker-compose en el repo.
+7. **Backups externos automáticos**: rclone a B2/S3/Drive. Verificado 7 ago: sin implementar.
+8. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`. Verificado 7 ago: sin implementar (no hay `app_logo` / `brand_color` / `logo_url`).
 
 **Ya hechos — verificados contra el código el 7 agosto 2026** (estaban listados como pendientes por error; no volver a planificarlos):
 

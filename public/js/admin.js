@@ -6408,6 +6408,8 @@
       (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar items</button>' : "") +
       (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
       '<button type="button" class="btn btn-small order-print">🖨 Imprimir remito</button>' +
+      '<button type="button" class="btn btn-small order-print-dep" title="Imprime productos y cantidades, sin precios — para el depósito y para que firme el cliente">📦 Imprimir depósito</button>' +
+      '<button type="button" class="btn btn-small order-remito-dep" title="El mismo remito sin precios, pero en PDF (para descargar o mandar por WhatsApp)">📄 PDF depósito</button>' +
       '<button type="button" class="btn btn-small order-share">📤 Compartir</button>' +
       "</div>";
     var itemsHtml = '<div class="order-items-box">' + itemsTable + balanceHtml + actionsRow + "</div>";
@@ -6656,6 +6658,29 @@
       printBtn.addEventListener("click", function() { printOrderRemito(order); });
     }
 
+    var printDepBtn = detailEl.querySelector(".order-print-dep");
+    if (printDepBtn) {
+      printDepBtn.addEventListener("click", function() { printOrderRemito(order, true); });
+    }
+
+    // Remito de deposito: mismo PDF pero sin importes (?precios=0).
+    var remDepBtn = detailEl.querySelector(".order-remito-dep");
+    if (remDepBtn) {
+      remDepBtn.addEventListener("click", async function() {
+        var clientName = order.full_name || order.username || "Pedido";
+        var dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+        var fileName = clientName + " " + dateSlug + " - remito.pdf";
+        remDepBtn.disabled = true;
+        remDepBtn.textContent = "…";
+        try {
+          await shareDocPdf("/api/admin/orders/" + order.id + "/pdf?precios=0", fileName);
+        } finally {
+          remDepBtn.disabled = false;
+          remDepBtn.textContent = "📄 PDF depósito";
+        }
+      });
+    }
+
     var shareBtn = detailEl.querySelector(".order-share");
     if (shareBtn) {
       shareBtn.addEventListener("click", async function() {
@@ -6676,14 +6701,17 @@
 
   // Imprime un remito del pedido (lo que se preparó para entregar): productos,
   // cantidades, precios y total + espacio para firma. Abre ventana e imprime.
-  function printOrderRemito(order) {
+  // hidePrices = true imprime el "remito de depósito": mismas cantidades pero sin
+  // ningún importe, con columna CONTROL para tildar y firmas al pie. Es la versión
+  // HTML del mismo documento que genera el PDF con ?precios=0.
+  function printOrderRemito(order, hidePrices) {
     var statusNames = ORDER_STATUS_LABELS; // fuente única
     var appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
     var clientText = order.full_name || order.username || "—";
     var vendText = order.vendedor_full_name || order.vendedor_username || "";
     var date = new Date().toLocaleDateString("es-AR");
     var items = order.items || [];
-    var anyDisc = items.some(function(it) { return Number(it.discount_percent) > 0; });
+    var anyDisc = !hidePrices && items.some(function(it) { return Number(it.discount_percent) > 0; });
     var total = 0;
     var discTotalRem = 0;
     var rows = items.map(function(it) {
@@ -6694,6 +6722,14 @@
       discTotalRem += Math.max(0, gross - sub);
       total += sub;
       var precioConDesc = Math.round(unitPrice * (1 - dp / 100) * 100) / 100;
+      if (hidePrices) {
+        return "<tr>" +
+          "<td class='col-cod'>" + escapeHtml(it.product_code || "") + "</td>" +
+          "<td class='col-prod'>" + escapeHtml(it.product_name || "") + "</td>" +
+          "<td class='col-cant'>" + escapeHtml(String(it.quantity)) + "</td>" +
+          "<td class='col-control'><span class='chk'></span></td>" +
+          "</tr>";
+      }
       return "<tr>" +
         "<td class='col-cod'>" + escapeHtml(it.product_code || "") + "</td>" +
         "<td class='col-prod'>" + escapeHtml(it.product_name || "") + "</td>" +
@@ -6705,7 +6741,7 @@
         "</tr>";
     }).join("");
     var totalUnidades = items.reduce(function(s, it) { return s + (Number(it.quantity) || 0); }, 0);
-    var colCount = anyDisc ? 7 : 5;
+    var colCount = hidePrices ? 4 : (anyDisc ? 7 : 5);
     var budgetRef = order.budget_number ? "<p class='ref'>Facturado desde presupuesto " + escapeHtml(order.budget_number) + "</p>" : "";
     var html = "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
       "<title>Remito pedido #" + order.id + "</title>" +
@@ -6739,6 +6775,11 @@
       ".col-disc{text-align:right;width:64px;color:#b45309;font-weight:600}" +
       ".col-precio{text-align:right;width:80px;color:#111}" +
       ".col-sub{text-align:right;width:90px;font-weight:700}" +
+      ".col-control{text-align:center;width:90px}" +
+      ".chk{display:inline-block;width:14px;height:14px;border:1.5px solid #9ca3af;border-radius:3px}" +
+      ".firmas{display:flex;gap:24px;margin-top:46px}" +
+      ".firmas div{flex:1;border-top:1px solid #9ca3af;padding-top:4px;font-size:11px;color:#6b7280}" +
+      ".sin-valores{font-size:13px;font-weight:800;color:#1e3a5f;letter-spacing:.04em}" +
       ".summary-row{display:flex;justify-content:flex-end;align-items:baseline;gap:32px;border-top:2px solid #1e3a5f;padding:10px 8px 0}" +
       ".summary-meta{font-size:12px;color:#6b7280}" +
       ".grand-total{font-size:20px;font-weight:800;color:#1e3a5f}" +
@@ -6765,20 +6806,27 @@
       "<table><thead><tr>" +
         "<th>Cód.</th><th>Producto</th>" +
         "<th style='text-align:center'>Cant.</th>" +
-        "<th style='text-align:right'>P. Unit.</th>" +
-        (anyDisc ? "<th style='text-align:right'>Desc.</th>" : "") +
-        (anyDisc ? "<th style='text-align:right'>Precio</th>" : "") +
-        "<th style='text-align:right'>Subtotal</th>" +
+        (hidePrices
+          ? "<th style='text-align:center'>Control</th>"
+          : "<th style='text-align:right'>P. Unit.</th>" +
+            (anyDisc ? "<th style='text-align:right'>Desc.</th>" : "") +
+            (anyDisc ? "<th style='text-align:right'>Precio</th>" : "") +
+            "<th style='text-align:right'>Subtotal</th>") +
       "</tr></thead>" +
       "<tbody>" + (rows || "<tr><td colspan='" + colCount + "' style='padding:10px;color:#6b7280'>Sin items</td></tr>") + "</tbody>" +
       "</table>" +
       "<div class='summary-row'>" +
         "<span class='summary-meta'>" + items.length + " ítems &nbsp;·&nbsp; " + totalUnidades + " unidades" +
-          (discTotalRem > 0 ? " &nbsp;·&nbsp; Descuento: $" + Math.round(discTotalRem).toLocaleString("es-AR") : "") + "</span>" +
-        "<span class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</span>" +
+          (!hidePrices && discTotalRem > 0 ? " &nbsp;·&nbsp; Descuento: $" + Math.round(discTotalRem).toLocaleString("es-AR") : "") + "</span>" +
+        (hidePrices
+          ? "<span class='sin-valores'>SIN VALORES</span>"
+          : "<span class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</span>") +
       "</div>" +
       (order.notes ? "<p class='notes'>" + escapeHtml(order.notes) + "</p>" : "") +
       budgetRef +
+      (hidePrices
+        ? "<div class='firmas'><div>Preparó</div><div>Entregó</div><div>Recibí conforme</div></div>"
+        : "") +
       "</body></html>";
     printHtml(html);
   }

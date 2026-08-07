@@ -9045,7 +9045,11 @@ async function pLimit(fns, concurrency) {
 }
 
 // ── Helper: genera PDF de remito/presupuesto con pdfkit ──────────────────
-function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, total, totalUnidades, notes, extraLine }) {
+// hidePrices = true genera el "remito de depósito": mismas lineas y cantidades
+// pero SIN importes (ni P. unit., ni subtotal, ni TOTAL). En su lugar suma una
+// columna CONTROL con casillero para tildar al armar/cargar, y lineas de firma
+// Entregó / Recibí conforme al pie. Es el papel que viaja con la mercaderia.
+function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, total, totalUnidades, notes, extraLine, hidePrices }) {
   const doc = new PDFDocument({ size: "A4", margin: 36, autoFirstPage: true });
   res.setHeader("Content-Type", "application/pdf");
   doc.pipe(res);
@@ -9085,11 +9089,14 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
   // Si algún item tiene descuento por línea, se agregan dos columnas extra:
   // "Desc." (el % descontado) y "Precio" (el precio unitario ya con el
   // descuento aplicado — solo se completa en las filas que tienen descuento).
-  const anyDisc = items.some((it) => (Number(it.discount_percent) || 0) > 0);
-  const COL = anyDisc
-    ? { cod: 42, cant: 40, price: 62, disc: 44, precio: 62, sub: 76 }
-    : { cod: 50, cant: 52, price: 90, disc: 0, precio: 0, sub: 90 };
-  COL.prod = MW - COL.cod - COL.cant - COL.price - COL.disc - COL.precio - COL.sub;
+  const anyDisc = !hidePrices && items.some((it) => (Number(it.discount_percent) || 0) > 0);
+  // En el remito de deposito las columnas de importes van en 0 y se agrega CONTROL.
+  const COL = hidePrices
+    ? { cod: 60, cant: 60, price: 0, disc: 0, precio: 0, sub: 0, control: 90 }
+    : anyDisc
+      ? { cod: 42, cant: 40, price: 62, disc: 44, precio: 62, sub: 76, control: 0 }
+      : { cod: 50, cant: 52, price: 90, disc: 0, precio: 0, sub: 90, control: 0 };
+  COL.prod = MW - COL.cod - COL.cant - COL.price - COL.disc - COL.precio - COL.sub - COL.control;
   const colX = { cod: MX };
   colX.prod = colX.cod + COL.cod;
   colX.cant = colX.prod + COL.prod;
@@ -9097,22 +9104,29 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
   colX.disc = colX.price + COL.price;
   colX.precio = colX.disc + COL.disc;
   colX.sub = colX.precio + COL.precio;
+  colX.control = colX.sub + COL.sub;
   doc.rect(MX, cy, MW, 20).fill(BLU);
   doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff");
   doc.text("CÓD.", colX.cod, cy + 6);
   doc.text("PRODUCTO", colX.prod, cy + 6);
   doc.text("CANT.", colX.cant, cy + 6, { width: COL.cant, align: "center" });
-  doc.text("P. UNIT.", colX.price, cy + 6, { width: COL.price, align: "right" });
-  if (anyDisc) {
-    doc.text("DESC.", colX.disc, cy + 6, { width: COL.disc, align: "right" });
-    doc.text("PRECIO", colX.precio, cy + 6, { width: COL.precio, align: "right" });
+  if (hidePrices) {
+    doc.text("CONTROL", colX.control, cy + 6, { width: COL.control, align: "center" });
+  } else {
+    doc.text("P. UNIT.", colX.price, cy + 6, { width: COL.price, align: "right" });
+    if (anyDisc) {
+      doc.text("DESC.", colX.disc, cy + 6, { width: COL.disc, align: "right" });
+      doc.text("PRECIO", colX.precio, cy + 6, { width: COL.precio, align: "right" });
+    }
+    doc.text("SUBTOTAL", colX.sub, cy + 6, { width: COL.sub, align: "right" });
   }
-  doc.text("SUBTOTAL", colX.sub, cy + 6, { width: COL.sub, align: "right" });
   cy += 20;
 
   // ── Filas de items ──
-  const ROW_H = 18;
-  const vSep = anyDisc ? [colX.prod, colX.cant, colX.price, colX.disc, colX.precio, colX.sub] : [colX.prod, colX.cant, colX.price, colX.sub];
+  const ROW_H = hidePrices ? 22 : 18;
+  const vSep = hidePrices
+    ? [colX.prod, colX.cant, colX.control]
+    : (anyDisc ? [colX.prod, colX.cant, colX.price, colX.disc, colX.precio, colX.sub] : [colX.prod, colX.cant, colX.price, colX.sub]);
   items.forEach((it, idx) => {
     if (cy + ROW_H > 800) { doc.addPage(); cy = 36; }
     if (idx % 2 === 1) doc.rect(MX, cy, MW, ROW_H).fill("#f8fafc");
@@ -9120,7 +9134,20 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
     const unitPrice = Number(it.unit_price) || 0;
     doc.font("Helvetica").fontSize(9).fillColor(GREY).text(String(it.product_code || ""), colX.cod, cy + 5, { width: COL.cod });
     doc.fillColor(BLACK).font("Helvetica-Bold").text(String(it.product_name || ""), colX.prod, cy + 5, { width: COL.prod - 4, ellipsis: true });
-    doc.font("Helvetica-Bold").fillColor(BLACK).text(String(it.quantity), colX.cant, cy + 5, { width: COL.cant, align: "center" });
+    doc.font("Helvetica-Bold").fillColor(BLACK).fontSize(hidePrices ? 11 : 9)
+      .text(String(it.quantity), colX.cant, cy + 5, { width: COL.cant, align: "center" });
+    doc.fontSize(9);
+    if (hidePrices) {
+      // Casillero vacio para tildar al armar/cargar la mercaderia.
+      const bx = colX.control + COL.control / 2 - 6;
+      doc.rect(bx, cy + 5, 12, 12).lineWidth(1).strokeColor("#9ca3af").stroke();
+      vSep.forEach((x) => {
+        doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
+      });
+      doc.moveTo(MX, cy + ROW_H).lineTo(MX + MW, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
+      cy += ROW_H;
+      return;
+    }
     doc.font("Helvetica").fillColor(GREY).text("$" + unitPrice.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.price, cy + 5, { width: COL.price, align: "right" });
     if (anyDisc) {
       doc.font("Helvetica-Bold").fillColor(disc > 0 ? "#b45309" : "#9ca3af")
@@ -9146,8 +9173,13 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
   // ── Summary ──
   doc.font("Helvetica").fontSize(9).fillColor(GREY)
     .text(items.length + " ítems · " + totalUnidades + " unidades", MX, cy);
-  doc.font("Helvetica-Bold").fontSize(16).fillColor(BLU)
-    .text("TOTAL: $" + total.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), MX, cy - 2, { align: "right" });
+  if (hidePrices) {
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(BLU)
+      .text("SIN VALORES", MX, cy - 2, { align: "right" });
+  } else {
+    doc.font("Helvetica-Bold").fontSize(16).fillColor(BLU)
+      .text("TOTAL: $" + total.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), MX, cy - 2, { align: "right" });
+  }
   cy += 20;
 
   if (extraLine) {
@@ -9156,6 +9188,20 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
   }
   if (notes) {
     doc.font("Helvetica-Oblique").fontSize(9).fillColor(GREY).text(notes, MX, cy);
+    cy += 16;
+  }
+
+  // ── Firmas (solo remito de deposito: es el papel que se firma al entregar) ──
+  if (hidePrices) {
+    if (cy + 60 > 800) { doc.addPage(); cy = 36; }
+    cy += 24;
+    const firmas = ["Preparó", "Entregó", "Recibí conforme"];
+    const fw = MW / firmas.length;
+    firmas.forEach((f, i) => {
+      const fx = MX + i * fw;
+      doc.moveTo(fx, cy).lineTo(fx + fw - 20, cy).lineWidth(0.8).strokeColor("#9ca3af").stroke();
+      doc.font("Helvetica").fontSize(8).fillColor(GREY).text(f, fx, cy + 4, { width: fw - 20 });
+    });
   }
 
   doc.end();
@@ -9283,9 +9329,12 @@ app.get("/api/admin/orders/:id/pdf", requireVendedorOrAdmin, (req, res) => {
   const STATUS_LABELS = { pendiente: "Pendiente", enviado: "Enviado", preparando: "En armado", listo: "Listo para entregar", entregado: "Entregado", cancelado: "Cancelado" };
   const total = items.reduce((s, it) => s + Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)), 0);
   const totalUnidades = items.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+  // ?precios=0 -> remito de deposito: mismas cantidades, sin ningun importe.
+  const hidePrices = String(req.query.precios || "") === "0";
   const safeClient = clientName.replace(/[^\w\s\-áéíóúüñÁÉÍÓÚÜÑ]/g, "").trim();
   const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
-  res.setHeader("Content-Disposition", 'attachment; filename="' + safeClient + " " + dateSlug + '.pdf"');
+  res.setHeader("Content-Disposition", 'attachment; filename="' + safeClient + " " + dateSlug +
+    (hidePrices ? " - remito" : "") + '.pdf"');
   const metaCells = [
     { label: "Fecha", value: date },
     { label: "Cliente", value: clientName },
@@ -9295,7 +9344,7 @@ app.get("/api/admin/orders/:id/pdf", requireVendedorOrAdmin, (req, res) => {
   buildRemitoPdf(res, {
     title: appName, docLabel: STATUS_LABELS[order.status] || order.status,
     docNum: String(id), date, metaCells, items, total, totalUnidades,
-    notes: order.notes || "", extraLine,
+    notes: order.notes || "", extraLine, hidePrices,
   });
 });
 
