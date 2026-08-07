@@ -147,7 +147,7 @@
   // Precios con 2 decimales (centavos). round2 redondea importes.
   function vRound2(v) { const n = Number(v); return isFinite(n) ? Math.round(n*100)/100 : 0; }
   function vFmtN(n) { return (Number(n)||0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-  function vEsc(s) { return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+  function vEsc(s) { return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
   function vFmtDate(s) {
     if (!s) return "";
     const d = new Date(s.replace(" ","T")+"Z");

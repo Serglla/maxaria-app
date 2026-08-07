@@ -1855,6 +1855,51 @@ El nombre del producto estaba en **13px con `-webkit-line-clamp: 1`** (una sola 
 
 **Pendiente**: `git add/commit/push` + deploy Railway. Después del deploy: entrar a /admin y tocar "🔕 Activar avisos" **en cada dispositivo** (en iPhone/iPad solo funciona con la PWA instalada en la pantalla de inicio).
 
+### Graphify instalado (grafo de conocimiento del código) + fix escape en ventas.js (7 agosto 2026 — `ventas.js?v=20260807a`)
+
+**Graphify** (`graphifyy` en PyPI, MIT, Graphify-Labs/graphify) indexa el código con tree-sitter y arma un grafo de conocimiento local. Objetivo: que el asistente navegue por estructura en vez de grepear archivos de 11k/16k líneas. **Costo de tokens: 0** — la extracción es AST puro, sin LLM.
+
+**Instalación (Windows)**
+- Requiere Python. Sergio tiene 3.14.3 vía el launcher `py`. `pip` pelado NO existe en el PATH: usar `py -m pip`.
+- `py -m pip install graphifyy` + `py -m pip install "graphifyy[sql]"` (el extra `[sql]` es necesario para que `scripts/schema.sql` aporte nodos; sin él tira warning y lo saltea).
+- `graphify install` → crea el skill en `C:\Users\sergi\.claude\skills\graphify\` y un **`CLAUDE.md` global** en `C:\Users\sergi\.claude\CLAUDE.md` (aplica a TODOS los proyectos, no solo Maxaria).
+- `graphify claude install` (desde la carpeta del proyecto) → escribe la sección `## graphify` al final de este `CLAUDE.md` (+10 líneas, verificado íntegro) y registra hooks `PreToolUse` en `.claude/settings.json`.
+- **PATH**: los hooks invocan `graphify` pelado. Si no está en el PATH fallan en cada llamada a Bash/Grep/Read/Glob. Se arregló agregando el dir de scripts al PATH de usuario:
+  ```powershell
+  $s = py -c "import sysconfig; print(sysconfig.get_path('scripts'))"
+  $u = [Environment]::GetEnvironmentVariable("Path","User")
+  [Environment]::SetEnvironmentVariable("Path", "$u;$s", "User")
+  ```
+  Alternativa si el PATH no se puede tocar: parchear las 2 líneas de `.claude/settings.json` a `py -m graphify ...`.
+
+**Construcción del grafo**
+- `graphify . --code-only` — el `--code-only` es **obligatorio acá**: sin él exige una API key de LLM para los 11 archivos de docs/imágenes. Con `--code-only` indexa solo código, local y gratis.
+- `graphify cluster-only .` — genera `GRAPH_REPORT.md`. El aviso "no LLM backend configured" es esperado: las comunidades quedan nombradas por su nodo hub (`app.js`, `server.js`, `fmtMoney`…), que alcanza.
+- **🔴 Caché incremental**: borrar `graphify-out\cache` NO alcanza para forzar una reconstrucción — queda el índice (`manifest.json` / `stat-index.json`) y el extract dice `21 files cached/unchanged, 0 re-extracted`. Por eso `schema.sql` no entraba aunque `tree_sitter_sql` ya estuviera instalado. **La solución es borrar todo `graphify-out\` y volver a extraer.**
+- Resultado final: **938 nodos · 2254 aristas · 50 comunidades**, 97% extraído / 3% inferido, sin ciclos de importación.
+- `graphify-out/` agregado al `.gitignore` (regenerable).
+- Mantenimiento: `graphify update .` después de cada tanda de cambios (AST-only, sin costo). Opcional: `graphify hook install` para que se rebuildee en cada commit.
+
+**Uso**: `graphify query "<pregunta>"`, `graphify path "<A>" "<B>"`, `graphify explain "<concepto>"` devuelven un subgrafo acotado, mucho más chico que leer los archivos crudos.
+
+**Lo que el grafo reveló (confirma con números lo que este archivo documenta hace meses)**
+- **Cohesión bajísima en los monolíticos**: `admin.js` 0.038, `api` 0.059, `app.js` 0.066 — contra 0.50 en módulos sanos como `backup-db.js` u `openBulkModal`. Traducción: dentro de esos archivos conviven bloques que casi no se hablan entre sí; están juntos por historia, no por diseño. **Es la raíz de los truncamientos** que se repiten desde mayo. Las 50 comunidades son el mapa de por dónde partirlos.
+- **God nodes**: `escapeHtml()` 122 aristas, `api()` 102, `fmtPrice()` 48, `showToast()` 33.
+- **Helpers duplicados** (aparecen dos veces en la lista de god nodes porque están definidos en varios archivos):
+  - Idénticas byte a byte: `normSearch` (admin.js:602, app.js:100, ventas.js:15), `matchWords` (admin.js:605, app.js:103, ventas.js:18), `escapeHtml` (admin.js:610, app.js:108), `formatDate` (admin.js:615, app.js:1878).
+  - **Solo parecen duplicadas, NO unificar a ciegas**: `fmtPrice` difiere a propósito (app.js:96 siempre con 2 decimales `$1.000,00`; admin.js:13509 sin decimales si es entero y con espacio `$ 1.000`); `showToast` son dos funciones distintas con el mismo nombre (`admin.js:681` es `(msg, type)`, `offline.js:99` es `(html, bg, durationMs)`); `round2` está en server.js (Node) y admin.js (browser), no compartibles sin build step.
+
+**🔴 Fix aplicado: `vEsc()` no escapaba la comilla simple**
+- `public/js/ventas.js:150` — `vEsc` escapaba `& < > "` pero **no `'`**, a diferencia de `escapeHtml` de admin.js/app.js que sí lo hace (`&#39;`). Un nombre de producto o cliente con apóstrofe insertado en un atributo con comillas simples rompía el HTML.
+- Se agregó `.replace(/'/g,"&#39;")` al final. Cambio de una línea, sin efectos colaterales (agregar un escape solo puede corregir HTML roto). Cache busting de `ventas.html` bumpeado a `?v=20260807a`.
+- `node --check` OK, archivos íntegros hasta la última línea (el mount NO estaba stale esta vez).
+
+**Decidido NO hacer (por ahora)**: unificar los 4 helpers idénticos en un `public/js/shared.js`. No hay build step, así que requeriría un namespace global cargado antes que los demás, tocar los 3 HTML, sumarlo a `PRECACHE_URLS` de `sw.js` (es PWA) y editar los 3 JS grandes. Beneficio ~40 líneas menos; riesgo alto dado el historial de truncamientos. Queda como deuda técnica.
+
+**Limpieza de la sesión**: se borró `public/js/admin.js.tmp` (el huérfano vacío que este archivo venía marcando desde mayo) y otro `.git/index.lock` huérfano.
+
+**Pendiente**: `git add/commit/push` + deploy Railway.
+
 ### Próximos pasos pendientes (en orden)
 
 1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.
@@ -1877,3 +1922,13 @@ El nombre del producto estaba en **13px con `-webkit-line-clamp: 1`** (una sola 
 ### Objetivo de negocio
 Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.
 - **Cuenta corriente**: débito al entregar pedido (monto = total), crédito al registrar pago. Balance = créditos − débitos.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

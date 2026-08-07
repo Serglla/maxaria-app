@@ -17,3 +17,6 @@ decode-backup.js
 
 # Configuración local de Claude Code
 .claude/
+
+# Grafo de conocimiento de Graphify (regenerable con `graphify .`)
+graphify-out/
