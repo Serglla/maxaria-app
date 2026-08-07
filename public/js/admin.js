@@ -6409,6 +6409,7 @@
       (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
       '<button type="button" class="btn btn-small order-print-dep" title="Productos y cantidades, sin importes, con casillero de control y firmas">🖨 Imprimir remito</button>' +
       '<button type="button" class="btn btn-small order-remito-dep" title="El mismo remito en PDF, para descargar o mandar por WhatsApp">📤 Compartir remito</button>' +
+      '<button type="button" class="btn btn-small order-share" title="PDF del pedido con precios y total">📤 Compartir</button>' +
       "</div>";
     var itemsHtml = '<div class="order-items-box">' + itemsTable + balanceHtml + actionsRow + "</div>";
 
@@ -6676,6 +6677,24 @@
       });
     }
 
+    // "Compartir" a secas: el PDF del pedido CON precios y total (sin ?precios=0).
+    // Es el que se le manda al cliente; el de arriba es el remito para armar/entregar.
+    var shareBtn = detailEl.querySelector(".order-share");
+    if (shareBtn) {
+      shareBtn.addEventListener("click", async function() {
+        var clientName = order.full_name || order.username || "Pedido";
+        var dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+        var fileName = clientName + " " + dateSlug + ".pdf";
+        shareBtn.disabled = true;
+        shareBtn.textContent = "…";
+        try {
+          await shareDocPdf("/api/admin/orders/" + order.id + "/pdf", fileName);
+        } finally {
+          shareBtn.disabled = false;
+          shareBtn.textContent = "📤 Compartir";
+        }
+      });
+    }
   }
 
   // Imprime el remito del pedido: productos y cantidades, con casillero de control
