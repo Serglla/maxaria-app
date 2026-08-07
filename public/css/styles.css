@@ -797,6 +797,62 @@ button { font: inherit; cursor: pointer; }
 /* Botones del circuito en la barra: alto compacto y ancho al contenido. */
 .oab-right .btn { height: 32px; }
 .oab-right .btn-x { height: 32px; width: 32px; padding: 0; }
+
+/* Celular y tablet: los cuatro documentos en grilla de 2 columnas, enfrentados.
+   Columna izquierda = remito (sin importes), columna derecha = pp (con precios);
+   arriba la fila de compartir y abajo la de imprimir. El orden del DOM no cambia
+   (desktop queda igual): se reordena solo con `order`, que en un grid de 2 columnas
+   con auto-placement va llenando fila por fila. Aplica a la barra de la tarjeta
+   (.oab-left) y a los mismos botones dentro del modal (.order-items-actions). */
+@media (max-width: 900px) {
+  .order-actions-bar { align-items: stretch; }
+  .oab-left {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    width: 100%;
+  }
+  .oab-left .order-total { order: 1; justify-self: start; align-self: center; margin-right: 0; }
+  .oab-left .oc-edit { order: 2; }
+  .oab-left .oc-share { order: 3; }
+  .oab-left .oc-share-full { order: 4; }
+  .oab-left .oc-print { order: 5; }
+  .oab-left .oc-print-full { order: 6; }
+
+  .order-items-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  /* Editar y Registrar cobro son acciones, no documentos: ancho completo arriba. */
+  .order-items-actions .order-edit-items { order: 1; grid-column: 1 / -1; }
+  .order-items-actions .order-charge { order: 2; grid-column: 1 / -1; }
+  .order-items-actions .od-share { order: 3; }
+  .order-items-actions .od-share-full { order: 4; }
+  .order-items-actions .od-print { order: 5; }
+  .order-items-actions .od-print-full { order: 6; }
+
+  /* Botones de la grilla: centrados, sin desbordar y con el texto en 2 lineas si hace falta. */
+  .oab-left .btn,
+  .order-items-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-width: 0;
+    width: 100%;
+    height: auto;
+    min-height: 34px;
+    padding: 6px 4px;
+    font-size: 12px;
+    line-height: 1.25;
+    white-space: normal;
+  }
+  /* Los botones del circuito (Registrar entrega, → Entregas) a lo ancho, abajo. */
+  .oab-right { width: 100%; gap: 6px; }
+  .oab-right .btn { flex: 1 1 auto; height: auto; min-height: 36px; }
+  .oab-right .btn-x { flex: 0 0 auto; }
+}
 .order-head {
   display: flex;
   justify-content: space-between;
