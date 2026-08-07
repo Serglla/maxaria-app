@@ -1923,10 +1923,11 @@ Pedido de Sergio: "un presupuesto con las cantidades de los productos que entreg
 - `buildRemitoPdf()` (server.js) acepta **`hidePrices`**. Con el flag: columnas `CÓD · PRODUCTO · CANT. · CONTROL` (casillero vacío para tildar al cargar), filas más altas (22pt) y cantidad en 11pt, sin P. Unit./Desc./Precio/Subtotal ni TOTAL, y al pie líneas de firma **Preparó · Entregó · Recibí conforme**. El camino normal quedó intacto (las columnas de importe van en ancho 0 y `anyDisc` se fuerza a false).
 - `GET /api/admin/orders/:id/pdf?precios=0` activa el flag y le agrega `" - remito"` al nombre del archivo.
 - `printOrderRemito(order, hidePrices)` (admin.js) hace lo mismo en la versión HTML de impresión, con CSS propio (`.col-control`, `.chk`, `.firmas`).
-- Botones nuevos en el detalle del pedido: **📦 Imprimir sin precios** (HTML, impresión directa) y **📄 PDF sin precios** (descarga/compartir). Los dos existentes ("🖨 Imprimir remito" y "📤 Compartir") siguen con precios, sin cambios. La llamada de la línea ~7480 pasa `undefined` → comportamiento viejo.
+- Botones finales (ver la decisión de abajo): **🖨 Imprimir remito** (HTML, impresión directa) y **📤 Compartir remito** (PDF), en la tarjeta del pedido y en el detalle expandible. Los cuatro apuntan a la variante sin precios.
 
 **Decisiones de Sergio al ver el remito impreso (mismo día, tras la primera versión)**
-- **Nada de "depósito" en los nombres**: el mismo papel sirve para armado y para entrega, así que los botones dicen simplemente "sin precios". (Se había propuesto "de depósito"/"para armado"/"de entrega"; eligió no especificar el uso.)
+- **🔴 El remito del pedido es SIEMPRE el que va sin precios.** Se eliminó de la UI la variante con importes: los botones "🖨 Imprimir remito" y "📤 Compartir remito" (tanto en la tarjeta del pedido como en el detalle expandible) usan `hidePrices` / `?precios=0`. Quedaron 2 botones en vez de 4. La variante con precios sigue soportada en `buildRemitoPdf` y en `printOrderRemito` (sin el flag) pero **no la invoca ningún botón** — si alguna vez hace falta, es volver a pasar el parámetro.
+- **Nada de "depósito" en los nombres**: el mismo papel sirve para armado y para entrega, así que se llama simplemente "remito". (Se había propuesto "de depósito"/"para armado"/"de entrega"; eligió no especificar el uso.)
 - **Sin el nombre del negocio**: en `hidePrices` NO se imprime el `title` (app_name) en el encabezado — queda solo "Estado: …" arriba a la izquierda y el "N° 252" a la derecha. Aplica a las dos versiones (PDF y HTML).
 - **Sin la leyenda "SIN VALORES"**: se quitó del pie; el resumen queda solo con "N ítems · N unidades".
 

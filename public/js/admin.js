@@ -6297,8 +6297,8 @@
         '<div class="oab-left">' +
           '<span class="order-total">' + totalLabel + "</span>" +
           '<button type="button" class="btn btn-small oc-edit" data-id="' + o.id + '">👁 Ver</button>' +
-          '<button type="button" class="btn btn-small oc-share" data-id="' + o.id + '">📤 Compartir</button>' +
-          '<button type="button" class="btn btn-small oc-print" data-id="' + o.id + '">🖨 Imprimir</button>' +
+          '<button type="button" class="btn btn-small oc-share" data-id="' + o.id + '">📤 Compartir remito</button>' +
+          '<button type="button" class="btn btn-small oc-print" data-id="' + o.id + '">🖨 Imprimir remito</button>' +
         "</div>" +
         '<div class="oab-right">' +
           pickBtn +
@@ -6407,10 +6407,8 @@
     var actionsRow = '<div class="order-items-actions">' +
       (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar items</button>' : "") +
       (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
-      '<button type="button" class="btn btn-small order-print">🖨 Imprimir remito</button>' +
-      '<button type="button" class="btn btn-small order-print-dep" title="Imprime productos y cantidades, sin ningún importe, con casillero de control y firmas">📦 Imprimir sin precios</button>' +
-      '<button type="button" class="btn btn-small order-remito-dep" title="El mismo remito sin precios, pero en PDF (para descargar o mandar por WhatsApp)">📄 PDF sin precios</button>' +
-      '<button type="button" class="btn btn-small order-share">📤 Compartir</button>' +
+      '<button type="button" class="btn btn-small order-print-dep" title="Productos y cantidades, sin importes, con casillero de control y firmas">🖨 Imprimir remito</button>' +
+      '<button type="button" class="btn btn-small order-remito-dep" title="El mismo remito en PDF, para descargar o mandar por WhatsApp">📤 Compartir remito</button>' +
       "</div>";
     var itemsHtml = '<div class="order-items-box">' + itemsTable + balanceHtml + actionsRow + "</div>";
 
@@ -6653,17 +6651,14 @@
       });
     }
 
-    var printBtn = detailEl.querySelector(".order-print");
-    if (printBtn) {
-      printBtn.addEventListener("click", function() { printOrderRemito(order); });
-    }
-
+    // El remito del pedido es SIEMPRE el que va sin importes (decision de Sergio,
+    // 7 ago): un solo documento para armado y para entrega. La variante con
+    // precios sigue existiendo en el server (sin ?precios=0) pero no se usa en la UI.
     var printDepBtn = detailEl.querySelector(".order-print-dep");
     if (printDepBtn) {
       printDepBtn.addEventListener("click", function() { printOrderRemito(order, true); });
     }
 
-    // Remito de deposito: mismo PDF pero sin importes (?precios=0).
     var remDepBtn = detailEl.querySelector(".order-remito-dep");
     if (remDepBtn) {
       remDepBtn.addEventListener("click", async function() {
@@ -6676,34 +6671,19 @@
           await shareDocPdf("/api/admin/orders/" + order.id + "/pdf?precios=0", fileName);
         } finally {
           remDepBtn.disabled = false;
-          remDepBtn.textContent = "📄 PDF sin precios";
+          remDepBtn.textContent = "📤 Compartir remito";
         }
       });
     }
 
-    var shareBtn = detailEl.querySelector(".order-share");
-    if (shareBtn) {
-      shareBtn.addEventListener("click", async function() {
-        var clientName = order.full_name || order.username || "Pedido";
-        var dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
-        var fileName = clientName + " " + dateSlug + ".pdf";
-        shareBtn.disabled = true;
-        shareBtn.textContent = "…";
-        try {
-          await shareDocPdf("/api/admin/orders/" + order.id + "/pdf", fileName);
-        } finally {
-          shareBtn.disabled = false;
-          shareBtn.textContent = "📤 Compartir";
-        }
-      });
-    }
   }
 
-  // Imprime un remito del pedido (lo que se preparó para entregar): productos,
-  // cantidades, precios y total + espacio para firma. Abre ventana e imprime.
-  // hidePrices = true imprime el "remito sin precios": mismas cantidades pero sin
-  // ningún importe y sin el nombre del negocio, con columna CONTROL para tildar y
-  // firmas al pie. Es la versión HTML del mismo documento que el PDF con ?precios=0.
+  // Imprime el remito del pedido: productos y cantidades, con casillero de control
+  // y firmas al pie. Abre ventana e imprime.
+  // hidePrices = true (lo que usa toda la UI desde el 7 ago) omite los importes y
+  // el nombre del negocio. Es la versión HTML del mismo documento que el PDF con
+  // ?precios=0. Con hidePrices falsy sale la variante vieja con precios y TOTAL,
+  // que ya no se invoca desde ningún botón pero se deja por si hace falta.
   function printOrderRemito(order, hidePrices) {
     var statusNames = ORDER_STATUS_LABELS; // fuente única
     var appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
@@ -7478,7 +7458,7 @@
           ocPrintBtn.disabled = true;
           try {
             const order = await api("/api/orders/" + id);
-            printOrderRemito(order);
+            printOrderRemito(order, true);
           } catch (err) {
             showToast("Error: " + err.message, "error");
           } finally {
@@ -7495,12 +7475,12 @@
           const o = list.find((x) => x.id === id) || {};
           const clientName = o.full_name || o.username || "Pedido";
           const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
-          const fileName = clientName + " " + dateSlug + ".pdf";
+          const fileName = clientName + " " + dateSlug + " - remito.pdf";
           ocShareBtn.disabled = true;
           const orig = ocShareBtn.textContent;
           ocShareBtn.textContent = "…";
           try {
-            await shareDocPdf("/api/admin/orders/" + id + "/pdf", fileName);
+            await shareDocPdf("/api/admin/orders/" + id + "/pdf?precios=0", fileName);
           } finally {
             ocShareBtn.disabled = false;
             ocShareBtn.textContent = orig;
