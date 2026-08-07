@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260805d" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260807a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -2040,6 +2040,8 @@
     <!-- ===== TAB CUENTAS ===== -->
     <section class="tab-panel" id="tab-cuentas" hidden>
       <div class="dash-kpi-row" id="acc-kpis" style="margin-bottom:14px"></div>
+      <!-- Panel de cobranza: clientes con deuda vencida (+N dias). Se oculta solo si no hay ninguno. -->
+      <div id="acc-cobranza" class="acc-cobranza" hidden></div>
       <div class="admin-toolbar">
         <input type="search" id="acc-search" class="admin-search" placeholder="Buscar cliente..." autocomplete="off" />
         <label class="acc-toggle"><input type="checkbox" id="acc-only-debtors" /> Solo deudores</label>
@@ -3860,6 +3862,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260805d"></script>
+  <script src="/js/admin.js?v=20260807a"></script>
 </body>
 </html>

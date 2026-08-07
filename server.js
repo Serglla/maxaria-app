@@ -8272,7 +8272,8 @@ app.delete("/api/admin/payments/:id", requireAdmin, (req, res) => {
 
 app.get("/api/admin/accounts", requireAdmin, (req, res) => {
   const users = db.prepare(
-    "SELECT id, username, full_name, level, COALESCE(credit_limit,0) AS credit_limit FROM users" +
+    "SELECT id, username, full_name, level, phone, whatsapp_number," +
+    "       COALESCE(credit_limit,0) AS credit_limit FROM users" +
     "  WHERE level IN (1,2,3,4) AND active = 1"
   ).all();
   const movs = db.prepare(
@@ -8314,6 +8315,9 @@ app.get("/api/admin/accounts", requireAdmin, (req, res) => {
     var daysOverdue = (balance < -0.0001 && oldestUnpaidAt) ? daysSince(oldestUnpaidAt) : null;
     return {
       id: u.id, username: u.username, full_name: u.full_name, level: u.level,
+      // Para el panel de cobranza de la pestaña Cuentas (link wa.me).
+      // whatsapp_number tiene prioridad sobre phone, igual que en el resto del sistema.
+      phone: u.phone || null, whatsapp_number: u.whatsapp_number || null,
       credit_limit: u.credit_limit || 0,
       total_credit: totalCredit, total_debit: totalDebit, balance: balance,
       last_movement_at: lastAt, days_since_movement: daysSince(lastAt),

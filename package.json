@@ -11,7 +11,8 @@
     "create-admin": "node scripts/create-admin.js",
     "import-prices": "node scripts/import-prices.js",
     "export-prices": "node scripts/export-prices.js",
-    "backup": "node scripts/backup-db.js"
+    "backup": "node scripts/backup-db.js",
+    "debt-reminder": "node scripts/debt-reminder.js"
   },
   "engines": {
     "node": ">=18"

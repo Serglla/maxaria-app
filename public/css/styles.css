@@ -4640,6 +4640,45 @@ label.cats-check input[type="checkbox"] {
 .acc-row-debt .acc-pay-btn { border-color: #f59e0b; color: #b45309; }
 .acc-row-debt .acc-pay-btn:hover { background: #b45309; border-color: #b45309; color: #fff; }
 
+/* ====== Cuentas corrientes: panel de cobranza (+30 dias) ====== */
+.acc-cobranza {
+  border: 1.5px solid #fca5a5;
+  border-left: 4px solid #dc2626;
+  background: #fef2f2;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.acc-cobranza[hidden] { display: none; }
+.acc-cob-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.acc-cob-title { font-size: 15px; font-weight: 800; color: #991b1b; }
+.acc-cob-sub { font-size: 12.5px; font-weight: 600; color: #b91c1c; }
+.acc-cob-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.acc-cob-item {
+  display: flex; align-items: center; gap: 12px;
+  background: #fff; border: 1px solid #fecaca; border-radius: 8px;
+  padding: 8px 10px;
+}
+.acc-cob-item.acc-cob-over { border-color: #dc2626; }
+.acc-cob-who { flex: 1 1 auto; min-width: 0; }
+.acc-cob-name { font-weight: 700; font-size: 14px; color: #111827; }
+.acc-cob-flag { font-size: 11px; font-weight: 700; color: #991b1b; white-space: nowrap; }
+.acc-cob-nums { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.acc-cob-monto { font-weight: 800; font-size: 14px; color: #991b1b; white-space: nowrap; }
+.acc-cob-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.acc-cob-wa {
+  display: inline-block; text-decoration: none; line-height: 1.6;
+  border-color: #16a34a; color: #15803d;
+}
+.acc-cob-wa:hover { background: #15803d; border-color: #15803d; color: #fff; }
+
+@media (max-width: 640px) {
+  .acc-cob-item { flex-wrap: wrap; gap: 8px; }
+  .acc-cob-who { flex: 1 1 100%; }
+  .acc-cob-nums { flex: 1 1 auto; }
+  .acc-cob-actions { flex: 0 0 auto; margin-left: auto; }
+}
+
 /* ====== Cuentas corrientes: historial expandible ====== */
 .acc-detail-cell {
   background: #f9fafb;

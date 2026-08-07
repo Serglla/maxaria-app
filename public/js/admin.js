@@ -444,6 +444,7 @@
     accTbody: document.getElementById("acc-tbody"),
     accReloadBtn: document.getElementById("acc-reload-btn"),
     accKpis: document.getElementById("acc-kpis"),
+    accCobranza: document.getElementById("acc-cobranza"),
     accOnlyDebtors: document.getElementById("acc-only-debtors"),
     accExportBtn: document.getElementById("acc-export-btn"),
     accTable: document.getElementById("acc-table"),
@@ -11971,6 +11972,79 @@
       card("dash-kpi-accent", "Deuda más antigua", (oldestDays ? oldestDays + " días" : "—"), "sin saldar");
   }
 
+  // ── Panel de cobranza (pestaña Cuentas) ─────────────────────────────────
+  // Lista los clientes con deuda vencida de +ACC_COBRANZA_DIAS dias, ordenados
+  // por antiguedad. Es la version en pantalla del recordatorio que calcula
+  // scripts/debt-reminder.js (misma logica FIFO, que ya resuelve el server en
+  // days_overdue). Se oculta solo cuando no hay ninguno.
+  var ACC_COBRANZA_DIAS = 30;
+
+  function accWaNumber(a) {
+    var raw = a.whatsapp_number || a.phone || "";
+    var digits = String(raw).replace(/\D/g, "");
+    return digits.length >= 8 ? digits : null;
+  }
+
+  function accCobranzaList() {
+    return state.accounts
+      .filter(function (a) {
+        return (Number(a.balance) || 0) < 0 &&
+               a.days_overdue != null && a.days_overdue >= ACC_COBRANZA_DIAS;
+      })
+      .sort(function (a, b) { return b.days_overdue - a.days_overdue; });
+  }
+
+  function renderCobranza() {
+    if (!els.accCobranza) return;
+    var list = accCobranzaList();
+    if (!list.length) { els.accCobranza.hidden = true; els.accCobranza.innerHTML = ""; return; }
+
+    var totalDeuda = list.reduce(function (s, a) { return s + Math.abs(Number(a.balance) || 0); }, 0);
+    var appName = (state.me && state.me.app_name) || "Maxaria";
+
+    var items = list.map(function (a) {
+      var nombre = a.full_name || a.username || "";
+      var debe = Math.abs(Number(a.balance) || 0);
+      var limit = Number(a.credit_limit) || 0;
+      var overLimit = limit > 0 && debe > limit;
+      var wa = accWaNumber(a);
+      var msg = "Hola " + nombre + ", te escribo de " + appName + ". " +
+                "Figura un saldo pendiente de " + fmtPrice(debe) + " con " + a.days_overdue + " dias. " +
+                "Cuando puedas, avisame como coordinamos el pago. Gracias!";
+      var waBtn = wa
+        ? '<a class="btn-mini acc-cob-wa" target="_blank" rel="noopener" href="https://wa.me/' + wa +
+          '?text=' + encodeURIComponent(msg) + '" title="Abrir WhatsApp con el mensaje precargado">💬 WhatsApp</a>'
+        : '<span class="muted small" title="El cliente no tiene teléfono ni WhatsApp cargado">sin WhatsApp</span>';
+      return '<li class="acc-cob-item' + (overLimit ? ' acc-cob-over' : '') + '">' +
+        '<div class="acc-cob-who">' +
+          '<span class="acc-cob-name">' + escapeHtml(nombre) + '</span>' +
+          (overLimit ? ' <span class="acc-cob-flag" title="Supera el límite de crédito">⚠️ excede límite</span>' : '') +
+        '</div>' +
+        '<div class="acc-cob-nums">' +
+          '<span class="acc-cob-monto">' + fmtPrice(debe) + '</span>' +
+          '<span class="acc-age acc-age-bad">' + a.days_overdue + ' d</span>' +
+        '</div>' +
+        '<div class="acc-cob-actions">' + waBtn +
+          '<button type="button" class="btn-mini acc-pay-btn" data-id="' + a.id + '">💵 Cobrar</button>' +
+        '</div>' +
+      '</li>';
+    }).join("");
+
+    els.accCobranza.innerHTML =
+      '<div class="acc-cob-head">' +
+        '<span class="acc-cob-title">📞 Para cobrar</span>' +
+        '<span class="acc-cob-sub">' + list.length + (list.length === 1 ? " cliente" : " clientes") +
+          ' con deuda de +' + ACC_COBRANZA_DIAS + ' días · ' + fmtPrice(totalDeuda) + '</span>' +
+      '</div>' +
+      '<ul class="acc-cob-list">' + items + '</ul>';
+    els.accCobranza.hidden = false;
+
+    // El boton Cobrar reusa el modal de pago existente.
+    els.accCobranza.querySelectorAll(".acc-pay-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () { openPaymentForAccount(Number(btn.dataset.id)); });
+    });
+  }
+
   function accSortedFiltered() {
     const q = (els.accSearch ? els.accSearch.value : "").trim().toLowerCase();
     let list = state.accounts.slice();
@@ -12002,6 +12076,7 @@
   function renderAccounts() {
     if (!els.accTbody) return;
     renderAccountsKpis();
+    renderCobranza();
     updateAccSortHeaders();
     const list = accSortedFiltered();
     if (els.accCount) els.accCount.textContent = list.length + (list.length === 1 ? " cliente" : " clientes");
