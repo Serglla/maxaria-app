@@ -6291,16 +6291,19 @@
         (delBtn ? '<div class="order-head-right">' + delBtn + "</div>" : "") +
       "</div>" +
       // Barra de acciones al pie (todo en una sola línea, sin expandir):
-      // monto + Ver (abre el modal de detalle) + los tres documentos a la izquierda;
+      // monto + Ver (abre el modal de detalle) + los cuatro documentos a la izquierda;
       // a la derecha los botones del circuito. Los documentos viven SOLO acá (decision
       // de Sergio, 7 ago): abajo, en el detalle, queda unicamente Editar.
+      // Orden y nombres fijados por Sergio: remito = SIN importes (para armar y
+      // entregar); "pp" = con precios y total (el que se le manda al cliente).
       '<div class="order-actions-bar">' +
         '<div class="oab-left">' +
           '<span class="order-total">' + totalLabel + "</span>" +
           '<button type="button" class="btn btn-small oc-edit" data-id="' + o.id + '">👁 Ver</button>' +
           '<button type="button" class="btn btn-small oc-print" data-id="' + o.id + '" title="Productos y cantidades, sin importes, con casillero de control y firmas">🖨 Imprimir remito</button>' +
-          '<button type="button" class="btn btn-small oc-share" data-id="' + o.id + '" title="El mismo remito en PDF, para descargar o mandar por WhatsApp">📤 Compartir remito</button>' +
-          '<button type="button" class="btn btn-small oc-share-full" data-id="' + o.id + '" title="PDF del pedido con precios y total">📤 Compartir</button>' +
+          '<button type="button" class="btn btn-small oc-share" data-id="' + o.id + '" title="El mismo remito sin importes, en PDF, para descargar o mandar por WhatsApp">📤 Compartir remito</button>' +
+          '<button type="button" class="btn btn-small oc-print-full" data-id="' + o.id + '" title="Imprime el pedido con precios unitarios y total">🖨 Imprimir pp</button>' +
+          '<button type="button" class="btn btn-small oc-share-full" data-id="' + o.id + '" title="PDF del pedido con precios y total, para descargar o mandar por WhatsApp">📤 Compartir pp</button>' +
         "</div>" +
         '<div class="oab-right">' +
           pickBtn +
@@ -6404,12 +6407,21 @@
             '</strong> · cobrado ' + fmtPrice(amountPaid) + "</div>"
         : '<div class="order-balance order-balance-ok">💳 Pedido saldado · cobrado ' + fmtPrice(amountPaid) + "</div>";
     }
-    // Acciones del detalle: solo Editar (estados pre-entrega) y Registrar cobro (si
-    // debe). Los tres botones de documentos (imprimir/compartir) estan arriba, en la
-    // barra de la tarjeta, para no repetirlos.
+    // Acciones del detalle: Editar (estados pre-entrega) y Registrar cobro (si debe).
+    // Los cuatro botones de documentos NO se repiten cuando el detalle se despliega
+    // dentro de una tarjeta (ahi ya estan en la barra de arriba), pero SI se agregan
+    // cuando el detalle se abre en el modal (👁 Ver, y la pestaña Ventas), que no
+    // tiene esa barra. Se detecta con closest(".order-card").
+    var inCard = !!(detailEl && detailEl.closest && detailEl.closest(".order-card"));
+    var docsRow = inCard ? "" :
+      '<button type="button" class="btn btn-small od-print" title="Productos y cantidades, sin importes, con casillero de control y firmas">🖨 Imprimir remito</button>' +
+      '<button type="button" class="btn btn-small od-share" title="El mismo remito sin importes, en PDF, para descargar o mandar por WhatsApp">📤 Compartir remito</button>' +
+      '<button type="button" class="btn btn-small od-print-full" title="Imprime el pedido con precios unitarios y total">🖨 Imprimir pp</button>' +
+      '<button type="button" class="btn btn-small od-share-full" title="PDF del pedido con precios y total, para descargar o mandar por WhatsApp">📤 Compartir pp</button>';
     var actionsRow = '<div class="order-items-actions">' +
       (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar</button>' : "") +
       (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
+      docsRow +
       "</div>";
     var itemsHtml = '<div class="order-items-box">' + itemsTable + balanceHtml + actionsRow + "</div>";
 
@@ -6652,8 +6664,41 @@
       });
     }
 
-    // Los botones de documentos (Imprimir remito / Compartir remito / Compartir) ya
-    // no viven en el detalle: estan arriba, en la barra de la tarjeta (wireOrderCards).
+    // Botones de documentos. Solo existen cuando el detalle se abre en el modal
+    // (en la tarjeta ya estan en la barra de arriba), asi que los querySelector
+    // devuelven null y no se wirea nada en el caso de la tarjeta.
+    // Aca el objeto `order` ya viene completo con items: no hace falta refetch.
+    function docFileName(suffix) {
+      var clientName = order.full_name || order.username || "Pedido";
+      var dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+      return clientName + " " + dateSlug + (suffix || "") + ".pdf";
+    }
+    function wireDocShare(sel, url, fileName) {
+      var btn = detailEl.querySelector(sel);
+      if (!btn) return;
+      btn.addEventListener("click", async function() {
+        btn.disabled = true;
+        var orig = btn.textContent;
+        btn.textContent = "…";
+        try {
+          await shareDocPdf(url, fileName);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
+      });
+    }
+
+    var odPrintBtn = detailEl.querySelector(".od-print");
+    if (odPrintBtn) {
+      odPrintBtn.addEventListener("click", function() { printOrderRemito(order, true); });
+    }
+    var odPrintFullBtn = detailEl.querySelector(".od-print-full");
+    if (odPrintFullBtn) {
+      odPrintFullBtn.addEventListener("click", function() { printOrderRemito(order); });
+    }
+    wireDocShare(".od-share", "/api/admin/orders/" + order.id + "/pdf?precios=0", docFileName(" - remito"));
+    wireDocShare(".od-share-full", "/api/admin/orders/" + order.id + "/pdf", docFileName());
   }
 
   // Imprime el remito del pedido: productos y cantidades, con casillero de control
@@ -7441,6 +7486,24 @@
             showToast("Error: " + err.message, "error");
           } finally {
             ocPrintBtn.disabled = false;
+          }
+        });
+      }
+
+      // "Imprimir pp": el mismo remito pero CON precios unitarios y total.
+      const ocPrintFullBtn = card.querySelector(".oc-print-full");
+      if (ocPrintFullBtn) {
+        ocPrintFullBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const id = Number(ocPrintFullBtn.dataset.id);
+          ocPrintFullBtn.disabled = true;
+          try {
+            const order = await api("/api/orders/" + id);
+            printOrderRemito(order);
+          } catch (err) {
+            showToast("Error: " + err.message, "error");
+          } finally {
+            ocPrintFullBtn.disabled = false;
           }
         });
       }
