@@ -1907,7 +1907,7 @@ El nombre del producto estaba en **13px con `-webkit-line-clamp: 1`** (una sola 
 - **Nota**: un producto con `category_id` NULL quedaría fuera para un cliente restringido (fail-closed). Hoy no hay ninguno (verificado: 0 en la base).
 - Verificado con sqlite3 sobre copia de la DB, 4 escenarios: cliente restringido con carrito mixto → solo pasa el permitido; carrito solo con prohibido → vacío (400); admin → pasan los dos; cliente sin restricción → pasan los dos. `node --check` OK.
 
-### Panel de cobranza en Cuentas + remito sin precios para depósito (7 agosto 2026 — `admin.js?v=20260807b`, `styles.css?v=20260807a`)
+### Panel de cobranza en Cuentas + remito sin precios (7 agosto 2026 — `admin.js?v=20260807b`, `styles.css?v=20260807a`)
 
 **Panel de cobranza (pestaña Cuentas)**
 El `scripts/debt-reminder.js` existía desde hace tiempo pero **nunca se ejecutaba**: no estaba en `package.json` ni agendado. Además lee la base **local**, así que corrido desde Windows daría los deudores de la DB de desarrollo, no los de producción. Sergio eligió verlo **en la sección de Cuentas** (no push, no dashboard), con corte de **+30 días**.
@@ -1918,14 +1918,19 @@ El `scripts/debt-reminder.js` existía desde hace tiempo pero **nunca se ejecuta
 - `package.json`: `npm run debt-reminder`.
 - **No existe disparo automático** — hay que entrar al panel. La versión proactiva quedó como pendiente opcional (ver lista).
 
-**Remito sin precios ("de depósito")**
+**Remito sin precios**
 Pedido de Sergio: "un presupuesto con las cantidades de los productos que entrego pero sin los precios".
-- `buildRemitoPdf()` (server.js) acepta **`hidePrices`**. Con el flag: columnas `CÓD · PRODUCTO · CANT. · CONTROL` (casillero vacío para tildar al cargar), filas más altas (22pt) y cantidad en 11pt, sin P. Unit./Desc./Precio/Subtotal, **"SIN VALORES"** donde iba el TOTAL, y al pie líneas de firma **Preparó · Entregó · Recibí conforme**. El camino normal quedó intacto (las columnas de importe van en ancho 0 y `anyDisc` se fuerza a false).
+- `buildRemitoPdf()` (server.js) acepta **`hidePrices`**. Con el flag: columnas `CÓD · PRODUCTO · CANT. · CONTROL` (casillero vacío para tildar al cargar), filas más altas (22pt) y cantidad en 11pt, sin P. Unit./Desc./Precio/Subtotal ni TOTAL, y al pie líneas de firma **Preparó · Entregó · Recibí conforme**. El camino normal quedó intacto (las columnas de importe van en ancho 0 y `anyDisc` se fuerza a false).
 - `GET /api/admin/orders/:id/pdf?precios=0` activa el flag y le agrega `" - remito"` al nombre del archivo.
-- `printOrderRemito(order, hidePrices)` (admin.js) hace lo mismo en la versión HTML de impresión, con CSS propio (`.col-control`, `.chk`, `.firmas`, `.sin-valores`).
-- Botones nuevos en el detalle del pedido: **📦 Imprimir depósito** (HTML, impresión directa) y **📄 PDF depósito** (descarga/compartir). Los dos existentes ("🖨 Imprimir remito" y "📤 Compartir") siguen con precios, sin cambios. La llamada de la línea ~7480 pasa `undefined` → comportamiento viejo.
+- `printOrderRemito(order, hidePrices)` (admin.js) hace lo mismo en la versión HTML de impresión, con CSS propio (`.col-control`, `.chk`, `.firmas`).
+- Botones nuevos en el detalle del pedido: **📦 Imprimir sin precios** (HTML, impresión directa) y **📄 PDF sin precios** (descarga/compartir). Los dos existentes ("🖨 Imprimir remito" y "📤 Compartir") siguen con precios, sin cambios. La llamada de la línea ~7480 pasa `undefined` → comportamiento viejo.
 
-**Verificación**: se generaron los PDFs **de verdad** con pdfkit en el sandbox (extrayendo `buildRemitoPdf` con `sed` y ejecutándola con un stream a archivo, ya que `server.js` no se puede importar por el binding Windows de better-sqlite3) y se decodificó el texto de los content streams (pdfkit escribe hex dentro de `TJ`, no `(...) Tj`): la variante con precios conserva `$3.649,50` y `TOTAL: $60.993,00`; la variante sin precios **no contiene ningún `$`** y sí `CONTROL`, `SIN VALORES` y las tres firmas. Lo mismo para el HTML de impresión, con stubs de `escapeHtml`/`printHtml`/`state` — probado también con un ítem con descuento para asegurar que no se cuele un importe por la rama `anyDisc`. `node --check` OK, llaves del CSS balanceadas.
+**Decisiones de Sergio al ver el remito impreso (mismo día, tras la primera versión)**
+- **Nada de "depósito" en los nombres**: el mismo papel sirve para armado y para entrega, así que los botones dicen simplemente "sin precios". (Se había propuesto "de depósito"/"para armado"/"de entrega"; eligió no especificar el uso.)
+- **Sin el nombre del negocio**: en `hidePrices` NO se imprime el `title` (app_name) en el encabezado — queda solo "Estado: …" arriba a la izquierda y el "N° 252" a la derecha. Aplica a las dos versiones (PDF y HTML).
+- **Sin la leyenda "SIN VALORES"**: se quitó del pie; el resumen queda solo con "N ítems · N unidades".
+
+**Verificación**: se generaron los PDFs **de verdad** con pdfkit en el sandbox (extrayendo `buildRemitoPdf` con `sed` y ejecutándola con un stream a archivo, ya que `server.js` no se puede importar por el binding Windows de better-sqlite3) y se decodificó el texto de los content streams (**pdfkit escribe hex dentro de `<...> TJ`, no `(...) Tj`** — extraer con `binascii.unhexlify`, sino parece vacío). Resultado final en ambos formatos: la variante con precios conserva importes, TOTAL y el nombre del negocio; la sin precios **no contiene ningún `$`, ni el nombre del negocio, ni "SIN VALORES"**, y sí el cliente, la columna CONTROL y las tres firmas. Probado también con un ítem con descuento, para asegurar que no se cuele un importe por la rama `anyDisc`. `node --check` OK, llaves del CSS balanceadas.
 
 **No verificado visualmente**: en Cowork no se puede levantar el server (better-sqlite3 es binario Windows), así que el aspecto del panel y del remito impreso los tiene que mirar Sergio con Ctrl+F5.
 

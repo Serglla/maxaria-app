@@ -9045,10 +9045,11 @@ async function pLimit(fns, concurrency) {
 }
 
 // ── Helper: genera PDF de remito/presupuesto con pdfkit ──────────────────
-// hidePrices = true genera el "remito de depósito": mismas lineas y cantidades
-// pero SIN importes (ni P. unit., ni subtotal, ni TOTAL). En su lugar suma una
-// columna CONTROL con casillero para tildar al armar/cargar, y lineas de firma
-// Entregó / Recibí conforme al pie. Es el papel que viaja con la mercaderia.
+// hidePrices = true genera el "remito sin precios": mismas lineas y cantidades
+// pero SIN importes (ni P. unit., ni subtotal, ni TOTAL) y SIN el nombre del
+// negocio en el encabezado. Suma una columna CONTROL con casillero para tildar
+// al armar/cargar, y lineas de firma Preparó / Entregó / Recibí conforme al pie.
+// Sirve igual para armado y para entrega: es el mismo papel para los dos usos.
 function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, total, totalUnidades, notes, extraLine, hidePrices }) {
   const doc = new PDFDocument({ size: "A4", margin: 36, autoFirstPage: true });
   res.setHeader("Content-Type", "application/pdf");
@@ -9058,8 +9059,11 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
   const MX = 36, MW = 595 - 72; // márgenes
 
   // ── Header ──
-  doc.font("Helvetica-Bold").fontSize(17).fillColor(BLU).text(title, MX, 36, { continued: false });
-  doc.font("Helvetica").fontSize(9).fillColor(GREY).text("Estado: " + docLabel, MX, 58);
+  // En el remito sin precios no va el nombre del negocio (pedido de Sergio).
+  if (!hidePrices) {
+    doc.font("Helvetica-Bold").fontSize(17).fillColor(BLU).text(title, MX, 36, { continued: false });
+  }
+  doc.font("Helvetica").fontSize(9).fillColor(GREY).text("Estado: " + docLabel, MX, hidePrices ? 40 : 58);
   const rnW = doc.widthOfString("N° " + docNum);
   doc.font("Helvetica").fontSize(9).fillColor(GREY).text("REMITO DE PEDIDO", MX, 36, { align: "right" });
   doc.font("Helvetica-Bold").fontSize(20).fillColor(BLU).text("N° " + docNum, MX, 48, { align: "right" });
@@ -9173,10 +9177,7 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
   // ── Summary ──
   doc.font("Helvetica").fontSize(9).fillColor(GREY)
     .text(items.length + " ítems · " + totalUnidades + " unidades", MX, cy);
-  if (hidePrices) {
-    doc.font("Helvetica-Bold").fontSize(11).fillColor(BLU)
-      .text("SIN VALORES", MX, cy - 2, { align: "right" });
-  } else {
+  if (!hidePrices) {
     doc.font("Helvetica-Bold").fontSize(16).fillColor(BLU)
       .text("TOTAL: $" + total.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), MX, cy - 2, { align: "right" });
   }

@@ -6408,8 +6408,8 @@
       (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar items</button>' : "") +
       (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
       '<button type="button" class="btn btn-small order-print">🖨 Imprimir remito</button>' +
-      '<button type="button" class="btn btn-small order-print-dep" title="Imprime productos y cantidades, sin precios — para el depósito y para que firme el cliente">📦 Imprimir depósito</button>' +
-      '<button type="button" class="btn btn-small order-remito-dep" title="El mismo remito sin precios, pero en PDF (para descargar o mandar por WhatsApp)">📄 PDF depósito</button>' +
+      '<button type="button" class="btn btn-small order-print-dep" title="Imprime productos y cantidades, sin ningún importe, con casillero de control y firmas">📦 Imprimir sin precios</button>' +
+      '<button type="button" class="btn btn-small order-remito-dep" title="El mismo remito sin precios, pero en PDF (para descargar o mandar por WhatsApp)">📄 PDF sin precios</button>' +
       '<button type="button" class="btn btn-small order-share">📤 Compartir</button>' +
       "</div>";
     var itemsHtml = '<div class="order-items-box">' + itemsTable + balanceHtml + actionsRow + "</div>";
@@ -6676,7 +6676,7 @@
           await shareDocPdf("/api/admin/orders/" + order.id + "/pdf?precios=0", fileName);
         } finally {
           remDepBtn.disabled = false;
-          remDepBtn.textContent = "📄 PDF depósito";
+          remDepBtn.textContent = "📄 PDF sin precios";
         }
       });
     }
@@ -6701,9 +6701,9 @@
 
   // Imprime un remito del pedido (lo que se preparó para entregar): productos,
   // cantidades, precios y total + espacio para firma. Abre ventana e imprime.
-  // hidePrices = true imprime el "remito de depósito": mismas cantidades pero sin
-  // ningún importe, con columna CONTROL para tildar y firmas al pie. Es la versión
-  // HTML del mismo documento que genera el PDF con ?precios=0.
+  // hidePrices = true imprime el "remito sin precios": mismas cantidades pero sin
+  // ningún importe y sin el nombre del negocio, con columna CONTROL para tildar y
+  // firmas al pie. Es la versión HTML del mismo documento que el PDF con ?precios=0.
   function printOrderRemito(order, hidePrices) {
     var statusNames = ORDER_STATUS_LABELS; // fuente única
     var appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
@@ -6790,7 +6790,8 @@
       "</head><body>" +
       "<div class='header'>" +
         "<div class='header-left'>" +
-          "<h1>" + escapeHtml(appName) + "</h1>" +
+          // En el remito sin precios no va el nombre del negocio (pedido de Sergio).
+          (hidePrices ? "" : "<h1>" + escapeHtml(appName) + "</h1>") +
           "<p class='status'>Estado: " + escapeHtml(statusNames[order.status] || order.status || "") + "</p>" +
         "</div>" +
         "<div class='header-right'>" +
@@ -6819,7 +6820,7 @@
         "<span class='summary-meta'>" + items.length + " ítems &nbsp;·&nbsp; " + totalUnidades + " unidades" +
           (!hidePrices && discTotalRem > 0 ? " &nbsp;·&nbsp; Descuento: $" + Math.round(discTotalRem).toLocaleString("es-AR") : "") + "</span>" +
         (hidePrices
-          ? "<span class='sin-valores'>SIN VALORES</span>"
+          ? ""
           : "<span class='grand-total'>TOTAL: $" + total.toLocaleString("es-AR") + "</span>") +
       "</div>" +
       (order.notes ? "<p class='notes'>" + escapeHtml(order.notes) + "</p>" : "") +
