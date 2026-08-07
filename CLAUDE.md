@@ -1898,26 +1898,41 @@ El nombre del producto estaba en **13px con `-webkit-line-clamp: 1`** (una sola 
 
 **Limpieza de la sesión**: se borró `public/js/admin.js.tmp` (el huérfano vacío que este archivo venía marcando desde mayo) y otro `.git/index.lock` huérfano.
 
+**Repaso de la lista de pendientes (misma sesión)**: se verificaron los 13 ítems contra el código. **7 ya estaban hechos** y seguían listados como pendientes (ctacte proveedores, remito PDF, alerta de stock mínimo, límite de crédito, estado de cuenta PDF, script de cobranza, gráfico de deuda). La lista quedó en 9 ítems reales, con la referencia de archivo/línea de cada verificación. Regla: antes de planificar un ítem viejo, chequearlo contra el código.
+
+**Fix: `POST /api/orders` no validaba las categorías permitidas del cliente**
+- La query de producto (server.js:3023) solo filtraba `active = 1`. El catálogo ya filtra por `user_category_access` en `/api/products`, pero un POST directo a la API con un `product_id` de una categoría no habilitada entraba igual.
+- Fix: se agregó `category_id` al SELECT, se resuelve `allowedCats = getUserAllowedCategoryIds(orderUserId, priceLevel)` antes del loop, y dentro se saltea el item si `allowedCats && !allowedCats.has(p.category_id)` — mismo criterio que "sin stock". Si no queda ninguna línea, cae en el 400 que ya existía.
+- El par `(orderUserId, priceLevel)` es el del **cliente atendido** cuando pide un vendedor, igual que en `/api/products`. Admin y vendedor sin cliente siguen sin restricción (el helper devuelve `null` para level 5 y 99).
+- **Nota**: un producto con `category_id` NULL quedaría fuera para un cliente restringido (fail-closed). Hoy no hay ninguno (verificado: 0 en la base).
+- Verificado con sqlite3 sobre copia de la DB, 4 escenarios: cliente restringido con carrito mixto → solo pasa el permitido; carrito solo con prohibido → vacío (400); admin → pasan los dos; cliente sin restricción → pasan los dos. `node --check` OK.
+
 **Pendiente**: `git add/commit/push` + deploy Railway.
 
 ### Próximos pasos pendientes (en orden)
 
-1. **🟡 Hardening del informe del 27 may** (lo que queda): validación categorías en POST orders, race condition `nextBudgetNumber`. ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ hechos el 9 jun.
-2. **Cuenta corriente con proveedores**: simétrico a lo que ya existe para clientes — registrar deuda que genera cada orden de compra y los pagos a proveedores.
-3. **Remito PDF por entrega**: ya existe el **remito por impresión HTML** (botón "🖨 Imprimir remito" en el detalle del pedido, 3 jun). Falta la versión **PDF descargable/enviable por WA** (reutiliza la infra del catálogo PDF) y, si Sergio confirma, la variante **sin precios** para el depósito.
-4. **Alerta de stock mínimo en dashboard**: el campo `stock_min` ya existe en productos (implementado 1 jun). Falta: indicador en dashboard + lista de "reponer".
-5. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias.
-6. **Backups externos automáticos**: rclone a B2/S3/Drive.
-7. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`.
-8. **Decisión sobre `plain_password`**: eliminar el campo de la DB. Para mostrar la pass al admin al crear usuario, devolverla solo en la respuesta JSON de ese POST (sin persistir).
-9. **Enforcement server-side de categorías del cliente en el catálogo PDF** (opcional): en `POST /api/admin/catalog/pdf`, cuando `priceConfig.type==="client"`, intersectar/forzar `categoryIds` con las categorías permitidas del cliente (`user_category_access`), para que el PDF respete sus categorías aunque el front mande "todas". El front ya lo hereda; esto es defensa extra contra JS cacheado.
+1. **🟡 Hardening del informe del 27 may**: ~~rate limit login~~ y ~~path traversal~~ (9 jun), ~~validación de categorías en POST /api/orders~~ (7 ago). Queda solo la **race condition de `nextBudgetNumber`**, que el 7 ago se determinó que **no puede ocurrir hoy**: `app.post("/api/budgets")` no es `async`, `better-sqlite3` es síncrono y Node single-threaded → no hay yield entre el SELECT del último número y el INSERT. Solo se vuelve real con **más de una réplica** compartiendo el SQLite. Si algún día se escala horizontalmente, mover `nextBudgetNumber()` dentro de la transacción + retry ante violación del UNIQUE.
+2. **Enforcement server-side de categorías del cliente en el catálogo PDF**: `POST /api/admin/catalog/pdf` (server.js:9320) NO llama a `getUserAllowedCategoryIds` — cuando `priceConfig.type==="client"` habría que intersectar `categoryIds` con las categorías permitidas del cliente. El front ya lo hereda; esto es defensa extra contra JS cacheado.
+3. **Decisión sobre `plain_password`**: sigue en la DB (10 referencias en server.js). Eliminar el campo y, para mostrar la pass al admin al crear usuario, devolverla solo en la respuesta JSON de ese POST (sin persistir).
+4. **Remito PDF sin precios para depósito**: el remito PDF **con** precios ya existe (`buildRemitoPdf`, server.js:9033). Falta la variante sin importes — sería un query param en `GET /api/admin/orders/:id/pdf` (hoy no acepta ninguno).
+5. **Agendar `scripts/debt-reminder.js`**: el script existe y tiene `getDebtors()`, pero **no está en los `scripts` de package.json** ni agendado en ningún lado. Falta el `npm run` + la tarea programada.
+6. **Partir `admin.js` / `server.js`** (deuda técnica, medida por Graphify el 7 ago): cohesión 0.038 en `admin.js`, 0.059 en `api`, 0.066 en `app.js`. Las 50 comunidades del grafo son el mapa de corte. **Ojo**: no es mover texto — `admin.js` es UN IIFE gigante con closure compartido (`state`, `els`, `api()`), así que hay que resolver cómo se comunican los módulos, el orden de los `<script>`, `PRECACHE_URLS` del SW y el cache busting. Conviene un piloto con un módulo aislado (Inflación o Gastos) antes de tocar el resto.
+7. **Containerización** (alternativa a Railway): Dockerfile multi-stage, `docker-compose.yml` con Caddy + N instancias. Verificado 7 ago: no hay Dockerfile ni docker-compose en el repo.
+8. **Backups externos automáticos**: rclone a B2/S3/Drive. Verificado 7 ago: sin implementar.
+9. **Branding configurable por instancia**: logo + color por cliente en tabla `settings`. Verificado 7 ago: sin implementar (no hay `app_logo` / `brand_color` / `logo_url`).
 
-**Mejoras de Cuentas corrientes ("lo otro" que Sergio dejó para después — propuestas el 6 jun tras el rediseño):**
+**Ya hechos — verificados contra el código el 7 agosto 2026** (estaban listados como pendientes por error; no volver a planificarlos):
 
-10. **Límite de crédito por cliente**: campo nuevo en `users` (ej: `credit_limit`), con alerta visual en la fila de Cuentas (y opcionalmente en el carrito/pedido) cuando la deuda supera el límite.
-11. **Estado de cuenta PDF por cliente**: documento descargable/enviable por WhatsApp con el detalle de movimientos y el saldo. Reutiliza la infra del catálogo PDF (pdfkit). Botón en el detalle expandible de la fila.
-12. **Recordatorio automático de cobranza**: scheduled task diario que liste por la mañana los deudores con +30 días (usar el `days_overdue` que ya devuelve `/api/admin/accounts`).
-13. **Gráfico de evolución de la deuda total** mes a mes en el Dashboard (Chart.js).
+- ~~Cuenta corriente con proveedores~~ → tabla `supplier_movements` (server.js:323) + débito por compra + pagos.
+- ~~Remito PDF por entrega~~ → `buildRemitoPdf()` (9033) + `GET /api/admin/orders/:id/pdf` (9254). Queda solo la variante sin precios (ítem 4).
+- ~~Alerta de stock mínimo en dashboard~~ → `low_stock` en el dashboard (5552) y `stock_bajo` (7859), más la pestaña **Reposición** completa (2 ago).
+- ~~Límite de crédito por cliente~~ → `credit_limit` (9 referencias en server.js).
+- ~~Estado de cuenta PDF por cliente~~ → `GET /api/admin/accounts/:userId/pdf` (8491).
+- ~~Recordatorio automático de cobranza~~ → `scripts/debt-reminder.js` escrito. Falta solo agendarlo (ítem 5).
+- ~~Gráfico de evolución de la deuda total~~ → `GET /api/admin/dashboard/debt-history` (10877) + render en admin.js.
+- ~~Rate limit login~~ y ~~path traversal `loadProductImage`~~ → hechos el 9 jun.
+
+**Método**: esta verificación se hizo con greps puntuales sobre `server.js` / `admin.js` / `package.json`. Si un ítem vuelve a quedar dudoso, chequearlo contra el código antes de planificar — la lista había acumulado 7 ítems ya implementados.
 
 ### Objetivo de negocio
 Vender Maxaria como SaaS llave en mano a distribuidoras mayoristas chicas en Concepción del Uruguay (Entre Ríos). Modelo: setup inicial 150–250k ARS + mensualidad 25–45k ARS por cliente. Meta inicial: 3 clientes pagos para cubrir suscripciones y dejar margen.

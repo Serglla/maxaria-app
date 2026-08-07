@@ -3021,9 +3021,16 @@ app.post("/api/orders", requireLogin, (req, res) => {
   // (precio_<base_level>) como snapshot del "costo" del vendedor para ese item.
   const cfg = getEffectivePriceConfig(orderUserId, priceLevel);
   const getProd = db.prepare(
-    "SELECT id, code, name, " + cfg.column + " AS base_price, stock" +
+    "SELECT id, code, name, category_id, " + cfg.column + " AS base_price, stock" +
     "  FROM products WHERE id = ? AND active = 1"
   );
+
+  // Categorias permitidas del cliente destino (null = sin restriccion).
+  // El catalogo ya las filtra en /api/products, pero un POST directo a la API
+  // podria mandar product_id de una categoria no habilitada: se valida aca
+  // tambien. Para vendedor, el par (orderUserId, priceLevel) es el del CLIENTE
+  // atendido, igual que en /api/products.
+  const allowedCats = getUserAllowedCategoryIds(orderUserId, priceLevel);
 
   const lines = [];
   let total = 0;
@@ -3033,6 +3040,10 @@ app.post("/api/orders", requireLogin, (req, res) => {
     if (!id || !qty) continue;
     const p = getProd.get(id);
     if (!p || p.stock <= 0) continue;
+    // Producto fuera de las categorias habilitadas para este cliente: se ignora
+    // (mismo criterio que sin stock). Si no queda ninguna linea, el endpoint
+    // responde 400 "Ninguno de los productos del carrito esta disponible".
+    if (allowedCats && !allowedCats.has(p.category_id)) continue;
     const unitPrice = computeEffectivePrice(p.base_price, cfg);
     const subtotal = round2(unitPrice * qty);
     // Si el cliente tenia lista personalizada, el "costo" del vendedor es el
