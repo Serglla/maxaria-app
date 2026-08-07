@@ -6291,14 +6291,16 @@
         (delBtn ? '<div class="order-head-right">' + delBtn + "</div>" : "") +
       "</div>" +
       // Barra de acciones al pie (todo en una sola línea, sin expandir):
-      // monto + Ver (abre el modal de detalle, donde se puede editar) + Compartir +
-      // Imprimir a la izquierda; a la derecha los botones del circuito.
+      // monto + Ver (abre el modal de detalle) + los tres documentos a la izquierda;
+      // a la derecha los botones del circuito. Los documentos viven SOLO acá (decision
+      // de Sergio, 7 ago): abajo, en el detalle, queda unicamente Editar.
       '<div class="order-actions-bar">' +
         '<div class="oab-left">' +
           '<span class="order-total">' + totalLabel + "</span>" +
           '<button type="button" class="btn btn-small oc-edit" data-id="' + o.id + '">👁 Ver</button>' +
-          '<button type="button" class="btn btn-small oc-share" data-id="' + o.id + '">📤 Compartir remito</button>' +
-          '<button type="button" class="btn btn-small oc-print" data-id="' + o.id + '">🖨 Imprimir remito</button>' +
+          '<button type="button" class="btn btn-small oc-print" data-id="' + o.id + '" title="Productos y cantidades, sin importes, con casillero de control y firmas">🖨 Imprimir remito</button>' +
+          '<button type="button" class="btn btn-small oc-share" data-id="' + o.id + '" title="El mismo remito en PDF, para descargar o mandar por WhatsApp">📤 Compartir remito</button>' +
+          '<button type="button" class="btn btn-small oc-share-full" data-id="' + o.id + '" title="PDF del pedido con precios y total">📤 Compartir</button>' +
         "</div>" +
         '<div class="oab-right">' +
           pickBtn +
@@ -6402,14 +6404,12 @@
             '</strong> · cobrado ' + fmtPrice(amountPaid) + "</div>"
         : '<div class="order-balance order-balance-ok">💳 Pedido saldado · cobrado ' + fmtPrice(amountPaid) + "</div>";
     }
-    // Acciones: editar items (solo estados pre-entrega), registrar cobro (si debe),
-    // imprimir remito y compartir.
+    // Acciones del detalle: solo Editar (estados pre-entrega) y Registrar cobro (si
+    // debe). Los tres botones de documentos (imprimir/compartir) estan arriba, en la
+    // barra de la tarjeta, para no repetirlos.
     var actionsRow = '<div class="order-items-actions">' +
-      (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar items</button>' : "") +
+      (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar</button>' : "") +
       (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
-      '<button type="button" class="btn btn-small order-print-dep" title="Productos y cantidades, sin importes, con casillero de control y firmas">🖨 Imprimir remito</button>' +
-      '<button type="button" class="btn btn-small order-remito-dep" title="El mismo remito en PDF, para descargar o mandar por WhatsApp">📤 Compartir remito</button>' +
-      '<button type="button" class="btn btn-small order-share" title="PDF del pedido con precios y total">📤 Compartir</button>' +
       "</div>";
     var itemsHtml = '<div class="order-items-box">' + itemsTable + balanceHtml + actionsRow + "</div>";
 
@@ -6652,49 +6652,8 @@
       });
     }
 
-    // El remito del pedido es SIEMPRE el que va sin importes (decision de Sergio,
-    // 7 ago): un solo documento para armado y para entrega. La variante con
-    // precios sigue existiendo en el server (sin ?precios=0) pero no se usa en la UI.
-    var printDepBtn = detailEl.querySelector(".order-print-dep");
-    if (printDepBtn) {
-      printDepBtn.addEventListener("click", function() { printOrderRemito(order, true); });
-    }
-
-    var remDepBtn = detailEl.querySelector(".order-remito-dep");
-    if (remDepBtn) {
-      remDepBtn.addEventListener("click", async function() {
-        var clientName = order.full_name || order.username || "Pedido";
-        var dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
-        var fileName = clientName + " " + dateSlug + " - remito.pdf";
-        remDepBtn.disabled = true;
-        remDepBtn.textContent = "…";
-        try {
-          await shareDocPdf("/api/admin/orders/" + order.id + "/pdf?precios=0", fileName);
-        } finally {
-          remDepBtn.disabled = false;
-          remDepBtn.textContent = "📤 Compartir remito";
-        }
-      });
-    }
-
-    // "Compartir" a secas: el PDF del pedido CON precios y total (sin ?precios=0).
-    // Es el que se le manda al cliente; el de arriba es el remito para armar/entregar.
-    var shareBtn = detailEl.querySelector(".order-share");
-    if (shareBtn) {
-      shareBtn.addEventListener("click", async function() {
-        var clientName = order.full_name || order.username || "Pedido";
-        var dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
-        var fileName = clientName + " " + dateSlug + ".pdf";
-        shareBtn.disabled = true;
-        shareBtn.textContent = "…";
-        try {
-          await shareDocPdf("/api/admin/orders/" + order.id + "/pdf", fileName);
-        } finally {
-          shareBtn.disabled = false;
-          shareBtn.textContent = "📤 Compartir";
-        }
-      });
-    }
+    // Los botones de documentos (Imprimir remito / Compartir remito / Compartir) ya
+    // no viven en el detalle: estan arriba, en la barra de la tarjeta (wireOrderCards).
   }
 
   // Imprime el remito del pedido: productos y cantidades, con casillero de control
@@ -7503,6 +7462,29 @@
           } finally {
             ocShareBtn.disabled = false;
             ocShareBtn.textContent = orig;
+          }
+        });
+      }
+
+      // "Compartir" a secas: el PDF del pedido CON precios y total (sin ?precios=0).
+      // Es el que se le manda al cliente; el de al lado es el remito para armar/entregar.
+      const ocShareFullBtn = card.querySelector(".oc-share-full");
+      if (ocShareFullBtn) {
+        ocShareFullBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const id = Number(ocShareFullBtn.dataset.id);
+          const o = list.find((x) => x.id === id) || {};
+          const clientName = o.full_name || o.username || "Pedido";
+          const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+          const fileName = clientName + " " + dateSlug + ".pdf";
+          ocShareFullBtn.disabled = true;
+          const orig = ocShareFullBtn.textContent;
+          ocShareFullBtn.textContent = "…";
+          try {
+            await shareDocPdf("/api/admin/orders/" + id + "/pdf", fileName);
+          } finally {
+            ocShareFullBtn.disabled = false;
+            ocShareFullBtn.textContent = orig;
           }
         });
       }
