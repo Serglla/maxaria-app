@@ -4201,14 +4201,21 @@
       els.adminsTbody.innerHTML = '<tr><td colspan="5" class="muted">Sin administradores</td></tr>';
       return;
     }
+    const meId = Number((state.me && state.me.id) || 0);
     els.adminsTbody.innerHTML = admins.map((a) => {
       if (a.is_superadmin) {
+        // El superadmin no se puede resetear desde acá (es a propósito), pero si
+        // la fila es la del usuario logueado le ofrecemos cambiar su propia clave.
+        const passCell = Number(a.id) === meId
+          ? '<td><button class="btn btn-small" data-act="mypass" type="button" ' +
+              'title="Cambiar mi contraseña">🔑 Clave</button></td>'
+          : '<td class="muted small">—</td>';
         return '<tr data-id="' + a.id + '">' +
           '<td>' + escapeHtml(a.username) + ' <span class="vend-badge">Superadmin</span></td>' +
           '<td>' + escapeHtml(a.full_name || "—") + '</td>' +
           '<td class="muted">Acceso total</td>' +
           '<td>' + (a.active ? "Sí" : "No") + '</td>' +
-          '<td class="muted small">—</td>' +
+          passCell +
         '</tr>';
       }
       const secs = sectionLabels(a.sections);
@@ -4233,6 +4240,7 @@
       const id = Number(btn.dataset.id);
       if (btn.dataset.act === "sections") openAdminSectionsModal(id);
       if (btn.dataset.act === "reset") openAdminResetModal(id, btn.dataset.username);
+      if (btn.dataset.act === "mypass") openMypassModal();
     });
     els.adminsTbody.addEventListener("change", async (e) => {
       const cb = e.target.closest('input[data-act="active"]');
@@ -12725,8 +12733,9 @@
   // ---------- cambiar mi contraseña ----------
   // Sirve para cualquier nivel que entre al panel, incluido el superadmin (que
   // a propósito no se puede resetear desde la pestaña Administradores).
+  // El botón vive en la fila del superadmin de la pestaña Administradores
+  // (data-act="mypass"), no en el topbar.
   const mypassEls = {
-    btn: document.getElementById("mypass-btn"),
     modal: document.getElementById("mypass-modal"),
     form: document.getElementById("mypass-form"),
     who: document.getElementById("mypass-who"),
@@ -12739,25 +12748,28 @@
     mypassEls.form.querySelectorAll("input[data-pass]").forEach((i) => { i.type = t; });
   }
 
-  if (mypassEls.btn && mypassEls.modal && mypassEls.form) {
+  // Declaración (no const) para que quede hoisteada: la llama el handler de la
+  // tabla de Administradores, que está definido más arriba en el archivo.
+  function openMypassModal() {
+    if (!mypassEls.modal || !mypassEls.form) return;
+    mypassEls.form.reset();
+    if (mypassEls.show) mypassEls.show.checked = false;
+    mypassSetType("password");
+    mypassEls.msg.textContent = "";
+    mypassEls.msg.className = "config-msg";
+    const u = state.me || {};
+    mypassEls.who.textContent = u.username
+      ? "Usuario: " + u.username + (u.fullName ? " · " + u.fullName : "")
+      : "";
+    mypassEls.modal.hidden = false;
+    const first = mypassEls.form.querySelector('input[name="current_password"]');
+    if (first) setTimeout(() => first.focus(), 50);
+  }
+
+  if (mypassEls.modal && mypassEls.form) {
     mypassEls.form
       .querySelectorAll('input[type="password"]')
       .forEach((i) => { i.dataset.pass = "1"; });
-
-    mypassEls.btn.addEventListener("click", () => {
-      mypassEls.form.reset();
-      if (mypassEls.show) mypassEls.show.checked = false;
-      mypassSetType("password");
-      mypassEls.msg.textContent = "";
-      mypassEls.msg.className = "config-msg";
-      const u = state.me || {};
-      mypassEls.who.textContent = u.username
-        ? "Usuario: " + u.username + (u.fullName ? " · " + u.fullName : "")
-        : "";
-      mypassEls.modal.hidden = false;
-      const first = mypassEls.form.querySelector('input[name="current_password"]');
-      if (first) setTimeout(() => first.focus(), 50);
-    });
 
     if (mypassEls.show) {
       mypassEls.show.addEventListener("change", () => {
