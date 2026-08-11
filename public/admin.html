@@ -3130,6 +3130,14 @@
         </label>
         <p class="muted" id="catalog-client-hint" style="font-size:12px;margin-top:2px">Si elegís un cliente, el catálogo usa automáticamente su lista de precios.</p>
 
+        <div style="margin-top:10px;display:flex;align-items:flex-start;gap:8px">
+          <input type="checkbox" id="catalog-with-prices" checked style="width:16px;height:16px;margin-top:2px;flex-shrink:0">
+          <div>
+            <div style="font-weight:500;font-size:14px;cursor:pointer" onclick="document.getElementById('catalog-with-prices').click()">Incluir precios</div>
+            <div class="muted" style="font-size:12px;margin-top:2px">Destildá para generar solo el listado de productos, sin importes (con o sin imágenes).</div>
+          </div>
+        </div>
+
         <div id="catalog-price-wrap">
           <label>Lista de precios
             <select id="catalog-price-select" name="price">
@@ -3164,7 +3172,7 @@
           </div>
         </div>
 
-        <div style="margin-top:10px;display:flex;align-items:flex-start;gap:8px">
+        <div id="catalog-changes-wrap" style="margin-top:10px;display:flex;align-items:flex-start;gap:8px">
           <input type="checkbox" id="catalog-include-changes" style="width:16px;height:16px;margin-top:2px;flex-shrink:0">
           <div>
             <div style="font-weight:500;font-size:14px;cursor:pointer" onclick="document.getElementById('catalog-include-changes').click()">Incluir últimos cambios de precio al inicio del catálogo</div>
@@ -3861,6 +3869,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260811a"></script>
+  <script src="/js/admin.js?v=20260811b"></script>
 </body>
 </html>

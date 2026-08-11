@@ -495,6 +495,8 @@
     catalogCatsAll: document.getElementById("catalog-cats-all"),
     catalogCatsNone: document.getElementById("catalog-cats-none"),
     catalogWithImages: document.getElementById("catalog-with-images"),
+    catalogWithPrices: document.getElementById("catalog-with-prices"),
+    catalogChangesWrap: document.getElementById("catalog-changes-wrap"),
     catalogIncludeChanges: document.getElementById("catalog-include-changes"),
     catalogMsg: document.getElementById("catalog-msg"),
     catalogGenerateBtn: document.getElementById("catalog-generate-btn"),
@@ -12898,9 +12900,19 @@
     const sel = els.catalogClientSelect;
     if (!sel) return;
     const hasClient = !!sel.value;
-    if (els.catalogPriceWrap) els.catalogPriceWrap.style.display = hasClient ? "none" : "";
+    // Sin precios no hay lista que elegir ni cambios de precio que adjuntar.
+    const withPrices = els.catalogWithPrices ? els.catalogWithPrices.checked : true;
+    if (els.catalogPriceWrap) {
+      els.catalogPriceWrap.style.display = (hasClient || !withPrices) ? "none" : "";
+    }
+    if (els.catalogChangesWrap) {
+      els.catalogChangesWrap.style.display = withPrices ? "" : "none";
+    }
     if (els.catalogClientHint) {
-      if (hasClient) {
+      if (!withPrices) {
+        els.catalogClientHint.textContent =
+          "Sin precios: el cliente solo define qué categorías se incluyen.";
+      } else if (hasClient) {
         const txt = sel.options[sel.selectedIndex].textContent;
         const after = txt.indexOf("—") >= 0 ? txt.slice(txt.indexOf("—") + 1).trim() : "";
         els.catalogClientHint.textContent = "Se usará la lista del cliente" + (after ? ": " + after : "") + ".";
@@ -12936,6 +12948,10 @@
       syncCatalogClientUI();
       applyCatalogClientCategories(Number(els.catalogClientSelect.value) || 0);
     });
+  }
+
+  if (els.catalogWithPrices) {
+    els.catalogWithPrices.addEventListener("change", syncCatalogClientUI);
   }
 
   if (els.catalogBtn) {
@@ -12977,12 +12993,14 @@
       ).map((cb) => Number(cb.dataset.catId));
       const allChecked = checkedCats.length === state.allCategories.length;
       const categoryIds = allChecked ? [] : checkedCats;
-      const includePriceChanges = els.catalogIncludeChanges ? els.catalogIncludeChanges.checked : false;
+      const withPrices = els.catalogWithPrices ? els.catalogWithPrices.checked : true;
+      const includePriceChanges = withPrices && els.catalogIncludeChanges
+        ? els.catalogIncludeChanges.checked : false;
       const withImages = els.catalogWithImages ? els.catalogWithImages.checked : true;
       const response = await fetch("/api/admin/catalog/pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ priceConfig, categoryIds, includePriceChanges, withImages }),
+        body: JSON.stringify({ priceConfig, categoryIds, includePriceChanges, withImages, withPrices }),
       });
       if (response.status === 401) { location.href = "/login"; throw new Error("Sesión expirada"); }
       if (!response.ok) {
@@ -12992,7 +13010,9 @@
       return await response.blob();
     }
 
-    const catalogFileName = () => "catalogo-" + new Date().toISOString().slice(0, 10) + ".pdf";
+    const catalogFileName = () => "catalogo" +
+      (els.catalogWithPrices && !els.catalogWithPrices.checked ? "-sin-precios" : "") +
+      "-" + new Date().toISOString().slice(0, 10) + ".pdf";
 
     // Corre la generación con feedback en el botón y pasa el blob a onBlob.
     async function runCatalogPdf(btn, busyLabel, idleLabel, onBlob) {

@@ -9389,8 +9389,11 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   const categoryIds = (Array.isArray(body.categoryIds) && body.categoryIds.length > 0)
     ? body.categoryIds.map(Number) : [];
   const targetUserId = Number(body.targetUserId) || 0;
-  const includePriceChanges = !!body.includePriceChanges;
   const withImages = body.withImages !== false; // default true
+  // Catálogo sin precios: solo el listado de productos (con o sin imágenes).
+  // Sin precios no tiene sentido adjuntar la sección de cambios de precio.
+  const withPrices = body.withPrices !== false; // default true
+  const includePriceChanges = withPrices && !!body.includePriceChanges;
 
   // Config de precios
   const lvlMap = {
@@ -9491,7 +9494,8 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   const doc = new PDFDocument({ size: "A4", margin: 0, autoFirstPage: true });
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition",
-    "attachment; filename=\"catalogo-" + new Date().toISOString().slice(0, 10) + ".pdf\"");
+    "attachment; filename=\"catalogo" + (withPrices ? "" : "-sin-precios") + "-" +
+    new Date().toISOString().slice(0, 10) + ".pdf\"");
   res.setHeader("Access-Control-Expose-Headers", "X-Whatsapp,X-Whatsapp-Name");
   if (targetWa)   res.setHeader("X-Whatsapp", targetWa);
   if (targetName) res.setHeader("X-Whatsapp-Name", Buffer.from(targetName).toString("base64"));
@@ -9712,7 +9716,8 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
      .text(appName, MX, cy, { width: UW, align: "center" });
   cy += 30;
   doc.font("Helvetica").fontSize(9).fillColor(CGRY)
-     .text("Precios: " + priceLabel + "   ·   " + hoy + "   ·   Solo productos en stock",
+     .text((withPrices ? "Precios: " + priceLabel : "Lista de productos") +
+       "   ·   " + hoy + "   ·   Solo productos en stock",
        MX, cy, { width: UW, align: "center" });
   cy += 18;
   doc.moveTo(MX, cy).lineTo(MX + UW, cy).strokeColor("#d1d5db").lineWidth(0.5).stroke();
@@ -9761,18 +9766,24 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
         const tx = cx + CPAD + ISIZ + 7;
         const tw = CW - CPAD - ISIZ - 7 - CPAD;
 
-        const nm = (p.pname || "").length > 46 ? (p.pname || "").slice(0, 44) + "…" : (p.pname || "");
+        // Sin precios el nombre puede ocupar más líneas (no hay que reservar el
+        // renglón grande del importe abajo).
+        const nmMax = withPrices ? 46 : 70;
+        const nm = (p.pname || "").length > nmMax
+          ? (p.pname || "").slice(0, nmMax - 2) + "…" : (p.pname || "");
         doc.font("Helvetica-Bold").fontSize(10).fillColor(CDRK)
-           .text(nm, tx, cardY + 8, { width: tw, lineBreak: true, height: 24 });
+           .text(nm, tx, cardY + 8, { width: tw, lineBreak: true, height: withPrices ? 24 : 38 });
         doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
-           .text("Cód: " + (p.code || "—"), tx, cardY + 33, { width: tw, lineBreak: false });
+           .text("Cód: " + (p.code || "—"), tx, cardY + (withPrices ? 33 : 47), { width: tw, lineBreak: false });
         if (p.description) {
           const ds = p.description.length > 68 ? p.description.slice(0, 66) + "…" : p.description;
           doc.font("Helvetica").fontSize(7.5).fillColor(CGRY)
-             .text(ds, tx, cardY + 45, { width: tw, lineBreak: true, height: 18 });
+             .text(ds, tx, cardY + (withPrices ? 45 : 59), { width: tw, lineBreak: true, height: 18 });
         }
-        doc.font("Helvetica-Bold").fontSize(15).fillColor(CAMT)
-           .text(fmtP(p.price), tx, cardY + CH - 23, { width: tw, lineBreak: false });
+        if (withPrices) {
+          doc.font("Helvetica-Bold").fontSize(15).fillColor(CAMT)
+             .text(fmtP(p.price), tx, cardY + CH - 23, { width: tw, lineBreak: false });
+        }
 
       } else {
         // ── Fila compacta sin imagen ────────────────────────────────────────
@@ -9782,20 +9793,27 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
            .strokeColor("#e5e7eb").lineWidth(0.4).stroke();
 
         const LP = cx + CPAD;
-        const codeW = 36, priceW = 68;
+        const codeW = 36, priceW = withPrices ? 68 : 0;
         const nameW = CW - CPAD * 2 - codeW - priceW - 10;
         const rowMid = cardY + 10;
 
         doc.font("Helvetica").fontSize(7).fillColor(CGRY)
            .text(p.code || "—", LP, rowMid, { width: codeW, lineBreak: false });
 
-        const nm2 = (p.pname || "").length > 55 ? (p.pname || "").slice(0, 53) + "…" : (p.pname || "");
+        const nmMax2 = withPrices ? 55 : 78;
+        const nm2 = (p.pname || "").length > nmMax2
+          ? (p.pname || "").slice(0, nmMax2 - 2) + "…" : (p.pname || "");
+        // ellipsis: corta por ancho real. Sin esto un nombre largo se sale de la
+        // celda y pisa el precio / la columna de al lado.
         doc.font("Helvetica-Bold").fontSize(9).fillColor(CDRK)
-           .text(nm2, LP + codeW + 5, rowMid, { width: nameW, lineBreak: false });
+           .text(nm2, LP + codeW + 5, rowMid,
+             { width: nameW, height: 11, lineBreak: false, ellipsis: true });
 
-        doc.font("Helvetica-Bold").fontSize(9.5).fillColor(CAMT)
-           .text(fmtP(p.price), cx + CW - CPAD - priceW, rowMid,
-             { width: priceW, align: "right", lineBreak: false });
+        if (withPrices) {
+          doc.font("Helvetica-Bold").fontSize(9.5).fillColor(CAMT)
+             .text(fmtP(p.price), cx + CW - CPAD - priceW, rowMid,
+               { width: priceW, align: "right", lineBreak: false });
+        }
       }
 
       pIdx++;
