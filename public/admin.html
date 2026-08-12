@@ -2217,14 +2217,16 @@
         <label>Nombre completo
           <input type="text" name="full_name" />
         </label>
-        <label>Nivel
-          <select name="level" required id="user-create-level">
-            <option value="1">Minorista</option>
-            <option value="2">Revendedor</option>
-            <option value="3">Mayorista</option>
-            <option value="4">VIP</option>
+        <label>Lista de precios
+          <select name="pricecfg" required id="user-create-price">
+            <optgroup label="Nivel base">
+              <option value="level:1">Minorista</option>
+              <option value="level:2">Revendedor</option>
+              <option value="level:3">Mayorista</option>
+              <option value="level:4">VIP</option>
+            </optgroup>
           </select>
-          <span class="muted small">Los vendedores se crean desde la pestaña Vendedores. Los admins se crean por CLI (npm run create-admin).</span>
+          <span class="muted small">Elegí un nivel base o una de tus listas personalizadas. Los vendedores se crean desde la pestaña Vendedores; los admins por CLI (npm run create-admin).</span>
         </label>
         <label>Teléfono <span class="muted">(opcional)</span>
           <input type="tel" name="phone" />
@@ -3875,6 +3877,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260811c"></script>
+  <script src="/js/admin.js?v=20260811e"></script>
 </body>
 </html>

@@ -594,6 +594,11 @@
   const PRICE_LEVEL_NAMES = {
     1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP",
   };
+  // base_level de una lista → nivel de usuario (publico/costo no son niveles de
+  // cliente, caen a minorista).
+  const PRICE_BASE_LEVEL_NUM = {
+    minorista: 1, revendedor: 2, mayorista: 3, vip: 4, publico: 1, costo: 1,
+  };
 
   // ---------- helpers ----------
   // OJO: fmtPrice vive UNA sola vez, en los helpers de formato de los modales
@@ -4079,17 +4084,32 @@
 
   // Crear usuario (solo clientes 1-4 desde aca; los vendedores se crean
   // desde su pestaña dedicada y los admins desde CLI)
-  els.userCreateBtn.addEventListener("click", () => {
+  els.userCreateBtn.addEventListener("click", async () => {
     els.userCreateForm.reset();
     els.userCreateMsg.textContent = "";
     els.userCreateModal.hidden = false;
     setTimeout(() => els.userCreateForm.querySelector('[name="username"]').focus(), 50);
+    // Mismo selector unificado que el modal de edición: niveles base + listas
+    // personalizadas (BC, Suc_Leon, etc.).
+    const sel = document.getElementById("user-create-price");
+    if (sel) {
+      await ensurePriceListsLoaded();
+      sel.innerHTML = unifiedPriceOptsHtml({ level: 1, price_list_id: null });
+    }
   });
 
   els.userCreateForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(els.userCreateForm);
-    const level = Number(fd.get("level"));
+    // El selector es uno solo: "level:N" o "list:ID". Con una lista, el nivel
+    // que se guarda es el de su nivel raíz (fallback si la lista se desactiva).
+    const cfg = decodePriceCfg(String(fd.get("pricecfg") || "level:1"));
+    let level = Number(cfg.level) || 0;
+    let priceListId = cfg.price_list_id || null;
+    if (priceListId) {
+      const pl = (state.priceLists || []).find((l) => Number(l.id) === Number(priceListId));
+      level = PRICE_BASE_LEVEL_NUM[(pl && pl.base_level) || "minorista"] || 1;
+    }
     if (![1, 2, 3, 4].includes(level)) {
       els.userCreateMsg.textContent = "Desde aca solo se pueden crear clientes (niveles 1-4).";
       els.userCreateMsg.className = "config-msg err";
@@ -4100,6 +4120,7 @@
       password: fd.get("password"),
       full_name: fd.get("full_name"),
       level: level,
+      price_list_id: priceListId,
       phone: fd.get("phone"),
       whatsapp_number: fd.get("whatsapp_number") || null,
       email: fd.get("email"),
@@ -11657,6 +11678,11 @@
     // Reparto tuyo/vendedor en vivo al tipear el monto.
     var payAmtInput = els.paymentCreateForm.querySelector('[name="amount"]');
     if (payAmtInput) payAmtInput.addEventListener("input", renderPaySplit);
+    // Al cambiar el monto, refrescar el detalle de comisión / reparto.
+    els.paymentCreateForm.addEventListener("input", (e) => {
+      if (e.target && e.target.name === "amount") renderPaySplit();
+    });
+
     els.paymentCreateForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       // Guard anti doble-clic: si ya hay un guardado en curso, ignorar.
@@ -12334,6 +12360,20 @@
 
   // Reparto del cobro actual entre vos y el vendedor ("primero lo tuyo").
   // Devuelve null si el pedido no tiene comisión de vendedor.
+  // Comisión del tercerizado que todavía NO se le acreditó al cliente. Espejo de
+  // syncRindeNetoCredit del server: la parte cubierta es proporcional a lo ya
+  // cobrado sobre el neto que el vendedor rinde.
+  function payPendingCommission() {
+    var po = state.payForOrder;
+    if (!po || !po.is_tercerizado || !(po.commission > 0)) return 0;
+    var net = Math.max(0, (po.total || 0) - (po.discount || 0) - po.commission);
+    var cash = po.cash_other || 0;
+    var covered = cash > 0
+      ? Math.min(po.commission, Math.round(po.commission * (net > 0 ? Math.min(1, cash / net) : 1)))
+      : 0;
+    return Math.max(0, po.commission - covered);
+  }
+
   function paySplit() {
     var po = state.payForOrder;
     if (!po || !(po.commission > 0)) return null;
@@ -12354,6 +12394,18 @@
     var sp = paySplit();
     if (!sp || sp.cobrado <= 0) { els.payFormSplit.hidden = true; els.payFormSplit.innerHTML = ""; return; }
     var vname = sp.vendor_name ? " (" + escapeHtml(sp.vendor_name) + ")" : "";
+    var po = state.payForOrder;
+    // Tercerizado: no hay reparto de lo que entra — el vendedor ya se quedó su
+    // parte y lo que cobrás es el neto. El resto se le acredita al cliente.
+    if (po && po.is_tercerizado) {
+      var pend = payPendingCommission();
+      els.payFormSplit.hidden = false;
+      els.payFormSplit.innerHTML =
+        'El vendedor' + vname + ' se queda su comisión: <strong>' + fmtPrice(pend) + '</strong> · ' +
+        'a tu caja entra <strong>' + fmtPrice(sp.cobrado) + '</strong>' +
+        ' <span class="muted">(se acredita igual en la cuenta del cliente, queda saldado)</span>';
+      return;
+    }
     els.payFormSplit.hidden = false;
     els.payFormSplit.innerHTML =
       'De este cobro → 🧑‍💼 Vendedor' + vname + ': <strong>' + fmtPrice(sp.vendorPart) + '</strong> · ' +
@@ -12367,7 +12419,9 @@
       id: order.id, detailEl: detailEl || null, total: Number(order.total) || 0,
       commission: Number(pf.vendor && pf.vendor.earning) || 0,
       vendor_name: (pf.vendor && pf.vendor.name) || "",
+      is_tercerizado: !!(pf.vendor && pf.vendor.is_tercerizado),
       cash_other: Number(order.cash_collected) || 0,
+      discount: Number(pf.discount) || 0,
     };
     if (els.paymentCreateForm) els.paymentCreateForm.reset();
     if (els.paymentCreateMsg) {
@@ -12386,7 +12440,13 @@
       var due = ventaCobro(Object.assign({}, order, {
         debit_total: (Number(order.balance_due) || 0) + (Number(order.amount_paid) || 0)
       })).falta;
-      if (amtInput && due > 0) setMoney(amtInput, due);
+      // Vendedor tercerizado: él le cobra al cliente y te rinde el neto, así que
+      // lo que entra a tu caja es la deuda MENOS la comisión que todavía no se
+      // acreditó. Esa parte la acredita el server al registrar el cobro, así que
+      // el cliente igual queda saldado.
+      var pend = payPendingCommission();
+      if (amtInput && due > 0) setMoney(amtInput, Math.max(0, due - pend));
+      renderPaySplit();
     });
     fillCajaSelect(document.getElementById("pay-form-caja"), null);
     setupPayDiscountUI(Number(order.total) || 0);

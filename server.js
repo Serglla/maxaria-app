@@ -4589,11 +4589,24 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
   const exists = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
   if (exists) return res.status(409).json({ error: "Ese usuario ya existe" });
 
+  // Lista de precios personalizada (opcional, solo clientes). El selector del
+  // panel es uno solo: o un nivel base, o una lista. Si viene lista, el level
+  // que se guarda es el de su nivel raíz y queda como fallback si la lista se
+  // borra o desactiva (getEffectivePriceConfig prioriza price_list_id).
+  let priceListId = null;
+  if (b.price_list_id) {
+    if (level < 1 || level > 4)
+      return res.status(400).json({ error: "Solo los clientes pueden tener lista de precios" });
+    const pl = db.prepare("SELECT id FROM price_lists WHERE id = ? AND active = 1").get(Number(b.price_list_id));
+    if (!pl) return res.status(400).json({ error: "Lista de precios no encontrada o inactiva" });
+    priceListId = pl.id;
+  }
+
   const hash = bcrypt.hashSync(password, 10);
   const r = db.prepare(
-    "INSERT INTO users (username, password_hash, plain_password, full_name, phone, whatsapp_number, email, level, active)" +
-    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)"
-  ).run(username, hash, password, fullName, phone, whatsappNumber, email, level);
+    "INSERT INTO users (username, password_hash, plain_password, full_name, phone, whatsapp_number, email, level, price_list_id, active)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"
+  ).run(username, hash, password, fullName, phone, whatsappNumber, email, level, priceListId);
 
   const user = db.prepare(
     "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
@@ -5992,6 +6005,46 @@ function syncVendorCommissionEgreso(orderId, cajaHint, registeredBy) {
   ).run(cajaId, payable, "Comisión vendedor pedido #" + orderId + " (" + vname + ")", orderId, registeredBy || null);
 }
 
+// Vendedor TERCERIZADO que "rinde neto": le cobra al cliente, se queda su
+// comisión y entrega el resto. El cliente pagó el total, así que la parte de la
+// comisión se acredita en su cuenta corriente (si no, arrastraría una deuda
+// fantasma por ese monto). No genera egreso de caja: esa plata nunca entró.
+// Idempotente: borra el crédito previo y lo recrea segun TODO lo cobrado del
+// pedido (entregas + pagos). Llamar SIEMPRE (si el pedido dejó de ser "rinde
+// neto" solo revoca), DENTRO de la transacción y DESPUÉS de insertar el cobro
+// y de guardar el descuento del pedido.
+// Devuelve null si no aplica (ahí la comisión va como egreso de caja).
+function syncRindeNetoCredit(orderId) {
+  db.prepare(
+    "DELETE FROM account_movements WHERE order_id = ? AND type = 'credit' AND description LIKE 'Comisión rendida%'"
+  ).run(orderId);
+  const order = db.prepare(
+    "SELECT id, user_id, total, discount_amount, assigned_vendedor_id, is_unified FROM orders WHERE id = ?"
+  ).get(orderId);
+  if (!order || order.is_unified || !order.assigned_vendedor_id) return null;
+  const vend = db.prepare(
+    "SELECT is_tercerizado, full_name, username FROM users WHERE id = ?"
+  ).get(order.assigned_vendedor_id);
+  if (!vend || !vend.is_tercerizado) return null;
+  const C = vendorCommissionForOrder(orderId);
+  if (C <= 0) return null;
+  const netRinde = Math.max(0, (Number(order.total) || 0) - (Number(order.discount_amount) || 0) - C);
+  const cash = cashCollectedForOrder(orderId);
+  let covered = 0;
+  if (cash > 0) {
+    const fraction = netRinde > 0 ? Math.min(1, cash / netRinde) : 1;
+    covered = Math.max(0, Math.min(Math.round(C * fraction), C));
+  }
+  if (covered > 0) {
+    const vname = (vend.full_name || vend.username) || ("Vendedor #" + order.assigned_vendedor_id);
+    db.prepare(
+      "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+      " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
+    ).run(order.user_id, covered, "Comisión rendida vendedor #" + orderId + " (" + vname + ")", orderId);
+  }
+  return { commission: C, credited: covered, net: netRinde };
+}
+
 // Registrar entrega de un pedido (admin o vendedor asignado)
 // Body: { delivered_to, efectivo_amount, transferencia_amount, notes }
 app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdmin("entregas"), (req, res) => {
@@ -6227,24 +6280,9 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
           " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
         ).run(order.user_id, cobrado, "Cobro entrega #" + id + " (" + parts.join(" + ") + ")", id);
       }
-      // Comisión rendida (solo tercerizado): el cliente ya pagó esa parte al
-      // quedársela el vendedor. Se acredita para saldar la cuenta del cliente.
-      // Se revoca siempre primero (cubre edición o pedido que dejó de ser rinde).
-      db.prepare(
-        "DELETE FROM account_movements WHERE order_id = ? AND type = 'credit' AND description LIKE 'Comisión rendida%'"
-      ).run(id);
-      if (rindeNeto && cobrado > 0) {
-        const netRinde = Math.max(0, (Number(order.total) || 0) - discountAmount - orderCommission);
-        const fraction = netRinde > 0 ? Math.min(1, cobrado / netRinde) : 1;
-        const commissionCovered = Math.max(0, Math.min(Math.round(orderCommission * fraction), orderCommission));
-        if (commissionCovered > 0) {
-          const vname = (vendorRow.full_name || vendorRow.username) || "vendedor";
-          db.prepare(
-            "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
-            " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
-          ).run(order.user_id, commissionCovered, "Comisión rendida vendedor #" + id + " (" + vname + ")", id);
-        }
-      }
+      // La "comisión rendida" del tercerizado se sincroniza al final de la
+      // transacción con syncRindeNetoCredit (necesita el descuento ya guardado
+      // y considera TODO lo cobrado del pedido, no solo esta entrega).
     }
 
     // Descuento del pedido como CRÉDITO en cuenta corriente (baja la deuda).
@@ -6285,6 +6323,9 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     // Comisión del vendedor. Tercerizado (rinde neto): el vendedor ya se la
     // quedó, no hay egreso en tu caja (limpiar cualquiera previo). Propio/admin:
     // egreso automático (la caja queda en lo tuyo).
+    // Acredita al cliente la parte que se quedó el tercerizado (o revoca el
+    // crédito si el pedido dejó de ser "rinde neto").
+    syncRindeNetoCredit(id);
     if (rindeNeto) {
       db.prepare("DELETE FROM cash_movements WHERE source = 'comision' AND related_id = ?").run(id);
     } else {
@@ -8219,8 +8260,18 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
         ).run(user_id, discountAmount, "Descuento pedido #" + orderId + " (" + dlabel + ")", orderId, paymentId);
       }
     }
-    // Egreso automático de la comisión del vendedor (la caja queda en lo tuyo).
-    if (orderId) comisionAvisoPago = syncVendorCommissionEgreso(orderId, cajaId, req.session.userId) || null;
+    // Comisión del vendedor. Tercerizado (rinde neto): cobrás el pedido menos su
+    // comisión y esa parte se le acredita al cliente para saldarlo — no hay
+    // egreso de caja porque esa plata nunca entró. Propio/admin: cobrás el total
+    // y la comisión sale como egreso automático (la caja queda en lo tuyo).
+    if (orderId) {
+      const rindePago = syncRindeNetoCredit(orderId);
+      if (rindePago) {
+        db.prepare("DELETE FROM cash_movements WHERE source = 'comision' AND related_id = ?").run(orderId);
+      } else {
+        comisionAvisoPago = syncVendorCommissionEgreso(orderId, cajaId, req.session.userId) || null;
+      }
+    }
   })();
 
   const payment = db.prepare(
@@ -8263,7 +8314,14 @@ app.delete("/api/admin/payments/:id", requireAdmin, (req, res) => {
     db.prepare("DELETE FROM cash_movements WHERE source = 'cobro' AND related_id = ?").run(id);
     db.prepare("DELETE FROM payments WHERE id = ?").run(id);
     // Recalcular la comisión del vendedor (bajó el cobrado → puede reducirse o borrarse).
-    if (payment.order_id) syncVendorCommissionEgreso(payment.order_id, null, req.session.userId);
+    if (payment.order_id) {
+      const rindeDel = syncRindeNetoCredit(payment.order_id);
+      if (rindeDel) {
+        db.prepare("DELETE FROM cash_movements WHERE source = 'comision' AND related_id = ?").run(payment.order_id);
+      } else {
+        syncVendorCommissionEgreso(payment.order_id, null, req.session.userId);
+      }
+    }
   })();
   res.json({ ok: true });
 });
