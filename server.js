@@ -11046,7 +11046,7 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
 
   // Ventas mes anterior — solo hasta el mismo dia del mes (comparable con el mes actual)
   const salesPrevMonth = db.prepare(
-    "SELECT COALESCE(SUM(total),0) AS total" +
+    "SELECT COUNT(*) AS cnt, COALESCE(SUM(total),0) AS total" +
     " FROM orders WHERE status != 'cancelado' AND COALESCE(is_unified,0)=0" +
     " AND " + localMonth("created_at") + "=? AND " + localDay("created_at") + " <= ?"
   ).get(prevMonth, prevMonthCut);
@@ -11200,7 +11200,7 @@ app.get("/api/admin/dashboard", requireAdmin, (req, res) => {
     salesToday:     { total: salesToday.total,     cnt: salesToday.cnt },
     salesWeek:      { total: salesWeek.total,      cnt: salesWeek.cnt },
     salesMonth:     { total: salesMonth.total,     cnt: salesMonth.cnt },
-    salesPrevMonth: { total: salesPrevMonth.total, days: monthDay },
+    salesPrevMonth: { total: salesPrevMonth.total, cnt: salesPrevMonth.cnt, days: monthDay },
     activeOrders,
     cobrosMonth:    { total: cobrosMonth.total, cnt: cobrosMonth.cnt },
     cobrosToday:    { total: cobrosToday.total },

@@ -1260,6 +1260,30 @@
         }
         setV("dash-sales-month-vs", vs);
       }
+      // Tickets de venta: cantidad de pedidos del mes y ticket promedio, ambos
+      // comparados contra el mes anterior HASTA EL MISMO DIA (salesPrevMonth ya
+      // viene cortado asi), para que la comparacion sea pareja.
+      {
+        const cnt = Number(d.salesMonth.cnt) || 0;
+        const prevCnt = Number(d.salesPrevMonth.cnt) || 0;
+        const pctTxt = (curr, prev) => {
+          if (!prev) return "";
+          const p = Math.round(((curr - prev) / prev) * 100);
+          return (p >= 0 ? "▲ " : "▼ ") + Math.abs(p) + "%";
+        };
+        setV("dash-orders-month", cnt);
+        const vsCnt = pctTxt(cnt, prevCnt);
+        setV("dash-orders-month-vs", prevCnt
+          ? vsCnt + " vs mes ant. (" + prevCnt + ")"
+          : "sin datos del mes anterior");
+
+        const ticket = cnt ? d.salesMonth.total / cnt : 0;
+        const prevTicket = prevCnt ? d.salesPrevMonth.total / prevCnt : 0;
+        const vsTicket = pctTxt(ticket, prevTicket);
+        setV("dash-ticket-month", cnt
+          ? "ticket prom. " + fmt(Math.round(ticket)) + (vsTicket ? " " + vsTicket : "")
+          : "");
+      }
       setV("dash-cobros-today",     fmt(d.cobrosToday.total));
       setV("dash-cobros-month",     fmt(d.cobrosMonth.total));
       setV("dash-cobros-month-cnt", d.cobrosMonth.cnt + " pago(s)");
