@@ -6590,3 +6590,35 @@ html.in-modal .ventas-wrap {
   .sc-count-lbl input { width: 100%; font-size: 16px; }
   .sc-checks { grid-template-columns: 1fr; }
 }
+
+/* ===== Vista previa del export "Planilla" (pestaña Ventas, solo superadmin) =====
+   Imita la hoja de control de Drive para que se pueda cotejar de un vistazo
+   antes de pegar: entrega en verde, debe en rojo, caja en azul. */
+.planilla-preview { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.planilla-preview th,
+.planilla-preview td { border: 1px solid #cbd5e1; padding: 3px 6px; white-space: nowrap; }
+.planilla-preview thead th { color: #0f172a; font-weight: 800; font-size: 11.5px; text-align: center; }
+.planilla-preview .pl-h0,
+.planilla-preview .pl-h1 { background: #d9ead3; }
+.planilla-preview .pl-h2 { background: #b6d7a8; }
+.planilla-preview .pl-h3 { background: #d9ead3; }
+.planilla-preview .pl-h4 { background: #b6d7a8; }
+.planilla-preview .pl-h5 { background: #93c47d; }
+.planilla-preview .pl-h6 { background: #ea9999; }
+.planilla-preview .pl-h7 { background: #6fa8dc; color: #fff; }
+.planilla-preview tbody tr:nth-child(odd) td { background: #f8fafc; }
+.planilla-preview .pl-date { color: #334155; }
+.planilla-preview .pl-cli  { font-weight: 700; color: #0f172a; }
+.planilla-preview .pl-num  { text-align: right; font-variant-numeric: tabular-nums; }
+.planilla-preview .pl-ent  { background: #e2f0d9 !important; color: #14532d; font-weight: 600; }
+.planilla-preview .pl-debe { color: #94a3b8; font-style: italic; }
+.planilla-preview .pl-caja { text-align: center; background: #dbeafe !important; font-weight: 700; color: #1e3a8a; }
+.planilla-preview .pl-nota { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.planilla-preview tfoot .pl-tot td { background: #f1f5f9; font-weight: 800; border-top: 2px solid #94a3b8; }
+
+/* Encabezados ordenables de la tabla de Ventas (mismo patrón que .acc-sort). */
+.ventas-table th.vt-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+.ventas-table th.vt-sort:hover { color: #1e3a5f; }
+.ventas-table th.vt-sort::after { content: " ⇅"; opacity: .35; font-size: 11px; }
+.ventas-table th.vt-sort.sort-asc::after  { content: " ↑"; opacity: 1; color: #1e3a5f; }
+.ventas-table th.vt-sort.sort-desc::after { content: " ↓"; opacity: 1; color: #1e3a5f; }

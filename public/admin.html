@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260807b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260819b" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -2142,14 +2142,15 @@
       <div class="admin-table-wrap">
         <table class="ventas-table" id="ventas-table">
           <thead>
+            <!-- Encabezados ordenables: click alterna asc/desc (ver .vt-sort). -->
             <tr>
-              <th>Cliente</th>
-              <th>Pedido</th>
-              <th>Entregado</th>
-              <th>Vendedor</th>
-              <th>Cobro</th>
-              <th class="num">Total</th>
-              <th class="num">Rentabilidad</th>
+              <th class="vt-sort" data-sort="client" title="Ordenar por cliente">Cliente</th>
+              <th class="vt-sort" data-sort="id" title="Ordenar por número de pedido">Pedido</th>
+              <th class="vt-sort" data-sort="date" title="Ordenar por fecha de entrega">Entregado</th>
+              <th class="vt-sort" data-sort="vendor" title="Ordenar por vendedor">Vendedor</th>
+              <th class="vt-sort" data-sort="cobro" title="Ordenar por saldo pendiente">Cobro</th>
+              <th class="num vt-sort" data-sort="total" title="Ordenar por total">Total</th>
+              <th class="num vt-sort" data-sort="rent" title="Ordenar por rentabilidad">Rentabilidad</th>
             </tr>
           </thead>
           <tbody id="ventas-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
@@ -2546,12 +2547,18 @@
       </div>
       <div style="overflow-y:auto">
         <p id="planilla-count" class="muted small" style="margin:0 0 8px"></p>
-        <textarea id="planilla-text" readonly spellcheck="false"
-          style="width:100%;height:260px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre;overflow-wrap:normal;overflow-x:auto"></textarea>
+        <!-- Vista previa: cómo van a quedar las filas una vez pegadas. -->
+        <div id="planilla-preview" style="overflow-x:auto"></div>
         <p class="muted small" style="margin:8px 0 0">
-          Columnas: FECHA · FECHA · CLIENTE · IMPORTE · NOTA · ENTREGA · <em>(DEBE vacío)</em> · CAJA.
           Pegá con Ctrl+V parado en la primera celda vacía de la planilla.
+          La columna <strong>DEBE</strong> se copia vacía para no pisar tu fórmula: acá va
+          entre paréntesis solo para que controles el número.
         </p>
+        <details style="margin-top:8px">
+          <summary class="muted small" style="cursor:pointer">Ver el texto exacto que se copia</summary>
+          <textarea id="planilla-text" readonly spellcheck="false"
+            style="width:100%;height:160px;margin-top:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre;overflow-wrap:normal;overflow-x:auto"></textarea>
+        </details>
       </div>
       <div class="admin-modal-foot" style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
         <button type="button" class="btn btn-small" id="planilla-select">Seleccionar todo</button>
@@ -3904,6 +3911,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260819d"></script>
+  <script src="/js/admin.js?v=20260819f"></script>
 </body>
 </html>

@@ -565,6 +565,10 @@
     accSortKey: "balance",
     accSortDir: "asc",
     accOnlyDebtors: false,
+    // Orden de la tabla de Ventas (click en los encabezados). El default
+    // "date/desc" es el que ya venia del server: entrega mas reciente primero.
+    ventasSortKey: "date",
+    ventasSortDir: "desc",
     // Items pendientes del formulario de nueva/editar compra
     purchaseItems: [],
     editingPurchaseId: null,
@@ -7759,12 +7763,57 @@
     }
     if (clientF) list = list.filter(function(o) { return (o.full_name || o.username || "—") === clientF; });
     if (paidF !== "all") list = list.filter(function(o) { var s = ventaCobro(o).saldado; return paidF === "saldado" ? s : !s; });
-    return list;
+    return ventasSortList(list);
+  }
+
+  // Orden por la columna elegida en el encabezado. El desempate SIEMPRE es por
+  // fecha de entrega descendente, asi dos filas con el mismo valor (dos pedidos
+  // del mismo cliente, dos saldados) quedan en un orden estable y predecible.
+  function ventasSortList(list) {
+    var key = state.ventasSortKey || "date";
+    var dir = state.ventasSortDir === "asc" ? 1 : -1;
+    var txt = function(o) { return (o.full_name || o.username || "").toLowerCase(); };
+    var vnd = function(o) { return (o.vendedor_full_name || o.vendedor_username || "").toLowerCase(); };
+    var fch = function(o) { return String(o.delivered_at || o.created_at || ""); };
+    return list.sort(function(a, b) {
+      var r = 0, av, bv;
+      if (key === "client" || key === "vendor") {
+        av = key === "client" ? txt(a) : vnd(a);
+        bv = key === "client" ? txt(b) : vnd(b);
+        // Sin vendedor va siempre al final, ordene como ordene.
+        if (key === "vendor" && (!av) !== (!bv)) return av ? -1 : 1;
+        r = av < bv ? -1 : (av > bv ? 1 : 0);
+        r = r * dir;
+      } else {
+        if (key === "id") { av = Number(a.id) || 0; bv = Number(b.id) || 0; }
+        else if (key === "cobro") { av = ventaCobro(a).falta; bv = ventaCobro(b).falta; }
+        else if (key === "total") { av = Number(a.total) || 0; bv = Number(b.total) || 0; }
+        else if (key === "rent") { av = ventaRent(a).profit; bv = ventaRent(b).profit; }
+        else { av = fch(a); bv = fch(b); r = (av < bv ? -1 : (av > bv ? 1 : 0)) * dir; }
+        if (key !== "date") r = (av - bv) * dir;
+      }
+      if (r !== 0) return r;
+      var da = fch(a), dbb = fch(b);
+      if (da !== dbb) return da < dbb ? 1 : -1; // desempate: mas reciente primero
+      return (Number(b.id) || 0) - (Number(a.id) || 0);
+    });
+  }
+
+  function updateVentasSortHeaders() {
+    var table = document.getElementById("ventas-table");
+    if (!table) return;
+    table.querySelectorAll("th.vt-sort").forEach(function(th) {
+      th.classList.remove("sort-asc", "sort-desc");
+      if (th.dataset.sort === state.ventasSortKey) {
+        th.classList.add(state.ventasSortDir === "desc" ? "sort-desc" : "sort-asc");
+      }
+    });
   }
 
   function renderVentasOrders() {
     if (!els.ventasTbody) return;
     ventasPopulateClientFilter();
+    updateVentasSortHeaders();
     var list = ventasFilteredList();
     if (els.ventasSummary) {
       var totalVendido = list.reduce(function(s, o) { return s + (Number(o.total) || 0); }, 0);
@@ -7844,27 +7893,75 @@
     return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2).replace(".", ",");
   }
 
-  function ventasPlanillaTsv() {
+  // Devuelve las filas YA armadas (array de celdas por fila), el TSV listo para
+  // pegar y el detalle por pedido. La vista previa y el texto copiado salen de
+  // la MISMA fuente, asi no pueden mostrar una cosa y pegar otra.
+  function ventasPlanillaData() {
     // Mas viejo primero: la planilla crece hacia abajo por fecha.
     var list = ventasFilteredList().slice().sort(function(a, b) {
       var da = String(a.delivered_at || a.created_at || "");
       var dbb = String(b.delivered_at || b.created_at || "");
       return da < dbb ? -1 : (da > dbb ? 1 : (a.id - b.id));
     });
-    var lines = [];
+    var rows = [];
     var lastFecha = "";
+    var totImporte = 0, totEntrega = 0, totDebe = 0;
     list.forEach(function(o) {
       var r = ventaPlanillaRow(o);
       var grupo = r.fecha !== lastFecha ? r.fecha : "";
       lastFecha = r.fecha;
-      lines.push([
-        grupo, r.fecha, r.cliente, planillaNum(r.importe), r.nota,
-        r.entrega > 0 ? planillaNum(r.entrega) : "",
-        "", // DEBE: va VACIO a proposito, lo calcula la formula de la planilla.
-        r.caja,
-      ].join("\t"));
+      totImporte += r.importe; totEntrega += r.entrega; totDebe += r.debe;
+      rows.push({
+        orderId: o.id,
+        // DEBE va VACIO a proposito: lo calcula la formula de la planilla.
+        cells: [
+          grupo, r.fecha, r.cliente, planillaNum(r.importe), r.nota,
+          r.entrega > 0 ? planillaNum(r.entrega) : "", "", r.caja,
+        ],
+        // Solo para la vista previa (no se copia).
+        debePreview: r.debe,
+      });
     });
-    return { text: lines.join("\n"), count: list.length };
+    return {
+      rows: rows,
+      count: rows.length,
+      text: rows.map(function(r) { return r.cells.join("\t"); }).join("\n"),
+      totals: { importe: totImporte, entrega: totEntrega, debe: totDebe },
+    };
+  }
+
+  var PLANILLA_HEADS = ["FECHA", "FECHA", "CLIENTE", "IMPORTE", "NOTA", "ENTREGA", "DEBE", "CAJA"];
+
+  // Vista previa con la misma pinta que la planilla de Drive: verde la entrega,
+  // rojo el debe, azul la caja. La columna DEBE se muestra en gris y entre
+  // parentesis para dejar claro que NO se copia (la calcula la formula).
+  function planillaPreviewHtml(data) {
+    var head = "<tr>" + PLANILLA_HEADS.map(function(h, i) {
+      return '<th class="pl-h pl-h' + i + '">' + h + "</th>";
+    }).join("") + "</tr>";
+    var body = data.rows.map(function(r) {
+      var c = r.cells;
+      return '<tr title="Pedido #' + r.orderId + '">' +
+        '<td class="pl-date">' + escapeHtml(c[0]) + "</td>" +
+        '<td class="pl-date">' + escapeHtml(c[1]) + "</td>" +
+        '<td class="pl-cli">' + escapeHtml(c[2]) + "</td>" +
+        '<td class="pl-num pl-imp">' + escapeHtml(c[3]) + "</td>" +
+        '<td class="pl-nota">' + escapeHtml(c[4]) + "</td>" +
+        '<td class="pl-num pl-ent">' + escapeHtml(c[5]) + "</td>" +
+        '<td class="pl-num pl-debe">' + (r.debePreview > 0 ? "(" + planillaNum(r.debePreview) + ")" : "") + "</td>" +
+        '<td class="pl-caja">' + escapeHtml(c[7]) + "</td>" +
+      "</tr>";
+    }).join("");
+    var t = data.totals;
+    var foot = '<tr class="pl-tot">' +
+      '<td colspan="3">' + data.count + (data.count === 1 ? " venta" : " ventas") + "</td>" +
+      '<td class="pl-num">' + planillaNum(t.importe) + "</td>" +
+      "<td></td>" +
+      '<td class="pl-num">' + planillaNum(t.entrega) + "</td>" +
+      '<td class="pl-num">' + (t.debe > 0 ? "(" + planillaNum(t.debe) + ")" : "") + "</td>" +
+      "<td></td></tr>";
+    return '<table class="planilla-preview"><thead>' + head + "</thead><tbody>" + body +
+      "</tbody><tfoot>" + foot + "</tfoot></table>";
   }
 
   // Copia el texto al portapapeles. Devuelve true/false, sin tirar excepcion.
@@ -7900,10 +7997,11 @@
   // ve y hace Ctrl+C. Y si no hay filas, se explica por que en vez de no pasar
   // nada (el caso tipico: el periodo de Ventas esta en "Hoy" y hoy no entregaste).
   async function copyVentasPlanilla() {
-    var out = ventasPlanillaTsv();
+    var out = ventasPlanillaData();
     var modal = document.getElementById("planilla-modal");
     var ta = document.getElementById("planilla-text");
     var info = document.getElementById("planilla-count");
+    var prev = document.getElementById("planilla-preview");
     if (!modal || !ta || !info) { // sin modal (HTML viejo cacheado): copia a secas
       if (!out.count) { showToast("No hay ventas para copiar con este filtro.", "error"); return; }
       showToast((await planillaCopyText(out.text))
@@ -7913,6 +8011,7 @@
       return;
     }
     ta.value = out.text;
+    if (prev) prev.innerHTML = out.count ? planillaPreviewHtml(out) : "";
     modal.hidden = false;
     if (!out.count) {
       var per = els.ventasRange ? els.ventasRange.options[els.ventasRange.selectedIndex].text : "";
@@ -16228,6 +16327,25 @@
     state.ventasRangeInit = true;
     loadVentasOrders();
   });
+  // Orden por columna en la tabla de Ventas. Un segundo click sobre la misma
+  // columna invierte el sentido. Los defaults por columna son los utiles: texto
+  // ascendente (A-Z) y numeros/fechas descendente (lo mas grande o reciente
+  // arriba). NO afecta al export de planilla, que siempre sale cronologico.
+  var ventasTable = document.getElementById("ventas-table");
+  if (ventasTable) {
+    ventasTable.querySelectorAll("th.vt-sort").forEach(function(th) {
+      th.addEventListener("click", function() {
+        var key = th.dataset.sort;
+        if (state.ventasSortKey === key) {
+          state.ventasSortDir = state.ventasSortDir === "asc" ? "desc" : "asc";
+        } else {
+          state.ventasSortKey = key;
+          state.ventasSortDir = (key === "client" || key === "vendor") ? "asc" : "desc";
+        }
+        renderVentasOrders();
+      });
+    });
+  }
   if (els.ventasPlanilla) els.ventasPlanilla.addEventListener("click", copyVentasPlanilla);
   // Botones del modal Planilla: copiar de nuevo y seleccionar todo a mano.
   var planillaCopyBtn = document.getElementById("planilla-copy");
