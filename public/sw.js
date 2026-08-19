@@ -10,7 +10,7 @@
  * Versionar CACHE_VERSION fuerza la invalidación de caches viejos al hacer deploy.
  */
 
-const CACHE_VERSION = "maxaria-v6";
+const CACHE_VERSION = "maxaria-v7";
 const STATIC_CACHE  = CACHE_VERSION + "-static";
 const PAGES_CACHE   = CACHE_VERSION + "-pages";
 const IMAGES_CACHE  = CACHE_VERSION + "-images";
@@ -111,12 +111,26 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 5) Resto (CSS, JS, íconos, manifest) → stale-while-revalidate
+  // 5) Código de la app (/js/*.js, /css/*.css) → NETWORK-FIRST.
+  // Antes iban por stale-while-revalidate: la primera carga después de un deploy
+  // servía la copia vieja del cache y la nueva recién se veía en la SEGUNDA
+  // recarga. Con lógica de plata (comisión del tercerizado, saldos) eso hacía
+  // que el panel mostrara números de una versión anterior del código y pareciera
+  // un descuadre. Con network-first se ve siempre lo último y el cache queda
+  // solo como fallback offline.
+  if (url.pathname.startsWith("/js/") || url.pathname.startsWith("/css/")) {
+    event.respondWith(networkFirst(req, STATIC_CACHE, false));
+    return;
+  }
+
+  // 6) Resto (íconos, manifest) → stale-while-revalidate
   event.respondWith(staleWhileRevalidate(req, STATIC_CACHE));
 });
 
 // ---------- estrategias ----------
-async function networkFirst(req, cacheName) {
+// htmlFallback: solo para navegaciones. Para assets (JS/CSS) NO tiene sentido
+// devolver la pagina "Sin conexion" en HTML: rompe el parseo del script.
+async function networkFirst(req, cacheName, htmlFallback = true) {
   const cache = await caches.open(cacheName);
   try {
     // cache: "no-store" → ignoramos el HTTP cache del navegador y vamos siempre
@@ -128,6 +142,7 @@ async function networkFirst(req, cacheName) {
   } catch {
     const cached = await cache.match(req);
     if (cached) return cached;
+    if (!htmlFallback) return Response.error();
     // Último recurso para navegaciones
     const fallback = await cache.match("/login");
     if (fallback) return fallback;

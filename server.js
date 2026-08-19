@@ -3502,7 +3502,11 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
           id: v.id,
           name: v.full_name || v.username || ("Vendedor #" + v.id),
           is_tercerizado: !!v.is_tercerizado,
-          earning: Number(vr.earning) || 0,
+          // Redondeado igual que vendorCommissionForOrder(): es el mismo numero
+          // que despues se acredita como "Comision rendida". Sin el redondeo el
+          // chip "debe rendir" mostraba medios pesos (ej. 909.816,5) que no
+          // coincidian con el credito real y parecian un descuadre.
+          earning: Math.max(0, Math.round(Number(vr.earning) || 0)),
         };
       }
     }
@@ -8408,6 +8412,79 @@ app.get("/api/admin/accounts/:userId", requireAdmin, (req, res) => {
     "  FROM account_movements WHERE user_id = ?"
   ).get(userId);
   res.json({ user: user, movements: movements, balance: balance.balance });
+});
+
+// GET /api/admin/accounts/:userId/open-orders
+// Pedidos del cliente que todavia tienen saldo (debito - creditos > 0), con la
+// info de comision del vendedor. Lo usa el modal "Registrar pago" de Cuentas:
+// si el cliente tiene UN solo pedido con deuda de un vendedor TERCERIZADO, el
+// cobro se imputa a ese pedido, porque el tercerizado le cobra al cliente y te
+// rinde el NETO (total - comision). Cobrando "a la cuenta" (sin order_id) el
+// server nunca corre syncRindeNetoCredit y al cliente le queda una deuda
+// fantasma por el monto de la comision.
+// pending_commission = la parte de la comision que TODAVIA no se le acredito al
+// cliente (espejo exacto de syncRindeNetoCredit). El monto que fisicamente
+// entra a tu caja por ese pedido es balance_due - pending_commission.
+app.get("/api/admin/accounts/:userId/open-orders", requireAdmin, (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!userId) return res.status(400).json({ error: "ID invalido" });
+  const rows = db.prepare(
+    "SELECT o.id, o.total, o.discount_amount, o.status, o.created_at," +
+    "       o.assigned_vendedor_id," +
+    "       (SELECT COALESCE(SUM(CASE WHEN am.type='debit' THEN am.amount ELSE -am.amount END),0)" +
+    "          FROM account_movements am WHERE am.order_id = o.id) AS balance_due," +
+    "       (SELECT COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END),0)" +
+    "          FROM account_movements am WHERE am.order_id = o.id) AS amount_paid" +
+    "  FROM orders o" +
+    "  WHERE o.user_id = ? AND o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
+    "  ORDER BY o.created_at ASC"
+  ).all(userId);
+
+  const out = [];
+  for (const r of rows) {
+    if ((Number(r.balance_due) || 0) <= 0.5) continue;
+    let commission = 0, vendorName = "", isTerc = false, pending = 0;
+    if (r.assigned_vendedor_id) {
+      const v = db.prepare(
+        "SELECT id, full_name, username, is_tercerizado FROM users WHERE id = ?"
+      ).get(r.assigned_vendedor_id);
+      if (v && v.is_tercerizado) {
+        isTerc = true;
+        vendorName = v.full_name || v.username || ("Vendedor #" + v.id);
+        commission = vendorCommissionForOrder(r.id);
+        if (commission > 0) {
+          // Misma formula que syncRindeNetoCredit: la parte cubierta es
+          // proporcional a lo ya cobrado sobre el neto que el vendedor rinde.
+          const netRinde = Math.max(0, (Number(r.total) || 0) - (Number(r.discount_amount) || 0) - commission);
+          const cash = cashCollectedForOrder(r.id);
+          let covered = 0;
+          if (cash > 0) {
+            const fraction = netRinde > 0 ? Math.min(1, cash / netRinde) : 1;
+            covered = Math.max(0, Math.min(Math.round(commission * fraction), commission));
+          }
+          pending = Math.max(0, commission - covered);
+        }
+      }
+    }
+    out.push({
+      id: r.id,
+      total: Number(r.total) || 0,
+      discount_amount: Number(r.discount_amount) || 0,
+      status: r.status,
+      created_at: r.created_at,
+      balance_due: Number(r.balance_due) || 0,
+      amount_paid: Number(r.amount_paid) || 0,
+      cash_collected: cashCollectedForOrder(r.id),
+      assigned_vendedor_id: r.assigned_vendedor_id || null,
+      vendor_name: vendorName,
+      is_tercerizado: isTerc,
+      commission: commission,
+      pending_commission: pending,
+      // Lo que fisicamente entra a tu caja si se salda este pedido.
+      cash_expected: Math.max(0, (Number(r.balance_due) || 0) - pending),
+    });
+  }
+  res.json(out);
 });
 
 // ===== Cuenta corriente de PROVEEDORES =====

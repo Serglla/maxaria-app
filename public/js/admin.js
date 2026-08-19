@@ -6457,9 +6457,34 @@
     var chargeableStatus = order.status === "entregado";
     var canCharge = state.isAdmin && balanceDue > 0.5 && chargeableStatus;
     if (state.isAdmin && chargeableStatus && (balanceDue > 0.5 || amountPaid > 0)) {
+      // Vendedor tercerizado: el saldo del pedido es lo que debe el CLIENTE (el
+      // bruto). Lo que entra fisicamente a tu caja es ese saldo menos la comision
+      // que el vendedor se queda; la diferencia se le acredita al cliente como
+      // "Comision rendida" al registrar el cobro. Sin esta aclaracion parece que
+      // "Debe X" y "debe rendir X - comision" se contradicen.
+      var tercNota = "";
+      var pfB = order.profitability || {};
+      if (balanceDue > 0.5 && pfB.vendor && pfB.vendor.is_tercerizado && Number(pfB.vendor.earning) > 0) {
+        var comB = Number(pfB.vendor.earning) || 0;
+        // Comision TODAVIA no acreditada (espejo de syncRindeNetoCredit): si ya
+        // hubo un cobro parcial, parte de la comision ya se le acredito.
+        var netoB = Math.max(0, (Number(order.total) || 0) - (Number(pfB.discount) || 0) - comB);
+        var cashB = Number(order.cash_collected) || 0;
+        var cubB = cashB > 0
+          ? Math.min(comB, Math.round(comB * (netoB > 0 ? Math.min(1, cashB / netoB) : 1)))
+          : 0;
+        comB = Math.max(0, comB - cubB);
+        if (comB > 0.5) {
+          var entraB = Math.max(0, balanceDue - comB);
+          tercNota = '<div class="order-balance-note muted" style="margin-top:4px;font-size:12.5px">' +
+            "Es lo que debe el cliente. " + escapeHtml(pfB.vendor.name) + " te rinde <strong>" +
+            fmtPrice(entraB) + "</strong> (se queda " + fmtPrice(comB) +
+            "); al cobrar, esa comisión se le acredita al cliente y el pedido queda saldado.</div>";
+        }
+      }
       balanceHtml = balanceDue > 0.5
         ? '<div class="order-balance order-balance-debt">💳 Saldo del pedido: <strong>Debe ' + fmtPrice(balanceDue) +
-            '</strong> · cobrado ' + fmtPrice(amountPaid) + "</div>"
+            '</strong> · cobrado ' + fmtPrice(amountPaid) + tercNota + "</div>"
         : '<div class="order-balance order-balance-ok">💳 Pedido saldado · cobrado ' + fmtPrice(amountPaid) + "</div>";
     }
     // Acciones del detalle: Editar (estados pre-entrega) y Registrar cobro (si debe).
@@ -12315,10 +12340,67 @@
       const amtInput = els.paymentCreateForm ? els.paymentCreateForm.querySelector('[name="amount"]') : null;
       attachMoneyInput(amtInput);
       if (amtInput && a && Number(a.balance) < 0) setMoney(amtInput, Math.abs(Number(a.balance)));
+      // Vendedor tercerizado: el cliente debe el BRUTO pero el vendedor te rinde
+      // el NETO (total - su comision). Si cobramos "a la cuenta" (sin order_id)
+      // el server no corre syncRindeNetoCredit y al cliente le queda una deuda
+      // fantasma por el monto de la comision. Por eso, si el cliente tiene UN
+      // solo pedido tercerizado con deuda, imputamos el cobro a ese pedido.
+      attachTercerizadoToAccountPayment(userId, amtInput);
     });
     fillCajaSelect(document.getElementById("pay-form-caja"), null);
     setupPayDiscountUI(null); // cobro general a la cuenta: sin descuento de pedido
     if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
+  }
+
+  // Busca los pedidos con deuda del cliente y, si hay exactamente uno con
+  // vendedor tercerizado y comision pendiente, convierte este cobro en un cobro
+  // imputado a ese pedido (mismo comportamiento que "Registrar cobro" desde el
+  // detalle): precarga el neto que entra a la caja y deja que el server acredite
+  // la "Comision rendida" para que el cliente quede saldado.
+  // Si hay VARIOS, no adivina: avisa para que se cobren desde cada pedido.
+  function attachTercerizadoToAccountPayment(userId, amtInput) {
+    api("/api/admin/accounts/" + userId + "/open-orders").then(function (rows) {
+      // El modal pudo cerrarse o cambiar de cliente mientras iba el fetch.
+      if (!els.paymentCreateModal || els.paymentCreateModal.hidden) return;
+      if (state.payForOrder) return; // ya es un cobro imputado a un pedido
+      if (els.payFormClient && String(els.payFormClient.value) !== String(userId)) return;
+      var terc = (rows || []).filter(function (o) {
+        return o.is_tercerizado && Number(o.pending_commission) > 0;
+      });
+      if (!terc.length) return;
+      if (terc.length > 1) {
+        if (els.paymentCreateMsg) {
+          els.paymentCreateMsg.textContent =
+            "⚠ Este cliente tiene " + terc.length + " pedidos con vendedor tercerizado (" +
+            terc.map(function (o) { return "#" + o.id; }).join(", ") +
+            "). Cobralos desde cada pedido para que se descuente la comisión: un pago general " +
+            "a la cuenta le deja una deuda fantasma.";
+          els.paymentCreateMsg.className = "config-msg err";
+        }
+        return;
+      }
+      var o = terc[0];
+      state.payForOrder = {
+        id: o.id, detailEl: null,
+        total: Number(o.total) || 0,
+        commission: Number(o.commission) || 0,
+        vendor_name: o.vendor_name || "",
+        is_tercerizado: true,
+        cash_other: Number(o.cash_collected) || 0,
+        discount: Number(o.discount_amount) || 0,
+      };
+      if (els.payFormClient) els.payFormClient.disabled = true; // el cobro es de este cliente
+      // Lo que fisicamente entra a tu caja = deuda del pedido - comision pendiente.
+      if (amtInput) setMoney(amtInput, Math.max(0, Number(o.cash_expected) || 0));
+      setupPayDiscountUI(Number(o.total) || 0);
+      if (els.paymentCreateMsg) {
+        els.paymentCreateMsg.textContent =
+          "Cobro imputado al pedido #" + o.id + " — " + (o.vendor_name || "el vendedor") +
+          " es tercerizado: te rinde el neto y la comisión se le acredita al cliente.";
+        els.paymentCreateMsg.className = "config-msg";
+      }
+      renderPaySplit();
+    }).catch(function () { /* sin datos: queda el cobro general de siempre */ });
   }
 
   // Cobro imputado a un pedido puntual. Reusa el modal de pago, precargando
