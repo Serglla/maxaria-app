@@ -7867,33 +7867,69 @@
     return { text: lines.join("\n"), count: list.length };
   }
 
+  // Copia el texto al portapapeles. Devuelve true/false, sin tirar excepcion.
+  // navigator.clipboard solo existe en contexto seguro (https o localhost); en
+  // una IP de red local por http es undefined, por eso el fallback con textarea.
+  async function planillaCopyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (_) { /* sigue al fallback */ }
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "0";
+      ta.style.left = "0";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      var ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch (_e) { return false; }
+  }
+
+  // Abre el modal con las filas listas e intenta copiarlas. El texto se muestra
+  // SIEMPRE: si el copiado automatico falla (permisos, http, iOS), el usuario lo
+  // ve y hace Ctrl+C. Y si no hay filas, se explica por que en vez de no pasar
+  // nada (el caso tipico: el periodo de Ventas esta en "Hoy" y hoy no entregaste).
   async function copyVentasPlanilla() {
     var out = ventasPlanillaTsv();
-    if (!out.count) { showToast("No hay ventas para copiar con este filtro.", "error"); return; }
-    var ok = false;
-    try {
-      await navigator.clipboard.writeText(out.text);
-      ok = true;
-    } catch (_) {
-      // Fallback para contextos sin permiso de portapapeles (http, iOS viejo).
-      try {
-        var ta = document.createElement("textarea");
-        ta.value = out.text;
-        ta.setAttribute("readonly", "");
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        ok = document.execCommand("copy");
-        document.body.removeChild(ta);
-      } catch (_e) { ok = false; }
+    var modal = document.getElementById("planilla-modal");
+    var ta = document.getElementById("planilla-text");
+    var info = document.getElementById("planilla-count");
+    if (!modal || !ta || !info) { // sin modal (HTML viejo cacheado): copia a secas
+      if (!out.count) { showToast("No hay ventas para copiar con este filtro.", "error"); return; }
+      showToast((await planillaCopyText(out.text))
+        ? "📋 " + out.count + " ventas copiadas · pegá con Ctrl+V"
+        : "No se pudo copiar. Revisá los permisos del navegador.",
+        out.count ? "ok" : "error");
+      return;
     }
-    if (ok) {
-      showToast("📋 " + out.count + (out.count === 1 ? " venta copiada" : " ventas copiadas") +
-        " · pegá en la planilla con Ctrl+V");
-    } else {
-      showToast("No se pudo copiar. Revisá los permisos del navegador.", "error");
+    ta.value = out.text;
+    modal.hidden = false;
+    if (!out.count) {
+      var per = els.ventasRange ? els.ventasRange.options[els.ventasRange.selectedIndex].text : "";
+      var desde = els.ventasFrom && els.ventasFrom.value ? els.ventasFrom.value : "";
+      var hasta = els.ventasTo && els.ventasTo.value ? els.ventasTo.value : "";
+      info.className = "small err";
+      info.textContent = "No hay ventas con el filtro actual" +
+        (per ? " (período: " + per + (desde || hasta ? " · " + desde + " → " + hasta : "") + ")" : "") +
+        ". Cambiá el período o limpiá los filtros de arriba y probá de nuevo.";
+      return;
     }
+    info.className = "muted small";
+    var ok = await planillaCopyText(out.text);
+    info.textContent = out.count + (out.count === 1 ? " venta" : " ventas") +
+      (ok ? " · ya copiadas al portapapeles, pegá con Ctrl+V."
+          : " · el navegador no dejó copiar solo: tocá “Copiar” o seleccioná el texto y hacé Ctrl+C.");
+    try { ta.focus(); ta.setSelectionRange(0, ta.value.length); } catch (_) {}
   }
 
   // Modal con el detalle de un pedido (reusa el render del circuito). Lo usa la
@@ -16193,6 +16229,22 @@
     loadVentasOrders();
   });
   if (els.ventasPlanilla) els.ventasPlanilla.addEventListener("click", copyVentasPlanilla);
+  // Botones del modal Planilla: copiar de nuevo y seleccionar todo a mano.
+  var planillaCopyBtn = document.getElementById("planilla-copy");
+  if (planillaCopyBtn) planillaCopyBtn.addEventListener("click", async () => {
+    var ta = document.getElementById("planilla-text");
+    if (!ta || !ta.value) return;
+    showToast(await planillaCopyText(ta.value)
+      ? "📋 Copiado · pegá en la planilla con Ctrl+V"
+      : "No se pudo copiar solo: seleccioná el texto y hacé Ctrl+C", "ok");
+  });
+  var planillaSelBtn = document.getElementById("planilla-select");
+  if (planillaSelBtn) planillaSelBtn.addEventListener("click", () => {
+    var ta = document.getElementById("planilla-text");
+    if (!ta) return;
+    ta.focus();
+    ta.setSelectionRange(0, ta.value.length);
+  });
   if (els.ventasClearDates) els.ventasClearDates.addEventListener("click", () => {
     if (els.ventasRange) els.ventasRange.value = "all";
     state.ventasRangeInit = true;
