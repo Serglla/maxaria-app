@@ -104,6 +104,7 @@
     ventasFrom: document.getElementById("ventas-from"),
     ventasTo: document.getElementById("ventas-to"),
     ventasClearDates: document.getElementById("ventas-clear-dates"),
+    ventasPlanilla: document.getElementById("ventas-planilla"),
     orderDetailModal: document.getElementById("order-detail-modal"),
     orderDetailBody: document.getElementById("order-detail-body"),
     orderDetailTitle: document.getElementById("order-detail-title"),
@@ -7743,9 +7744,10 @@
     return { neto: neto, cost: cost, profit: profit, margin: margin, hasCost: cost > 0 };
   }
 
-  function renderVentasOrders() {
-    if (!els.ventasTbody) return;
-    ventasPopulateClientFilter();
+  // Ventas que quedan despues de aplicar los filtros de la barra (busqueda,
+  // cliente, cobro). Extraido de renderVentasOrders para que el export de la
+  // planilla copie EXACTAMENTE las filas que se ven en pantalla.
+  function ventasFilteredList() {
     var q = (els.ventasSearch ? els.ventasSearch.value.trim().toLowerCase() : "");
     var clientF = els.ventasClient ? els.ventasClient.value : "";
     var paidF = els.ventasPaid ? els.ventasPaid.value : "all";
@@ -7757,6 +7759,13 @@
     }
     if (clientF) list = list.filter(function(o) { return (o.full_name || o.username || "—") === clientF; });
     if (paidF !== "all") list = list.filter(function(o) { var s = ventaCobro(o).saldado; return paidF === "saldado" ? s : !s; });
+    return list;
+  }
+
+  function renderVentasOrders() {
+    if (!els.ventasTbody) return;
+    ventasPopulateClientFilter();
+    var list = ventasFilteredList();
     if (els.ventasSummary) {
       var totalVendido = list.reduce(function(s, o) { return s + (Number(o.total) || 0); }, 0);
       var totalRent = list.reduce(function(s, o) { return s + ventaRent(o).profit; }, 0);
@@ -7772,6 +7781,119 @@
     els.ventasTbody.querySelectorAll(".ventas-row").forEach(function(tr) {
       tr.addEventListener("dblclick", function() { openOrderDetailModal(Number(tr.dataset.id)); });
     });
+  }
+
+  // ===== EXPORT "PLANILLA" (control paralelo en Drive) =====
+  // Arma las ventas filtradas con las columnas del bloque izquierdo de la
+  // planilla: FECHA(grupo) · FECHA · CLIENTE · IMPORTE · NOTA · ENTREGA · DEBE · CAJA
+  // Se copia como TSV: al pegar en Sheets cada tab cae en su columna sola.
+  //
+  // Criterios (calcados de como carga Sergio a mano):
+  //  - CLIENTE: en MAYUSCULAS. Si el pedido es de un vendedor TERCERIZADO, se
+  //    antepone la sigla del vendedor ("Juan Manuel" -> "JM WALTER"), porque en
+  //    la planilla esos pedidos se identifican asi.
+  //  - IMPORTE: neto (total - descuento). Para tercerizado, ademas MENOS su
+  //    comision: en la planilla se anota lo que el vendedor RINDE, no el bruto
+  //    que debe el cliente.
+  //  - ENTREGA: la plata que entro DE VERDAD (entrega ef+transf + pagos). No se
+  //    usa amount_paid porque ese incluye el credito "Comision rendida", que no
+  //    es plata. Vacio si todavia no se cobro nada (asi lo deja Sergio).
+  //  - DEBE: se copia VACIO. En la planilla esa columna es una formula
+  //    (IMPORTE - ENTREGA) y pegarle un valor la pisaria. r.debe se calcula
+  //    igual porque lo usa el toast/control, pero no se emite.
+  //  - CAJA: la caja del cobro (efectivo -> transferencia -> ultimo pago).
+  //  - La 1ra columna repite la fecha SOLO en la primera fila de cada dia.
+  // Solo lo ve el SUPERADMIN (clase .superadmin-only en el boton del HTML).
+  function ventaPlanillaRow(o) {
+    var neto = Math.max(0, (Number(o.total) || 0) - (Number(o.discount_amount) || 0));
+    var esTerc = !!o.vendedor_is_tercerizado;
+    var com = esTerc ? Math.max(0, Math.round(Number(o.vendor_commission) || 0)) : 0;
+    var importe = Math.max(0, neto - com);
+    var entrega = Math.max(0, Number(o.cash_collected) || 0);
+    // Un cobro no puede superar lo que se anota como importe (redondeos).
+    if (entrega > importe) entrega = importe;
+    var nombre = (o.full_name || o.username || "").trim().toUpperCase();
+    if (esTerc) {
+      var sigla = (o.vendedor_full_name || o.vendedor_username || "")
+        .trim().split(/\s+/).map(function(w) { return w.charAt(0); }).join("").toUpperCase();
+      if (sigla) nombre = sigla + " " + nombre;
+    }
+    return {
+      fecha: planillaFecha(o.delivered_at || o.created_at),
+      cliente: nombre,
+      importe: importe,
+      nota: String(o.notes || "").replace(/[\t\r\n]+/g, " ").trim(),
+      entrega: entrega,
+      debe: Math.max(0, importe - entrega),
+      caja: o.caja_efectivo_name || o.caja_transfer_name || o.caja_pago_name || "",
+    };
+  }
+
+  // dd/mm/aaaa a partir del timestamp UTC de la base, en hora local.
+  function planillaFecha(ts) {
+    if (!ts) return "";
+    var d = new Date(String(ts).replace(" ", "T") + (/[Zz+]/.test(String(ts)) ? "" : "Z"));
+    if (isNaN(d.getTime())) return "";
+    var p = function(n) { return (n < 10 ? "0" : "") + n; };
+    return p(d.getDate()) + "/" + p(d.getMonth() + 1) + "/" + d.getFullYear();
+  }
+
+  // Numero con coma decimal y SIN separador de miles: es lo que mejor pega en
+  // una hoja con formato es-AR (con puntos de miles, Sheets lo toma como texto).
+  function planillaNum(n) {
+    return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2).replace(".", ",");
+  }
+
+  function ventasPlanillaTsv() {
+    // Mas viejo primero: la planilla crece hacia abajo por fecha.
+    var list = ventasFilteredList().slice().sort(function(a, b) {
+      var da = String(a.delivered_at || a.created_at || "");
+      var dbb = String(b.delivered_at || b.created_at || "");
+      return da < dbb ? -1 : (da > dbb ? 1 : (a.id - b.id));
+    });
+    var lines = [];
+    var lastFecha = "";
+    list.forEach(function(o) {
+      var r = ventaPlanillaRow(o);
+      var grupo = r.fecha !== lastFecha ? r.fecha : "";
+      lastFecha = r.fecha;
+      lines.push([
+        grupo, r.fecha, r.cliente, planillaNum(r.importe), r.nota,
+        r.entrega > 0 ? planillaNum(r.entrega) : "",
+        "", // DEBE: va VACIO a proposito, lo calcula la formula de la planilla.
+        r.caja,
+      ].join("\t"));
+    });
+    return { text: lines.join("\n"), count: list.length };
+  }
+
+  async function copyVentasPlanilla() {
+    var out = ventasPlanillaTsv();
+    if (!out.count) { showToast("No hay ventas para copiar con este filtro.", "error"); return; }
+    var ok = false;
+    try {
+      await navigator.clipboard.writeText(out.text);
+      ok = true;
+    } catch (_) {
+      // Fallback para contextos sin permiso de portapapeles (http, iOS viejo).
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = out.text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch (_e) { ok = false; }
+    }
+    if (ok) {
+      showToast("📋 " + out.count + (out.count === 1 ? " venta copiada" : " ventas copiadas") +
+        " · pegá en la planilla con Ctrl+V");
+    } else {
+      showToast("No se pudo copiar. Revisá los permisos del navegador.", "error");
+    }
   }
 
   // Modal con el detalle de un pedido (reusa el render del circuito). Lo usa la
@@ -16070,6 +16192,7 @@
     state.ventasRangeInit = true;
     loadVentasOrders();
   });
+  if (els.ventasPlanilla) els.ventasPlanilla.addEventListener("click", copyVentasPlanilla);
   if (els.ventasClearDates) els.ventasClearDates.addEventListener("click", () => {
     if (els.ventasRange) els.ventasRange.value = "all";
     state.ventasRangeInit = true;

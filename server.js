@@ -3223,11 +3223,27 @@ app.get("/api/admin/ventas", requireAdmin, (req, res) => {
     "       (SELECT COALESCE(SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END),0) FROM account_movements am WHERE am.order_id = o.id) AS amount_paid," +
     // Costo del pedido al costo ACTUAL de cada producto (products.cost). Permite
     // mostrar la rentabilidad (neto - costo) directamente en la lista de Ventas.
-    "       (SELECT COALESCE(SUM(COALESCE(p.cost,0) * oi.quantity),0) FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = o.id) AS cost_total" +
+    "       (SELECT COALESCE(SUM(COALESCE(p.cost,0) * oi.quantity),0) FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = o.id) AS cost_total," +
+    // --- Campos para el export "Planilla" (pestaña Ventas) ---
+    // El control paralelo en Drive necesita: la PLATA que entro de verdad (no
+    // los creditos de cuenta corriente, que incluyen la "Comision rendida" del
+    // tercerizado), la comision del vendedor y en que caja cayo el cobro.
+    "       v.is_tercerizado AS vendedor_is_tercerizado," +
+    "       (SELECT COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+    "                                 THEN (oi.unit_price - oi.vendedor_cost_unit) * oi.quantity ELSE 0 END),0)" +
+    "          FROM order_items oi WHERE oi.order_id = o.id) AS vendor_commission," +
+    // Efectivo real del pedido = entrega (ef + transf) + pagos imputados.
+    "       (COALESCE(d.efectivo_amount,0) + COALESCE(d.transferencia_amount,0) +" +
+    "        (SELECT COALESCE(SUM(pa.amount),0) FROM payments pa WHERE pa.order_id = o.id)) AS cash_collected," +
+    "       ce.name AS caja_efectivo_name, ct.name AS caja_transfer_name," +
+    "       (SELECT ca.name FROM payments pa JOIN cash_accounts ca ON ca.id = pa.caja_id" +
+    "         WHERE pa.order_id = o.id AND pa.caja_id IS NOT NULL ORDER BY pa.id DESC LIMIT 1) AS caja_pago_name" +
     "  FROM orders o" +
     "  JOIN users u ON u.id = o.user_id" +
     "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
     "  LEFT JOIN deliveries d ON d.order_id = o.id" +
+    "  LEFT JOIN cash_accounts ce ON ce.id = d.caja_id" +
+    "  LEFT JOIN cash_accounts ct ON ct.id = d.caja_transfer_id" +
     "  WHERE " + where.join(" AND ") +
     "  ORDER BY COALESCE(d.delivered_at, o.created_at) DESC LIMIT 1000";
   const rows = db.prepare(sql).all(...params);
