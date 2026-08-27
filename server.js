@@ -6600,9 +6600,14 @@ app.get("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     "  LEFT JOIN suppliers s ON s.id = po.supplier_id WHERE po.id = ?"
   ).get(id);
   if (!purchase) return res.status(404).json({ error: "Compra no encontrada" });
+  // units_per_bulto viene del producto: lo usa la columna BULTOS del modal de
+  // compra y la exportacion al proveedor (si el producto se borro, queda 1).
   const items = db.prepare(
-    "SELECT id, product_id, product_code, product_name, quantity, unit_cost, subtotal" +
-    "  FROM purchase_items WHERE purchase_order_id = ? ORDER BY id"
+    "SELECT pi.id, pi.product_id, pi.product_code, pi.product_name, pi.quantity," +
+    "       pi.unit_cost, pi.subtotal, COALESCE(p.units_per_bulto, 1) AS units_per_bulto," +
+    "       COALESCE(p.pack_unit, 'bulto') AS pack_unit" +
+    "  FROM purchase_items pi LEFT JOIN products p ON p.id = pi.product_id" +
+    " WHERE pi.purchase_order_id = ? ORDER BY pi.id"
   ).all(id);
   res.json(Object.assign({}, purchase, { items: items }));
 });
@@ -8166,6 +8171,102 @@ app.post("/api/admin/cotizacion/pdf", requireAdmin, (req, res) => {
   buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items, notes });
 });
 
+// ===== Exportar una compra para pasarsela al proveedor =====
+// El cuerpo llega armado desde el modal de compra (asi funciona igual con una
+// compra todavia sin guardar). porBultos = cantidades en bultos (N x u/blt);
+// si no, en unidades. El PDF NO lleva precios: es el pedido al proveedor.
+app.post("/api/admin/purchases/export/pdf", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const items = Array.isArray(b.items) ? b.items.filter((it) => it && (it.product_name || it.product_code)) : [];
+  if (!items.length) return res.status(400).json({ error: "Sin productos para exportar" });
+  const appName = (db.prepare("SELECT value FROM settings WHERE key='app_name'").get() || {}).value || "Maxaria";
+  const supplierName = String(b.supplier_name || "").trim();
+  const notes = String(b.notes || "").trim().slice(0, 1000);
+  const porBultos = !!b.porBultos;
+  const date = new Date().toLocaleDateString("es-AR");
+  const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+  const safeSup = (supplierName || "Compra").replace(/[^\w\s\-áéíóúüñÁÉÍÓÚÜÑ]/g, "").trim();
+  // buildCotizacionPdf expresa la cantidad segun pack_unit + units_per_bulto:
+  // se mapea el item de la compra a esa forma (empaque = 'bulto').
+  const fmtN = (n) => {
+    const v = Math.round((Number(n) || 0) * 1000) / 1000;
+    return Number.isInteger(v) ? String(v) : String(v).replace(".", ",");
+  };
+  const pdfItems = items.map((it) => {
+    const upb = Math.max(1, Math.round(Number(it.units_per_bulto) || 1));
+    const q = Number(it.quantity) || 0;
+    let label;
+    if (!porBultos || upb <= 1) {
+      label = fmtN(q) + " un.";
+    } else {
+      const b = Math.round((q / upb) * 1000) / 1000;
+      // Bultos exactos: solo los bultos. Fraccionado: se aclaran las unidades
+      // para que el proveedor no tenga que interpretar un "2,5 bultos".
+      label = fmtN(b) + (b === 1 ? " bulto" : " bultos") + (Number.isInteger(b) ? "" : " (" + fmtN(q) + " un.)");
+    }
+    return {
+      product_code: it.product_code || "",
+      product_name: it.product_name || "",
+      quantity: q,
+      units_per_bulto: upb,
+      pack_unit: "bulto",
+      comprimidos_per_unit: null,
+      qty_label: label,
+    };
+  });
+  res.setHeader("Content-Disposition", 'attachment; filename="Pedido ' + safeSup + " " + dateSlug + '.pdf"');
+  buildCotizacionPdf(res, {
+    appName, supplierName, date, porBultos, items: pdfItems, notes,
+    docLabel: "PEDIDO AL PROVEEDOR", showSupplier: true,
+  });
+});
+
+// Misma compra en .xlsx, esta vez CON costos y total (para confirmar precios o
+// para que el proveedor la cargue en su sistema).
+app.post("/api/admin/purchases/export/xlsx", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const items = Array.isArray(b.items) ? b.items.filter((it) => it && (it.product_name || it.product_code)) : [];
+  if (!items.length) return res.status(400).json({ error: "Sin productos para exportar" });
+  let XLSX;
+  try { XLSX = require("xlsx"); }
+  catch (err) { return res.status(500).json({ error: "No se pudo generar el Excel (falta la libreria xlsx)" }); }
+  const supplierName = String(b.supplier_name || "").trim();
+  const reference = String(b.reference || "").trim();
+  const notes = String(b.notes || "").trim().slice(0, 1000);
+  const date = new Date().toLocaleDateString("es-AR");
+
+  const rows = [];
+  rows.push(["Pedido al proveedor"]);
+  rows.push(["Fecha", date]);
+  if (supplierName) rows.push(["Proveedor", supplierName]);
+  if (reference)    rows.push(["Referencia", reference]);
+  rows.push([]);
+  rows.push(["Código", "Producto", "Bultos", "Und/bulto", "Unidades", "Costo unit.", "Costo x bulto", "Subtotal"]);
+  let total = 0, totalUn = 0, totalBlt = 0;
+  items.forEach((it) => {
+    const upb = Math.max(1, Math.round(Number(it.units_per_bulto) || 1));
+    const qty = Number(it.quantity) || 0;
+    const cost = Number(it.unit_cost) || 0;
+    const bultos = Math.round((qty / upb) * 1000) / 1000;
+    const sub = Math.round(qty * cost * 100) / 100;
+    total += sub; totalUn += qty; totalBlt += bultos;
+    rows.push([it.product_code || "", it.product_name || "", bultos, upb, qty, cost, Math.round(cost * upb * 100) / 100, sub]);
+  });
+  rows.push(["", "TOTAL", Math.round(totalBlt * 1000) / 1000, "", totalUn, "", "", Math.round(total * 100) / 100]);
+  if (notes) { rows.push([]); rows.push(["Notas", notes]); }
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [{ wch: 10 }, { wch: 42 }, { wch: 9 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 13 }, { wch: 13 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Pedido");
+  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+  const safeSup = (supplierName || "Compra").replace(/[^\w\s\-áéíóúüñÁÉÍÓÚÜÑ]/g, "").trim();
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", 'attachment; filename="Pedido ' + safeSup + " " + dateSlug + '.xlsx"');
+  res.send(buf);
+});
+
 // ===== Pagos =====
 
 app.get("/api/admin/payments", requireAdmin, (req, res) => {
@@ -9362,7 +9463,7 @@ function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, 
 // ── Helper: genera PDF de un pedido de cotización (sin precios) ───────────
 // Mismo lenguaje visual que buildRemitoPdf pero pensado como pedido a un
 // proveedor: columnas N° · CÓD · PRODUCTO · CANTIDAD (en unidades o bultos).
-function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items, notes }) {
+function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items, notes, docLabel, showSupplier }) {
   const doc = new PDFDocument({ size: "A4", margin: 36, autoFirstPage: true });
   res.setHeader("Content-Type", "application/pdf");
   doc.pipe(res);
@@ -9374,7 +9475,7 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
   doc.font("Helvetica-Bold").fontSize(17).fillColor(BLU).text(appName, MX, 36);
   doc.font("Helvetica").fontSize(9).fillColor(GREY)
     .text(porBultos ? "Cantidades por empaque (caja/bulto)" : "Cantidades por unidad", MX, 58);
-  doc.font("Helvetica").fontSize(9).fillColor(GREY).text("PEDIDO DE COTIZACIÓN", MX, 36, { align: "right" });
+  doc.font("Helvetica").fontSize(9).fillColor(GREY).text(docLabel || "PEDIDO DE COTIZACIÓN", MX, 36, { align: "right" });
   doc.font("Helvetica-Bold").fontSize(14).fillColor(BLU).text(date, MX, 48, { align: "right" });
 
   // ── Línea azul superior ──
@@ -9384,9 +9485,9 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
   // ── Meta row (solo Fecha; el proveedor no se imprime: la misma cotización
   //    suele pedirse a varios proveedores) ──
   cy += 6;
-  const metaCells = [
-    { label: "Fecha", value: date },
-  ];
+  const metaCells = showSupplier && supplierName
+    ? [{ label: "Fecha", value: date }, { label: "Proveedor", value: supplierName }]
+    : [{ label: "Fecha", value: date }];
   const cellW = MW / metaCells.length;
   metaCells.forEach((cell, i) => {
     const cx = MX + i * cellW;
@@ -9424,6 +9525,10 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
     if (idx % 2 === 1) doc.rect(MX, cy, MW, ROW_H).fill("#f8fafc");
     let qty;
     const upb = Number(it.units_per_bulto) || 1;
+    if (it.qty_label) {
+      // El caller ya armo la etiqueta (compra: bultos exactos, sin redondear).
+      qty = String(it.qty_label);
+    } else {
     const q = Number(it.quantity) || 0;
     const pack = it.pack_unit || "bulto";
     // Mostrar SOLO lo que se cargó, sin aclaraciones ni equivalencias.
@@ -9437,6 +9542,7 @@ function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items
       qty = b + " " + (b === 1 ? sing : plur);
     } else {
       qty = q + " und";
+    }
     }
     doc.font("Helvetica").fontSize(9).fillColor(GREY).text(String(idx + 1), colX.num, cy + 6, { width: COL.num - 4 });
     doc.fillColor(BLACK).font("Helvetica-Bold").text(String(it.product_name || ""), colX.prod, cy + 6, { width: COL.prod - 6, ellipsis: true });

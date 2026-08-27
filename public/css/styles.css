@@ -4569,6 +4569,20 @@ label.cats-check input[type="checkbox"] {
 #pur-items-table {
   min-width: 0;
 }
+/* Con la columna BULTOS son 7 columnas: en pantallas chicas los inputs grandes
+   (bultos y cantidad) desbordan el modal. Se achican y la tabla puede scrollear
+   horizontal dentro de su seccion en vez de romper el layout. */
+.purchase-items-section { overflow-x: auto; }
+@media (max-width: 700px) {
+  #pur-items-table { font-size: 12px; }
+  #pur-items-table th, #pur-items-table td { padding: 4px 5px; }
+  #pur-items-table .pur-bultos,
+  #pur-items-table .pur-qty { width: 74px !important; font-size: 14px !important; padding: 5px 4px !important; }
+  #pur-items-table .pur-cost,
+  #pur-items-table .pur-cost-bulto { width: 68px !important; }
+  #pur-items-table .pur-upb { width: 42px !important; }
+  #pur-items-table .pur-mode { width: 96px !important; }
+}
 .pur-supplier-row {
   display: flex;
   gap: 6px;
@@ -4630,6 +4644,7 @@ label.cats-check input[type="checkbox"] {
   margin-top: 10px;
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* ====== Cuentas corrientes: badges de saldo ====== */

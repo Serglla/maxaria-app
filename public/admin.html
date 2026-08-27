@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260819b" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260827a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -2749,6 +2749,7 @@
               <tr>
                 <th>Código</th>
                 <th>Producto</th>
+                <th class="num">Bultos</th>
                 <th class="num">Cant.</th>
                 <th class="num">Costo unit.</th>
                 <th class="num">Subtotal</th>
@@ -2756,11 +2757,12 @@
               </tr>
             </thead>
             <tbody id="pur-items-tbody">
-              <tr id="pur-items-empty"><td colspan="6" class="muted">Agregá productos con el botón "+ Agregar productos".</td></tr>
+              <tr id="pur-items-empty"><td colspan="7" class="muted">Agregá productos con el botón "+ Agregar productos".</td></tr>
             </tbody>
             <tfoot>
               <tr>
-                <td colspan="4" class="num"><strong>Total</strong></td>
+                <td colspan="4" class="num" id="pur-items-bultos-total"></td>
+                <td class="num"><strong>Total</strong></td>
                 <td class="num" id="pur-items-total"><strong>$0</strong></td>
                 <td></td>
               </tr>
@@ -2770,6 +2772,8 @@
 
         <p id="purchase-create-msg" class="config-msg"></p>
         <div class="admin-modal-foot">
+          <button type="button" class="btn" id="pur-export-btn" title="Exportar la lista para pasarle al proveedor">📤 Exportar</button>
+          <span style="flex:1"></span>
           <button type="button" class="btn" data-close>Cancelar</button>
           <button type="submit" class="btn btn-primary" id="pur-submit-btn">Guardar compra</button>
         </div>
@@ -3137,6 +3141,37 @@
         <button type="button" class="btn" id="pcot-export-btn" title="Exportar lista de productos">📋 Exportar</button>
         <button type="button" class="btn" id="pcot-convert-btn" hidden title="Abrir como nueva compra">📥 → Compra</button>
         <button type="button" class="btn btn-primary" id="pcot-save-btn">Guardar cotización</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: exportar compra (para pasarle al proveedor) -->
+  <div class="admin-modal" id="pur-export-modal" hidden style="z-index:1400">
+    <div class="admin-modal-box" style="max-width:420px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
+      <h3>Exportar compra</h3>
+      <p style="margin:0 0 6px;color:#374151">Elegí el formato para pasarle al proveedor.</p>
+      <p class="muted small" id="pur-export-sub" style="margin:0 0 14px"></p>
+
+      <div style="margin-bottom:14px">
+        <div class="muted small" style="margin-bottom:6px;font-weight:600">Cantidades</div>
+        <div style="display:flex;gap:8px">
+          <label style="flex:1;display:flex;align-items:center;gap:6px;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;cursor:pointer">
+            <input type="radio" name="pur-export-qty" value="bultos" checked /> 🗃️ Bultos
+          </label>
+          <label style="flex:1;display:flex;align-items:center;gap:6px;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;cursor:pointer">
+            <input type="radio" name="pur-export-qty" value="unidades" /> 📦 Unidades
+          </label>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button type="button" class="btn btn-primary" id="pur-export-pdf-btn" style="font-size:14px;padding:10px">📄 PDF sin precios <span style="font-size:12px;opacity:.85">(pedido al proveedor)</span></button>
+        <button type="button" class="btn" id="pur-export-xlsx-btn" style="font-size:14px;padding:10px">📊 Excel (.xlsx) <span class="muted" style="font-size:12px">(con costos y total)</span></button>
+        <button type="button" class="btn" id="pur-export-wa-btn" style="font-size:14px;padding:10px">💬 Texto para WhatsApp</button>
+      </div>
+      <div class="admin-modal-foot" style="margin-top:16px">
+        <button type="button" class="btn" id="pur-export-cancel-btn">Cancelar</button>
       </div>
     </div>
   </div>
@@ -3911,6 +3946,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260819f"></script>
+  <script src="/js/admin.js?v=20260827a"></script>
 </body>
 </html>

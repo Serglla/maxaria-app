@@ -2021,3 +2021,33 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+### Columna BULTOS en compras + exportar la compra al proveedor (27 agosto 2026 — `admin.js?v=20260827a`, `styles.css?v=20260827a`)
+
+Pedido de Sergio: en el armado de una compra, una columna **bultos** que tenga en cuenta cómo viene el artículo (cuántas unidades compone el bulto y cuántos bultos se compraron), y poder **exportar la compra** para pasársela al proveedor. Decisiones (AskUserQuestion): columna BULTOS **aparte** (no un modo del selector); el und/bulto editado en la fila **se guarda en el producto**; exportar en **PDF sin precios + Excel + texto para WhatsApp**.
+
+**1. Columna BULTOS (modal Nueva/Editar compra)**
+- `admin.html`: columna nueva entre PRODUCTO y CANT. (la tabla pasa a 7 columnas; `colspan` del tbody vacío 6→7) y celda de totales `#pur-items-bultos-total` en el tfoot ("79,5 blt · 535 un.").
+- `admin.js` (`renderPurchaseItems`): la celda tiene **dos inputs vinculados** — bultos (96px, 16px negrita) y **u/blt** (54px, `products.units_per_bulto`, editable) — más una nota: `= N un` en gris, `(bulto partido)` si los bultos dan fraccionados, y **rojo `⚠ no da unidades enteras`** solo cuando la cantidad canónica no es entera (que es lo único que el guardado rechaza).
+- El item guarda **siempre** la cantidad canónica en unidades/tabletas (`it.quantity`); los bultos son una vista (`purBultosOf` = quantity / upb). Helpers nuevos: `purUpbOf`, `purBultosOf`, `purResolveUpb`, `purNormalizeItem`, `purBltNoteText/Style`, `fmtTabletasRaw` (punto decimal, va dentro de un `input[type=number]`) y **`purSyncRow`** — refresca los campos derivados de la fila **sin re-renderizar** (el re-render mientras se tipea pierde el foco; bug del teclado ya conocido) y saltea el input que tiene el foco.
+- Escribir bultos → `quantity = bultos × upb`. Escribir unidades → se recalculan los bultos. Cambiar el **u/blt mantiene los BULTOS** y recalcula las unidades (si cambió el empaque, lo que se compró fueron esos bultos).
+- **Se eliminó el modo "por caja"** del selector (quedan tableta / unidad / comprimido): la columna BULTOS lo reemplaza. `purNormalizeItem` **migra** los items que llegan en modo caja (cotización → compra, o edición) conservando `upb` y la cantidad; `purSyncCaja` se borró. El costo por caja no se perdió: bajo COSTO UNIT. hay un input **`$/blt`** (visible con upb>1) que divide por el u/blt para dejar el costo unitario canónico.
+- Validación al guardar: reemplaza la de "modo caja" — cualquier item no-comprimido con cantidad no entera o < 1 se rechaza nombrando bultos × u/blt.
+- El detalle expandible de una compra guardada también muestra la columna Bultos (`N ×upb`, o `—` si el producto es suelto).
+
+**2. El u/blt se guarda en el producto** (`purPersistUpb`, después del POST/PUT de la compra): PATCH `units_per_bulto` para cada item cuyo u/blt difiera del producto, sincroniza `state.allProducts`/`state.products` y avisa por toast. Best-effort: si un PATCH falla la compra ya quedó guardada, solo se avisa. Así la próxima compra, la cotización, la Recepción y la Reposición arrancan con el empaque correcto.
+
+**3. Exportar la compra** — botón **📤 Exportar** en el pie del modal de compra (exporta lo que hay en pantalla, sirva o no una compra ya guardada) y en el detalle expandible de cada compra. Mini-modal `#pur-export-modal` con radio **Bultos / Unidades** y 3 formatos:
+- **PDF sin precios** → `POST /api/admin/purchases/export/pdf`. Reusa `buildCotizacionPdf`, que ganó dos parámetros opcionales: `docLabel` (encabezado, acá "PEDIDO AL PROVEEDOR") y `showSupplier` (agrega la celda Proveedor al meta row — la cotización no lo imprime a propósito porque se pide a varios). El endpoint arma él mismo `qty_label` por item (campo nuevo que `buildCotizacionPdf` usa tal cual si viene): bultos exactos → "10 bultos"; fraccionado → "2,5 bultos (50 un.)" — evita el `Math.ceil` del path de cotización, que redondearía para arriba.
+- **Excel** → `POST /api/admin/purchases/export/xlsx`, con `require("xlsx")` **lazy** dentro del handler (la dependencia ya estaba en package.json pero no se cargaba en server.js). Columnas: Código · Producto · Bultos · Und/bulto · Unidades · Costo unit. · Costo x bulto · Subtotal + fila TOTAL. Este sí lleva costos.
+- **WhatsApp** → texto plano armado en el cliente, `navigator.share` en mobile; en escritorio copia al portapapeles y abre `wa.me/?text=`.
+- Ambos endpoints se llaman `/api/admin/purchases/export/...` **a propósito**: `sectionForAdminRequest` matchea por prefijo `/api/admin/purchases` → sección "compras". Con `/api/admin/purchase/...` habrían quedado sin sección.
+
+**4. `GET /api/admin/purchases/:id`** ahora hace LEFT JOIN a products y devuelve `units_per_bulto` y `pack_unit` por item (los usa la columna BULTOS al editar y la exportación desde el detalle).
+
+**CSS**: `.purchase-items-section { overflow-x:auto }` + bloque `@media (max-width:700px)` que achica los inputs de la fila (bultos/cant 74px, costos 68px, u/blt 42px, selector 96px) — con 7 columnas el modal desbordaba en mobile. `.pur-detail-actions` pasa a `flex-wrap:wrap` (ahora son 3 botones).
+
+**Verificación**: `node --check` OK en server.js y admin.js. 15 casos de la conversión bultos↔unidades en `/tmp` con node (10 blt ×10 = 100 un.; 360/12 = 30 blt; upb=1 → bultos = unidades; cambiar u/blt 10→20 mantiene los 10 bultos y da 200 un.; costo/blt 36780 ÷10 = 3678; item sin upb → suelto) — todos pasan. PDF generado en aislado con pdfkit y **revisado visualmente** (label, celda Proveedor, "2,5 bultos (50 un.)"), más una regresión del path de cotización (sin `qty_label`) que sigue OK. `renderPurchaseItems` renderizado en un harness con el CSS real y **screenshot revisado**; la migración del modo caja se verificó ahí (item con `pack_mode:"caja"` → `unidad` con upb intacto). Escritura del .xlsx probada con la lib. El server **no se puede levantar desde el mount** (`better-sqlite3` está compilado para Windows: "invalid ELF header"), así que los endpoints no se probaron por HTTP. ⚠ Al editar CSS con Python se aplanaron los CRLF de `styles.css` (es un archivo **mixto**: CRLF hasta el bloque `.planilla-preview`, LF de ahí al final) — se restauró; si se vuelve a tocar ese archivo, abrirlo en modo binario.
+
+**Pendiente**: `git add/commit/push` + deploy Railway + Ctrl+F5. Diff completo en `cambios-bultos-export.diff` (borrable).
+

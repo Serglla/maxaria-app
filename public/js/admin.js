@@ -383,6 +383,14 @@
     purProdSearch: document.getElementById("pur-prod-search"),
     purProdResults: document.getElementById("pur-prod-results"),
     purItemsTbody: document.getElementById("pur-items-tbody"),
+    purItemsBultosTotal: document.getElementById("pur-items-bultos-total"),
+    purExportBtn: document.getElementById("pur-export-btn"),
+    purExportModal: document.getElementById("pur-export-modal"),
+    purExportSub: document.getElementById("pur-export-sub"),
+    purExportPdfBtn: document.getElementById("pur-export-pdf-btn"),
+    purExportXlsxBtn: document.getElementById("pur-export-xlsx-btn"),
+    purExportWaBtn: document.getElementById("pur-export-wa-btn"),
+    purExportCancelBtn: document.getElementById("pur-export-cancel-btn"),
     purItemsEmpty: document.getElementById("pur-items-empty"),
     purItemsTotal: document.getElementById("pur-items-total"),
     purSubmitBtn: document.getElementById("pur-submit-btn"),
@@ -10242,22 +10250,38 @@
       const items = data.items || [];
       const notesHtml = data.notes ? '<p class="muted small">' + escapeHtml(data.notes) + '</p>' : '';
       const tableHtml = items.length
-        ? '<table class="pur-detail-table"><thead><tr><th>Código</th><th>Producto</th><th class="num">Cant.</th><th class="num">Costo unit.</th><th class="num">Subtotal</th></tr></thead><tbody>' +
-          items.map((it) =>
-            '<tr><td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
+        ? '<table class="pur-detail-table"><thead><tr><th>Código</th><th>Producto</th><th class="num">Bultos</th><th class="num">Cant.</th><th class="num">Costo unit.</th><th class="num">Subtotal</th></tr></thead><tbody>' +
+          items.map((it) => {
+            const upb = Math.max(1, Math.round(Number(it.units_per_bulto) || 1));
+            return '<tr><td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
             '<td>' + escapeHtml(it.product_name || "") + '</td>' +
+            '<td class="num">' + (upb > 1
+              ? fmtTabletas(Math.round((Number(it.quantity) / upb) * 100) / 100) + ' <span class="muted" style="font-size:11px">×' + upb + '</span>'
+              : '<span class="muted">—</span>') + '</td>' +
             '<td class="num">' + it.quantity + '</td>' +
             '<td class="num">' + fmtPrice(it.unit_cost) + '</td>' +
-            '<td class="num">' + fmtPrice(it.subtotal) + '</td></tr>'
-          ).join("") +
+            '<td class="num">' + fmtPrice(it.subtotal) + '</td></tr>';
+          }).join("") +
           '</tbody></table>'
         : '<p class="muted">Sin items.</p>';
       const editBtn = '<div class="pur-detail-actions">' +
         '<button type="button" class="btn btn-small pur-edit-btn" data-id="' + id + '">Editar compra</button> ' +
+        '<button type="button" class="btn btn-small pur-export-row-btn" data-id="' + id + '">📤 Exportar</button> ' +
         '<button type="button" class="btn btn-small btn-danger pur-del-btn" data-id="' + id + '">🗑 Eliminar compra</button>' +
         '</div>';
       cell.innerHTML = notesHtml + tableHtml + editBtn;
       cell.querySelector(".pur-edit-btn").addEventListener("click", () => openPurchaseEdit(id));
+      cell.querySelector(".pur-export-row-btn").addEventListener("click", () => openPurExport({
+        items: items.map((it) => ({
+          product_code: it.product_code, product_name: it.product_name,
+          quantity: it.quantity, unit_cost: it.unit_cost,
+          upb: Math.max(1, Math.round(Number(it.units_per_bulto) || 1)),
+        })),
+        supplier_name: data.supplier_name || "",
+        reference: data.reference || "",
+        notes: data.notes || "",
+        label: "Compra #" + id,
+      }));
       cell.querySelector(".pur-del-btn").addEventListener("click", async () => {
         const isRecv = Number(data.received) === 1;
         const units = (data.items || []).reduce((s, it) => s + (it.product_id ? Number(it.quantity) || 0 : 0), 0);
@@ -10300,6 +10324,9 @@
         quantity:     it.quantity,
         unit_cost:    it.unit_cost,
         subtotal:     it.subtotal,
+        // Empaque del producto para la columna BULTOS (el server lo devuelve
+        // con el JOIN a products; si el producto se borró, queda suelto).
+        upb:          Math.max(1, Math.round(Number(it.units_per_bulto) || 1)),
       }));
       if (els.purchaseCreateForm) els.purchaseCreateForm.reset();
       if (els.purchaseCreateMsg) els.purchaseCreateMsg.textContent = "";
@@ -10351,35 +10378,78 @@
   function recalcPurchaseTotal() {
     const total = state.purchaseItems.reduce((s, it) => s + it.subtotal, 0);
     if (els.purItemsTotal) els.purItemsTotal.innerHTML = '<strong>' + fmtPrice(total) + '</strong>';
+    if (els.purItemsBultosTotal) {
+      const tb = state.purchaseItems.reduce((s, it) => s + purBultosOf(it), 0);
+      const tu = state.purchaseItems.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+      els.purItemsBultosTotal.innerHTML = state.purchaseItems.length
+        ? '<span class="muted" style="font-weight:600">' + fmtTabletas(Math.round(tb * 100) / 100) +
+          ' blt · ' + fmtTabletas(tu) + ' un.</span>'
+        : "";
+    }
+  }
+
+  // ---- Empaque de compra (bultos) ----
+  // El item guarda SIEMPRE la cantidad canónica en unidades/tabletas
+  // (it.quantity). Los bultos son una vista: bultos = quantity / upb, donde upb
+  // = unidades por bulto del producto (products.units_per_bulto), editable por
+  // fila. Escribir en cualquiera de los dos campos recalcula el otro.
+  function purUpbOf(it) {
+    return Math.max(1, Math.round(Number(it && it.upb) || 1));
+  }
+  function purBultosOf(it) {
+    const upb = purUpbOf(it);
+    return Math.round(((Number(it && it.quantity) || 0) / upb) * 1000) / 1000;
+  }
+  // Toma el und/bulto del producto si el item todavía no tiene uno propio.
+  function purResolveUpb(it) {
+    if (it.upb == null) {
+      const prod = (state.allProducts || []).find((p) => p.id === it.product_id);
+      it.upb = Math.max(1, Math.round(Number(it.units_per_bulto) || Number(prod && prod.units_per_bulto) || 1));
+    }
+    it.upb = purUpbOf(it);
+    return it.upb;
+  }
+  // El modo "por caja" viejo quedó reemplazado por la columna BULTOS: se migra
+  // el item conservando su equivalencia (upb) y la cantidad ya canónica.
+  function purNormalizeItem(it) {
+    if (it.pack_mode === "caja") {
+      it.upb = Math.max(1, Math.round(Number(it.upb) || 1));
+      it.pack_mode = "unidad";
+      delete it.caja_qty; delete it.caja_cost;
+    }
+    purResolveUpb(it);
+    return it;
   }
 
   function renderPurchaseItems() {
     if (!els.purItemsTbody) return;
     if (!state.purchaseItems.length) {
-      els.purItemsTbody.innerHTML = '<tr id="pur-items-empty"><td colspan="6" class="muted">Agregá productos con el botón "+ Agregar productos".</td></tr>';
+      els.purItemsTbody.innerHTML = '<tr id="pur-items-empty"><td colspan="7" class="muted">Agregá productos con el botón "+ Agregar productos".</td></tr>';
       recalcPurchaseTotal();
       return;
     }
+    state.purchaseItems.forEach(purNormalizeItem);
     els.purItemsTbody.innerHTML = state.purchaseItems.map((it, idx) => {
       const mode    = it.pack_mode === "comprimido" ? "comprimido"
-                    : it.pack_mode === "caja"       ? "caja"
                     : it.pack_mode === "unidad"     ? "unidad" : "tableta";
       const isComp  = mode === "comprimido";
-      const isCaja  = mode === "caja";
       const cpt     = isComp ? Math.max(1, Number(it.cpt) || 1) : 1;
-      const upb     = isCaja ? Math.max(1, Number(it.upb) || 1) : 1;
-      const qtyVal  = isComp ? (Number(it.comp_qty) || 0) : isCaja ? (Number(it.caja_qty) || 0) : it.quantity;
-      const costVal = isComp ? (Number(it.comp_cost) || 0) : isCaja ? (Number(it.caja_cost) || 0) : it.unit_cost;
-      const tabIsInt = !isComp || (Number(it.comp_qty) || 0) % cpt === 0;
-      const cajaIsInt = !isCaja || Number.isInteger(Number(it.quantity));
+      const upb     = purUpbOf(it);
+      const bultos  = purBultosOf(it);
+      const qtyVal  = isComp ? (Number(it.comp_qty) || 0) : it.quantity;
+      const costVal = isComp ? (Number(it.comp_cost) || 0) : it.unit_cost;
+      const tabIsInt  = !isComp || (Number(it.comp_qty) || 0) % cpt === 0;
+      // Rojo SOLO si la cantidad no da unidades enteras (eso el guardado lo
+      // rechaza). Un bulto partido (2,5 blt × 20 = 50 un.) es válido: se avisa
+      // en gris, sin alarma.
+      const qtyIsInt  = Number.isInteger(Number(it.quantity));
+      const bltIsInt  = upb === 1 || Number.isInteger(bultos);
       const qtyTitle = isComp ? "Cantidad en comprimidos"
-                     : isCaja ? "Cantidad en cajas/bultos (acepta 2.5)"
                      : "Cantidad en " + (mode === "unidad" ? "unidades" : "tabletas (unidades)");
       const modeSel =
         '<select class="admin-input pur-mode" data-idx="' + idx + '" style="font-size:11px;padding:3px 4px;width:120px">' +
           '<option value="tableta"' + (mode === "tableta" ? " selected" : "") + '>por tableta</option>' +
           '<option value="unidad"' + (mode === "unidad" ? " selected" : "") + '>por unidad</option>' +
-          '<option value="caja"' + (isCaja ? " selected" : "") + '>por caja</option>' +
           '<option value="comprimido"' + (isComp ? " selected" : "") + '>por comprimido</option>' +
         '</select>';
       const compExtra = isComp
@@ -10389,31 +10459,90 @@
           '</div>' +
           '<div style="font-size:11px;' + (tabIsInt ? "color:#9ca3af" : "color:#dc2626;font-weight:700") + '">= ' + fmtTabletas(it.quantity) + ' tabl' + (tabIsInt ? "" : " ⚠") + '</div>'
         : "";
-      const cajaExtra = isCaja
-        ? '<div style="display:flex;align-items:center;gap:4px;justify-content:flex-end">' +
-            '<input type="number" class="cell-input cell-num pur-upb" min="1" step="1" value="' + upb + '" data-idx="' + idx + '" style="width:54px;text-align:center" title="Unidades por caja (und/bulto del producto, editable)" />' +
-            '<span style="font-size:11px;color:#9ca3af;font-weight:500">u/caja</span>' +
+
+      // ── Celda BULTOS: cuántos bultos se compraron × cuántas unidades trae ──
+      const bultosCell =
+        '<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px">' +
+          '<input type="number" class="cell-input cell-num pur-bultos" min="0" step="any" value="' + fmtTabletasRaw(bultos) + '" data-idx="' + idx + '" style="width:96px;text-align:center;font-size:16px;font-weight:600;padding:6px 8px" title="Cantidad de bultos comprados" />' +
+          '<div style="display:flex;align-items:center;gap:4px;justify-content:flex-end">' +
+            '<span style="font-size:11px;color:#9ca3af;font-weight:500">×</span>' +
+            '<input type="number" class="cell-input cell-num pur-upb" min="1" step="1" value="' + upb + '" data-idx="' + idx + '" style="width:54px;text-align:center" title="Unidades por bulto del producto (se guarda en el producto al guardar la compra)" />' +
+            '<span style="font-size:11px;color:#9ca3af;font-weight:500">u/blt</span>' +
           '</div>' +
-          '<div style="font-size:11px;' + (cajaIsInt ? "color:#9ca3af" : "color:#dc2626;font-weight:700") + '">= ' + fmtTabletas(it.quantity) + ' un' + (cajaIsInt ? "" : " ⚠") + '</div>'
+          (upb > 1
+            ? '<div class="pur-blt-note" style="font-size:11px;' + purBltNoteStyle(it) + '">' + purBltNoteText(it) + '</div>'
+            : '<div class="pur-blt-note" style="font-size:11px;color:#d1d5db">suelto</div>') +
+        '</div>';
+
+      const costBultoRow = upb > 1
+        ? '<div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:3px">' +
+            '<span style="font-size:10px;color:#9ca3af">$/blt</span>' +
+            '<input type="number" class="cell-input cell-num pur-cost-bulto" min="0" step="0.01" value="' + Math.round((Number(it.unit_cost) || 0) * upb) + '" data-idx="' + idx + '" style="width:90px" title="Costo por bulto (lo que cotiza el proveedor). Recalcula el costo unitario." />' +
+          '</div>'
         : "";
+
       return '<tr data-idx="' + idx + '">' +
         '<td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
         '<td>' + escapeHtml(it.product_name || "") + '</td>' +
+        '<td class="num">' + bultosCell + '</td>' +
         '<td class="num">' +
           '<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px">' +
             modeSel +
-            '<input type="number" class="cell-input cell-num pur-qty" ' + (isCaja ? 'min="0" step="any"' : 'min="1" step="1"') + ' value="' + qtyVal + '" data-idx="' + idx + '" style="width:120px;text-align:center;font-size:16px;font-weight:600;padding:6px 8px" title="' + qtyTitle + '" />' +
-            compExtra + cajaExtra +
+            '<input type="number" class="cell-input cell-num pur-qty" min="0" step="' + (isComp ? "1" : "any") + '" value="' + qtyVal + '" data-idx="' + idx + '" style="width:120px;text-align:center;font-size:16px;font-weight:600;padding:6px 8px' + (qtyIsInt ? "" : ";border-color:#dc2626") + '" title="' + qtyTitle + '" />' +
+            compExtra +
           '</div>' +
         '</td>' +
         '<td class="num"><input type="number" class="cell-input cell-num pur-cost" min="0" step="0.01" value="' + costVal + '" data-idx="' + idx + '" style="width:90px" />' +
-          (isComp ? '<div style="font-size:10px;color:#9ca3af">$/comp</div>' : isCaja ? '<div style="font-size:10px;color:#9ca3af">$/caja</div>' : "") +
+          (isComp ? '<div style="font-size:10px;color:#9ca3af">$/comp</div>' : "") + costBultoRow +
         '</td>' +
         '<td class="num pur-subtotal">' + fmtPrice(it.subtotal) + '</td>' +
         '<td><button type="button" class="btn btn-small pur-remove" data-idx="' + idx + '">✕</button></td>' +
       '</tr>';
     }).join("");
     recalcPurchaseTotal();
+  }
+
+  // Texto y color de la nota bajo los bultos. Rojo = el guardado lo va a
+  // rechazar (unidades no enteras). Gris = informativo (bulto partido).
+  function purBltNoteText(it) {
+    const q = Number(it.quantity) || 0;
+    if (!Number.isInteger(q)) return "= " + fmtTabletas(q) + " un ⚠ no da unidades enteras";
+    const partido = !Number.isInteger(purBultosOf(it));
+    return "= " + fmtTabletas(q) + " un" + (partido ? " (bulto partido)" : "");
+  }
+  function purBltNoteStyle(it) {
+    return Number.isInteger(Number(it.quantity)) ? "color:#9ca3af" : "color:#dc2626;font-weight:700";
+  }
+
+  // Igual que fmtTabletas pero con punto decimal: va DENTRO de un input
+  // type="number", que no acepta coma.
+  function fmtTabletasRaw(n) {
+    const v = Number(n) || 0;
+    return Number.isInteger(v) ? String(v) : String(Math.round(v * 1000) / 1000);
+  }
+
+  // Refresca los campos derivados de una fila sin re-renderizar (re-render
+  // mientras se tipea = se pierde el foco; bug conocido del teclado).
+  function purSyncRow(tr, it, skipEl) {
+    if (!tr) return;
+    const upb = purUpbOf(it);
+    const set = (sel, val) => {
+      const el = tr.querySelector(sel);
+      if (el && el !== skipEl && document.activeElement !== el) el.value = val;
+    };
+    if (it.pack_mode !== "comprimido") set(".pur-qty", fmtTabletasRaw(it.quantity));
+    set(".pur-bultos", fmtTabletasRaw(purBultosOf(it)));
+    set(".pur-cost", it.unit_cost);
+    set(".pur-cost-bulto", Math.round((Number(it.unit_cost) || 0) * upb));
+    const note = tr.querySelector(".pur-blt-note");
+    if (note && upb > 1) {
+      note.textContent = purBltNoteText(it);
+      note.style.cssText = "font-size:11px;" + purBltNoteStyle(it);
+    }
+    const qtyEl = tr.querySelector(".pur-qty");
+    if (qtyEl) qtyEl.style.borderColor = Number.isInteger(Number(it.quantity)) ? "" : "#dc2626";
+    const sub = tr.querySelector(".pur-subtotal");
+    if (sub) sub.textContent = fmtPrice(it.subtotal);
   }
 
   // Recalcula quantity/unit_cost canónicos (en tabletas) de un item en modo comprimido.
@@ -10424,28 +10553,15 @@
     it.subtotal = it.unit_cost * it.quantity;
   }
 
-  // Recalcula quantity/unit_cost canónicos de un item en modo caja (cantidad en
-  // cajas × u/caja; costo por caja ÷ u/caja).
-  function purSyncCaja(it) {
-    const upb = Math.max(1, Number(it.upb) || 1);
-    it.quantity = Math.round((Number(it.caja_qty) || 0) * upb * 100) / 100;
-    it.unit_cost = Math.round((Number(it.caja_cost) || 0) / upb);
-    it.subtotal = it.unit_cost * it.quantity;
-  }
-
   function addPurchaseItem(product, qty) {
     const addQty = Math.max(1, Math.floor(Number(qty) || 1));
     const existing = state.purchaseItems.find((it) => it.product_id === product.id);
     if (existing) {
-      // Respetar el modo del item si ya estaba en comprimido/caja.
+      // Respetar el modo del item si ya estaba en comprimido.
       if (existing.pack_mode === "comprimido") {
         const cpt = Math.max(1, Number(existing.cpt) || 1);
         existing.comp_qty = (Number(existing.comp_qty) || 0) + addQty * cpt;
         purSyncComp(existing);
-      } else if (existing.pack_mode === "caja") {
-        const upb = Math.max(1, Number(existing.upb) || 1);
-        existing.caja_qty = Math.round(((Number(existing.caja_qty) || 0) + addQty / upb) * 100) / 100;
-        purSyncCaja(existing);
       } else {
         existing.quantity += addQty;
         existing.subtotal = existing.quantity * existing.unit_cost;
@@ -10458,6 +10574,9 @@
         quantity: addQty,
         unit_cost: product.cost || 0,
         subtotal: (product.cost || 0) * addQty,
+        // Unidades por bulto del producto: es lo que traduce bultos ↔ unidades
+        // en la columna BULTOS (editable por fila).
+        upb: Math.max(1, Math.round(Number(product.units_per_bulto) || 1)),
         // Analgésicos → "tableta"; resto → "por unidad" (default por rubro).
         pack_mode: isPillCategory(product) ? "tableta" : "unidad",
       });
@@ -10471,30 +10590,42 @@
       if (idx < 0 || !state.purchaseItems[idx]) return;
       const it = state.purchaseItems[idx];
       const isComp = it.pack_mode === "comprimido";
-      const isCaja = it.pack_mode === "caja";
-      if (e.target.classList.contains("pur-qty")) {
-        if (isComp) { it.comp_qty = Math.max(1, Math.floor(Number(e.target.value) || 1)); purSyncComp(it); }
-        else if (isCaja) { it.caja_qty = Math.max(0, Number(e.target.value) || 0); purSyncCaja(it); }
-        else { it.quantity = Math.max(1, Math.floor(Number(e.target.value) || 1)); it.subtotal = it.quantity * it.unit_cost; }
+      const upb = purUpbOf(it);
+      if (e.target.classList.contains("pur-bultos")) {
+        // Bultos → unidades: N bultos × u/blt. Es la vía natural de carga
+        // (el proveedor factura por bulto).
+        const b = Math.max(0, Number(e.target.value) || 0);
+        it.quantity = Math.round(b * upb * 100) / 100;
+        if (isComp) { it.comp_qty = Math.round(it.quantity * Math.max(1, Number(it.cpt) || 1)); }
+        it.subtotal = it.quantity * it.unit_cost;
+      } else if (e.target.classList.contains("pur-upb")) {
+        // Cambiar el u/blt mantiene los BULTOS cargados y recalcula unidades
+        // (si cambió el empaque, lo que compró fueron esos bultos).
+        const prevUpb = upb;
+        const prevBultos = (Number(it.quantity) || 0) / prevUpb;
+        it.upb = Math.max(1, Math.floor(Number(e.target.value) || 1));
+        it.quantity = Math.round(prevBultos * it.upb * 100) / 100;
+        if (isComp) { it.comp_qty = Math.round(it.quantity * Math.max(1, Number(it.cpt) || 1)); }
+        it.subtotal = it.quantity * it.unit_cost;
+      } else if (e.target.classList.contains("pur-qty")) {
+        if (isComp) { it.comp_qty = Math.max(0, Math.floor(Number(e.target.value) || 0)); purSyncComp(it); }
+        else { it.quantity = Math.max(0, Number(e.target.value) || 0); it.subtotal = it.quantity * it.unit_cost; }
       } else if (e.target.classList.contains("pur-cost")) {
         if (isComp) { it.comp_cost = Math.max(0, Number(e.target.value) || 0); purSyncComp(it); }
-        else if (isCaja) { it.caja_cost = Math.max(0, Number(e.target.value) || 0); purSyncCaja(it); }
         else { it.unit_cost = Math.max(0, Number(e.target.value) || 0); it.subtotal = it.quantity * it.unit_cost; }
+      } else if (e.target.classList.contains("pur-cost-bulto")) {
+        // Costo por bulto → costo unitario (lo que guarda el sistema).
+        it.unit_cost = Math.round((Math.max(0, Number(e.target.value) || 0) / upb) * 100) / 100;
+        it.subtotal = it.quantity * it.unit_cost;
       } else if (e.target.classList.contains("pur-cpt")) {
         it.cpt = Math.max(1, Math.floor(Number(e.target.value) || 1)); purSyncComp(it);
-      } else if (e.target.classList.contains("pur-upb")) {
-        it.upb = Math.max(1, Math.floor(Number(e.target.value) || 1)); purSyncCaja(it);
       } else return;
-      const tr = e.target.closest("tr");
-      if (tr) {
-        const subtotalCell = tr.querySelector(".pur-subtotal");
-        if (subtotalCell) subtotalCell.textContent = fmtPrice(it.subtotal);
-      }
+      purSyncRow(e.target.closest("tr"), it, e.target);
       recalcPurchaseTotal();
     });
 
-    // Cambio de modo/cpt (select y blur de inputs) → re-render para refrescar el
-    // aviso "= N tabl ⚠" y los campos por comprimido.
+    // Cambio de modo (select) → re-render para refrescar el aviso "= N tabl ⚠"
+    // y los campos por comprimido.
     els.purItemsTbody.addEventListener("change", (e) => {
       const idx = e.target.dataset.idx != null ? Number(e.target.dataset.idx) : -1;
       if (idx < 0 || !state.purchaseItems[idx]) return;
@@ -10505,28 +10636,17 @@
           it.cpt = Math.max(1, parseComprimidos(it.product_name) || 1);
           it.comp_qty = Math.max(1, Math.round((it.quantity || 1) * it.cpt));
           it.comp_cost = Math.round((it.unit_cost || 0) / it.cpt);
-          delete it.caja_qty; delete it.caja_cost; delete it.upb;
           purSyncComp(it);
-        } else if (e.target.value === "caja") {
-          it.pack_mode = "caja";
-          // u/caja default = und/bulto del producto (editable en la fila)
-          const prod = (state.allProducts || []).find((p) => p.id === it.product_id);
-          it.upb = Math.max(1, Number(it.upb) || Number(prod && prod.units_per_bulto) || 1);
-          it.caja_qty = Math.max(0, Math.round(((it.quantity || 1) / it.upb) * 100) / 100);
-          it.caja_cost = Math.round((it.unit_cost || 0) * it.upb);
-          delete it.comp_qty; delete it.comp_cost; delete it.cpt;
-          purSyncCaja(it);
         } else {
           it.pack_mode = e.target.value === "unidad" ? "unidad" : "tableta";
-          it.quantity = Math.max(1, Math.round(it.quantity || 1));
+          it.quantity = Math.max(0, Math.round(it.quantity || 0));
           it.subtotal = it.quantity * it.unit_cost;
           delete it.comp_qty; delete it.comp_cost; delete it.cpt;
-          delete it.caja_qty; delete it.caja_cost; delete it.upb;
         }
         renderPurchaseItems();
-      } else if ((it.pack_mode === "comprimido" || it.pack_mode === "caja") &&
+      } else if (it.pack_mode === "comprimido" &&
                  (e.target.classList.contains("pur-qty") || e.target.classList.contains("pur-cost") ||
-                  e.target.classList.contains("pur-cpt") || e.target.classList.contains("pur-upb"))) {
+                  e.target.classList.contains("pur-cpt"))) {
         renderPurchaseItems();
       }
     });
@@ -10821,6 +10941,175 @@
     if (els.purSubmitBtn) els.purSubmitBtn.textContent = "Guardar compra";
   }
 
+  // ---- Exportar la compra para pasarsela al proveedor ----
+  // Trabaja sobre lo que hay en pantalla (state.purchaseItems + el header del
+  // form), asi sirve tanto para una compra nueva sin guardar como para una ya
+  // cargada que se abrio con "Exportar" desde el detalle.
+  var purExportCtx = null;   // { items, supplier_name, reference, notes, label }
+
+  function purExportPayload() {
+    const ctx = purExportCtx || {};
+    return {
+      supplier_name: ctx.supplier_name || "",
+      reference: ctx.reference || "",
+      notes: ctx.notes || "",
+      items: (ctx.items || []).map((it) => ({
+        product_code: it.product_code || "",
+        product_name: it.product_name || "",
+        quantity: Number(it.quantity) || 0,
+        unit_cost: Number(it.unit_cost) || 0,
+        units_per_bulto: Math.max(1, Math.round(Number(it.upb) || Number(it.units_per_bulto) || 1)),
+      })),
+    };
+  }
+
+  function purExportQtyMode() {
+    const r = document.querySelector('input[name="pur-export-qty"]:checked');
+    return r ? r.value : "bultos";
+  }
+
+  // Abre el mini-modal con el contexto dado (o con lo que hay en el modal de compra).
+  function openPurExport(ctx) {
+    if (!ctx) {
+      const form = els.purchaseCreateForm;
+      const supSel = form ? form.querySelector('[name="supplier_id"]') : null;
+      const supTxt = supSel ? ((supSel.options[supSel.selectedIndex] || {}).text || "") : "";
+      ctx = {
+        items: state.purchaseItems,
+        supplier_name: (supTxt && supTxt !== "Sin proveedor") ? supTxt : "",
+        reference: form ? (form.querySelector('[name="reference"]') || {}).value || "" : "",
+        notes: form ? (form.querySelector('[name="notes"]') || {}).value || "" : "",
+        label: state.editingPurchaseId ? "Compra #" + state.editingPurchaseId : "Compra nueva",
+      };
+    }
+    if (!ctx.items || !ctx.items.length) { showToast("Sin productos para exportar", "err"); return; }
+    purExportCtx = ctx;
+    if (els.purExportSub) {
+      const n = ctx.items.length;
+      els.purExportSub.textContent = (ctx.label || "") + " · " + n + " producto" + (n !== 1 ? "s" : "") +
+        (ctx.supplier_name ? " · " + ctx.supplier_name : "");
+    }
+    if (els.purExportModal) els.purExportModal.hidden = false;
+  }
+
+  function purExportFileName(ext) {
+    const ctx = purExportCtx || {};
+    const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+    return ("Pedido " + (ctx.supplier_name || "") + " " + dateSlug + "." + ext).replace(/\s+/g, " ").trim();
+  }
+
+  async function purExportDownload(url, ext) {
+    if (els.purExportModal) els.purExportModal.hidden = true;
+    const body = purExportPayload();
+    if (!body.items.length) { showToast("Sin productos para exportar", "err"); return; }
+    body.porBultos = purExportQtyMode() === "bultos";
+    showToast("Generando archivo…");
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (resp.status === 401) { location.href = "/login"; return; }
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || "Error " + resp.status);
+      }
+      const blob = await resp.blob();
+      const fileName = purExportFileName(ext);
+      if (ext === "pdf") { await sharePdfBlob(blob, fileName); return; }
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
+    } catch (err) {
+      if (err.name !== "AbortError") showToast("No se pudo exportar: " + err.message, "err");
+    }
+  }
+
+  // Texto plano para pegar/compartir por WhatsApp (sin precios, como el PDF).
+  function purExportWhatsapp() {
+    if (els.purExportModal) els.purExportModal.hidden = true;
+    const ctx = purExportCtx || {};
+    const items = ctx.items || [];
+    if (!items.length) { showToast("Sin productos para exportar", "err"); return; }
+    const porBultos = purExportQtyMode() === "bultos";
+    const lines = [];
+    lines.push("*Pedido" + (ctx.supplier_name ? " — " + ctx.supplier_name : "") + "*");
+    lines.push(new Date().toLocaleDateString("es-AR"));
+    lines.push("");
+    items.forEach((it, i) => {
+      const upb = Math.max(1, Math.round(Number(it.upb) || Number(it.units_per_bulto) || 1));
+      const qty = Number(it.quantity) || 0;
+      const cant = (porBultos && upb > 1)
+        ? fmtTabletas(Math.round((qty / upb) * 100) / 100) + (Math.round(qty / upb) === 1 ? " bulto" : " bultos") + " (" + fmtTabletas(qty) + " un.)"
+        : fmtTabletas(qty) + " un.";
+      lines.push((i + 1) + ". " + (it.product_name || "") + " — " + cant);
+    });
+    lines.push("");
+    lines.push("Total: " + items.length + " producto" + (items.length !== 1 ? "s" : ""));
+    if (ctx.notes) { lines.push(""); lines.push(ctx.notes); }
+    const text = lines.join("\n");
+    if (navigator.share) {
+      navigator.share({ text: text }).catch(() => {});
+      return;
+    }
+    // Sin Web Share (escritorio): abrir WhatsApp Web con el texto ya cargado y
+    // dejarlo tambien en el portapapeles por las dudas.
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => showToast("Lista copiada al portapapeles"),
+        () => {}
+      );
+    }
+    window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank", "noopener");
+  }
+
+  if (els.purExportBtn) els.purExportBtn.addEventListener("click", () => openPurExport(null));
+  if (els.purExportPdfBtn)  els.purExportPdfBtn.addEventListener("click",  () => purExportDownload("/api/admin/purchases/export/pdf", "pdf"));
+  if (els.purExportXlsxBtn) els.purExportXlsxBtn.addEventListener("click", () => purExportDownload("/api/admin/purchases/export/xlsx", "xlsx"));
+  if (els.purExportWaBtn)   els.purExportWaBtn.addEventListener("click", purExportWhatsapp);
+  if (els.purExportCancelBtn) els.purExportCancelBtn.addEventListener("click", () => {
+    if (els.purExportModal) els.purExportModal.hidden = true;
+  });
+
+  // El und/bulto que se edita en la fila de la compra se guarda en el producto
+  // (products.units_per_bulto): así la próxima compra, la cotización, la
+  // recepción y la reposición ya arrancan con el empaque correcto. Best-effort:
+  // si algún PATCH falla, la compra ya quedó guardada — solo se avisa.
+  async function purPersistUpb() {
+    const pend = [];
+    for (const it of state.purchaseItems) {
+      if (!it.product_id) continue;
+      const prod = (state.allProducts || []).find((p) => p.id === it.product_id);
+      if (!prod) continue;
+      const nuevo = purUpbOf(it);
+      const actual = Math.max(1, Math.round(Number(prod.units_per_bulto) || 1));
+      if (nuevo !== actual) pend.push({ it, prod, nuevo });
+    }
+    if (!pend.length) return;
+    let ok = 0;
+    for (const { prod, nuevo } of pend) {
+      try {
+        await api("/api/admin/products/" + prod.id, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ units_per_bulto: nuevo }),
+        });
+        prod.units_per_bulto = nuevo;
+        const inList = (state.products || []).find((p) => p.id === prod.id);
+        if (inList) inList.units_per_bulto = nuevo;
+        ok++;
+      } catch (err) {
+        console.error("No se pudo guardar el und/bulto de " + prod.code, err);
+      }
+    }
+    if (ok) showToast("Und/bulto actualizado en " + ok + " producto" + (ok !== 1 ? "s" : ""));
+    if (ok < pend.length) showToast("No se pudo guardar el und/bulto de " + (pend.length - ok) + " producto(s)", "err");
+  }
+
   if (els.purchaseCreateForm) {
     els.purchaseCreateForm.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -10838,14 +11127,16 @@
           " (no da tabletas enteras). Ajustá la cantidad de comprimidos." });
         return;
       }
-      // Validación: en modo caja, cajas × u/caja deben dar unidades enteras (≥ 1).
-      const badCaja = state.purchaseItems.find((it) => it.pack_mode === "caja" &&
+      // Validación: bultos × u/blt (o las unidades tipeadas) deben dar unidades
+      // enteras ≥ 1 — el stock se lleva en unidades enteras.
+      const badQty = state.purchaseItems.find((it) => it.pack_mode !== "comprimido" &&
         (!(Number(it.quantity) >= 1) || !Number.isInteger(Number(it.quantity))));
-      if (badCaja) {
-        await alertModal({ title: "Cantidad incompleta", message: '"' + (badCaja.product_name || "Producto") +
-          '": ' + (badCaja.caja_qty || 0) + " cajas × " + Math.max(1, Number(badCaja.upb) || 1) +
-          " u/caja = " + fmtTabletas(badCaja.quantity) +
-          " unidades — no da unidades enteras. Ajustá la cantidad de cajas o el u/caja." });
+      if (badQty) {
+        const upb = purUpbOf(badQty);
+        await alertModal({ title: "Cantidad incompleta", message: '"' + (badQty.product_name || "Producto") +
+          '": ' + fmtTabletas(purBultosOf(badQty)) + " bultos × " + upb +
+          " u/blt = " + fmtTabletas(badQty.quantity) +
+          " unidades — tiene que dar unidades enteras (mínimo 1). Ajustá los bultos, el u/blt o la cantidad." });
         return;
       }
       const fd = new FormData(els.purchaseCreateForm);
@@ -10871,6 +11162,7 @@
       if (els.purchaseCreateMsg) { els.purchaseCreateMsg.textContent = "Guardando…"; els.purchaseCreateMsg.className = "config-msg"; }
       try {
         await api(url, { method: method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        await purPersistUpb();
         state.purchasesLoaded = false;
         await loadPurchases();
         if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = true;
@@ -11737,6 +12029,8 @@
               quantity:     it.quantity,
               unit_cost:    it.unit_price || 0,
               subtotal:     (it.unit_price || 0) * it.quantity,
+              // Unidades por bulto de la cotización → columna BULTOS de la compra.
+              upb:          Math.max(1, Math.round(Number(it.units_per_bulto) || 1)),
             };
             // Si la cotización estaba en "por comprimido", arrancar la compra igual.
             if (it.pack_unit === "comprimido") {
@@ -11745,17 +12039,9 @@
               base.cpt = cpt;
               base.comp_qty = Math.max(1, Math.round(it.quantity * cpt));
               base.comp_cost = Math.round((it.unit_price || 0) / cpt);
-            } else if ((it.pack_unit === "caja" || it.pack_unit === "bulto")) {
-              // Cotizada por caja/bulto: arrancar la compra en modo caja (solo si
-              // la cantidad da cajas exactas, para no ensuciar los números).
-              const upb = Math.max(1, Number(it.units_per_bulto) || 1);
-              if (upb > 1 && it.quantity > 0 && it.quantity % upb === 0) {
-                base.pack_mode = "caja";
-                base.upb = upb;
-                base.caja_qty = it.quantity / upb;
-                base.caja_cost = Math.round((it.unit_price || 0) * upb);
-              }
             }
+            // Si venía cotizada por caja/bulto, la columna BULTOS ya muestra la
+            // equivalencia (cantidad ÷ upb) — no hace falta un modo aparte.
             return base;
           });
 
