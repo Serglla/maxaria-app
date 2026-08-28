@@ -246,9 +246,10 @@
     actSubtabs: document.querySelectorAll(".act-subtab"),
     actSubpanels: document.querySelectorAll(".act-subpanel"),
     // Clientes
-    actCliFrom: document.getElementById("act-cli-from"),
-    actCliTo: document.getElementById("act-cli-to"),
-    actCliApply: document.getElementById("act-cli-apply"),
+    actCliMonth: document.getElementById("act-cli-month"),
+    actCliPrev: document.getElementById("act-cli-prev"),
+    actCliNext: document.getElementById("act-cli-next"),
+    actCliVs: document.getElementById("act-cli-vs"),
     actCliSearch: document.getElementById("act-cli-search"),
     actCliCount: document.getElementById("act-cli-count"),
     actCliTbody: document.getElementById("act-cli-tbody"),
@@ -2444,6 +2445,7 @@
     vendRows: [],
     moRows: [],
     clientsRows: [],
+    clientsMeta: null,
     rankingRows: [],
     rkPeriod: "month",
     catRows: [],
@@ -2547,24 +2549,86 @@
     return parts.length ? ("?" + parts.join("&")) : "";
   }
 
-  // ---- Clientes ----
+  // ---- Clientes (por mes, con variacion contra el mes anterior) ----
+  // El informe pasa de rango libre a MES calendario: el server devuelve el mes
+  // pedido y el total del mes previo por cliente, y agrega las "bajas" (compraron
+  // el mes pasado y este no) con total 0, para que la caida se vea.
+  function actCliMonthValue() {
+    if (els.actCliMonth && /^\d{4}-\d{2}$/.test(els.actCliMonth.value || "")) return els.actCliMonth.value;
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  }
+  function actCliShiftMonth(delta) {
+    const [y, m] = actCliMonthValue().split("-").map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    if (els.actCliMonth) els.actCliMonth.value = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+    loadActClients();
+  }
+  const MESES_LARGOS = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  function fmtMonthLabel(key) {
+    if (!/^\d{4}-\d{2}$/.test(String(key || ""))) return "";
+    const [y, m] = key.split("-").map(Number);
+    return MESES_LARGOS[m - 1] + " " + y;
+  }
   async function loadActClients() {
     if (!els.actCliTbody) return;
-    fillDefaultRange(els.actCliFrom, els.actCliTo);
-    els.actCliTbody.innerHTML = '<tr><td colspan="9" class="muted">Cargando…</td></tr>';
+    if (els.actCliMonth && !els.actCliMonth.value) els.actCliMonth.value = actCliMonthValue();
+    // No dejar elegir meses futuros (no hay datos y confunde).
+    if (els.actCliMonth) {
+      const now = new Date();
+      els.actCliMonth.max = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+    }
+    els.actCliTbody.innerHTML = '<tr><td colspan="10" class="muted">Cargando…</td></tr>';
     try {
-      const data = await api("/api/admin/activity/clients" + rangeQs(els.actCliFrom, els.actCliTo));
+      const data = await api("/api/admin/activity/clients?month=" + encodeURIComponent(actCliMonthValue()));
       actState.clientsRows = data.rows || [];
+      actState.clientsMeta = data;
+      if (els.actCliVs) {
+        els.actCliVs.textContent = data.prev_month ? "vs. " + fmtMonthLabel(data.prev_month) : "";
+      }
       renderActClients();
     } catch (e) {
-      els.actCliTbody.innerHTML = '<tr><td colspan="9" class="muted">Error cargando datos</td></tr>';
+      els.actCliTbody.innerHTML = '<tr><td colspan="10" class="muted">Error cargando datos</td></tr>';
     }
+  }
+  // Variacion del mes contra el anterior. pct = null cuando no hay base con que
+  // comparar (cliente nuevo): un "+infinito%" no dice nada, se marca NUEVO.
+  function cliVar(r) {
+    const now = Number(r.total_sold) || 0;
+    const prev = Number(r.prev_total_sold) || 0;
+    const diff = now - prev;
+    return { now, prev, diff, pct: prev > 0 ? (diff / prev) * 100 : null };
+  }
+  function cliVarCell(r) {
+    const v = cliVar(r);
+    if (!v.prev && !v.now) return '<td class="num muted">—</td>';
+    if (!v.prev) {
+      return '<td class="num"><span class="cli-var-badge cli-var-new">★ NUEVO</span></td>';
+    }
+    if (!v.now) {
+      return '<td class="num"><span class="cli-var-badge cli-var-lost">▼ PERDIDO</span>' +
+             '<div class="cli-var-amt cli-var-down">−' + fmtMoney(v.prev) + '</div></td>';
+    }
+    if (v.diff === 0) return '<td class="num muted">= sin cambio</td>';
+    const up = v.diff > 0;
+    const cls = up ? "cli-var-up" : "cli-var-down";
+    const pct = (up ? "▲ +" : "▼ −") + fmtTabletas(Math.round(Math.abs(v.pct) * 10) / 10) + "%";
+    const amt = (up ? "+" : "−") + fmtMoney(Math.abs(v.diff));
+    return '<td class="num"><div class="cli-var-pct ' + cls + '">' + pct + '</div>' +
+           '<div class="cli-var-amt ' + cls + '">' + amt + '</div></td>';
   }
   function cliSortVal(r, k) {
     if (k === "name") return (r.full_name || r.username || "").toLowerCase();
     if (k === "orders") return Number(r.orders_count) || 0;
     if (k === "delivered") return Number(r.delivered_count) || 0;
     if (k === "sold") return Number(r.total_sold) || 0;
+    // Ordena por el % cuando hay base; los nuevos van arriba de todo y los
+    // perdidos abajo de todo (son los extremos reales de la variacion).
+    if (k === "var") {
+      const v = cliVar(r);
+      if (v.pct == null) return v.now > 0 ? 1e9 : -1e9;
+      return v.pct;
+    }
     if (k === "avg") return Number(r.orders_count) > 0 ? (Number(r.total_sold) || 0) / Number(r.orders_count) : 0;
     if (k === "cost") return Number(r.total_cost) || 0;
     if (k === "earning") return Number(r.total_earning) || 0;
@@ -2582,47 +2646,67 @@
     rows = reportSortRows(rows, actState.sort.cli, cliSortVal);
     updateReportSortHeaders("act-cli-table", actState.sort.cli);
     if (els.actCliCount) {
-      els.actCliCount.textContent = rows.length + (rows.length === 1 ? " cliente" : " clientes");
+      const activos = rows.filter((r) => (Number(r.total_sold) || 0) > 0).length;
+      const bajas = rows.length - activos;
+      els.actCliCount.textContent = activos + (activos === 1 ? " cliente" : " clientes") +
+        (bajas ? " · " + bajas + " sin compras este mes" : "");
     }
     if (!rows.length) {
-      els.actCliTbody.innerHTML = '<tr><td colspan="9" class="muted">Sin clientes con pedidos en el período</td></tr>';
+      els.actCliTbody.innerHTML = '<tr><td colspan="10" class="muted">Sin clientes con pedidos en el mes</td></tr>';
       if (els.actCliTfoot) els.actCliTfoot.innerHTML = "";
       return;
     }
-    let tOrders = 0, tDeliv = 0, tSold = 0, tCost = 0, tEarn = 0;
+    let tOrders = 0, tDeliv = 0, tSold = 0, tPrev = 0, tCost = 0, tEarn = 0;
     els.actCliTbody.innerHTML = rows.map((r) => {
       tOrders += Number(r.orders_count) || 0;
       tDeliv += Number(r.delivered_count) || 0;
       tSold += Number(r.total_sold) || 0;
+      tPrev += Number(r.prev_total_sold) || 0;
       tCost += Number(r.total_cost) || 0;
       tEarn += Number(r.total_earning) || 0;
+      const lost = !(Number(r.total_sold) > 0);
       const avg = r.orders_count > 0 ? Math.round((Number(r.total_sold) || 0) / r.orders_count) : 0;
       const name = escapeHtml(r.full_name || r.username) + ' <span class="muted small">(' + escapeHtml(r.username) + ')</span>';
-      return '<tr>' +
+      return '<tr' + (lost ? ' class="cli-row-lost"' : '') + '>' +
         '<td>' + name + '</td>' +
         '<td class="num">' + (Number(r.orders_count) || 0) + '</td>' +
         '<td class="num muted">' + (Number(r.delivered_count) || 0) + '</td>' +
         '<td class="num"><strong>' + fmtMoney(r.total_sold) + '</strong></td>' +
+        cliVarCell(r) +
         '<td class="num">' + fmtMoney(avg) + '</td>' +
         '<td class="num muted">' + fmtMoney(r.total_cost) + '</td>' +
         '<td class="num"><strong>' + fmtMoney(r.total_earning) + '</strong></td>' +
         '<td class="muted small">' + escapeHtml(fmtDateShort(r.last_order_at)) + '</td>' +
-        '<td><button class="btn btn-small" data-act="act-cli-detail" data-id="' + r.user_id + '" data-name="' + escapeHtml(r.full_name || r.username) + '" type="button">Ver detalle</button></td>' +
+        // En una baja, el detalle util es el del mes ANTERIOR (lo que dejo de
+        // comprar): el boton abre esa ventana, no un mes vacio.
+        '<td><button class="btn btn-small" data-act="act-cli-detail" data-id="' + r.user_id + '"' +
+          (lost ? ' data-prev="1"' : '') +
+          ' data-name="' + escapeHtml(r.full_name || r.username) + '" type="button">' +
+          (lost ? "Ver mes ant." : "Ver detalle") + '</button></td>' +
       '</tr>';
     }).join("");
     if (els.actCliTfoot) {
+      const tDiff = tSold - tPrev;
+      const tPct = tPrev > 0 ? (tDiff / tPrev) * 100 : null;
+      const tCls = tDiff > 0 ? "cli-var-up" : tDiff < 0 ? "cli-var-down" : "";
+      const totVar = tPct == null ? "—"
+        : '<span class="' + tCls + '">' + (tDiff >= 0 ? "▲ +" : "▼ −") +
+          fmtTabletas(Math.round(Math.abs(tPct) * 10) / 10) + "%</span>";
       els.actCliTfoot.innerHTML =
         '<tr><th>Totales</th>' +
         '<th class="num">' + tOrders + '</th>' +
         '<th class="num muted">' + tDeliv + '</th>' +
         '<th class="num">' + fmtMoney(tSold) + '</th>' +
+        '<th class="num">' + totVar + '</th>' +
         '<th></th>' +
         '<th class="num muted">' + fmtMoney(tCost) + '</th>' +
         '<th class="num"><strong>' + fmtMoney(tEarn) + '</strong></th>' +
         '<th></th><th></th></tr>';
     }
   }
-  if (els.actCliApply) els.actCliApply.addEventListener("click", loadActClients);
+  if (els.actCliMonth) els.actCliMonth.addEventListener("change", loadActClients);
+  if (els.actCliPrev) els.actCliPrev.addEventListener("click", () => actCliShiftMonth(-1));
+  if (els.actCliNext) els.actCliNext.addEventListener("click", () => actCliShiftMonth(1));
   if (els.actCliSearch) {
     els.actCliSearch.addEventListener("input", () => {
       // debounce simple
@@ -2636,17 +2720,20 @@
       if (!btn) return;
       const uid = Number(btn.dataset.id);
       const name = btn.dataset.name || "";
+      // data-prev = cliente que no compro este mes: se muestra el mes anterior.
+      const detMonth = btn.dataset.prev
+        ? (actState.clientsMeta && actState.clientsMeta.prev_month) || actCliMonthValue()
+        : actCliMonthValue();
       if (els.actCliDetailTitle) els.actCliDetailTitle.textContent = "Pedidos de " + name;
       if (els.actCliDetailSub) {
-        const from = els.actCliFrom && els.actCliFrom.value || "";
-        const to = els.actCliTo && els.actCliTo.value || "";
-        els.actCliDetailSub.textContent = "Rango: " + (from || "(inicio)") + " → " + (to || "(hoy)");
+        els.actCliDetailSub.textContent = "Mes: " + fmtMonthLabel(detMonth) +
+          (btn.dataset.prev ? " (sin compras en " + fmtMonthLabel(actCliMonthValue()) + ")" : "");
       }
       if (els.actCliDetailTbody) els.actCliDetailTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
       if (els.actCliDetailTfoot) els.actCliDetailTfoot.innerHTML = "";
       if (els.actCliDetailModal) els.actCliDetailModal.hidden = false;
       try {
-        const data = await api("/api/admin/activity/clients/" + uid + rangeQs(els.actCliFrom, els.actCliTo));
+        const data = await api("/api/admin/activity/clients/" + uid + "?month=" + encodeURIComponent(detMonth));
         renderActClientDetail(data.orders || []);
       } catch (err) {
         if (els.actCliDetailTbody) els.actCliDetailTbody.innerHTML = '<tr><td colspan="8" class="muted">Error</td></tr>';

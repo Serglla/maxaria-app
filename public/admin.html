@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260827a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260827b" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -1078,9 +1078,12 @@
       <!-- ===== Sub-vista: Clientes ===== -->
       <div class="act-subpanel" data-subpanel="clientes" hidden>
         <div class="admin-toolbar">
-          <label class="admin-filter">Desde <input type="date" id="act-cli-from" class="admin-input" /></label>
-          <label class="admin-filter">Hasta <input type="date" id="act-cli-to" class="admin-input" /></label>
-          <button class="btn" id="act-cli-apply" type="button">Aplicar</button>
+          <div class="act-month-nav">
+            <button class="btn btn-small" id="act-cli-prev" type="button" title="Mes anterior">‹</button>
+            <input type="month" id="act-cli-month" class="admin-input" />
+            <button class="btn btn-small" id="act-cli-next" type="button" title="Mes siguiente">›</button>
+          </div>
+          <span class="muted small" id="act-cli-vs"></span>
           <input type="search" id="act-cli-search" class="admin-search" placeholder="Buscar cliente..." autocomplete="off" />
           <span class="admin-spacer"></span>
           <span id="act-cli-count" class="muted">…</span>
@@ -1093,6 +1096,7 @@
                 <th class="num sortable" data-sort="orders">Pedidos<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="delivered">Entregados<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="sold">Total comprado<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="var" title="Variación contra el mes anterior">Var. vs mes ant.<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="avg">Ticket promedio<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="cost">Costo<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="earning">Ganancia<span class="sort-arrow"></span></th>
@@ -1100,7 +1104,7 @@
                 <th>Acciones</th>
               </tr>
             </thead>
-            <tbody id="act-cli-tbody"><tr><td colspan="9" class="muted">Cargando…</td></tr></tbody>
+            <tbody id="act-cli-tbody"><tr><td colspan="10" class="muted">Cargando…</td></tr></tbody>
             <tfoot id="act-cli-tfoot"></tfoot>
           </table>
         </div>
@@ -3946,6 +3950,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260827a"></script>
+  <script src="/js/admin.js?v=20260827b"></script>
 </body>
 </html>

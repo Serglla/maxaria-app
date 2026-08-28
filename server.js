@@ -5432,6 +5432,42 @@ function previousActivityWindow(from, to) {
   };
 }
 
+// Rango de un mes calendario 'YYYY-MM' (y el mes anterior), en la zona local.
+// Si no viene ?month=, usa el mes en curso. Devuelve los mismos campos que
+// parseActivityRange mas la ventana previa, para calcular la variacion.
+function parseActivityMonth(req) {
+  const raw = String(req.query.month || "");
+  let y, m;
+  if (/^\d{4}-\d{2}$/.test(raw)) {
+    y = Number(raw.slice(0, 4));
+    m = Number(raw.slice(5, 7));
+  }
+  if (!(y >= 1970 && m >= 1 && m <= 12)) {
+    const now = nowLocal();
+    y = now.getUTCFullYear();
+    m = now.getUTCMonth() + 1;
+  }
+  const pad = (n) => String(n).padStart(2, "0");
+  // Ultimo dia del mes: dia 0 del mes siguiente.
+  const lastDay = (yy, mm) => new Date(Date.UTC(yy, mm, 0)).getUTCDate();
+  const monthKey  = y + "-" + pad(m);
+  const fromDay   = monthKey + "-01";
+  const toDay     = monthKey + "-" + pad(lastDay(y, m));
+  const py = m === 1 ? y - 1 : y;
+  const pm = m === 1 ? 12 : m - 1;
+  const prevKey     = py + "-" + pad(pm);
+  const prevFromDay = prevKey + "-01";
+  const prevToDay   = prevKey + "-" + pad(lastDay(py, pm));
+  return {
+    month: monthKey, prevMonth: prevKey,
+    fromDay, toDay, prevFromDay, prevToDay,
+    from: localDayBoundToUtc(fromDay, false),
+    to:   localDayBoundToUtc(toDay, true),
+    prevFrom: localDayBoundToUtc(prevFromDay, false),
+    prevTo:   localDayBoundToUtc(prevToDay, true),
+  };
+}
+
 // ----- Historial agregado por cliente -----
 // Suma pedidos no cancelados (excluye unificados del tercerizado) en el
 // rango. Devuelve por cliente: cantidad de pedidos, entregados, total
@@ -5439,11 +5475,14 @@ function previousActivityWindow(from, to) {
 // sino cae a products.cost actual como aproximacion), ganancia, ticket
 // promedio, ultimo pedido. Cliente = level entre 1 y 4.
 app.get("/api/admin/activity/clients", requireAdmin, (req, res) => {
-  const range = parseActivityRange(req);
-  const rows = db.prepare(
+  const r = parseActivityMonth(req);
+
+  // Agregado por cliente para UNA ventana. Se corre dos veces (mes actual y mes
+  // anterior) y se cruzan en JS: mas simple que un FULL OUTER en SQLite y deja
+  // ver las bajas (compro el mes pasado y este no).
+  const aggSql =
     "WITH cli_orders AS (" +
-    "  SELECT u.id AS user_id, u.username, u.full_name, u.level, u.active," +
-    "         o.id AS order_id, o.status, o.total, o.created_at" +
+    "  SELECT u.id AS user_id, o.id AS order_id, o.status, o.total, o.created_at" +
     "    FROM users u" +
     "    JOIN orders o ON o.user_id = u.id" +
     "   WHERE u.level BETWEEN 1 AND 4" +
@@ -5479,17 +5518,56 @@ app.get("/api/admin/activity/clients", requireAdmin, (req, res) => {
     "  LEFT JOIN ord_agg oa ON oa.user_id = u.id" +
     "  LEFT JOIN item_agg ia ON ia.user_id = u.id" +
     " WHERE u.level BETWEEN 1 AND 4" +
-    "   AND COALESCE(oa.orders_count,0) > 0" +
-    " ORDER BY oa.total_sold DESC, u.username"
-  ).all(range.from, range.to);
-  res.json({ from: range.fromDay, to: range.toDay, rows: rows });
+    "   AND COALESCE(oa.orders_count,0) > 0";
+  const stmt = db.prepare(aggSql);
+  const cur  = stmt.all(r.from, r.to);
+  const prev = stmt.all(r.prevFrom, r.prevTo);
+
+  const prevBy = new Map(prev.map((x) => [x.user_id, x]));
+  const rows = cur.map((x) => {
+    const p = prevBy.get(x.user_id);
+    const prevSold = p ? Number(p.total_sold) || 0 : 0;
+    return Object.assign({}, x, {
+      prev_total_sold: prevSold,
+      prev_orders_count: p ? Number(p.orders_count) || 0 : 0,
+      // is_new: no compro el mes anterior. is_lost: no compro este mes.
+      is_new: p ? 0 : 1,
+      is_lost: 0,
+    });
+  });
+  // Bajas: estaban el mes pasado y este mes no compraron nada.
+  const curIds = new Set(cur.map((x) => x.user_id));
+  prev.forEach((p) => {
+    if (curIds.has(p.user_id)) return;
+    rows.push({
+      user_id: p.user_id, username: p.username, full_name: p.full_name,
+      level: p.level, active: p.active,
+      orders_count: 0, delivered_count: 0, total_sold: 0,
+      total_cost: 0, total_earning: 0,
+      last_order_at: p.last_order_at,
+      prev_total_sold: Number(p.total_sold) || 0,
+      prev_orders_count: Number(p.orders_count) || 0,
+      is_new: 0, is_lost: 1,
+    });
+  });
+  rows.sort((a, b) => (Number(b.total_sold) || 0) - (Number(a.total_sold) || 0) ||
+                      (Number(b.prev_total_sold) || 0) - (Number(a.prev_total_sold) || 0) ||
+                      String(a.username || "").localeCompare(String(b.username || "")));
+
+  res.json({
+    month: r.month, prev_month: r.prevMonth,
+    from: r.fromDay, to: r.toDay,
+    prev_from: r.prevFromDay, prev_to: r.prevToDay,
+    rows: rows,
+  });
 });
 
 // Detalle de pedidos de un cliente puntual en el rango.
 app.get("/api/admin/activity/clients/:userId", requireAdmin, (req, res) => {
   const uid = Number(req.params.userId);
   if (!uid) return res.status(400).json({ error: "ID invalido" });
-  const range = parseActivityRange(req);
+  // La pestana Por cliente pasa ?month=YYYY-MM; el resto sigue con from/to.
+  const range = req.query.month ? parseActivityMonth(req) : parseActivityRange(req);
   const cliente = db.prepare(
     "SELECT id, username, full_name, level FROM users WHERE id = ? AND level BETWEEN 1 AND 4"
   ).get(uid);

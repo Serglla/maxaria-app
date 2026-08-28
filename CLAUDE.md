@@ -2051,3 +2051,27 @@ Pedido de Sergio: en el armado de una compra, una columna **bultos** que tenga e
 
 **Pendiente**: `git add/commit/push` + deploy Railway + Ctrl+F5. Diff completo en `cambios-bultos-export.diff` (borrable).
 
+
+### Actividad → Por cliente: informe por MES + columna de variación (27 agosto 2026 — `admin.js?v=20260827b`, `styles.css?v=20260827b`)
+
+Pedido de Sergio: el informe de Actividad → Por cliente debe ser **por mes**, y necesita una columna que muestre la **suba o baja de compra por cliente**. Decisiones (AskUserQuestion): **selector de mes** (no rango); variación con **% y $ juntos**; se muestran **ambos extremos marcados** (★ NUEVO / ▼ PERDIDO).
+
+**Server**
+- Helper nuevo `parseActivityMonth(req)` (al lado de `parseActivityRange`): toma `?month=YYYY-MM` (default: mes en curso) y devuelve el mes y el **mes anterior** ya convertidos a límites UTC con `localDayBoundToUtc` — o sea respeta `TZ_OFFSET_HOURS` (−3), así un pedido del 31/07 23:30 local cae en julio y no en agosto.
+- `GET /api/admin/activity/clients` deja de usar `parseActivityRange`. El agregado por cliente se extrajo a un `aggSql` **preparado una vez y ejecutado dos veces** (mes actual y mes previo) y se cruzan en JS — más simple que un FULL OUTER en SQLite. La query en sí no cambió (mismos filtros: level 1..4, no cancelado, no unificado; costo por `vendedor_cost_unit` con fallback a `products.cost`).
+- Cada fila suma `prev_total_sold`, `prev_orders_count`, `is_new` (no compró el mes anterior) e `is_lost`. Las **bajas** (compraron el mes pasado y este no) se agregan como filas con totales en 0 y su `last_order_at` real — antes no aparecían en ningún lado. Respuesta: `{month, prev_month, from, to, prev_from, prev_to, rows}`.
+- `GET /api/admin/activity/clients/:userId` acepta `?month=` (si viene usa `parseActivityMonth`, si no sigue con `parseActivityRange` — no rompe otros llamadores).
+
+**Frontend**
+- `admin.html`: Desde/Hasta + Aplicar se reemplazan por `.act-month-nav` (botones `‹` `›` + `input[type=month]` `#act-cli-month`) y un `#act-cli-vs` que dice "vs. julio 2026". Columna nueva **Var. vs mes ant.** (sortable, `data-sort="var"`) entre Total comprado y Ticket promedio; la tabla pasa a 10 columnas.
+- `admin.js`: `actCliMonthValue()` / `actCliShiftMonth(±1)` / `fmtMonthLabel()`. `loadActClients` pega a `?month=` y setea `max` en el input (no deja elegir meses futuros). Los els `actCliFrom/actCliTo/actCliApply` se borraron.
+- `cliVar(r)` devuelve `{now, prev, diff, pct}` con **`pct = null` cuando no hay base** (cliente nuevo): un "+∞%" no dice nada, por eso se muestra el badge en vez del número. `cliVarCell` renderiza ▲/▼ con el % arriba y la diferencia en $ abajo (verde/rojo), `★ NUEVO`, `▼ PERDIDO` (+ los $ que se perdieron) o "= sin cambio".
+- El orden por `var` usa el %; los nuevos van a un extremo (`1e9`) y los perdidos al otro (`-1e9`), que es donde corresponden.
+- Las filas de bajas llevan `.cli-row-lost` (opacidad 62%, nombre en itálica) y su botón dice **"Ver mes ant."** y abre el detalle del **mes anterior** — en una baja lo útil es ver qué dejó de comprar, no un mes vacío.
+- El contador del toolbar ahora dice "N clientes · M sin compras este mes" y el tfoot suma una celda con la variación **del total** del mes.
+- CSS nuevo `.act-month-nav` y `.cli-var-*` / `.cli-row-lost`.
+
+**Verificación**: `node --check` OK en ambos. El `aggSql` se **extrajo del server.js real** (parseando el literal) y se corrió con sqlite3 sobre una **copia** de `data/maxaria.db` con datos inyectados que cubren los 5 casos: sube +39,2%, baja −40%, NUEVO, PERDIDO (−100%) y sin cambio. Verificado además que un pedido **cancelado** de agosto no suma y que uno del **31/07 23:30 local** cae en julio (los límites UTC dan `2026-08-01 03:00:00` → `2026-09-01 02:59:59`). `renderActClients` + `cliVarCell` renderizados en un harness con el CSS real y **screenshot revisado**. Los endpoints no se probaron por HTTP (el server no levanta desde el mount: `better-sqlite3` compilado para Windows).
+
+**Pendiente**: `git add/commit/push` + deploy Railway + Ctrl+F5.
+

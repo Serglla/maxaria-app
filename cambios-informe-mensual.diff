@@ -1,0 +1,431 @@
+diff --git a/public/admin.html b/public/admin.html
+index 9b0d7a7..723fd7d 100644
+--- a/public/admin.html
++++ b/public/admin.html
+@@ -4,7 +4,7 @@
+   <meta charset="utf-8" />
+   <meta name="viewport" content="width=device-width, initial-scale=1" />
+   <title id="page-title">Admin</title>
+-  <link rel="stylesheet" href="/css/styles.css?v=20260827a" />
++  <link rel="stylesheet" href="/css/styles.css?v=20260827b" />
+ 
+   <link rel="manifest" href="/manifest.json" />
+   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+@@ -1078,9 +1078,12 @@
+       <!-- ===== Sub-vista: Clientes ===== -->
+       <div class="act-subpanel" data-subpanel="clientes" hidden>
+         <div class="admin-toolbar">
+-          <label class="admin-filter">Desde <input type="date" id="act-cli-from" class="admin-input" /></label>
+-          <label class="admin-filter">Hasta <input type="date" id="act-cli-to" class="admin-input" /></label>
+-          <button class="btn" id="act-cli-apply" type="button">Aplicar</button>
++          <div class="act-month-nav">
++            <button class="btn btn-small" id="act-cli-prev" type="button" title="Mes anterior">‹</button>
++            <input type="month" id="act-cli-month" class="admin-input" />
++            <button class="btn btn-small" id="act-cli-next" type="button" title="Mes siguiente">›</button>
++          </div>
++          <span class="muted small" id="act-cli-vs"></span>
+           <input type="search" id="act-cli-search" class="admin-search" placeholder="Buscar cliente..." autocomplete="off" />
+           <span class="admin-spacer"></span>
+           <span id="act-cli-count" class="muted">…</span>
+@@ -1093,6 +1096,7 @@
+                 <th class="num sortable" data-sort="orders">Pedidos<span class="sort-arrow"></span></th>
+                 <th class="num sortable" data-sort="delivered">Entregados<span class="sort-arrow"></span></th>
+                 <th class="num sortable" data-sort="sold">Total comprado<span class="sort-arrow"></span></th>
++                <th class="num sortable" data-sort="var" title="Variación contra el mes anterior">Var. vs mes ant.<span class="sort-arrow"></span></th>
+                 <th class="num sortable" data-sort="avg">Ticket promedio<span class="sort-arrow"></span></th>
+                 <th class="num sortable" data-sort="cost">Costo<span class="sort-arrow"></span></th>
+                 <th class="num sortable" data-sort="earning">Ganancia<span class="sort-arrow"></span></th>
+@@ -1100,7 +1104,7 @@
+                 <th>Acciones</th>
+               </tr>
+             </thead>
+-            <tbody id="act-cli-tbody"><tr><td colspan="9" class="muted">Cargando…</td></tr></tbody>
++            <tbody id="act-cli-tbody"><tr><td colspan="10" class="muted">Cargando…</td></tr></tbody>
+             <tfoot id="act-cli-tfoot"></tfoot>
+           </table>
+         </div>
+@@ -3946,6 +3950,6 @@
+   <!-- Mini-toast -->
+   <div id="toast" class="admin-toast" hidden></div>
+ 
+-  <script src="/js/admin.js?v=20260827a"></script>
++  <script src="/js/admin.js?v=20260827b"></script>
+ </body>
+ </html>
+diff --git a/public/css/styles.css b/public/css/styles.css
+index 2598bbf..335dbd2 100644
+--- a/public/css/styles.css
++++ b/public/css/styles.css
+@@ -4647,6 +4647,26 @@ label.cats-check input[type="checkbox"] {
+   flex-wrap: wrap;
+ }
+ 
++/* ====== Actividad > Por cliente: navegador de mes + variacion ====== */
++.act-month-nav { display: flex; align-items: center; gap: 4px; }
++.act-month-nav .btn { padding: 4px 10px; font-size: 16px; line-height: 1; font-weight: 700; }
++.act-month-nav input[type="month"] { min-width: 150px; }
++/* La variacion se lee de un vistazo: verde sube, rojo baja. El % arriba (la
++   magnitud) y los pesos abajo en chico (el peso real). */
++.cli-var-pct { font-weight: 700; font-size: 13px; white-space: nowrap; }
++.cli-var-amt { font-size: 11px; white-space: nowrap; opacity: .85; }
++.cli-var-up   { color: #15803d; }
++.cli-var-down { color: #dc2626; }
++.cli-var-badge {
++  display: inline-block; padding: 2px 8px; border-radius: 999px;
++  font-size: 11px; font-weight: 700; white-space: nowrap;
++}
++.cli-var-new  { background: #dcfce7; color: #15803d; }
++.cli-var-lost { background: #fee2e2; color: #b91c1c; }
++/* Cliente que compro el mes pasado y este no: la fila se apaga, pero se ve. */
++.cli-row-lost td { opacity: .62; }
++.cli-row-lost td:first-child { font-style: italic; }
++
+ /* ====== Cuentas corrientes: badges de saldo ====== */
+ .acc-balance-badge {
+   display: inline-block;
+diff --git a/public/js/admin.js b/public/js/admin.js
+index 7773fd9..e24adeb 100644
+--- a/public/js/admin.js
++++ b/public/js/admin.js
+@@ -246,9 +246,10 @@
+     actSubtabs: document.querySelectorAll(".act-subtab"),
+     actSubpanels: document.querySelectorAll(".act-subpanel"),
+     // Clientes
+-    actCliFrom: document.getElementById("act-cli-from"),
+-    actCliTo: document.getElementById("act-cli-to"),
+-    actCliApply: document.getElementById("act-cli-apply"),
++    actCliMonth: document.getElementById("act-cli-month"),
++    actCliPrev: document.getElementById("act-cli-prev"),
++    actCliNext: document.getElementById("act-cli-next"),
++    actCliVs: document.getElementById("act-cli-vs"),
+     actCliSearch: document.getElementById("act-cli-search"),
+     actCliCount: document.getElementById("act-cli-count"),
+     actCliTbody: document.getElementById("act-cli-tbody"),
+@@ -2444,6 +2445,7 @@
+     vendRows: [],
+     moRows: [],
+     clientsRows: [],
++    clientsMeta: null,
+     rankingRows: [],
+     rkPeriod: "month",
+     catRows: [],
+@@ -2547,24 +2549,86 @@
+     return parts.length ? ("?" + parts.join("&")) : "";
+   }
+ 
+-  // ---- Clientes ----
++  // ---- Clientes (por mes, con variacion contra el mes anterior) ----
++  // El informe pasa de rango libre a MES calendario: el server devuelve el mes
++  // pedido y el total del mes previo por cliente, y agrega las "bajas" (compraron
++  // el mes pasado y este no) con total 0, para que la caida se vea.
++  function actCliMonthValue() {
++    if (els.actCliMonth && /^\d{4}-\d{2}$/.test(els.actCliMonth.value || "")) return els.actCliMonth.value;
++    const d = new Date();
++    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
++  }
++  function actCliShiftMonth(delta) {
++    const [y, m] = actCliMonthValue().split("-").map(Number);
++    const d = new Date(y, m - 1 + delta, 1);
++    if (els.actCliMonth) els.actCliMonth.value = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
++    loadActClients();
++  }
++  const MESES_LARGOS = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
++  function fmtMonthLabel(key) {
++    if (!/^\d{4}-\d{2}$/.test(String(key || ""))) return "";
++    const [y, m] = key.split("-").map(Number);
++    return MESES_LARGOS[m - 1] + " " + y;
++  }
+   async function loadActClients() {
+     if (!els.actCliTbody) return;
+-    fillDefaultRange(els.actCliFrom, els.actCliTo);
+-    els.actCliTbody.innerHTML = '<tr><td colspan="9" class="muted">Cargando…</td></tr>';
++    if (els.actCliMonth && !els.actCliMonth.value) els.actCliMonth.value = actCliMonthValue();
++    // No dejar elegir meses futuros (no hay datos y confunde).
++    if (els.actCliMonth) {
++      const now = new Date();
++      els.actCliMonth.max = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
++    }
++    els.actCliTbody.innerHTML = '<tr><td colspan="10" class="muted">Cargando…</td></tr>';
+     try {
+-      const data = await api("/api/admin/activity/clients" + rangeQs(els.actCliFrom, els.actCliTo));
++      const data = await api("/api/admin/activity/clients?month=" + encodeURIComponent(actCliMonthValue()));
+       actState.clientsRows = data.rows || [];
++      actState.clientsMeta = data;
++      if (els.actCliVs) {
++        els.actCliVs.textContent = data.prev_month ? "vs. " + fmtMonthLabel(data.prev_month) : "";
++      }
+       renderActClients();
+     } catch (e) {
+-      els.actCliTbody.innerHTML = '<tr><td colspan="9" class="muted">Error cargando datos</td></tr>';
+-    }
++      els.actCliTbody.innerHTML = '<tr><td colspan="10" class="muted">Error cargando datos</td></tr>';
++    }
++  }
++  // Variacion del mes contra el anterior. pct = null cuando no hay base con que
++  // comparar (cliente nuevo): un "+infinito%" no dice nada, se marca NUEVO.
++  function cliVar(r) {
++    const now = Number(r.total_sold) || 0;
++    const prev = Number(r.prev_total_sold) || 0;
++    const diff = now - prev;
++    return { now, prev, diff, pct: prev > 0 ? (diff / prev) * 100 : null };
++  }
++  function cliVarCell(r) {
++    const v = cliVar(r);
++    if (!v.prev && !v.now) return '<td class="num muted">—</td>';
++    if (!v.prev) {
++      return '<td class="num"><span class="cli-var-badge cli-var-new">★ NUEVO</span></td>';
++    }
++    if (!v.now) {
++      return '<td class="num"><span class="cli-var-badge cli-var-lost">▼ PERDIDO</span>' +
++             '<div class="cli-var-amt cli-var-down">−' + fmtMoney(v.prev) + '</div></td>';
++    }
++    if (v.diff === 0) return '<td class="num muted">= sin cambio</td>';
++    const up = v.diff > 0;
++    const cls = up ? "cli-var-up" : "cli-var-down";
++    const pct = (up ? "▲ +" : "▼ −") + fmtTabletas(Math.round(Math.abs(v.pct) * 10) / 10) + "%";
++    const amt = (up ? "+" : "−") + fmtMoney(Math.abs(v.diff));
++    return '<td class="num"><div class="cli-var-pct ' + cls + '">' + pct + '</div>' +
++           '<div class="cli-var-amt ' + cls + '">' + amt + '</div></td>';
+   }
+   function cliSortVal(r, k) {
+     if (k === "name") return (r.full_name || r.username || "").toLowerCase();
+     if (k === "orders") return Number(r.orders_count) || 0;
+     if (k === "delivered") return Number(r.delivered_count) || 0;
+     if (k === "sold") return Number(r.total_sold) || 0;
++    // Ordena por el % cuando hay base; los nuevos van arriba de todo y los
++    // perdidos abajo de todo (son los extremos reales de la variacion).
++    if (k === "var") {
++      const v = cliVar(r);
++      if (v.pct == null) return v.now > 0 ? 1e9 : -1e9;
++      return v.pct;
++    }
+     if (k === "avg") return Number(r.orders_count) > 0 ? (Number(r.total_sold) || 0) / Number(r.orders_count) : 0;
+     if (k === "cost") return Number(r.total_cost) || 0;
+     if (k === "earning") return Number(r.total_earning) || 0;
+@@ -2582,47 +2646,67 @@
+     rows = reportSortRows(rows, actState.sort.cli, cliSortVal);
+     updateReportSortHeaders("act-cli-table", actState.sort.cli);
+     if (els.actCliCount) {
+-      els.actCliCount.textContent = rows.length + (rows.length === 1 ? " cliente" : " clientes");
++      const activos = rows.filter((r) => (Number(r.total_sold) || 0) > 0).length;
++      const bajas = rows.length - activos;
++      els.actCliCount.textContent = activos + (activos === 1 ? " cliente" : " clientes") +
++        (bajas ? " · " + bajas + " sin compras este mes" : "");
+     }
+     if (!rows.length) {
+-      els.actCliTbody.innerHTML = '<tr><td colspan="9" class="muted">Sin clientes con pedidos en el período</td></tr>';
++      els.actCliTbody.innerHTML = '<tr><td colspan="10" class="muted">Sin clientes con pedidos en el mes</td></tr>';
+       if (els.actCliTfoot) els.actCliTfoot.innerHTML = "";
+       return;
+     }
+-    let tOrders = 0, tDeliv = 0, tSold = 0, tCost = 0, tEarn = 0;
++    let tOrders = 0, tDeliv = 0, tSold = 0, tPrev = 0, tCost = 0, tEarn = 0;
+     els.actCliTbody.innerHTML = rows.map((r) => {
+       tOrders += Number(r.orders_count) || 0;
+       tDeliv += Number(r.delivered_count) || 0;
+       tSold += Number(r.total_sold) || 0;
++      tPrev += Number(r.prev_total_sold) || 0;
+       tCost += Number(r.total_cost) || 0;
+       tEarn += Number(r.total_earning) || 0;
++      const lost = !(Number(r.total_sold) > 0);
+       const avg = r.orders_count > 0 ? Math.round((Number(r.total_sold) || 0) / r.orders_count) : 0;
+       const name = escapeHtml(r.full_name || r.username) + ' <span class="muted small">(' + escapeHtml(r.username) + ')</span>';
+-      return '<tr>' +
++      return '<tr' + (lost ? ' class="cli-row-lost"' : '') + '>' +
+         '<td>' + name + '</td>' +
+         '<td class="num">' + (Number(r.orders_count) || 0) + '</td>' +
+         '<td class="num muted">' + (Number(r.delivered_count) || 0) + '</td>' +
+         '<td class="num"><strong>' + fmtMoney(r.total_sold) + '</strong></td>' +
++        cliVarCell(r) +
+         '<td class="num">' + fmtMoney(avg) + '</td>' +
+         '<td class="num muted">' + fmtMoney(r.total_cost) + '</td>' +
+         '<td class="num"><strong>' + fmtMoney(r.total_earning) + '</strong></td>' +
+         '<td class="muted small">' + escapeHtml(fmtDateShort(r.last_order_at)) + '</td>' +
+-        '<td><button class="btn btn-small" data-act="act-cli-detail" data-id="' + r.user_id + '" data-name="' + escapeHtml(r.full_name || r.username) + '" type="button">Ver detalle</button></td>' +
++        // En una baja, el detalle util es el del mes ANTERIOR (lo que dejo de
++        // comprar): el boton abre esa ventana, no un mes vacio.
++        '<td><button class="btn btn-small" data-act="act-cli-detail" data-id="' + r.user_id + '"' +
++          (lost ? ' data-prev="1"' : '') +
++          ' data-name="' + escapeHtml(r.full_name || r.username) + '" type="button">' +
++          (lost ? "Ver mes ant." : "Ver detalle") + '</button></td>' +
+       '</tr>';
+     }).join("");
+     if (els.actCliTfoot) {
++      const tDiff = tSold - tPrev;
++      const tPct = tPrev > 0 ? (tDiff / tPrev) * 100 : null;
++      const tCls = tDiff > 0 ? "cli-var-up" : tDiff < 0 ? "cli-var-down" : "";
++      const totVar = tPct == null ? "—"
++        : '<span class="' + tCls + '">' + (tDiff >= 0 ? "▲ +" : "▼ −") +
++          fmtTabletas(Math.round(Math.abs(tPct) * 10) / 10) + "%</span>";
+       els.actCliTfoot.innerHTML =
+         '<tr><th>Totales</th>' +
+         '<th class="num">' + tOrders + '</th>' +
+         '<th class="num muted">' + tDeliv + '</th>' +
+         '<th class="num">' + fmtMoney(tSold) + '</th>' +
++        '<th class="num">' + totVar + '</th>' +
+         '<th></th>' +
+         '<th class="num muted">' + fmtMoney(tCost) + '</th>' +
+         '<th class="num"><strong>' + fmtMoney(tEarn) + '</strong></th>' +
+         '<th></th><th></th></tr>';
+     }
+   }
+-  if (els.actCliApply) els.actCliApply.addEventListener("click", loadActClients);
++  if (els.actCliMonth) els.actCliMonth.addEventListener("change", loadActClients);
++  if (els.actCliPrev) els.actCliPrev.addEventListener("click", () => actCliShiftMonth(-1));
++  if (els.actCliNext) els.actCliNext.addEventListener("click", () => actCliShiftMonth(1));
+   if (els.actCliSearch) {
+     els.actCliSearch.addEventListener("input", () => {
+       // debounce simple
+@@ -2636,17 +2720,20 @@
+       if (!btn) return;
+       const uid = Number(btn.dataset.id);
+       const name = btn.dataset.name || "";
++      // data-prev = cliente que no compro este mes: se muestra el mes anterior.
++      const detMonth = btn.dataset.prev
++        ? (actState.clientsMeta && actState.clientsMeta.prev_month) || actCliMonthValue()
++        : actCliMonthValue();
+       if (els.actCliDetailTitle) els.actCliDetailTitle.textContent = "Pedidos de " + name;
+       if (els.actCliDetailSub) {
+-        const from = els.actCliFrom && els.actCliFrom.value || "";
+-        const to = els.actCliTo && els.actCliTo.value || "";
+-        els.actCliDetailSub.textContent = "Rango: " + (from || "(inicio)") + " → " + (to || "(hoy)");
++        els.actCliDetailSub.textContent = "Mes: " + fmtMonthLabel(detMonth) +
++          (btn.dataset.prev ? " (sin compras en " + fmtMonthLabel(actCliMonthValue()) + ")" : "");
+       }
+       if (els.actCliDetailTbody) els.actCliDetailTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+       if (els.actCliDetailTfoot) els.actCliDetailTfoot.innerHTML = "";
+       if (els.actCliDetailModal) els.actCliDetailModal.hidden = false;
+       try {
+-        const data = await api("/api/admin/activity/clients/" + uid + rangeQs(els.actCliFrom, els.actCliTo));
++        const data = await api("/api/admin/activity/clients/" + uid + "?month=" + encodeURIComponent(detMonth));
+         renderActClientDetail(data.orders || []);
+       } catch (err) {
+         if (els.actCliDetailTbody) els.actCliDetailTbody.innerHTML = '<tr><td colspan="8" class="muted">Error</td></tr>';
+diff --git a/server.js b/server.js
+index 7f31295..e903972 100644
+--- a/server.js
++++ b/server.js
+@@ -5432,6 +5432,42 @@ function previousActivityWindow(from, to) {
+   };
+ }
+ 
++// Rango de un mes calendario 'YYYY-MM' (y el mes anterior), en la zona local.
++// Si no viene ?month=, usa el mes en curso. Devuelve los mismos campos que
++// parseActivityRange mas la ventana previa, para calcular la variacion.
++function parseActivityMonth(req) {
++  const raw = String(req.query.month || "");
++  let y, m;
++  if (/^\d{4}-\d{2}$/.test(raw)) {
++    y = Number(raw.slice(0, 4));
++    m = Number(raw.slice(5, 7));
++  }
++  if (!(y >= 1970 && m >= 1 && m <= 12)) {
++    const now = nowLocal();
++    y = now.getUTCFullYear();
++    m = now.getUTCMonth() + 1;
++  }
++  const pad = (n) => String(n).padStart(2, "0");
++  // Ultimo dia del mes: dia 0 del mes siguiente.
++  const lastDay = (yy, mm) => new Date(Date.UTC(yy, mm, 0)).getUTCDate();
++  const monthKey  = y + "-" + pad(m);
++  const fromDay   = monthKey + "-01";
++  const toDay     = monthKey + "-" + pad(lastDay(y, m));
++  const py = m === 1 ? y - 1 : y;
++  const pm = m === 1 ? 12 : m - 1;
++  const prevKey     = py + "-" + pad(pm);
++  const prevFromDay = prevKey + "-01";
++  const prevToDay   = prevKey + "-" + pad(lastDay(py, pm));
++  return {
++    month: monthKey, prevMonth: prevKey,
++    fromDay, toDay, prevFromDay, prevToDay,
++    from: localDayBoundToUtc(fromDay, false),
++    to:   localDayBoundToUtc(toDay, true),
++    prevFrom: localDayBoundToUtc(prevFromDay, false),
++    prevTo:   localDayBoundToUtc(prevToDay, true),
++  };
++}
++
+ // ----- Historial agregado por cliente -----
+ // Suma pedidos no cancelados (excluye unificados del tercerizado) en el
+ // rango. Devuelve por cliente: cantidad de pedidos, entregados, total
+@@ -5439,11 +5475,14 @@ function previousActivityWindow(from, to) {
+ // sino cae a products.cost actual como aproximacion), ganancia, ticket
+ // promedio, ultimo pedido. Cliente = level entre 1 y 4.
+ app.get("/api/admin/activity/clients", requireAdmin, (req, res) => {
+-  const range = parseActivityRange(req);
+-  const rows = db.prepare(
++  const r = parseActivityMonth(req);
++
++  // Agregado por cliente para UNA ventana. Se corre dos veces (mes actual y mes
++  // anterior) y se cruzan en JS: mas simple que un FULL OUTER en SQLite y deja
++  // ver las bajas (compro el mes pasado y este no).
++  const aggSql =
+     "WITH cli_orders AS (" +
+-    "  SELECT u.id AS user_id, u.username, u.full_name, u.level, u.active," +
+-    "         o.id AS order_id, o.status, o.total, o.created_at" +
++    "  SELECT u.id AS user_id, o.id AS order_id, o.status, o.total, o.created_at" +
+     "    FROM users u" +
+     "    JOIN orders o ON o.user_id = u.id" +
+     "   WHERE u.level BETWEEN 1 AND 4" +
+@@ -5479,17 +5518,56 @@ app.get("/api/admin/activity/clients", requireAdmin, (req, res) => {
+     "  LEFT JOIN ord_agg oa ON oa.user_id = u.id" +
+     "  LEFT JOIN item_agg ia ON ia.user_id = u.id" +
+     " WHERE u.level BETWEEN 1 AND 4" +
+-    "   AND COALESCE(oa.orders_count,0) > 0" +
+-    " ORDER BY oa.total_sold DESC, u.username"
+-  ).all(range.from, range.to);
+-  res.json({ from: range.fromDay, to: range.toDay, rows: rows });
++    "   AND COALESCE(oa.orders_count,0) > 0";
++  const stmt = db.prepare(aggSql);
++  const cur  = stmt.all(r.from, r.to);
++  const prev = stmt.all(r.prevFrom, r.prevTo);
++
++  const prevBy = new Map(prev.map((x) => [x.user_id, x]));
++  const rows = cur.map((x) => {
++    const p = prevBy.get(x.user_id);
++    const prevSold = p ? Number(p.total_sold) || 0 : 0;
++    return Object.assign({}, x, {
++      prev_total_sold: prevSold,
++      prev_orders_count: p ? Number(p.orders_count) || 0 : 0,
++      // is_new: no compro el mes anterior. is_lost: no compro este mes.
++      is_new: p ? 0 : 1,
++      is_lost: 0,
++    });
++  });
++  // Bajas: estaban el mes pasado y este mes no compraron nada.
++  const curIds = new Set(cur.map((x) => x.user_id));
++  prev.forEach((p) => {
++    if (curIds.has(p.user_id)) return;
++    rows.push({
++      user_id: p.user_id, username: p.username, full_name: p.full_name,
++      level: p.level, active: p.active,
++      orders_count: 0, delivered_count: 0, total_sold: 0,
++      total_cost: 0, total_earning: 0,
++      last_order_at: p.last_order_at,
++      prev_total_sold: Number(p.total_sold) || 0,
++      prev_orders_count: Number(p.orders_count) || 0,
++      is_new: 0, is_lost: 1,
++    });
++  });
++  rows.sort((a, b) => (Number(b.total_sold) || 0) - (Number(a.total_sold) || 0) ||
++                      (Number(b.prev_total_sold) || 0) - (Number(a.prev_total_sold) || 0) ||
++                      String(a.username || "").localeCompare(String(b.username || "")));
++
++  res.json({
++    month: r.month, prev_month: r.prevMonth,
++    from: r.fromDay, to: r.toDay,
++    prev_from: r.prevFromDay, prev_to: r.prevToDay,
++    rows: rows,
++  });
+ });
+ 
+ // Detalle de pedidos de un cliente puntual en el rango.
+ app.get("/api/admin/activity/clients/:userId", requireAdmin, (req, res) => {
+   const uid = Number(req.params.userId);
+   if (!uid) return res.status(400).json({ error: "ID invalido" });
+-  const range = parseActivityRange(req);
++  // La pestana Por cliente pasa ?month=YYYY-MM; el resto sigue con from/to.
++  const range = req.query.month ? parseActivityMonth(req) : parseActivityRange(req);
+   const cliente = db.prepare(
+     "SELECT id, username, full_name, level FROM users WHERE id = ? AND level BETWEEN 1 AND 4"
+   ).get(uid);

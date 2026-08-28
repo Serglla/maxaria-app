@@ -4647,6 +4647,26 @@ label.cats-check input[type="checkbox"] {
   flex-wrap: wrap;
 }
 
+/* ====== Actividad > Por cliente: navegador de mes + variacion ====== */
+.act-month-nav { display: flex; align-items: center; gap: 4px; }
+.act-month-nav .btn { padding: 4px 10px; font-size: 16px; line-height: 1; font-weight: 700; }
+.act-month-nav input[type="month"] { min-width: 150px; }
+/* La variacion se lee de un vistazo: verde sube, rojo baja. El % arriba (la
+   magnitud) y los pesos abajo en chico (el peso real). */
+.cli-var-pct { font-weight: 700; font-size: 13px; white-space: nowrap; }
+.cli-var-amt { font-size: 11px; white-space: nowrap; opacity: .85; }
+.cli-var-up   { color: #15803d; }
+.cli-var-down { color: #dc2626; }
+.cli-var-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.cli-var-new  { background: #dcfce7; color: #15803d; }
+.cli-var-lost { background: #fee2e2; color: #b91c1c; }
+/* Cliente que compro el mes pasado y este no: la fila se apaga, pero se ve. */
+.cli-row-lost td { opacity: .62; }
+.cli-row-lost td:first-child { font-style: italic; }
+
 /* ====== Cuentas corrientes: badges de saldo ====== */
 .acc-balance-badge {
   display: inline-block;
