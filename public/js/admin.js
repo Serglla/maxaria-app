@@ -2578,7 +2578,7 @@
       const now = new Date();
       els.actCliMonth.max = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
     }
-    els.actCliTbody.innerHTML = '<tr><td colspan="10" class="muted">Cargando…</td></tr>';
+    els.actCliTbody.innerHTML = '<tr><td colspan="11" class="muted">Cargando…</td></tr>';
     try {
       const data = await api("/api/admin/activity/clients?month=" + encodeURIComponent(actCliMonthValue()));
       actState.clientsRows = data.rows || [];
@@ -2588,7 +2588,7 @@
       }
       renderActClients();
     } catch (e) {
-      els.actCliTbody.innerHTML = '<tr><td colspan="10" class="muted">Error cargando datos</td></tr>';
+      els.actCliTbody.innerHTML = '<tr><td colspan="11" class="muted">Error cargando datos</td></tr>';
     }
   }
   // Variacion del mes contra el anterior. pct = null cuando no hay base con que
@@ -2632,6 +2632,7 @@
     if (k === "avg") return Number(r.orders_count) > 0 ? (Number(r.total_sold) || 0) / Number(r.orders_count) : 0;
     if (k === "cost") return Number(r.total_cost) || 0;
     if (k === "earning") return Number(r.total_earning) || 0;
+    if (k === "commission") return Number(r.total_commission) || 0;
     if (k === "last") return r.last_order_at || "";
     return 0;
   }
@@ -2652,11 +2653,11 @@
         (bajas ? " · " + bajas + " sin compras este mes" : "");
     }
     if (!rows.length) {
-      els.actCliTbody.innerHTML = '<tr><td colspan="10" class="muted">Sin clientes con pedidos en el mes</td></tr>';
+      els.actCliTbody.innerHTML = '<tr><td colspan="11" class="muted">Sin clientes con pedidos en el mes</td></tr>';
       if (els.actCliTfoot) els.actCliTfoot.innerHTML = "";
       return;
     }
-    let tOrders = 0, tDeliv = 0, tSold = 0, tPrev = 0, tCost = 0, tEarn = 0;
+    let tOrders = 0, tDeliv = 0, tSold = 0, tPrev = 0, tCost = 0, tEarn = 0, tComm = 0;
     els.actCliTbody.innerHTML = rows.map((r) => {
       tOrders += Number(r.orders_count) || 0;
       tDeliv += Number(r.delivered_count) || 0;
@@ -2664,6 +2665,7 @@
       tPrev += Number(r.prev_total_sold) || 0;
       tCost += Number(r.total_cost) || 0;
       tEarn += Number(r.total_earning) || 0;
+      tComm += Number(r.total_commission) || 0;
       const lost = !(Number(r.total_sold) > 0);
       const avg = r.orders_count > 0 ? Math.round((Number(r.total_sold) || 0) / r.orders_count) : 0;
       const name = escapeHtml(r.full_name || r.username) + ' <span class="muted small">(' + escapeHtml(r.username) + ')</span>';
@@ -2676,6 +2678,9 @@
         '<td class="num">' + fmtMoney(avg) + '</td>' +
         '<td class="num muted">' + fmtMoney(r.total_cost) + '</td>' +
         '<td class="num"><strong>' + fmtMoney(r.total_earning) + '</strong></td>' +
+        // La comisión no es plata de Sergio: apagada, y "—" cuando el cliente no
+        // tiene lista personalizada (el caso normal).
+        '<td class="num muted">' + (Number(r.total_commission) ? fmtMoney(r.total_commission) : "—") + '</td>' +
         '<td class="muted small">' + escapeHtml(fmtDateShort(r.last_order_at)) + '</td>' +
         // En una baja, el detalle util es el del mes ANTERIOR (lo que dejo de
         // comprar): el boton abre esa ventana, no un mes vacio.
@@ -2701,6 +2706,7 @@
         '<th></th>' +
         '<th class="num muted">' + fmtMoney(tCost) + '</th>' +
         '<th class="num"><strong>' + fmtMoney(tEarn) + '</strong></th>' +
+        '<th class="num muted">' + (tComm ? fmtMoney(tComm) : "—") + '</th>' +
         '<th></th><th></th></tr>';
     }
   }
@@ -12185,9 +12191,11 @@
         pack_unit: it.pack_unit || "bulto",
         comprimidos_per_unit: it.pack_unit === "comprimido" ? cotComprimidos(it) : null,
       }));
-      showToast("Generando PDF…");
+      const fmtEl = document.querySelector('input[name="pcot-export-fmt"]:checked');
+      const ext = fmtEl && fmtEl.value === "xlsx" ? "xlsx" : "pdf";
+      showToast(ext === "xlsx" ? "Generando Excel…" : "Generando PDF…");
       try {
-        const resp = await fetch("/api/admin/cotizacion/pdf", {
+        const resp = await fetch("/api/admin/cotizacion/" + ext, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ supplier_name: supName, notes: notas, porBultos, items: payloadItems }),
@@ -12199,8 +12207,14 @@
         }
         const blob = await resp.blob();
         const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
-        const fileName = "Cotizacion " + (supName || "") + " " + dateSlug + ".pdf";
-        await sharePdfBlob(blob, fileName.replace(/\s+/g, " ").trim());
+        const fileName = ("Cotizacion " + (supName || "") + " " + dateSlug + "." + ext).replace(/\s+/g, " ").trim();
+        if (ext === "pdf") { await sharePdfBlob(blob, fileName); return; }
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
       } catch (err) {
         if (err.name !== "AbortError") showToast("No se pudo exportar: " + err.message, "err");
       }

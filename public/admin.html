@@ -1099,12 +1099,13 @@
                 <th class="num sortable" data-sort="var" title="Variación contra el mes anterior">Var. vs mes ant.<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="avg">Ticket promedio<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort="cost">Costo<span class="sort-arrow"></span></th>
-                <th class="num sortable" data-sort="earning">Ganancia<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="earning" title="Ganancia neta tuya: precio de venta − costo real del producto − comisión del vendedor. Misma cuenta que Reportes.">Ganancia<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort="commission" title="Lo que se queda el vendedor tercerizado en los clientes con lista personalizada. No es plata tuya.">Comisión vend.<span class="sort-arrow"></span></th>
                 <th class="sortable" data-sort="last" data-defdir="desc">Último pedido<span class="sort-arrow"></span></th>
                 <th>Acciones</th>
               </tr>
             </thead>
-            <tbody id="act-cli-tbody"><tr><td colspan="10" class="muted">Cargando…</td></tr></tbody>
+            <tbody id="act-cli-tbody"><tr><td colspan="11" class="muted">Cargando…</td></tr></tbody>
             <tfoot id="act-cli-tfoot"></tfoot>
           </table>
         </div>
@@ -3184,7 +3185,18 @@
   <div class="admin-modal" id="pcot-export-modal" hidden style="z-index:1400">
     <div class="admin-modal-box" style="max-width:380px">
         <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
-      <h3>Exportar cotización (PDF)</h3>
+      <h3>Exportar cotización</h3>
+      <div style="margin-bottom:14px">
+        <div class="muted small" style="margin-bottom:6px;font-weight:600">Formato</div>
+        <div style="display:flex;gap:8px">
+          <label style="flex:1;display:flex;align-items:center;gap:6px;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;cursor:pointer">
+            <input type="radio" name="pcot-export-fmt" value="pdf" checked /> 📄 PDF
+          </label>
+          <label style="flex:1;display:flex;align-items:center;gap:6px;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;cursor:pointer" title="Para cambiar nombres de productos antes de mandarla">
+            <input type="radio" name="pcot-export-fmt" value="xlsx" /> 📊 Excel <span class="muted" style="font-size:11px">(editable)</span>
+          </label>
+        </div>
+      </div>
       <p style="margin:0 0 16px;color:#374151">¿Cómo querés expresar las cantidades?</p>
       <div style="display:flex;flex-direction:column;gap:10px">
         <button type="button" class="btn btn-primary" id="pcot-export-units-btn" style="font-size:14px;padding:10px">📦 Por unidades</button>
@@ -3950,6 +3962,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260827b"></script>
+  <script src="/js/admin.js?v=20260915a"></script>
 </body>
 </html>

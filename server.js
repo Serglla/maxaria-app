@@ -5468,6 +5468,27 @@ function parseActivityMonth(req) {
   };
 }
 
+// ===== Ganancia NETA del negocio por línea de pedido =====
+// Definida ACA (y no en la sección de Reportes) porque la usan dos secciones
+// lejanas: /api/admin/reports/sales y /api/admin/activity/clients. Es la unica
+// definicion de "ganancia mia" del sistema; si cambia, cambian los dos paneles.
+//   (precio de venta - costo real del producto)  MENOS  la comisión del vendedor.
+// La comisión existe solo cuando el cliente tiene lista personalizada (vendedor_cost_unit
+// no nulo) y vale (unit_price - vendedor_cost_unit). Restándola a la ganancia bruta queda:
+//   con lista  -> (vendedor_cost_unit - p.cost)   ; sin lista -> (unit_price - p.cost)
+// Ej. pedido #222: ganancia bruta $256.069 - comisión $72.401 = $183.668 (neta real de Sergio).
+const NET_EARNING_EXPR =
+  "CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+  " THEN (oi.vendedor_cost_unit - COALESCE(p.cost,0))" +
+  " ELSE (oi.unit_price - COALESCE(p.cost,0)) END * oi.quantity";
+
+// Comisión del vendedor tercerizado sobre la linea: lo que se queda EL VENDEDOR.
+// Solo existe con lista personalizada. Es exactamente lo que la pestaña
+// "Por vendedor" muestra como ganancia del vendedor.
+const VEND_COMMISSION_EXPR =
+  "CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+  " THEN (oi.unit_price - oi.vendedor_cost_unit) * oi.quantity ELSE 0 END";
+
 // ----- Historial agregado por cliente -----
 // Suma pedidos no cancelados (excluye unificados del tercerizado) en el
 // rango. Devuelve por cliente: cantidad de pedidos, entregados, total
@@ -5499,9 +5520,15 @@ app.get("/api/admin/activity/clients", requireAdmin, (req, res) => {
     "    FROM cli_orders GROUP BY user_id" +
     ")," +
     "item_agg AS (" +
+    // Costo = costo REAL del producto (p.cost), no el precio de lista del
+    // vendedor; ganancia = NET_EARNING_EXPR, la misma que /reports/sales. Antes
+    // este bloque usaba vendedor_cost_unit como costo y (unit_price -
+    // vendedor_cost_unit) como ganancia, que es la COMISION DEL VENDEDOR: para
+    // los clientes con lista personalizada este panel no cerraba con Reportes.
     "  SELECT co.user_id," +
-    "         SUM(COALESCE(oi.vendedor_cost_unit, p.cost, 0) * oi.quantity) AS total_cost," +
-    "         SUM((oi.unit_price - COALESCE(oi.vendedor_cost_unit, p.cost, 0)) * oi.quantity) AS total_earning" +
+    "         SUM(COALESCE(p.cost,0) * oi.quantity) AS total_cost," +
+    "         SUM(" + NET_EARNING_EXPR + ") AS total_earning," +
+    "         SUM(" + VEND_COMMISSION_EXPR + ") AS total_commission" +
     "    FROM cli_orders co" +
     "    JOIN order_items oi ON oi.order_id = co.order_id" +
     "    LEFT JOIN products p ON p.id = oi.product_id" +
@@ -5513,6 +5540,7 @@ app.get("/api/admin/activity/clients", requireAdmin, (req, res) => {
     "       COALESCE(oa.total_sold,0) AS total_sold," +
     "       COALESCE(ia.total_cost,0) AS total_cost," +
     "       COALESCE(ia.total_earning,0) AS total_earning," +
+    "       COALESCE(ia.total_commission,0) AS total_commission," +
     "       oa.last_order_at" +
     "  FROM users u" +
     "  LEFT JOIN ord_agg oa ON oa.user_id = u.id" +
@@ -5543,7 +5571,7 @@ app.get("/api/admin/activity/clients", requireAdmin, (req, res) => {
       user_id: p.user_id, username: p.username, full_name: p.full_name,
       level: p.level, active: p.active,
       orders_count: 0, delivered_count: 0, total_sold: 0,
-      total_cost: 0, total_earning: 0,
+      total_cost: 0, total_earning: 0, total_commission: 0,
       last_order_at: p.last_order_at,
       prev_total_sold: Number(p.total_sold) || 0,
       prev_orders_count: Number(p.orders_count) || 0,
@@ -8249,6 +8277,58 @@ app.post("/api/admin/cotizacion/pdf", requireAdmin, (req, res) => {
   buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items, notes });
 });
 
+// Misma cotización en .xlsx EDITABLE: para renombrar productos con la
+// denominación que usa el proveedor (en el sistema pueden llamarse distinto)
+// antes de mandarla. Sin precios, con la cantidad separada en número + unidad.
+app.post("/api/admin/cotizacion/xlsx", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const items = Array.isArray(b.items) ? b.items.filter((it) => it && (it.product_name || it.product_code)) : [];
+  if (!items.length) return res.status(400).json({ error: "Sin productos para exportar" });
+  let XLSX;
+  try { XLSX = require("xlsx"); }
+  catch (err) { return res.status(500).json({ error: "No se pudo generar el Excel (falta la libreria xlsx)" }); }
+  const appName = (db.prepare("SELECT value FROM settings WHERE key='app_name'").get() || {}).value || "Maxaria";
+  const supplierName = String(b.supplier_name || "").trim();
+  const notes = String(b.notes || "").trim().slice(0, 1000);
+  const porBultos = !!b.porBultos;
+  const date = new Date().toLocaleDateString("es-AR");
+
+  const rows = [];
+  rows.push(["Pedido de cotización — " + appName]);
+  rows.push(["Fecha", date]);
+  if (supplierName) rows.push(["Proveedor", supplierName]);
+  rows.push([]);
+  rows.push(["N°", "Código", "Producto", "Cantidad", "Unidad", "Precio", "Observaciones"]);
+  items.forEach((it, idx) => {
+    // Misma lógica de cantidad que el PDF (buildCotizacionPdf).
+    const q = Number(it.quantity) || 0;
+    const upb = Number(it.units_per_bulto) || 1;
+    const pack = it.pack_unit || "bulto";
+    let cant, unidad;
+    if (pack === "comprimido") {
+      cant = Math.round(q * Math.max(1, Number(it.comprimidos_per_unit) || 1)); unidad = "comp";
+    } else if (porBultos && pack !== "unidad" && upb > 1) {
+      cant = Math.ceil(q / upb);
+      unidad = pack === "caja" ? (cant === 1 ? "caja" : "cajas") : (cant === 1 ? "bulto" : "bultos");
+    } else {
+      cant = q; unidad = "und";
+    }
+    rows.push([idx + 1, it.product_code || "", it.product_name || "", cant, unidad, "", ""]);
+  });
+  if (notes) { rows.push([]); rows.push(["Notas", notes]); }
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [{ wch: 5 }, { wch: 10 }, { wch: 48 }, { wch: 10 }, { wch: 9 }, { wch: 12 }, { wch: 28 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Cotización");
+  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
+  const safeSup = (supplierName || "Cotizacion").replace(/[^\w\s\-áéíóúüñÁÉÍÓÚÜÑ]/g, "").trim();
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", 'attachment; filename="Cotizacion ' + safeSup + " " + dateSlug + '.xlsx"');
+  res.send(buf);
+});
+
 // ===== Exportar una compra para pasarsela al proveedor =====
 // El cuerpo llega armado desde el modal de compra (asi funciona igual con una
 // compra todavia sin guardar). porBultos = cantidades en bultos (N x u/blt);
@@ -10694,17 +10774,6 @@ app.delete("/api/admin/reports/inflation/:id", requireAdmin, (req, res) => {
 });
 
 // ===== REPORTES DE VENTAS =====
-
-// Ganancia NETA del negocio por línea de pedido:
-//   (precio de venta - costo real del producto)  MENOS  la comisión del vendedor.
-// La comisión existe solo cuando el cliente tiene lista personalizada (vendedor_cost_unit
-// no nulo) y vale (unit_price - vendedor_cost_unit). Restándola a la ganancia bruta queda:
-//   con lista  -> (vendedor_cost_unit - p.cost)   ; sin lista -> (unit_price - p.cost)
-// Ej. pedido #222: ganancia bruta $256.069 - comisión $72.401 = $183.668 (neta real de Sergio).
-const NET_EARNING_EXPR =
-  "CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
-  " THEN (oi.vendedor_cost_unit - COALESCE(p.cost,0))" +
-  " ELSE (oi.unit_price - COALESCE(p.cost,0)) END * oi.quantity";
 
 // GET /api/admin/reports/sales — pedidos con KPIs del período
 // Params: from, to, client_id, vendedor_id, status (default: todos menos cancelado)
