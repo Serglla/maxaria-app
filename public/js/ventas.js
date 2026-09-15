@@ -8,7 +8,7 @@
   "use strict";
 
   // ── Estado global mínimo ──
-  const me = { app_name: "Maxaria", level: 0, fullName: "", id: 0, vendedorClientId: null };
+  const me = { app_name: "ERP Test", level: 0, fullName: "", id: 0, vendedorClientId: null };
 
   // Búsqueda por inicio de palabra: cada término del query tiene que ser
   // prefijo de alguna palabra del texto (ignora mayúsculas y acentos).
@@ -27,7 +27,7 @@
       const r = await fetch("/api/me");
       if (r.ok) {
         const data = await r.json();
-        me.app_name = data.app_name || "Maxaria";
+        me.app_name = data.app_name || "ERP Test";
         me.level    = Number(data.level) || 0;
         me.fullName = data.fullName || data.username || "";
         me.id       = Number(data.id) || 0;
@@ -37,8 +37,8 @@
           ? Number(data.vendedorClient.id) : null;
         // Actualizar topbar
         const brand = document.getElementById("topbar-brand-name");
-        if (brand) brand.textContent = (me.app_name || "Maxaria");
-        document.title = (me.app_name || "Maxaria") + " — Ventas";
+        if (brand) brand.textContent = (me.app_name || "ERP Test");
+        document.title = (me.app_name || "ERP Test") + " — Ventas";
         const info = document.getElementById("user-info");
         if (info) {
           const lvl = data.levelName || "";
@@ -856,7 +856,7 @@
     const surPct  = vEls.surcharge ? Number(vEls.surcharge.value) : 0;
     const notes   = vEls.notes ? vEls.notes.value : "";
     const date    = new Date().toLocaleDateString("es-AR");
-    const appName = me.app_name || "Maxaria";
+    const appName = me.app_name || "ERP Test";
     const status  = vState.editingStatus || "borrador";
     const STATUS_LABELS = { borrador: "Borrador", enviado: "Enviado", aceptado: "Aceptado", cancelado: "Cancelado", facturado: "Facturado" };
 
@@ -889,24 +889,24 @@
       "*{box-sizing:border-box}" +
       "body{font-family:Arial,sans-serif;font-size:13px;margin:28px 32px;color:#111}" +
       ".header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}" +
-      ".header-left h1{font-size:20px;font-weight:800;margin:0 0 2px;color:#1e3a5f}" +
+      ".header-left h1{font-size:20px;font-weight:800;margin:0 0 2px;color:#0f4c5c}" +
       ".header-left .status{font-size:11px;color:#6b7280;margin:0}" +
       ".header-right{text-align:right}" +
       ".header-right .doc-label{font-size:11px;color:#6b7280;margin:0 0 1px;text-transform:uppercase;letter-spacing:.05em}" +
-      ".header-right .doc-num{font-size:18px;font-weight:800;color:#1e3a5f;margin:0}" +
-      ".meta-row{display:flex;gap:0;border-top:2px solid #1e3a5f;border-bottom:1px solid #d1d5db;padding:8px 0;margin-bottom:0;font-size:12.5px}" +
+      ".header-right .doc-num{font-size:18px;font-weight:800;color:#0f4c5c;margin:0}" +
+      ".meta-row{display:flex;gap:0;border-top:2px solid #0f4c5c;border-bottom:1px solid #d1d5db;padding:8px 0;margin-bottom:0;font-size:12.5px}" +
       ".meta-cell{flex:1;padding:0 12px;border-right:1px solid #d1d5db}" +
       ".meta-cell:first-child{padding-left:0}" +
       ".meta-cell:last-child{border-right:none}" +
       ".meta-cell span{display:block;font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;margin-bottom:1px}" +
       ".meta-cell strong{font-size:13px;color:#111}" +
       "table{width:100%;border-collapse:collapse}" +
-      "thead tr{background:#1e3a5f}" +
+      "thead tr{background:#0f4c5c}" +
       "thead th{color:#fff;font-size:11px;font-weight:700;padding:7px 8px;text-align:left;letter-spacing:.03em;border-right:1px solid rgba(255,255,255,0.25)}" +
       "thead th:last-child{border-right:none}" +
-      "tbody tr{border-bottom:1px solid #1e3a5f}" +
+      "tbody tr{border-bottom:1px solid #0f4c5c}" +
       "tbody tr:nth-child(even){background:#f8fafc}" +
-      "tbody td{padding:6px 8px;font-size:12.5px;vertical-align:middle;border-right:1px solid #1e3a5f}" +
+      "tbody td{padding:6px 8px;font-size:12.5px;vertical-align:middle;border-right:1px solid #0f4c5c}" +
       "tbody td:last-child{border-right:none}" +
       ".col-cod{color:#6b7280;width:60px}" +
       ".col-prod{font-weight:600}" +
@@ -915,10 +915,10 @@
       ".col-disc{text-align:right;width:56px;color:#b45309;font-weight:600}" +
       ".col-precio{text-align:right;width:80px;color:#111}" +
       ".col-sub{text-align:right;width:90px;font-weight:700}" +
-      ".summary-row{display:flex;justify-content:flex-end;align-items:baseline;gap:24px;border-top:2px solid #1e3a5f;padding:10px 8px 0}" +
+      ".summary-row{display:flex;justify-content:flex-end;align-items:baseline;gap:24px;border-top:2px solid #0f4c5c;padding:10px 8px 0}" +
       ".summary-meta{font-size:12px;color:#6b7280}" +
       ".adjustments{font-size:12px;color:#6b7280;margin-top:4px;text-align:right}" +
-      ".grand-total{font-size:20px;font-weight:800;color:#1e3a5f}" +
+      ".grand-total{font-size:20px;font-weight:800;color:#0f4c5c}" +
       ".notes{margin-top:12px;font-size:12px;color:#6b7280;font-style:italic}" +
       "@media print{body{margin:14px 18px}}" +
       "</style></head><body>" +

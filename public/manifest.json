@@ -1,17 +1,24 @@
 {
-  "name": "Maxaria",
-  "short_name": "Maxaria",
-  "description": "Catálogo mayorista y minorista, pedidos por WhatsApp, panel de administración.",
+  "name": "ERP Test",
+  "short_name": "ERP Test",
+  "description": "Demo: catálogo, pedidos, stock, caja y reportes.",
   "lang": "es-AR",
   "dir": "ltr",
   "start_url": "/catalogo",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone"],
+  "display_override": [
+    "window-controls-overlay",
+    "standalone"
+  ],
   "orientation": "any",
   "background_color": "#ffffff",
-  "theme_color": "#1e3a5f",
-  "categories": ["business", "shopping", "productivity"],
+  "theme_color": "#0f4c5c",
+  "categories": [
+    "business",
+    "shopping",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -38,14 +45,24 @@
       "short_name": "Catálogo",
       "description": "Ver productos y armar un pedido",
       "url": "/catalogo",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
       "name": "Admin",
       "short_name": "Admin",
       "description": "Panel de administración",
       "url": "/admin",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }

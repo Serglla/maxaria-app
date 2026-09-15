@@ -131,7 +131,7 @@
         else resolve(window.confirm(opts.message || ""));
         return;
       }
-      const appName = (state.me && (state.me.app_name || state.me.appName)) || "Maxaria";
+      const appName = (state.me && (state.me.app_name || state.me.appName)) || "ERP Test";
       titleEl.textContent = opts.title || appName;
       bodyEl.textContent = opts.message || "";
       okBtn.textContent = opts.confirmText || (opts.alert ? "Aceptar" : "Confirmar");
@@ -1268,7 +1268,7 @@
 
     // Agregamos un encabezado temporal con el nombre de la app y el nivel,
     // asi la imagen exportada es autoexplicativa para WhatsApp.
-    const appName = (state.me && state.me.app_name) || document.title || "Maxaria";
+    const appName = (state.me && state.me.app_name) || document.title || "ERP Test";
     const lvlName = state.priceChangesLevelName || "";
     const headerEl = document.createElement("div");
     headerEl.className = "pc-capture-header";
@@ -1692,7 +1692,7 @@
       bar.id = "order-notif-bar";
       bar.setAttribute("role", "status");
       bar.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:99999;" +
-        "background:#1e3a5f;color:#fff;padding:12px 16px;font-size:14px;line-height:1.4;" +
+        "background:#0f4c5c;color:#fff;padding:12px 16px;font-size:14px;line-height:1.4;" +
         "box-shadow:0 4px 14px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:4px;" +
         "max-height:60vh;overflow-y:auto";
       document.body.appendChild(bar);
