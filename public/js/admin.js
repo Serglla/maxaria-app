@@ -8197,10 +8197,10 @@
 
   async function loadVentasOrders() {
     if (!els.ventasTbody) return;
-    // Default al abrir por primera vez: solo la semana actual.
+    // Default al abrir por primera vez: el mes corriente completo.
     if (!state.ventasRangeInit) {
       state.ventasRangeInit = true;
-      if (els.ventasRange) { els.ventasRange.value = "week"; setVentasRangeDates("week"); }
+      if (els.ventasRange) { els.ventasRange.value = "month"; setVentasRangeDates("month"); }
     }
     const qs = [];
     if (els.ventasFrom && els.ventasFrom.value) qs.push("from=" + encodeURIComponent(els.ventasFrom.value));
