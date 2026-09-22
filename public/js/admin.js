@@ -5967,7 +5967,7 @@
           '<td data-label="Código"><code>' + escapeHtml(it.product_code) + '</code></td>' +
           '<td class="no-cell-name" data-label="Producto">' + escapeHtml(it.product_name) + '</td>' +
           '<td data-label="Cant." style="text-align:right"><input type="number" class="cell-input cell-num no-qty" min="1" step="1" value="' + it.quantity + '" data-idx="' + idx + '" style="width:60px"></td>' +
-          '<td data-label="P. Unit." style="text-align:right">' + fmtPrice(it.unit_price) + '</td>' +
+          '<td data-label="P. Unit." style="text-align:right"><input type="number" class="cell-input cell-num no-price" min="0" step="0.01" value="' + it.unit_price + '" data-idx="' + idx + '" style="width:90px" title="Precio unitario (editable)"></td>' +
           '<td data-label="Desc." style="text-align:right">' + discCellHtml(it, idx, noDiscUnit) + '</td>' +
           '<td data-label="Subtotal" style="text-align:right;font-weight:600" class="no-sub">' + fmtPrice(lineNetSub(it)) + '</td>' +
           '<td class="no-cell-rm"><button type="button" class="btn btn-small no-rm" data-idx="' + idx + '">✕</button></td>' +
@@ -5980,6 +5980,19 @@
         inp.addEventListener("input", function() {
           var idx = Number(this.dataset.idx);
           noItems[idx].quantity = Math.max(1, Math.floor(Number(this.value) || 1));
+          var tr = this.closest("tr");
+          var sub = tr ? tr.querySelector(".no-sub") : null;
+          if (sub) sub.textContent = fmtPrice(lineNetSub(noItems[idx]));
+          noUpdateTotal();
+        });
+        inp.addEventListener("change", function() { noRenderItems(); });
+      });
+      // precio unitario editable: mismo criterio que la cantidad (actualiza en el
+      // lugar mientras se tipea, sin re-render, para no cerrar el teclado).
+      els.noItemsTbody.querySelectorAll(".no-price").forEach(function(inp) {
+        inp.addEventListener("input", function() {
+          var idx = Number(this.dataset.idx);
+          noItems[idx].unit_price = Math.max(0, round2(Number(this.value) || 0));
           var tr = this.closest("tr");
           var sub = tr ? tr.querySelector(".no-sub") : null;
           if (sub) sub.textContent = fmtPrice(lineNetSub(noItems[idx]));
