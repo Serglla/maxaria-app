@@ -6780,3 +6780,14 @@ html.in-modal .ventas-wrap {
 .my-account-pays ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .my-account-pays li { display: flex; justify-content: space-between; font-size: 13px; color: #334155; }
 .my-account-sub { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; color: #64748b; margin: 6px 2px 8px; }
+
+/* Usuarios -> editar cliente: "Dejo de comprar" (23/9/2026) */
+.ue-pattern { margin-top: 14px; padding: 12px 14px; border: 1px solid #e5e7eb; border-radius: 10px; background: #f8fafc; }
+.ue-pattern-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ue-pattern-head strong { font-size: 14px; }
+.ue-pattern-alert { margin: 8px 0 4px; padding: 7px 10px; border-radius: 8px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 12.5px; font-weight: 600; }
+.ue-pattern-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+.ue-pattern-table th { text-align: left; font-size: 11px; text-transform: uppercase; color: #64748b; padding: 4px 6px; border-bottom: 1px solid #e2e8f0; }
+.ue-pattern-table td { padding: 6px; border-bottom: 1px solid #eef2f6; vertical-align: top; }
+.ue-pattern-table .num { text-align: right; white-space: nowrap; }
+.ue-pattern-flag { display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 999px; background: #fee2e2; color: #b91c1c; font-size: 10.5px; font-weight: 700; }

@@ -3018,35 +3018,36 @@ app.get("/api/my-account", requireLogin, (req, res) => {
   });
 });
 
-app.get("/api/my-suggestions", requireLogin, (req, res) => {
-  let targetId = req.session.userId;
-  let targetLevel = req.session.level;
-  if (req.session.level === 5) {
-    if (!req.session.vendedorClientId) return res.json({ habitual: [], recompra: [] });
-    targetId = req.session.vendedorClientId;
-    targetLevel = req.session.vendedorClientLevel;
-  }
-  // El admin no tiene "pedido habitual" propio; para no romper el catalogo
-  // devolvemos vacio salvo que este atendiendo (no aplica hoy).
-  if (Number(targetLevel) === 99) return res.json({ habitual: [], recompra: [] });
-
-  // Ultimos N pedidos reales del cliente (sin cancelados ni unificados).
+// Patron de compra de un cliente a partir de sus ultimos pedidos:
+//  - habitual: lo que se repite en >= SUGG_MIN_ORDERS pedidos (con cantidad tipica)
+//  - recompra: productos con ciclo de compra conocido que se le pasaron (1.15x)
+// opts.admin = vista del panel (Usuarios): incluye productos sin stock /
+// inactivos / fuera de sus categorias (marcados), devuelve todos los atrasados
+// y cuando fue su ultimo pedido. Sirve para detectar que el cliente sigue
+// comprando pero consigue esos productos en otro lado.
+function clientBuyingPattern(targetId, targetLevel, opts) {
+  const admin = !!(opts && opts.admin);
+  const empty = { habitual: [], recompra: [], orders_analyzed: 0, last_order_days: null };
   const orders = db.prepare(
     "SELECT id, created_at FROM orders" +
     " WHERE user_id = ? AND status != 'cancelado' AND COALESCE(is_unified,0) = 0" +
     " ORDER BY created_at DESC LIMIT ?"
   ).all(targetId, SUGG_MAX_ORDERS);
-  if (!orders.length) return res.json({ habitual: [], recompra: [] });
+  if (!orders.length) return empty;
   const orderIds = orders.map((o) => o.id);
   const ph = orderIds.map(() => "?").join(",");
-
-  // Frecuencia y cantidad tipica por producto en esos pedidos.
   const items = db.prepare(
     "SELECT oi.product_id AS pid, oi.order_id, oi.quantity, o.created_at" +
     "  FROM order_items oi JOIN orders o ON o.id = oi.order_id" +
     " WHERE oi.order_id IN (" + ph + ") AND oi.product_id IS NOT NULL"
   ).all(...orderIds);
-  if (!items.length) return res.json({ habitual: [], recompra: [] });
+
+  const daysAgo = (iso) => {
+    const t = Date.parse(String(iso).replace(" ", "T") + "Z");
+    return Number.isFinite(t) ? Math.floor((Date.now() - t) / 86400000) : null;
+  };
+  const base = { orders_analyzed: orders.length, last_order_days: daysAgo(orders[0].created_at) };
+  if (!items.length) return Object.assign(empty, base);
 
   const byProduct = new Map();
   for (const it of items) {
@@ -3057,24 +3058,27 @@ app.get("/api/my-suggestions", requireLogin, (req, res) => {
     e.dates.push(String(it.created_at));
   }
 
-  // Precio y visibilidad exactamente como los ve el cliente en el catalogo.
+  // Precio y visibilidad como los ve el cliente en el catalogo (en la vista
+  // admin no se filtra: se marca si hoy no lo podria pedir).
   const cfg = getEffectivePriceConfig(targetId, targetLevel);
   const pe = priceSqlExpr(cfg, "p");
   const allowedIds = getUserAllowedCategoryIds(targetId, targetLevel);
+  if (!admin && allowedIds !== null && allowedIds.size === 0) return Object.assign(empty, base);
   const pids = Array.from(byProduct.keys());
   const pph = pids.map(() => "?").join(",");
   let psql =
-    "SELECT p.id, p.code, p.name, p.image_url, p.stock, p.category_id," +
+    "SELECT p.id, p.code, p.name, p.image_url, p.stock, p.active, p.category_id," +
+    "       COALESCE(c.active,1) AS cat_active," +
     "       c.name AS category_name, " + pe.expr + " AS price" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
-    " WHERE p.active = 1 AND p.stock > 0 AND COALESCE(c.active,1) = 1" +
-    "   AND p.id IN (" + pph + ")";
+    " WHERE p.id IN (" + pph + ")";
   const pparams = [...pe.params, ...pids];
-  if (allowedIds !== null && allowedIds.size > 0) {
-    psql += " AND p.category_id IN (" + Array.from(allowedIds).map(() => "?").join(",") + ")";
-    pparams.push(...Array.from(allowedIds));
-  } else if (allowedIds !== null && allowedIds.size === 0) {
-    return res.json({ habitual: [], recompra: [] });
+  if (!admin) {
+    psql += " AND p.active = 1 AND p.stock > 0 AND COALESCE(c.active,1) = 1";
+    if (allowedIds !== null) {
+      psql += " AND p.category_id IN (" + Array.from(allowedIds).map(() => "?").join(",") + ")";
+      pparams.push(...Array.from(allowedIds));
+    }
   }
   const prods = new Map();
   for (const p of db.prepare(psql).all(...pparams)) prods.set(p.id, p);
@@ -3084,19 +3088,22 @@ app.get("/api/my-suggestions", requireLogin, (req, res) => {
     const m = Math.floor(a.length / 2);
     return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
   };
-  const daysAgo = (iso) => {
-    const t = Date.parse(String(iso).replace(" ", "T") + "Z");
-    return Number.isFinite(t) ? Math.floor((Date.now() - t) / 86400000) : null;
-  };
 
   const habitual = [];
   const recompra = [];
   for (const [pid, e] of byProduct.entries()) {
     const p = prods.get(pid);
-    if (!p) continue; // sin stock, inactivo o fuera de sus categorias
+    if (!p) continue; // sin stock, inactivo o fuera de sus categorias (vista cliente)
     const timesOrdered = e.orders.size;
     const qty = Math.max(1, Math.round(median(e.qtys)));
-    if (timesOrdered >= SUGG_MIN_ORDERS) {
+    // En la vista admin, motivo por el que el cliente hoy no lo podria pedir.
+    let unavailable = null;
+    if (admin) {
+      if (!Number(p.active) || !Number(p.cat_active)) unavailable = "inactivo";
+      else if (!(Number(p.stock) > 0)) unavailable = "sin stock";
+      else if (allowedIds !== null && !allowedIds.has(p.category_id)) unavailable = "categoría no habilitada";
+    }
+    if (timesOrdered >= SUGG_MIN_ORDERS && !unavailable) {
       habitual.push({
         product_id: p.id, code: p.code, name: p.name, image_url: p.image_url,
         price: p.price, stock: p.stock, category_name: p.category_name,
@@ -3118,8 +3125,10 @@ app.get("/api/my-suggestions", requireLogin, (req, res) => {
       const since = daysAgo(dates[dates.length - 1]);
       if (cycle >= 3 && since != null && since > cycle * 1.15) {
         recompra.push({
-          product_id: p.id, code: p.code, name: p.name,
+          product_id: p.id, code: p.code, name: p.name, category_name: p.category_name,
           price: p.price, qty: qty, cycle_days: cycle, days_since: since,
+          times_bought: dates.length, last_date: dates[dates.length - 1],
+          unavailable: unavailable,
         });
       }
     }
@@ -3128,11 +3137,33 @@ app.get("/api/my-suggestions", requireLogin, (req, res) => {
   habitual.sort((a, b) => b.times_ordered - a.times_ordered || a.name.localeCompare(b.name, "es"));
   // Los mas atrasados primero (mas dias de más sobre su ciclo).
   recompra.sort((a, b) => (b.days_since - b.cycle_days) - (a.days_since - a.cycle_days));
-  res.json({
+  return Object.assign(base, {
     habitual: habitual.slice(0, SUGG_MAX_ITEMS),
-    recompra: recompra.slice(0, 5),
-    orders_analyzed: orders.length,
+    recompra: admin ? recompra : recompra.slice(0, 5),
   });
+}
+
+app.get("/api/my-suggestions", requireLogin, (req, res) => {
+  let targetId = req.session.userId;
+  let targetLevel = req.session.level;
+  if (req.session.level === 5) {
+    if (!req.session.vendedorClientId) return res.json({ habitual: [], recompra: [] });
+    targetId = req.session.vendedorClientId;
+    targetLevel = req.session.vendedorClientLevel;
+  }
+  // El admin no tiene "pedido habitual" propio.
+  if (Number(targetLevel) === 99) return res.json({ habitual: [], recompra: [] });
+  res.json(clientBuyingPattern(targetId, targetLevel, { admin: false }));
+});
+
+// Vista admin (Usuarios → editar cliente): productos que el cliente dejo de
+// comprar aunque sigue haciendo pedidos (señal de que los consigue en otro lado).
+app.get("/api/admin/users/:id/buying-pattern", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const u = db.prepare("SELECT id, level FROM users WHERE id = ?").get(id);
+  if (!u) return res.status(404).json({ error: "Usuario no encontrado" });
+  if (Number(u.level) < 1 || Number(u.level) > 4) return res.json({ habitual: [], recompra: [], orders_analyzed: 0, last_order_days: null });
+  res.json(clientBuyingPattern(u.id, u.level, { admin: true }));
 });
 
 // ----- Pedidos -----

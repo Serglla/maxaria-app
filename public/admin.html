@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260922j" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260923c" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -2304,6 +2304,9 @@
           <button type="button" class="btn btn-small" id="ue-revoke-btn" hidden title="Invalida el link enviado: el cliente tendrá que entrar con usuario y contraseña, o pedirte uno nuevo">🚫 Revocar link</button>
           <span id="ue-link-info" class="muted small"></span>
         </div>
+        <!-- Productos que el cliente dejó de comprar (sigue pidiendo, pero
+             estos ya no): señal de que los consigue en otro lado. -->
+        <div id="ue-pattern" class="ue-pattern" hidden></div>
         <p id="user-edit-msg" class="config-msg"></p>
         <div class="admin-modal-foot">
           <button type="button" class="btn" data-close>Cerrar</button>
@@ -3969,6 +3972,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260923a"></script>
+  <script src="/js/admin.js?v=20260923b"></script>
 </body>
 </html>

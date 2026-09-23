@@ -2044,6 +2044,48 @@
       els.userEditMsg.className = "config-msg";
     }
     els.userEditModal.hidden = false;
+    loadUserBuyingPattern(u.id);
+  }
+
+  // "Dejó de comprar": productos con ciclo de compra conocido que el cliente no
+  // repone hace más de lo normal. Si igual sigue haciendo pedidos, lo más
+  // probable es que esos productos los esté consiguiendo en otro lado.
+  async function loadUserBuyingPattern(userId) {
+    const box = document.getElementById("ue-pattern");
+    if (!box) return;
+    box.hidden = false;
+    box.innerHTML = '<p class="muted small" style="margin:0">Analizando sus compras…</p>';
+    let d;
+    try {
+      d = await api("/api/admin/users/" + userId + "/buying-pattern", {}, "el patrón de compra");
+    } catch (_) { box.hidden = true; return; }
+    if (state.editUserId !== userId) return; // cambiaron de cliente mientras cargaba
+    const rec = d.recompra || [];
+    const lastTxt = d.last_order_days == null ? "sin pedidos"
+      : d.last_order_days === 0 ? "hoy" : (d.last_order_days === 1 ? "ayer" : "hace " + d.last_order_days + " días");
+    let head = '<div class="ue-pattern-head"><strong>Dejó de comprar</strong>' +
+      '<span class="muted small">Último pedido: ' + lastTxt +
+      (d.orders_analyzed ? " · analizados sus últimos " + d.orders_analyzed + " pedidos" : "") + "</span></div>";
+    if (!d.orders_analyzed) {
+      box.innerHTML = head + '<p class="muted small" style="margin:6px 0 0">Todavía no tiene pedidos para analizar.</p>';
+      return;
+    }
+    if (!rec.length) {
+      box.innerHTML = head + '<p class="muted small" style="margin:6px 0 0">✔ Viene reponiendo todo lo que suele comprar.</p>';
+      return;
+    }
+    const sigue = d.last_order_days != null && rec.length && d.last_order_days < Math.min.apply(null, rec.map((r) => r.days_since));
+    box.innerHTML = head +
+      (sigue ? '<p class="ue-pattern-alert">⚠ Sigue haciendo pedidos pero no repone estos productos: puede estar comprándolos en otro lado.</p>' : "") +
+      '<table class="ue-pattern-table"><thead><tr><th>Producto</th><th class="num">Sin pedirlo</th><th class="num">Solía cada</th><th class="num">Última compra</th></tr></thead><tbody>' +
+      rec.map((r) =>
+        "<tr><td>" + escapeHtml(r.name) + ' <span class="muted small">' + escapeHtml(r.code || "") + "</span>" +
+          (r.unavailable ? ' <span class="ue-pattern-flag">' + escapeHtml(r.unavailable) + "</span>" : "") +
+        '</td><td class="num"><strong>' + r.days_since + ' días</strong></td>' +
+        '<td class="num">' + r.cycle_days + " días</td>" +
+        '<td class="num">' + formatDate(r.last_date).split(",")[0] + "</td></tr>"
+      ).join("") +
+      "</tbody></table>";
   }
 
   // Doble click en una fila → abrir modal de edición (salvo si tocaron el 📊).

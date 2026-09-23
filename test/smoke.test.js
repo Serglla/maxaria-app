@@ -486,3 +486,22 @@ test("Mis pedidos del cliente: /api/my-account da el saldo total de la cuenta", 
   const adm = await admin.get("/api/my-account");
   assert.equal(adm.json.applies, false);
 });
+
+test("patrón de compra: detecta el producto que el cliente dejó de reponer", async () => {
+  const pid = newProduct("S8", 100);
+  const nc = await admin.post("/api/admin/users", { username: "cliente8", password: "Clave123", full_name: "Cliente Ocho", level: 1 });
+  assert.equal(nc.status, 200, nc.text);
+  const cid = nc.json.user.id;
+  const d = rawDb();
+  const insO = d.prepare("INSERT INTO orders (user_id, status, total, stock_discounted, created_at) VALUES (?, 'entregado', 100, 1, datetime('now', ?))");
+  const insI = d.prepare("INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal) VALUES (?,?,?,?,2,50,100)");
+  for (const ago of ["-40 days", "-33 days", "-26 days"]) insI.run(insO.run(cid, ago).lastInsertRowid, pid, "S8", "Prod S8");
+  insO.run(cid, "-1 days"); // sigue comprando otras cosas
+  d.close();
+  const r = await admin.get("/api/admin/users/" + cid + "/buying-pattern");
+  assert.equal(r.status, 200, r.text);
+  const rec = r.json.recompra.find((x) => x.product_id === pid);
+  assert.ok(rec, JSON.stringify(r.json));
+  assert.equal(rec.cycle_days, 7);
+  assert.ok(r.json.last_order_days <= 1);
+});
