@@ -5939,6 +5939,26 @@ html.in-modal .ventas-wrap {
 .bidir-pct::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .bidir-pct { -moz-appearance: textfield; }
 
+/* Celular: el modal de producto tenía 26px + 20px de margen a cada lado y la
+   grilla de precios columnas fijas (90px + 150px): en una pantalla de 360px
+   quedaban ~200px y la columna de precio se salía de la caja (no se veían los
+   precios de Revendedor, Mayorista, etc.). */
+@media (max-width: 520px) {
+  #edit-product-modal .admin-modal-box,
+  #new-product-modal .admin-modal-box { padding: 16px 12px; width: calc(100% - 16px); }
+  #edit-product-modal .admin-modal-head + div,
+  #new-product-modal .admin-modal-head + div { padding: 12px 0 !important; }
+  .bidir-header,
+  .bidir-row {
+    grid-template-columns: minmax(0, 1fr) 56px minmax(0, 1.5fr);
+    gap: 8px;
+  }
+  .bidir-header, .bidir-row { padding-left: 10px; padding-right: 10px; }
+  .bidir-lbl { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bidir-pct { padding: 0 4px !important; }
+  .bidir-price { padding: 0 8px !important; font-size: 14px; }
+}
+
 /* ═══════════════════════════════════════════
    AJUSTES DE STOCK
    ═══════════════════════════════════════════ */
