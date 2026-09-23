@@ -1564,12 +1564,15 @@
     try {
       // Si /api/orders falla por red (offline), usar array vacío y mostrar
       // igual los pedidos guardados en IndexedDB.
-      const [orders, pendingOrders] = await Promise.all([
+      const isClient = !!(state.me && state.me.level >= 1 && state.me.level <= 4);
+      const [orders, pendingOrders, account] = await Promise.all([
         api("/api/orders").catch((e) => (e instanceof TypeError ? [] : Promise.reject(e))),
         window.OfflineMode ? window.OfflineMode.getAll() : Promise.resolve([]),
+        isClient ? api("/api/my-account").catch(() => null) : Promise.resolve(null),
       ]);
+      const accountHtml = account && account.applies ? accountSummaryHtml(account) : "";
       if (!orders.length && !pendingOrders.length) {
-        els.ordersBody.innerHTML = '<p class="muted">Todavia no hay pedidos.</p>';
+        els.ordersBody.innerHTML = accountHtml + '<p class="muted">Todavia no hay pedidos.</p>';
         return;
       }
       // Pedidos guardados offline (sin conexión previa)
@@ -1588,6 +1591,7 @@
       }
       const header = isTerc ? renderDispatchBar(orders) : "";
       els.ordersBody.innerHTML =
+        accountHtml +
         header +
         pendingHtml +
         (orders.length
@@ -1738,7 +1742,35 @@
   function clientStatusLabel(s) {
     return CLIENT_STATUS_LABELS[s] || statusLabel(s);
   }
-  // Chip de estado de pago para pedidos entregados (vista cliente/vendedor).
+  // Saldo total del cliente arriba de "Mis pedidos". El cliente paga a cuenta
+  // (parte de un pedido, algo del anterior o de mas), asi que lo que importa es
+  // cuanto debe en total, no pedido por pedido.
+  function accountSummaryHtml(acc) {
+    const debt = Number(acc.debt) || 0;
+    const credit = Number(acc.credit) || 0;
+    let cls = "acc-ok", big, small;
+    if (debt > 0.5) {
+      cls = "acc-debt"; big = fmtPrice(debt); small = "Es la suma de lo que quedó sin pagar de tus pedidos.";
+    } else if (credit > 0.5) {
+      cls = "acc-credit"; big = fmtPrice(credit); small = "Tenés saldo a favor: se descuenta de tu próximo pedido.";
+    } else {
+      big = "Estás al día"; small = "No tenés saldo pendiente.";
+    }
+    const label = debt > 0.5 ? "Tu saldo pendiente" : (credit > 0.5 ? "Saldo a favor" : "Tu cuenta");
+    const pagos = (acc.last_payments || []).slice(0, 3).map(function(p) {
+      return "<li><span>" + formatDate(p.date) + "</span><strong>" + fmtPrice(p.amount) + "</strong></li>";
+    }).join("");
+    return '<div class="my-account ' + cls + '">' +
+      '<div class="my-account-label">' + label + "</div>" +
+      '<div class="my-account-big">' + big + "</div>" +
+      '<div class="my-account-small">' + small + "</div>" +
+      (pagos ? '<div class="my-account-pays"><div class="my-account-pays-title">Últimos pagos</div><ul>' + pagos + "</ul></div>" : "") +
+    "</div>" +
+    '<div class="my-account-sub">Tus últimos pedidos</div>';
+  }
+
+  // Chip de estado de pago para pedidos entregados (vista vendedor).
+  // Para el cliente no se muestra: su deuda se ve en total arriba.
   // Usa balance_due (total − cobrado/pagado) que viene del backend.
   function paymentChipHtml(o) {
     if (o.status !== "entregado") return "";
@@ -1794,7 +1826,8 @@
 
     // El admin ve los estados internos; el cliente/vendedor ve las etapas simples.
     const label = isAdmin ? statusLabel(o.status) : clientStatusLabel(o.status);
-    const payChip = isAdmin ? "" : paymentChipHtml(o);
+    const isClientView = !!(state.me && state.me.level >= 1 && state.me.level <= 4);
+    const payChip = (isAdmin || isClientView) ? "" : paymentChipHtml(o);
     return '<article class="order-card' + (isTerc ? ' with-dispatch' : '') + '" data-id="' + o.id + '">' +
       '<header class="order-head" title="Click para ver el detalle">' +
         dispatchCb +
@@ -1890,7 +1923,7 @@
         (discTotal > 0 ? '<div class="order-disc-total" style="text-align:right;margin-top:4px;font-size:12px;color:#b45309;font-weight:700">Descuento aplicado: ' + fmtPrice(discTotal) + '</div>' : "") +
         pickChgHtml +
         (o.notes ? '<div class="order-notes">Nota: ' + escapeHtml(o.notes) + '</div>' : "") +
-        (!isAdmin ? paymentDetailHtml(o) : "") +
+        (!isAdmin && !(state.me && state.me.level >= 1 && state.me.level <= 4) ? paymentDetailHtml(o) : "") +
         '<div class="order-det-foot">' + statusSelect + reenviarBtn + '</div>';
 
       det.dataset.loaded = "1";

@@ -475,3 +475,14 @@ test("pedido unificado: al entregarlo no vuelve a descontar el stock de los hijo
   assert.equal(r.status, 200, r.text);
   assert.equal(stockOf(pid), 90);
 });
+
+test("Mis pedidos del cliente: /api/my-account da el saldo total de la cuenta", async () => {
+  const cli = client();
+  await cli.login("cliente1", "Clave123");
+  const r = await cli.get("/api/my-account");
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.json.applies, true);
+  assert.equal(Math.round(r.json.balance), await balanceOf(ids.client));
+  const adm = await admin.get("/api/my-account");
+  assert.equal(adm.json.applies, false);
+});

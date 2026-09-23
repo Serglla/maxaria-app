@@ -2989,6 +2989,35 @@ const SUGG_MAX_ORDERS = 12;   // ultimos N pedidos que se miran
 const SUGG_MAX_ITEMS = 12;    // productos en "tu pedido habitual"
 const SUGG_MIN_ORDERS = 2;    // aparecer en al menos N pedidos para sugerirlo
 const SUGG_MIN_CYCLES = 3;    // compras necesarias para estimar el ciclo
+// Cuenta corriente del cliente logueado, en una sola cifra. En la practica el
+// cliente paga "a cuenta" (parte de un pedido, algo del anterior, de mas...):
+// mostrar pedido por pedido si esta pagado confundia. La fuente de verdad es
+// account_movements (mismo saldo que la pestaña Cuentas del admin).
+app.get("/api/my-account", requireLogin, (req, res) => {
+  const lvl = Number(req.session.level);
+  if (lvl < 1 || lvl > 4) return res.json({ applies: false });
+  const uid = req.session.userId;
+  const r = db.prepare(
+    "SELECT COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE -amount END),0) AS bal" +
+    "  FROM account_movements WHERE user_id = ?"
+  ).get(uid);
+  const balance = Math.round((Number(r && r.bal) || 0) * 100) / 100;
+  // Ultimos pagos del cliente (lo que entrego), para que vea que se le anoto.
+  const pagos = db.prepare(
+    "SELECT amount, created_at, description FROM account_movements" +
+    " WHERE user_id = ? AND type = 'credit'" +
+    "   AND description NOT LIKE 'Descuento pedido%' AND description NOT LIKE 'Comisión rendida%'" +
+    " ORDER BY created_at DESC, id DESC LIMIT 5"
+  ).all(uid);
+  res.json({
+    applies: true,
+    balance: balance,
+    debt: balance < 0 ? -balance : 0,
+    credit: balance > 0 ? balance : 0,
+    last_payments: pagos.map((p) => ({ amount: p.amount, date: p.created_at })),
+  });
+});
+
 app.get("/api/my-suggestions", requireLogin, (req, res) => {
   let targetId = req.session.userId;
   let targetLevel = req.session.level;
