@@ -2361,6 +2361,9 @@ button { font: inherit; cursor: pointer; }
 .cp-line { display: block; white-space: nowrap; }
 .cp-lbl { color: #9ca3af; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; margin-right: 5px; }
 .cp-val { color: #b45309; font-weight: 800; }
+.cp-rate { margin-top: 2px; }
+.cp-rate .cp-val { color: #1e3a5f; font-size: 13px; font-weight: 700; }
+.cell-salesrate strong { color: #1e3a5f; }
 
 /* ===== Modo edición de la tabla de productos ("✏️ Editar tabla") ===== */
 .btn-tool.btn-tool-active { background: #1e3a5f; border-color: #1e3a5f; color: #fff; }

@@ -38,6 +38,7 @@
     price_vip: "number",
     price_publico: "number",
     active: "number",
+    sales_daily: "number",
   };
 
   const els = {
@@ -4816,8 +4817,8 @@
     const type = SORT_TYPES[field] || "text";
     const mult = dir === "desc" ? -1 : 1;
     return (a, b) => {
-      const va = a[field];
-      const vb = b[field];
+      const va = field === "sales_daily" ? salesDailyOf(a) : a[field];
+      const vb = field === "sales_daily" ? salesDailyOf(b) : b[field];
       if (type === "number") {
         // null/undefined cuentan como 0 para que no rompan el orden numerico
         const na = (va === null || va === undefined || va === "") ? 0 : Number(va);
@@ -4938,12 +4939,17 @@
       thList.hidden = !curListCfg;
       if (curListCfg) thList.textContent = curListCfg.name;
     }
+    // Columna "Venta/día": solo con el filtro Precio en Costo.
+    showSalesRate = (state.priceView === "costo");
+    const thRate = document.getElementById("th-salesrate");
+    if (thRate) thRate.hidden = !showSalesRate;
+    if (showSalesRate) ensureSalesRate();
     const list = (state.selectMode && state.showOnlySelected)
       ? state.productsFiltered.filter((p) => state.selectedIds.has(p.id))
       : state.productsFiltered;
     els.prodCount.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     if (!list.length) {
-      els.prodTbody.innerHTML = '<tr><td colspan="' + ((state.selectMode ? 16 : 15) + (curListCfg ? 1 : 0)) + '" class="muted">Sin resultados</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="' + ((state.selectMode ? 16 : 15) + (curListCfg ? 1 : 0) + (showSalesRate ? 1 : 0)) + '" class="muted">Sin resultados</td></tr>';
       els.pageInfo.textContent = "Página 0 / 0";
       els.pagePrev.disabled = true;
       els.pageNext.disabled = true;
@@ -4980,6 +4986,46 @@
   // derecha. Con "todos" apila los 5 precios de venta (el costo solo si se pide
   // explícitamente).
   var curListCfg = null; // lista elegida en el filtro Precio (la usa rowHtml)
+
+  // ---------- Venta promedio por día (columna visible con Precio = Costo) ----------
+  // Se pide una sola vez por carga de página a /api/admin/products-sales-rate
+  // (mismo cálculo que Reposición). state.salesRate = { pid: {daily, units} }.
+  var showSalesRate = false;
+  function salesDailyOf(p) {
+    var r = state.salesRate && state.salesRate[p.id];
+    return r ? Number(r.daily) || 0 : 0;
+  }
+  function fmtSalesDaily(n) {
+    if (!n) return "0";
+    if (n < 0.1) return "<0,1";
+    return n.toLocaleString("es-AR", { maximumFractionDigits: n >= 10 ? 0 : 1 });
+  }
+  function salesRateCell(p) {
+    if (!showSalesRate) return "";
+    if (!state.salesRate) return '<td class="num cell-money cell-salesrate muted">…</td>';
+    var r = state.salesRate[p.id];
+    var d = r ? Number(r.daily) || 0 : 0;
+    var tip = r
+      ? (fmtNum(r.units) + " u. vendidas en los últimos " + state.salesRateWindow + " días (las últimas 2 semanas pesan el doble)")
+      : ("Sin ventas en los últimos " + state.salesRateWindow + " días");
+    return '<td class="num cell-money cell-salesrate' + (d ? "" : " muted") + '" title="' + escapeHtml(tip) + '">' +
+      (d ? "<strong>" + fmtSalesDaily(d) + "</strong>" : "—") + '</td>';
+  }
+  async function ensureSalesRate() {
+    if (state.salesRate || state.salesRateLoading) return;
+    state.salesRateLoading = true;
+    try {
+      const out = await api("/api/admin/products-sales-rate", {}, "la venta promedio por día");
+      state.salesRate = (out && out.rates) || {};
+      state.salesRateWindow = (out && out.window_days) || 60;
+      applyFilters(); // re-ordena (si se ordenaba por venta) y re-renderiza
+    } catch (err) {
+      state.salesRate = {};
+      state.salesRateWindow = 60;
+    } finally {
+      state.salesRateLoading = false;
+    }
+  }
 
   // Agrega al filtro "Precio" un optgroup con las listas de precios activas,
   // para poder ver la tabla con los precios calculados de esa lista. Como las
@@ -5055,7 +5101,13 @@
       }).join("");
     }
     var mm = PRICE_VIEW_MAP[pv] || PRICE_VIEW_MAP.minorista;
-    return '<span class="cp-line"><span class="cp-lbl">' + mm[0] + '</span><span class="cp-val">$' + fmtPriceNum(p[mm[1]]) + '</span></span>';
+    var line = '<span class="cp-line"><span class="cp-lbl">' + mm[0] + '</span><span class="cp-val">$' + fmtPriceNum(p[mm[1]]) + '</span></span>';
+    if (pv === "costo" && state.salesRate) {
+      var d = salesDailyOf(p);
+      line += '<span class="cp-line cp-rate"><span class="cp-lbl">Vende</span><span class="cp-val">' +
+        (d ? fmtSalesDaily(d) + " u/día" : "—") + '</span></span>';
+    }
+    return line;
   }
 
   // ---------- Modo edición de tabla (botón "✏️ Editar tabla") ----------
@@ -5116,6 +5168,7 @@
       '<td class="muted cell-cat">' + escapeHtml(p.category_name || "—") + '</td>' +
       '<td class="num cell-stock' + stockCls + '"' + stockTitle + '>' + fmtNum(p.stock) + (stockLow ? " ⚠" : "") + '</td>' +
       moneyCell(p, "cost", "muted") +
+      salesRateCell(p) +
       moneyCell(p, "price_vip") +
       moneyCell(p, "price_revendedor") +
       moneyCell(p, "price_mayorista") +
@@ -5151,6 +5204,7 @@
       editCellCat(p) +
       editCellNum(p, "stock", "cell-stock") +
       editCellNum(p, "cost", "cell-money") +
+      salesRateCell(p) +
       moneyCell(p, "price_vip") +
       moneyCell(p, "price_revendedor") +
       moneyCell(p, "price_mayorista") +

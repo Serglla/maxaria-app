@@ -7538,6 +7538,37 @@ function repoLeadTimes(cfg) {
   return out;
 }
 
+// GET /api/admin/products-sales-rate — venta promedio por dia de cada producto.
+// Mismo calculo que Reposicion (ventana repo_window_days, el tramo reciente
+// pesa el doble; excluye cancelados y unificados) para que los dos numeros
+// coincidan. La usa la tabla de Productos cuando el filtro Precio es "Costo".
+app.get("/api/admin/products-sales-rate", requireAdmin, (req, res) => {
+  const cfg = repoConfig();
+  const oldDays = cfg.windowDays - cfg.recentDays;
+  const dayIso = (back) => new Date(Date.now() - back * 86400000).toISOString().slice(0, 10);
+  const windowStart = localDayBoundToUtc(dayIso(cfg.windowDays), false);
+  const recentStart = localDayBoundToUtc(dayIso(cfg.recentDays), false);
+  const rates = {};
+  for (const r of db.prepare(
+    "SELECT oi.product_id AS pid," +
+    "       SUM(CASE WHEN o.created_at >= ? THEN oi.quantity ELSE 0 END) AS q_recent," +
+    "       SUM(CASE WHEN o.created_at <  ? THEN oi.quantity ELSE 0 END) AS q_old" +
+    "  FROM order_items oi" +
+    "  JOIN orders o ON o.id = oi.order_id" +
+    " WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
+    "   AND oi.product_id IS NOT NULL AND o.created_at >= ?" +
+    " GROUP BY oi.product_id"
+  ).all(recentStart, recentStart, windowStart)) {
+    const qRecent = Number(r.q_recent) || 0;
+    const qOld = Number(r.q_old) || 0;
+    const rateRecent = qRecent / cfg.recentDays;
+    const rateOld = oldDays > 0 ? qOld / oldDays : 0;
+    const daily = qOld > 0 ? (2 * rateRecent + rateOld) / 3 : rateRecent;
+    rates[r.pid] = { daily: Math.round(daily * 100) / 100, units: qRecent + qOld };
+  }
+  res.json({ window_days: cfg.windowDays, recent_days: cfg.recentDays, rates });
+});
+
 // GET /api/admin/reposicion — sugerencia de compra agrupada por proveedor.
 // Query: supplier_id (filtro), urgencia (quebrado|critico|reponer), incluir_todo.
 app.get("/api/admin/reposicion", requireAdmin, (req, res) => {
