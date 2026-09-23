@@ -10,7 +10,7 @@
  * Versionar CACHE_VERSION fuerza la invalidación de caches viejos al hacer deploy.
  */
 
-const CACHE_VERSION = "maxaria-v7";
+const CACHE_VERSION = "maxaria-v8";
 const STATIC_CACHE  = CACHE_VERSION + "-static";
 const PAGES_CACHE   = CACHE_VERSION + "-pages";
 const IMAGES_CACHE  = CACHE_VERSION + "-images";
@@ -75,6 +75,13 @@ self.addEventListener("activate", (event) => {
 // ---------- fetch: routing ----------
 self.addEventListener("fetch", (event) => {
   const req = event.request;
+  // Al cerrar sesión se borran los datos guardados para offline (precios,
+  // clientes, pedidos del usuario): en un celular compartido o prestado no
+  // tienen que quedar a la vista del próximo que lo use.
+  if (req.method === "POST" && new URL(req.url).pathname === "/logout") {
+    event.waitUntil(caches.delete(DATA_CACHE));
+    return;
+  }
   if (req.method !== "GET") return; // POST/PUT/DELETE siempre van a la red
 
   const url = new URL(req.url);

@@ -1,3 +1,10 @@
+/* El atributo hidden SIEMPRE oculta. Sin esto, cualquier clase con display:flex
+   o block le ganaba al hidden del navegador y el elemento quedaba visible:
+   pasaba con las barras de "Selección múltiple" y "Editar tabla" de Productos
+   (se veían siempre), la de Márgenes, el botón de avisos en el celular, el
+   banner de presupuestos pendientes y la caja de sugerencias del catálogo. */
+[hidden] { display: none !important; }
+
 /* ============================================================
    TOKENS DE MARCA — sistema unificado (jun 2026)
    Un solo azul (navy), un acento cálido (ámbar), tinta y superficies.
@@ -2450,11 +2457,16 @@ button { font: inherit; cursor: pointer; }
   .prod-row {
     position: relative;
     display: grid;
-    grid-template-columns: 46px auto minmax(0, 1fr) auto 34px;
+    /* Nombre arriba y la categoría debajo, las dos a todo el ancho (así la
+       categoría no se corta); después el código a la izquierda y precio +
+       stock a la derecha. Los botones ± / 🕒 van apilados en su propia
+       columna para que no pisen el precio. */
+    grid-template-columns: 46px minmax(0, 1fr) auto 34px;
     grid-template-areas:
-      "img name name  name  adj"
-      "img code cat   price adj"
-      "img .    .     stock adj";
+      "img name  name  adj"
+      "img cat   cat   adj"
+      "img code  price adj"
+      "img code  stock adj";
     column-gap: 8px;
     row-gap: 2px;
     align-items: center;
@@ -2519,9 +2531,8 @@ button { font: inherit; cursor: pointer; }
     font-size: 11.5px; font-weight: 700; color: #6b7280; white-space: nowrap;
   }
   .prod-row .cell-code::before { content: "#"; opacity: .6; }
-  .prod-row .cell-code::after { content: " ·"; color: #d1d5db; }
   .prod-row .cell-cat {
-    grid-area: cat; align-self: center; min-width: 0;
+    grid-area: cat; align-self: center; min-width: 0; white-space: normal !important;
     font-size: 10.5px; color: #9ca3af; text-transform: uppercase;
     letter-spacing: .3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
@@ -2533,8 +2544,20 @@ button { font: inherit; cursor: pointer; }
     grid-area: stock; align-self: center; text-align: right;
     font-size: 19px; font-weight: 800; color: #111827; line-height: 1;
   }
-  .prod-row .cell-adj { grid-area: adj; align-self: center; justify-self: end; }
-  .prod-row .cell-adj .btn { padding: 6px 8px; font-size: 15px; line-height: 1; }
+  .prod-row .cell-adj {
+    grid-area: adj; align-self: center; justify-self: end;
+    display: flex !important; flex-direction: column; gap: 6px;
+  }
+  .prod-row .cell-adj .btn { padding: 6px 0; width: 34px; font-size: 15px; line-height: 1; }
+  /* La tabla de escritorio dibuja líneas azules entre celdas y bajo cada fila
+     (.admin-table tbody td/tr). En la tarjeta no van: se veían como rayas
+     verticales dentro de la tarjeta. El #id le gana a esas reglas. */
+  #prod-tbody > tr.prod-row { border-bottom: 1px solid #e5e7eb; }
+  #prod-tbody > tr.prod-row.prod-selected { border-color: #2563eb; }
+  #prod-tbody > tr.prod-row > td { border: none; }
+  #prod-tbody > tr.prod-row:nth-child(even) { background: #fff; }
+  #prod-tbody > tr.prod-row:hover { background: #fff !important; }
+  #prod-tbody > tr.prod-row.row-oos:hover { background: var(--warn-bg) !important; }
 
   /* Modo selección: checkbox flotante sobre la esquina de la imagen */
   .prod-row .col-check {
@@ -3145,6 +3168,23 @@ button { font: inherit; cursor: pointer; }
   border-right: 1px solid #1e3a5f;
 }
 .admin-table tbody td:last-child { border-right: none; }
+
+/* Productos en escritorio: la columna Nombre queda fija al hacer scroll a la
+   derecha (con 16 columnas, al mirar Público o Empaque se perdía de qué
+   producto era la fila). background: inherit toma el color de la fila
+   (zebra, sin stock, seleccionada, hover). Solo > 640px: en el celular la
+   tabla es de tarjetas. */
+@media (min-width: 641px) {
+  #prod-table tbody td.cell-name {
+    position: sticky; left: 0; z-index: 1;
+    background: inherit;
+    box-shadow: 3px 0 4px -2px rgba(30,58,95,.18);
+  }
+  #prod-table thead th[data-sort="name"] {
+    position: sticky; left: 0; z-index: 3;
+    box-shadow: 3px 0 4px -2px rgba(0,0,0,.25);
+  }
+}
 
 /* ── Edición masiva de costos/precios en la grilla ── */
 .bulk-price-input {

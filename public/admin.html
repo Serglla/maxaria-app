@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260922d" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260922g" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -42,7 +42,7 @@
         </div>
         <!-- El texto va en .tb-txt: en celular se oculta y queda solo el ícono,
              para que los botones entren sin cortarse ni comerse la pantalla. -->
-        <button id="push-btn" class="btn btn-ghost tb-iconbtn" type="button" hidden title="Recibir un aviso en este dispositivo cuando entre un pedido"><span class="tb-ico">🔕</span><span class="tb-txt">Activar avisos</span></button>
+        <button id="push-btn" class="btn btn-ghost tb-iconbtn" type="button" hidden title="Recibir un aviso en este dispositivo cuando entre un pedido"><span class="tb-ico">📵</span><span class="tb-txt">Activar avisos</span></button>
         <a class="btn btn-ghost tb-iconbtn" href="/catalogo" title="Ir al catálogo"><span class="tb-ico">🏠</span><span class="tb-txt">Catálogo</span></a>
         <button id="logout-btn" class="btn btn-ghost" type="button" title="Cerrar sesión">Salir</button>
       </div>
@@ -730,6 +730,10 @@
           <dt>Carpeta de backups:</dt><dd><code id="dbinfo-backups-dir">…</code></dd>
           <dt>Backups en disco:</dt><dd id="dbinfo-backups">…</dd>
         </dl>
+        <div id="db-download-wrap" class="config-row" hidden>
+          <a class="btn btn-primary" id="db-download-btn" href="/api/admin/backup/download" download>⬇ Descargar copia de la base</a>
+          <span class="muted small">Guardala fuera de Railway (Drive, un pendrive). Conviene una vez por semana.</span>
+        </div>
       </div>
 
       <div class="config-card">
@@ -2268,7 +2272,7 @@
               <input type="text" id="ue-username" hidden autocomplete="off" autocapitalize="off" spellcheck="false" />
             </div>
           </label>
-          <label>Contraseña actual <span class="muted small">(usá "Reset pass" para cambiarla)</span>
+          <label>Contraseña <span class="muted small">(no se guarda: solo se ve al crearla o resetearla)</span>
             <span id="ue-password-text" class="ue-uname-text"></span>
           </label>
           <label>Nombre completo
@@ -2298,6 +2302,7 @@
           <button type="button" class="btn btn-small" id="ue-cats-btn">🗂 Categorías</button>
           <button type="button" class="btn btn-small" id="ue-share-btn">📲 Compartir acceso</button>
           <button type="button" class="btn btn-small" id="ue-revoke-btn" hidden title="Invalida el link enviado: el cliente tendrá que entrar con usuario y contraseña, o pedirte uno nuevo">🚫 Revocar link</button>
+          <span id="ue-link-info" class="muted small"></span>
         </div>
         <p id="user-edit-msg" class="config-msg"></p>
         <div class="admin-modal-foot">
@@ -3227,7 +3232,7 @@
         <div style="margin-top:10px;display:flex;align-items:flex-start;gap:8px">
           <input type="checkbox" id="catalog-with-prices" checked style="width:16px;height:16px;margin-top:2px;flex-shrink:0">
           <div>
-            <div style="font-weight:500;font-size:14px;cursor:pointer" onclick="document.getElementById('catalog-with-prices').click()">Incluir precios</div>
+            <div style="font-weight:500;font-size:14px;cursor:pointer" data-click-for="catalog-with-prices">Incluir precios</div>
             <div class="muted" style="font-size:12px;margin-top:2px">Destildá para generar solo el listado de productos, sin importes (con o sin imágenes).</div>
           </div>
         </div>
@@ -3261,7 +3266,7 @@
         <div style="margin-top:10px;display:flex;align-items:flex-start;gap:8px">
           <input type="checkbox" id="catalog-with-images" checked style="width:16px;height:16px;margin-top:2px;flex-shrink:0">
           <div>
-            <div style="font-weight:500;font-size:14px;cursor:pointer" onclick="document.getElementById('catalog-with-images').click()">Incluir imágenes de producto</div>
+            <div style="font-weight:500;font-size:14px;cursor:pointer" data-click-for="catalog-with-images">Incluir imágenes de producto</div>
             <div class="muted" style="font-size:12px;margin-top:2px">Sin imágenes: catálogo compacto con filas pequeñas, muchos más productos por página.</div>
           </div>
         </div>
@@ -3269,7 +3274,7 @@
         <div id="catalog-changes-wrap" style="margin-top:10px;display:flex;align-items:flex-start;gap:8px">
           <input type="checkbox" id="catalog-include-changes" style="width:16px;height:16px;margin-top:2px;flex-shrink:0">
           <div>
-            <div style="font-weight:500;font-size:14px;cursor:pointer" onclick="document.getElementById('catalog-include-changes').click()">Incluir últimos cambios de precio al inicio del catálogo</div>
+            <div style="font-weight:500;font-size:14px;cursor:pointer" data-click-for="catalog-include-changes">Incluir últimos cambios de precio al inicio del catálogo</div>
             <div class="muted" style="font-size:12px;margin-top:2px">Se agrega una sección al principio con los productos actualizados, en doble columna por categoría.</div>
           </div>
         </div>
@@ -3963,6 +3968,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260922d"></script>
+  <script src="/js/admin.js?v=20260922g"></script>
 </body>
 </html>

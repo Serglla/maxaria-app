@@ -41,6 +41,11 @@
     sales_daily: "number",
   };
 
+  // Claves recién creadas/reseteadas en ESTA sesión del panel (solo en memoria):
+  // el servidor ya no guarda claves legibles, así que para "Compartir acceso"
+  // de un vendedor/admin hay que resetearla antes.
+  const sessionPasswords = new Map();
+
   const els = {
     userInfo: document.getElementById("user-info"),
     logoutBtn: document.getElementById("logout-btn"),
@@ -201,6 +206,7 @@
     ueCatsBtn: document.getElementById("ue-cats-btn"),
     ueShareBtn: document.getElementById("ue-share-btn"),
     ueRevokeBtn: document.getElementById("ue-revoke-btn"),
+    ueLinkInfo: document.getElementById("ue-link-info"),
     // Administradores (solo superadmin)
     adminsTbody: document.getElementById("admins-tbody"),
     adminCreateBtn: document.getElementById("admin-create-btn"),
@@ -841,6 +847,14 @@
         // pestaña Administradores); un admin común solo ve sus secciones.
         const isSuper = !!me.isSuperadmin;
         const allowed = Array.isArray(me.adminSections) ? me.adminSections : null;
+        // Descarga de la base completa: solo superadmin.
+        const dbDl = document.getElementById("db-download-wrap");
+        if (dbDl) dbDl.hidden = !isSuper;
+        // Backup/import de usuarios (lleva hashes de claves): solo superadmin.
+        if (!isSuper && els.usersExportBtn) {
+          const card = els.usersExportBtn.closest(".config-card");
+          if (card) card.hidden = true;
+        }
         els.tabBtns.forEach((btn) => {
           const tab = btn.dataset.tab;
           if (tab === "administradores" || tab === "inflacion") {
@@ -1908,15 +1922,17 @@
       msg += "Ahí podés ver los productos, ver lo que solés pedir y armar tu pedido. ¡Cualquier duda, escribinos!";
       okMsg = "Link de acceso listo · mensaje copiado";
     } else {
-      const hasPass = u.plain_password && u.plain_password !== "—";
+      // Las claves ya no se guardan en el servidor: solo se puede compartir la
+      // que se acaba de crear o resetear en esta sesión del panel.
+      const pass = sessionPasswords.get(Number(u.id));
+      if (!pass) {
+        showToast("🔒 Por seguridad la contraseña no se guarda: usá 'Reset pass' y volvé a compartir", "err");
+        return;
+      }
       msg += "Te damos acceso a " + appName + ".\n";
       msg += "Ingresá desde: " + origin + "\n\n";
       msg += "👤 Usuario: " + u.username + "\n";
-      if (hasPass) msg += "🔑 Contraseña: " + u.plain_password + "\n";
-      if (!hasPass) {
-        showToast("⚠️ Sin contraseña guardada: usá 'Reset pass' y volvé a compartir", "err");
-        return;
-      }
+      msg += "🔑 Contraseña: " + pass + "\n";
       okMsg = "Abriendo WhatsApp con el acceso · mensaje copiado";
     }
 
@@ -1967,9 +1983,16 @@
     els.ueUsernameEdit.hidden = false;
     els.ueUsername.hidden = true;
     els.ueUsername.value = u.username || "";
-    els.uePasswordText.textContent = u.plain_password || "—";
+    els.uePasswordText.textContent = sessionPasswords.get(Number(u.id)) ||
+      "🔒 No se guarda por seguridad (usá Reset pass para cambiarla)";
     // "Revocar link" solo si ya tiene uno generado.
     if (els.ueRevokeBtn) els.ueRevokeBtn.hidden = !u.access_token;
+    if (els.ueLinkInfo) {
+      // Último uso del link de acceso: sirve para detectar un link que alguien
+      // más está usando (vence solo si no se usa por 90 días).
+      els.ueLinkInfo.textContent = !u.access_token ? ""
+        : (u.access_token_last_used_at ? "Link usado por última vez: " + formatDate(u.access_token_last_used_at) : "Link todavía sin usar");
+    }
     els.ueFullName.value = u.full_name || "";
     els.uePricecfg.innerHTML = unifiedPriceOptsHtml(u);
     els.ueVendedor.innerHTML = vendedorOptsHtml(u.assigned_vendedor_id);
@@ -2282,6 +2305,7 @@
               err.message + "). Corregilo en la columna «Nivel de costo».", "error");
           }
         }
+        if (out && out.user) sessionPasswords.set(Number(out.user.id), String(body.password || ""));
         state.vendedoresLoaded = false; // forzar recarga
         await loadVendedores();
         els.vendCreateModal.hidden = true;
@@ -2307,6 +2331,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ password }),
         });
+        sessionPasswords.set(Number(state.vendResetTargetId), String(password || ""));
         els.vendResetModal.hidden = true;
         showToast("Contraseña del vendedor actualizada");
       } catch (err) {
@@ -2317,7 +2342,7 @@
   }
 
   // -------- Actividad (ganancias por vendedor) --------
-  function fmtMoney(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function fmtMoney(n) { return fmtPrice(n); } // mismo formato en todo el panel
 
   async function loadActividad() {
     if (!els.actTbody) return;
@@ -4241,6 +4266,7 @@
         body: JSON.stringify(body),
       });
       state.users.unshift(out.user);
+      sessionPasswords.set(Number(out.user.id), String(body.password || ""));
       state.orderClientsLoaded = false; // que el selector "Cliente" del detalle de pedido traiga el nuevo
       renderUsers();
       els.userCreateModal.hidden = true;
@@ -4264,6 +4290,8 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: password }),
       });
+      sessionPasswords.set(Number(state.resetTargetId), String(password || ""));
+      if (state.editUserId === state.resetTargetId && els.uePasswordText) els.uePasswordText.textContent = String(password || "");
       els.userResetModal.hidden = true;
       showToast("Contraseña actualizada");
     } catch (err) {
@@ -4701,6 +4729,15 @@
       }
     });
   }
+
+  // Textos clickeables que tildan un checkbox (data-click-for="<id>"). Antes
+  // eran onclick="..." inline, que la Content-Security-Policy bloquea.
+  document.addEventListener("click", (e) => {
+    const el = e.target.closest && e.target.closest("[data-click-for]");
+    if (!el) return;
+    const cb = document.getElementById(el.dataset.clickFor);
+    if (cb) cb.click();
+  });
 
   // ---------- Export / Import de usuarios ----------
   if (els.usersExportBtn) {
@@ -8682,10 +8719,12 @@
     const ico = pushBtn.querySelector(".tb-ico");
     const txt = pushBtn.querySelector(".tb-txt");
     if (ico && txt) {
-      ico.textContent = on ? "🔔" : "🔕";
+      // 📲 (no 🔔): la campana ya es el panel de notificaciones al lado y las
+      // dos juntas se confundían en el celular.
+      ico.textContent = on ? "📲" : "📵";
       txt.textContent = on ? "Avisos activos" : "Activar avisos";
     } else {
-      pushBtn.textContent = on ? "🔔 Avisos activos" : "🔕 Activar avisos";
+      pushBtn.textContent = on ? "📲 Avisos activos" : "📵 Activar avisos";
     }
     pushBtn.classList.toggle("push-on", on);
     pushBtn.title = on
@@ -13786,7 +13825,7 @@
       els.catalogPriceWrap.style.display = (hasClient || !withPrices) ? "none" : "";
     }
     if (els.catalogChangesWrap) {
-      els.catalogChangesWrap.style.display = withPrices ? "" : "none";
+      els.catalogChangesWrap.style.display = withPrices ? "flex" : "none"; // "" borraba el display:flex inline y el tilde quedaba arriba del texto
     }
     if (els.catalogClientHint) {
       if (!withPrices) {
@@ -14586,14 +14625,15 @@
   // que el hoisting dejaba muerta). Antes redondeaba SIEMPRE a entero: abrir
   // el modal de un producto con precio 3.649,50 mostraba "$ 3.650" y guardar
   // persistía 3650 (pérdida silenciosa de centavos).
+  // Formato único de precios del panel: "$ 1.234,50" (siempre 2 decimales,
+  // igual que el catálogo, Ventas y los PDFs). Antes los enteros salían
+  // "$ 1.234" y los con centavos "$ 1.234,50", y otras pantallas usaban
+  // "$1.234,00": el mismo número se veía de tres maneras.
   function fmtPrice(n) {
-    n = Number(n) || 0;
-    if (Math.abs(n - Math.round(n)) >= 0.005) {
-      return "$ " + n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-    n = Math.round(n) || 0;
-    return "$ " + n.toLocaleString("es-AR");
+    n = round2(Number(n) || 0);
+    return "$ " + n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
+
   // Parsea "$1.000,00" o "1000" → entero
   // Parsea un precio que puede venir en DOS formatos:
   //  - argentino formateado: "$3.649,50" (punto = miles, coma = decimal)

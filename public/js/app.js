@@ -93,7 +93,7 @@
     suggestions: null,
   };
 
-  function fmtPrice(n) { return "$" + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function fmtPrice(n) { return "$ " + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
   // Búsqueda por inicio de palabra: cada término del query tiene que ser
   // prefijo de alguna palabra del texto (ignora mayúsculas y acentos).

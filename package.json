@@ -12,7 +12,8 @@
     "import-prices": "node scripts/import-prices.js",
     "export-prices": "node scripts/export-prices.js",
     "backup": "node scripts/backup-db.js",
-    "debt-reminder": "node scripts/debt-reminder.js"
+    "debt-reminder": "node scripts/debt-reminder.js",
+    "test": "node --test \"test/**/*.test.js\""
   },
   "engines": {
     "node": ">=18"

@@ -143,7 +143,7 @@
   const V_STATUS_LABELS = { borrador:"Borrador", enviado:"Enviado", aceptado:"Aceptado", facturado:"Facturado", cancelado:"Cancelado" };
   const V_STATUS_BADGE  = { borrador:"budget-badge--borrador", enviado:"budget-badge--enviado", aceptado:"budget-badge--aceptado", facturado:"budget-badge--facturado", cancelado:"budget-badge--cancelado" };
 
-  function vFmt(n) { return "$" + (Number(n)||0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function vFmt(n) { return "$ " + (Number(n)||0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   // Precios con 2 decimales (centavos). round2 redondea importes.
   function vRound2(v) { const n = Number(v); return isFinite(n) ? Math.round(n*100)/100 : 0; }
   function vFmtN(n) { return (Number(n)||0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }

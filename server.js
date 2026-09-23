@@ -15,6 +15,7 @@ const multer = require("multer");
 const { readExcelBuffer } = require("./scripts/excel_helper");
 const { importPrices } = require("./scripts/import-prices");
 const PDFDocument = require("pdfkit");
+const { buildRemitoPdf, buildCotizacionPdf } = require("./lib/pdf-docs");
 
 const ENV_PATH = path.join(__dirname, ".env");
 if (fs.existsSync(ENV_PATH)) {
@@ -183,6 +184,11 @@ try { db.exec("ALTER TABLE orders ADD COLUMN assigned_vendedor_id INTEGER REFERE
 try { db.exec("ALTER TABLE users ADD COLUMN vendedor_price_level INTEGER NOT NULL DEFAULT 1"); } catch (_) {}
 try { db.exec("ALTER TABLE users ADD COLUMN whatsapp_number TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE users ADD COLUMN plain_password TEXT"); } catch (_) {}
+// Seguridad: las claves ya NO se guardan legibles. La columna queda por
+// compatibilidad pero se vacia en cada arranque (borra las que habia) y ningun
+// endpoint la vuelve a escribir. La clave se muestra una sola vez, en el panel,
+// al crear o resetear el usuario.
+try { db.exec("UPDATE users SET plain_password = NULL WHERE plain_password IS NOT NULL"); } catch (_) {}
 
 // Migracion: Superadmin + usuarios privilegiados con permisos por seccion.
 // - users.is_superadmin: 1 = superadmin (acceso total + unico que gestiona admins).
@@ -539,6 +545,17 @@ db.exec(
 // aparte porque ALTER TABLE no admite UNIQUE inline).
 try { db.exec("ALTER TABLE users ADD COLUMN access_token TEXT"); } catch (_) {}
 try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_access_token ON users(access_token) WHERE access_token IS NOT NULL"); } catch (_) {}
+// Vencimiento del link de acceso: vence si NO se usa durante ACCESS_LINK_IDLE_DAYS
+// (vencimiento "por inactividad": un cliente que entra seguido nunca lo pierde,
+// pero un link reenviado y olvidado deja de servir). Los links que ya existian
+// arrancan a contar desde el deploy.
+try { db.exec("ALTER TABLE users ADD COLUMN access_token_created_at TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE users ADD COLUMN access_token_last_used_at TEXT"); } catch (_) {}
+try { db.exec("UPDATE users SET access_token_created_at = datetime('now') WHERE access_token IS NOT NULL AND access_token_created_at IS NULL"); } catch (_) {}
+const ACCESS_LINK_IDLE_DAYS = (() => {
+  const n = Number(process.env.ACCESS_LINK_IDLE_DAYS);
+  return Number.isFinite(n) && n >= 1 && n <= 3650 ? Math.round(n) : 90;
+})();
 // MARGENES: objetivo de margen sobre venta (%). NULL = hereda del objetivo de
 // la categoria y, si tampoco tiene, del global (settings.margin_target_default).
 try { db.exec("ALTER TABLE products ADD COLUMN margin_target REAL"); } catch (_) {}
@@ -1455,7 +1472,33 @@ class SqliteStore extends session.Store {
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
-app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+// Content-Security-Policy: el navegador solo ejecuta scripts servidos por
+// la app o por cdnjs (Chart.js, html2canvas). Si alguien lograra meter HTML con
+// un <script> en un nombre de producto o cliente, no se ejecuta. Los estilos
+// inline se permiten (el panel los usa mucho); las imágenes de producto pueden
+// venir de cualquier https (se cargan desde yourfiles.cloud y similares).
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://cdnjs.cloudflare.com"],
+      scriptSrcAttr: ["'none'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:", "https:"],
+      fontSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"],
+      frameSrc: ["'self'", "blob:"],
+      frameAncestors: ["'self'"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      workerSrc: ["'self'"],
+      manifestSrc: ["'self'"],
+    },
+  },
+}));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -1901,6 +1944,28 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref();
 
+// Hash de una clave aleatoria: solo sirve para igualar el tiempo del login.
+const DUMMY_BCRYPT_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString("hex"), 10);
+
+// Inicia la sesion con un id NUEVO (regenerate): evita la "fijacion de sesion",
+// donde alguien le hace usar a la victima una cookie que ya conoce y despues
+// entra con ella una vez que la victima se loguea.
+function startSession(req, user, cb) {
+  req.session.regenerate((err) => {
+    if (err) return cb(err);
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    req.session.level = user.level;
+    req.session.fullName = user.full_name;
+    // Para vendedores: guardar su lista de precios configurada
+    if (user.level === 5) {
+      req.session.vendedorPriceLevel = [1, 2, 3, 4].includes(Number(user.vendedor_price_level))
+        ? Number(user.vendedor_price_level) : 1;
+    }
+    req.session.save(cb);
+  });
+}
+
 app.post("/login", (req, res) => {
   const ip = req.ip || "?";
   if (!loginRateOk(ip)) {
@@ -1911,27 +1976,20 @@ app.post("/login", (req, res) => {
   const user = db
     .prepare("SELECT id, username, password_hash, full_name, level, active, vendedor_price_level FROM users WHERE username = ?")
     .get(String(username).trim().toLowerCase());
-  if (!user || !user.active) {
-    loginRateFail(ip);
-    return res.status(401).json({ error: "Usuario o contrasena incorrectos" });
-  }
-  if (!bcrypt.compareSync(String(password), user.password_hash)) {
+  // Siempre se compara contra un hash (uno falso si el usuario no existe) para
+  // que el tiempo de respuesta no revele qué usuarios existen.
+  const passOk = bcrypt.compareSync(String(password), user ? user.password_hash : DUMMY_BCRYPT_HASH);
+  if (!user || !user.active || !passOk) {
     loginRateFail(ip);
     return res.status(401).json({ error: "Usuario o contrasena incorrectos" });
   }
   loginAttempts.delete(ip);
   db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").run(user.id);
-  req.session.userId = user.id;
-  req.session.username = user.username;
-  req.session.level = user.level;
-  req.session.fullName = user.full_name;
-  // Para vendedores: guardar su lista de precios configurada
-  if (user.level === 5) {
-    req.session.vendedorPriceLevel = [1, 2, 3, 4].includes(Number(user.vendedor_price_level))
-      ? Number(user.vendedor_price_level) : 1;
-  }
-  logActivity(req, "login", null);
-  res.json({ ok: true, user: { id: user.id, username: user.username, fullName: user.full_name, level: user.level, levelName: levelName(user.level) } });
+  startSession(req, user, (err) => {
+    if (err) return res.status(500).json({ error: "No se pudo iniciar la sesion" });
+    logActivity(req, "login", null);
+    res.json({ ok: true, user: { id: user.id, username: user.username, fullName: user.full_name, level: user.level, levelName: levelName(user.level) } });
+  });
 });
 
 app.post("/logout", (req, res) => {
@@ -1999,7 +2057,8 @@ app.get("/c/:token", (req, res) => {
   const token = String(req.params.token || "").trim();
   const user = token.length >= 20
     ? db.prepare(
-        "SELECT id, username, full_name, level, active, vendedor_price_level" +
+        "SELECT id, username, full_name, level, active, vendedor_price_level," +
+        "       (julianday('now') - julianday(COALESCE(access_token_last_used_at, access_token_created_at, datetime('now')))) AS idle_days" +
         "  FROM users WHERE access_token = ?"
       ).get(token)
     : null;
@@ -2008,15 +2067,32 @@ app.get("/c/:token", (req, res) => {
     loginRateFail(ip);
     return res.status(404).sendFile(path.join(__dirname, "public", "login.html"));
   }
+  if (Number(user.idle_days) > ACCESS_LINK_IDLE_DAYS) {
+    // Vencido por inactividad: se revoca y se explica (no es un intento de
+    // fuerza bruta, asi que no suma al rate limit).
+    db.prepare("UPDATE users SET access_token = NULL WHERE id = ?").run(user.id);
+    return res.status(410).type("html").send(accessLinkExpiredHtml());
+  }
   loginAttempts.delete(ip);
-  db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").run(user.id);
-  req.session.userId = user.id;
-  req.session.username = user.username;
-  req.session.level = user.level;
-  req.session.fullName = user.full_name;
-  logActivity(req, "login", { via: "link" });
-  res.redirect("/catalogo");
+  db.prepare("UPDATE users SET last_login_at = datetime('now'), access_token_last_used_at = datetime('now') WHERE id = ?").run(user.id);
+  startSession(req, user, (err) => {
+    if (err) return res.status(500).send("No se pudo iniciar la sesion");
+    logActivity(req, "login", { via: "link" });
+    res.redirect("/catalogo");
+  });
 });
+
+function accessLinkExpiredHtml() {
+  const name = String(getAppName() || "").replace(/[<>&"]/g, "");
+  return '<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    "<title>Link vencido</title></head>" +
+    '<body style="font-family:system-ui,sans-serif;background:#f3f4f6;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center">' +
+    '<div style="background:#fff;border-radius:14px;padding:28px 24px;max-width:380px;margin:16px;box-shadow:0 4px 20px rgba(0,0,0,.08);text-align:center">' +
+    '<div style="font-size:40px">⏳</div><h1 style="font-size:20px;margin:8px 0">Este link venció</h1>' +
+    '<p style="color:#4b5563;line-height:1.5">Por seguridad, los links de acceso vencen si no se usan por ' + ACCESS_LINK_IDLE_DAYS + " días. " +
+    "Pedile uno nuevo a " + (name || "tu vendedor") + ' por WhatsApp.</p>' +
+    '<p><a href="/login" style="color:#2563eb">Entrar con usuario y contraseña</a></p></div></body></html>';
+}
 
 app.get("/", (req, res) => {
   if (req.session && req.session.userId) return res.redirect("/catalogo");
@@ -3118,6 +3194,16 @@ app.post("/api/orders", requireLogin, (req, res) => {
   res.json({ ok: true, order: { id: orderId, total: total, items: lines.length } });
 });
 
+// Vista operativa de pedidos (Pedidos / Armado / Entregas). Antes era
+// "los 200 mas recientes" sin mirar el estado: con mas de 200 pedidos, uno
+// viejo que seguia pendiente o en armado desaparecia de la cola sin aviso.
+// Ahora: TODOS los pedidos en curso + los ultimos 200 cerrados (entregado /
+// cancelado) para el historial. Las ventas viejas se consultan en Ventas.
+const ORDERS_OPERATIVE_WHERE =
+  "(o.status NOT IN ('entregado','cancelado')" +
+  "  OR o.id IN (SELECT id FROM orders WHERE status IN ('entregado','cancelado')" +
+  "              ORDER BY created_at DESC LIMIT 200))";
+
 app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, res) => {
   const isAdmin = req.session.level === 99;
   const isVendedor = req.session.level === 5;
@@ -3148,7 +3234,8 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "  JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN users v ON v.id = o.assigned_vendedor_id" +
       "  LEFT JOIN deliveries d ON d.order_id = o.id" +
-      "  ORDER BY o.created_at DESC LIMIT 200"
+      "  WHERE " + ORDERS_OPERATIVE_WHERE +
+      "  ORDER BY o.created_at DESC"
     ).all();
     return res.json(rows);
   }
@@ -3167,8 +3254,9 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "  FROM orders o" +
       "  JOIN users u ON u.id = o.user_id" +
       "  LEFT JOIN deliveries d ON d.order_id = o.id" +
-      "  WHERE o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?" +
-      "  ORDER BY o.created_at DESC LIMIT 200"
+      "  WHERE (o.assigned_vendedor_id = ? OR u.assigned_vendedor_id = ?)" +
+      "    AND " + ORDERS_OPERATIVE_WHERE +
+      "  ORDER BY o.created_at DESC"
     ).all(req.session.userId, req.session.userId);
     return res.json(rows);
   }
@@ -4505,10 +4593,10 @@ function isValidUsername(s) {
 
 app.get("/api/admin/users", requireAdmin, (req, res) => {
   const rows = db.prepare(
-    "SELECT u.id, u.username, u.full_name, u.phone, u.whatsapp_number, u.email, u.plain_password," +
+    "SELECT u.id, u.username, u.full_name, u.phone, u.whatsapp_number, u.email," +
     "       u.level, u.active, u.created_at, u.last_login_at," +
     "       u.assigned_vendedor_id, u.price_list_id, u.vendedor_price_level, u.is_tercerizado," +
-    "       u.access_token," +
+    "       u.access_token, u.access_token_last_used_at," +
     "       (SELECT COUNT(*) FROM activity_log a WHERE a.user_id = u.id AND a.event = 'login') AS login_count," +
     "       (SELECT MAX(a.created_at) FROM activity_log a WHERE a.user_id = u.id) AS last_activity_at" +
     "  FROM users u ORDER BY u.level DESC, u.username"
@@ -4625,11 +4713,11 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
   const hash = bcrypt.hashSync(password, 10);
   const r = db.prepare(
     "INSERT INTO users (username, password_hash, plain_password, full_name, phone, whatsapp_number, email, level, price_list_id, active)" +
-    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"
-  ).run(username, hash, password, fullName, phone, whatsappNumber, email, level, priceListId);
+    " VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 1)"
+  ).run(username, hash, fullName, phone, whatsappNumber, email, level, priceListId);
 
   const user = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
+    "SELECT id, username, full_name, phone, whatsapp_number, email, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
   ).get(r.lastInsertRowid);
   res.json({ ok: true, user: user });
 });
@@ -4741,7 +4829,7 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   vals.push(id);
   db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
   const user = db.prepare(
-    "SELECT id, username, full_name, phone, whatsapp_number, email, plain_password, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
+    "SELECT id, username, full_name, phone, whatsapp_number, email, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
   ).get(id);
   res.json({ ok: true, user: user });
 });
@@ -4755,7 +4843,7 @@ app.post("/api/admin/users/:id/reset-password", requireAdmin, (req, res) => {
   if (password.length < 6)
     return res.status(400).json({ error: "La contrasena debe tener al menos 6 caracteres" });
   const hash = bcrypt.hashSync(password, 10);
-  db.prepare("UPDATE users SET password_hash = ?, plain_password = ? WHERE id = ?").run(hash, password, id);
+  db.prepare("UPDATE users SET password_hash = ?, plain_password = NULL WHERE id = ?").run(hash, id);
   res.json({ ok: true });
 });
 
@@ -4773,7 +4861,7 @@ app.post("/api/admin/users/:id/access-link", requireAdmin, (req, res) => {
   for (let i = 0; i < 5 && !token; i++) {
     const cand = genAccessToken();
     try {
-      db.prepare("UPDATE users SET access_token = ? WHERE id = ?").run(cand, id);
+      db.prepare("UPDATE users SET access_token = ?, access_token_created_at = datetime('now'), access_token_last_used_at = NULL WHERE id = ?").run(cand, id);
       token = cand;
     } catch (_) { /* colision del UNIQUE: reintenta */ }
   }
@@ -4828,8 +4916,8 @@ app.post("/api/admin/admins", requireAdmin, (req, res) => {
   const hash = bcrypt.hashSync(password, 10);
   const r = db.prepare(
     "INSERT INTO users (username, password_hash, plain_password, full_name, level, active, is_superadmin, admin_sections)" +
-    " VALUES (?, ?, ?, ?, 99, 1, 0, ?)"
-  ).run(username, hash, password, fullName, sections.join(","));
+    " VALUES (?, ?, NULL, ?, 99, 1, 0, ?)"
+  ).run(username, hash, fullName, sections.join(","));
   const row = db.prepare(
     "SELECT id, username, full_name, active, is_superadmin, admin_sections FROM users WHERE id = ?"
   ).get(r.lastInsertRowid);
@@ -4868,12 +4956,32 @@ app.post("/api/admin/admins/:id/reset-password", requireAdmin, (req, res) => {
   const password = String((req.body || {}).password || "");
   if (password.length < 6) return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
   const hash = bcrypt.hashSync(password, 10);
-  db.prepare("UPDATE users SET password_hash = ?, plain_password = ? WHERE id = ?").run(hash, password, id);
+  db.prepare("UPDATE users SET password_hash = ?, plain_password = NULL WHERE id = ?").run(hash, id);
   res.json({ ok: true });
 });
 
 // Info diagnostica de la base. Sirve para detectar DB efimera y mostrar
 // la advertencia en /admin antes de que el deploy se lleve los datos.
+// Descarga de una copia completa de la base (solo superadmin). Es el respaldo
+// "fuera de Railway": los backups automaticos quedan en el mismo volumen que la
+// base, asi que si se pierde el volumen se pierden los dos. Se genera con la
+// API de backup de SQLite (consistente aunque haya escrituras en curso).
+app.get("/api/admin/backup/download", requireAdmin, requireSuperadminOnly, async (req, res) => {
+  const stamp = localDayIso() + "-" + Date.now();
+  const tmp = path.join(require("os").tmpdir(), "maxaria-descarga-" + stamp + ".db");
+  try {
+    await db.backup(tmp);
+    logActivity(req, "backup_descarga", null);
+    res.download(tmp, "maxaria-backup-" + localDayIso() + ".db", () => {
+      fs.unlink(tmp, () => {});
+    });
+  } catch (e) {
+    console.error("[backup/download]", e);
+    fs.unlink(tmp, () => {});
+    if (!res.headersSent) res.status(500).json({ error: "No se pudo generar el backup" });
+  }
+});
+
 app.get("/api/admin/dbinfo", requireAdmin, (req, res) => {
   let size = null, mtime = null;
   try {
@@ -4917,7 +5025,15 @@ app.get("/api/admin/dbinfo", requireAdmin, (req, res) => {
 // Export de usuarios a JSON. Incluye password_hash para que el restore
 // funcione sin que tengan que reasignar contrasenas. Es info sensible,
 // solo el admin la puede bajar.
-app.get("/api/admin/users/export", requireAdmin, (req, res) => {
+// Solo superadmin: el export lleva el hash de clave de TODOS los usuarios
+// (incluido el superadmin) y el import permite crear administradores.
+function requireSuperadminOnly(req, res, next) {
+  if (!getAdminPerms(req.session.userId).isSuperadmin)
+    return res.status(403).json({ error: "Solo el superadmin puede exportar o importar usuarios" });
+  next();
+}
+
+app.get("/api/admin/users/export", requireAdmin, requireSuperadminOnly, (req, res) => {
   const rows = db.prepare(
     "SELECT username, password_hash, full_name, phone, email, level, active, created_at, last_login_at" +
     "  FROM users ORDER BY id"
@@ -4942,7 +5058,7 @@ app.get("/api/admin/users/export", requireAdmin, (req, res) => {
 // usuarios existentes que no esten en el archivo, asi un import parcial
 // no rompe nada. Sirve para recuperar despues de un deploy que vacio la
 // base, o para mover usuarios entre entornos.
-app.post("/api/admin/users/import", requireAdmin, (req, res) => {
+app.post("/api/admin/users/import", requireAdmin, requireSuperadminOnly, (req, res) => {
   const body = req.body || {};
   const list = Array.isArray(body) ? body : (body.users || []);
   if (!Array.isArray(list) || !list.length) {
@@ -9117,19 +9233,10 @@ app.get("/api/admin/accounts/:userId/pdf", requireAdmin, (req, res) => {
   doc.end();
 });
 
-// ── Endpoint para tarea programada de deudores ─────────────────────────────
-// Protegido con token (variable de entorno CRON_SECRET). No requiere sesion.
-// Retorna la lista de clientes con deuda activa >= 30 dias (o el umbral
-// que se pase como ?days=N). Uso: curl "URL/api/cron/debt-report?token=SECRET"
-app.get("/api/cron/debt-report", (req, res) => {
-  const CRON_SECRET = process.env.CRON_SECRET || "";
-  const token = String(req.query.token || req.headers["x-cron-token"] || "");
-  if (!CRON_SECRET || token !== CRON_SECRET) {
-    return res.status(401).json({ error: "Token invalido o no configurado" });
-  }
-  const minDays = Math.max(0, Number(req.query.days) || 30);
-
-  // Reutiliza la misma logica que GET /api/admin/accounts
+// Clientes con deuda cuya parte impaga mas vieja tiene >= minDays dias (FIFO:
+// los pagos saldan primero las deudas mas viejas). Misma logica que la pestaña
+// Cuentas. La usan el reporte por token y el aviso push diario de cobranza.
+function computeOverdueDebtors(minDays) {
   const users = db.prepare(
     "SELECT id, username, full_name, COALESCE(credit_limit,0) AS credit_limit FROM users" +
     "  WHERE level IN (1,2,3,4) AND active = 1"
@@ -9179,6 +9286,51 @@ app.get("/api/cron/debt-report", (req, res) => {
   });
 
   deudores.sort(function(a, b) { return b.days_overdue - a.days_overdue; });
+  return deudores;
+}
+
+// ── Aviso push diario de cobranza ───────────────────────────────────────────
+// Una vez por dia (a partir de las 9 hora local) avisa a los admins que ven
+// Cuentas cuantos clientes deben hace mas de 30 dias y cuanto suman. Guarda el
+// dia enviado en settings para no repetirlo aunque Railway reinicie el server.
+function runDailyDebtPush() {
+  if (!PUSH_READY) return;
+  try {
+    const now = nowLocal();
+    if (now.getUTCHours() < 9) return;
+    const today = localDayIso(now);
+    if (getSetting("debt_push_last_day", "") === today) return;
+    setSetting("debt_push_last_day", today);
+    const list = computeOverdueDebtors(30);
+    if (!list.length) return;
+    const total = list.reduce((s2, d) => s2 + Math.abs(d.balance), 0);
+    const top = list.slice(0, 3).map((d) => d.full_name || d.username).join(", ");
+    sendPushTo(adminsForSection("cuentas"), {
+      title: "💵 Cobranza: " + list.length + (list.length === 1 ? " cliente" : " clientes") + " +30 días",
+      body: "Suman $" + Math.round(total).toLocaleString("es-AR") + ". " + top + (list.length > 3 ? "…" : ""),
+      url: "/admin",
+      tag: "cobranza-diaria",
+    });
+  } catch (e) {
+    console.error("[push] cobranza diaria:", e.message);
+  }
+}
+setInterval(runDailyDebtPush, 30 * 60 * 1000).unref();
+setTimeout(runDailyDebtPush, 60 * 1000).unref();
+
+// ── Endpoint para tarea programada de deudores ─────────────────────────────
+// Protegido con token (variable de entorno CRON_SECRET). No requiere sesion.
+// Retorna la lista de clientes con deuda activa >= 30 dias (o el umbral
+// que se pase como ?days=N). Uso: curl "URL/api/cron/debt-report?token=SECRET"
+app.get("/api/cron/debt-report", (req, res) => {
+  const CRON_SECRET = process.env.CRON_SECRET || "";
+  const token = String(req.query.token || req.headers["x-cron-token"] || "");
+  if (!CRON_SECRET || token !== CRON_SECRET) {
+    return res.status(401).json({ error: "Token invalido o no configurado" });
+  }
+  const minDays = Math.max(0, Number(req.query.days) || 30);
+
+  const deudores = computeOverdueDebtors(minDays);
   const appName = (db.prepare("SELECT value FROM settings WHERE key='app_name'").get() || {}).value || "Maxaria";
   res.json({ ok: true, app: appName, min_days: minDays, count: deudores.length, deudores: deudores });
 });
@@ -9485,279 +9637,8 @@ async function pLimit(fns, concurrency) {
   return results;
 }
 
-// ── Helper: genera PDF de remito/presupuesto con pdfkit ──────────────────
-// hidePrices = true genera el "remito sin precios": mismas lineas y cantidades
-// pero SIN importes (ni P. unit., ni subtotal, ni TOTAL) y SIN el nombre del
-// negocio en el encabezado. Suma una columna CONTROL con casillero para tildar
-// al armar/cargar, y lineas de firma Preparó / Entregó / Recibí conforme al pie.
-// Sirve igual para armado y para entrega: es el mismo papel para los dos usos.
-function buildRemitoPdf(res, { title, docLabel, docNum, date, metaCells, items, total, totalUnidades, notes, extraLine, hidePrices }) {
-  const doc = new PDFDocument({ size: "A4", margin: 36, autoFirstPage: true });
-  res.setHeader("Content-Type", "application/pdf");
-  doc.pipe(res);
+// buildRemitoPdf y buildCotizacionPdf viven en lib/pdf-docs.js
 
-  const BLU = "#1e3a5f", GREY = "#6b7280", BLACK = "#111111", AMB = "#d97706";
-  const MX = 36, MW = 595 - 72; // márgenes
-
-  // ── Header ──
-  // En el remito sin precios no va el nombre del negocio (pedido de Sergio).
-  if (!hidePrices) {
-    doc.font("Helvetica-Bold").fontSize(17).fillColor(BLU).text(title, MX, 36, { continued: false });
-  }
-  doc.font("Helvetica").fontSize(9).fillColor(GREY).text("Estado: " + docLabel, MX, hidePrices ? 40 : 58);
-  const rnW = doc.widthOfString("N° " + docNum);
-  doc.font("Helvetica").fontSize(9).fillColor(GREY).text("REMITO DE PEDIDO", MX, 36, { align: "right" });
-  doc.font("Helvetica-Bold").fontSize(20).fillColor(BLU).text("N° " + docNum, MX, 48, { align: "right" });
-
-  // ── Línea azul superior ──
-  let cy = 72;
-  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(2).strokeColor(BLU).stroke();
-
-  // ── Meta row ──
-  cy += 6;
-  const cellW = MW / metaCells.length;
-  metaCells.forEach((cell, i) => {
-    const cx = MX + i * cellW;
-    doc.font("Helvetica").fontSize(7.5).fillColor(GREY).text(cell.label.toUpperCase(), cx, cy);
-    doc.font("Helvetica-Bold").fontSize(11).fillColor(BLACK).text(cell.value, cx, cy + 9, { width: cellW - 4, ellipsis: true });
-    if (i < metaCells.length - 1) {
-      doc.moveTo(cx + cellW - 2, cy).lineTo(cx + cellW - 2, cy + 22).lineWidth(0.5).strokeColor("#d1d5db").stroke();
-    }
-  });
-
-  // ── Línea azul bajo meta ──
-  cy += 26;
-  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(1).strokeColor("#d1d5db").stroke();
-  cy += 6;
-
-  // ── Encabezado tabla ──
-  // Si algún item tiene descuento por línea, se agregan dos columnas extra:
-  // "Desc." (el % descontado) y "Precio" (el precio unitario ya con el
-  // descuento aplicado — solo se completa en las filas que tienen descuento).
-  const anyDisc = !hidePrices && items.some((it) => (Number(it.discount_percent) || 0) > 0);
-  // En el remito de deposito las columnas de importes van en 0 y se agrega CONTROL.
-  const COL = hidePrices
-    ? { cod: 60, cant: 60, price: 0, disc: 0, precio: 0, sub: 0, control: 90 }
-    : anyDisc
-      ? { cod: 42, cant: 40, price: 62, disc: 44, precio: 62, sub: 76, control: 0 }
-      : { cod: 50, cant: 52, price: 90, disc: 0, precio: 0, sub: 90, control: 0 };
-  COL.prod = MW - COL.cod - COL.cant - COL.price - COL.disc - COL.precio - COL.sub - COL.control;
-  const colX = { cod: MX };
-  colX.prod = colX.cod + COL.cod;
-  colX.cant = colX.prod + COL.prod;
-  colX.price = colX.cant + COL.cant;
-  colX.disc = colX.price + COL.price;
-  colX.precio = colX.disc + COL.disc;
-  colX.sub = colX.precio + COL.precio;
-  colX.control = colX.sub + COL.sub;
-  doc.rect(MX, cy, MW, 20).fill(BLU);
-  doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff");
-  doc.text("CÓD.", colX.cod, cy + 6);
-  doc.text("PRODUCTO", colX.prod, cy + 6);
-  doc.text("CANT.", colX.cant, cy + 6, { width: COL.cant, align: "center" });
-  if (hidePrices) {
-    doc.text("CONTROL", colX.control, cy + 6, { width: COL.control, align: "center" });
-  } else {
-    doc.text("P. UNIT.", colX.price, cy + 6, { width: COL.price, align: "right" });
-    if (anyDisc) {
-      doc.text("DESC.", colX.disc, cy + 6, { width: COL.disc, align: "right" });
-      doc.text("PRECIO", colX.precio, cy + 6, { width: COL.precio, align: "right" });
-    }
-    doc.text("SUBTOTAL", colX.sub, cy + 6, { width: COL.sub, align: "right" });
-  }
-  cy += 20;
-
-  // ── Filas de items ──
-  const ROW_H = hidePrices ? 22 : 18;
-  const vSep = hidePrices
-    ? [colX.prod, colX.cant, colX.control]
-    : (anyDisc ? [colX.prod, colX.cant, colX.price, colX.disc, colX.precio, colX.sub] : [colX.prod, colX.cant, colX.price, colX.sub]);
-  items.forEach((it, idx) => {
-    if (cy + ROW_H > 800) { doc.addPage(); cy = 36; }
-    if (idx % 2 === 1) doc.rect(MX, cy, MW, ROW_H).fill("#f8fafc");
-    const disc = Number(it.discount_percent) || 0;
-    const unitPrice = Number(it.unit_price) || 0;
-    doc.font("Helvetica").fontSize(9).fillColor(GREY).text(String(it.product_code || ""), colX.cod, cy + 5, { width: COL.cod });
-    doc.fillColor(BLACK).font("Helvetica-Bold").text(String(it.product_name || ""), colX.prod, cy + 5, { width: COL.prod - 4, ellipsis: true });
-    doc.font("Helvetica-Bold").fillColor(BLACK).fontSize(hidePrices ? 11 : 9)
-      .text(String(it.quantity), colX.cant, cy + 5, { width: COL.cant, align: "center" });
-    doc.fontSize(9);
-    if (hidePrices) {
-      // Casillero vacio para tildar al armar/cargar la mercaderia.
-      const bx = colX.control + COL.control / 2 - 6;
-      doc.rect(bx, cy + 5, 12, 12).lineWidth(1).strokeColor("#9ca3af").stroke();
-      vSep.forEach((x) => {
-        doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
-      });
-      doc.moveTo(MX, cy + ROW_H).lineTo(MX + MW, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
-      cy += ROW_H;
-      return;
-    }
-    doc.font("Helvetica").fillColor(GREY).text("$" + unitPrice.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.price, cy + 5, { width: COL.price, align: "right" });
-    if (anyDisc) {
-      doc.font("Helvetica-Bold").fillColor(disc > 0 ? "#b45309" : "#9ca3af")
-        .text(disc > 0 ? "-" + (Math.round(disc * 100) / 100) + "%" : "—", colX.disc, cy + 5, { width: COL.disc, align: "right" });
-      const precioConDesc = round2(unitPrice * (1 - disc / 100));
-      doc.font("Helvetica").fillColor(disc > 0 ? BLACK : "#9ca3af")
-        .text(disc > 0 ? "$" + precioConDesc.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—", colX.precio, cy + 5, { width: COL.precio, align: "right" });
-    }
-    doc.font("Helvetica-Bold").fillColor(BLACK).text("$" + Number(it.subtotal != null ? it.subtotal : (it.unit_price * it.quantity)).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.sub, cy + 5, { width: COL.sub, align: "right" });
-    // separadores verticales azules
-    vSep.forEach((x) => {
-      doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
-    });
-    // separador horizontal azul (marca el renglón)
-    doc.moveTo(MX, cy + ROW_H).lineTo(MX + MW, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
-    cy += ROW_H;
-  });
-
-  // ── Línea azul cierre ──
-  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(2).strokeColor(BLU).stroke();
-  cy += 8;
-
-  // ── Summary ──
-  doc.font("Helvetica").fontSize(9).fillColor(GREY)
-    .text(items.length + " ítems · " + totalUnidades + " unidades", MX, cy);
-  if (!hidePrices) {
-    doc.font("Helvetica-Bold").fontSize(16).fillColor(BLU)
-      .text("TOTAL: $" + total.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), MX, cy - 2, { align: "right" });
-  }
-  cy += 20;
-
-  if (extraLine) {
-    doc.font("Helvetica-Oblique").fontSize(8).fillColor(GREY).text(extraLine, MX, cy);
-    cy += 14;
-  }
-  if (notes) {
-    doc.font("Helvetica-Oblique").fontSize(9).fillColor(GREY).text(notes, MX, cy);
-    cy += 16;
-  }
-
-  // ── Firmas (solo remito de deposito: es el papel que se firma al entregar) ──
-  if (hidePrices) {
-    if (cy + 60 > 800) { doc.addPage(); cy = 36; }
-    cy += 24;
-    const firmas = ["Preparó", "Entregó", "Recibí conforme"];
-    const fw = MW / firmas.length;
-    firmas.forEach((f, i) => {
-      const fx = MX + i * fw;
-      doc.moveTo(fx, cy).lineTo(fx + fw - 20, cy).lineWidth(0.8).strokeColor("#9ca3af").stroke();
-      doc.font("Helvetica").fontSize(8).fillColor(GREY).text(f, fx, cy + 4, { width: fw - 20 });
-    });
-  }
-
-  doc.end();
-}
-
-// ── Helper: genera PDF de un pedido de cotización (sin precios) ───────────
-// Mismo lenguaje visual que buildRemitoPdf pero pensado como pedido a un
-// proveedor: columnas N° · CÓD · PRODUCTO · CANTIDAD (en unidades o bultos).
-function buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items, notes, docLabel, showSupplier }) {
-  const doc = new PDFDocument({ size: "A4", margin: 36, autoFirstPage: true });
-  res.setHeader("Content-Type", "application/pdf");
-  doc.pipe(res);
-
-  const BLU = "#1e3a5f", GREY = "#6b7280", BLACK = "#111111";
-  const MX = 36, MW = 595 - 72;
-
-  // ── Header ──
-  doc.font("Helvetica-Bold").fontSize(17).fillColor(BLU).text(appName, MX, 36);
-  doc.font("Helvetica").fontSize(9).fillColor(GREY)
-    .text(porBultos ? "Cantidades por empaque (caja/bulto)" : "Cantidades por unidad", MX, 58);
-  doc.font("Helvetica").fontSize(9).fillColor(GREY).text(docLabel || "PEDIDO DE COTIZACIÓN", MX, 36, { align: "right" });
-  doc.font("Helvetica-Bold").fontSize(14).fillColor(BLU).text(date, MX, 48, { align: "right" });
-
-  // ── Línea azul superior ──
-  let cy = 72;
-  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(2).strokeColor(BLU).stroke();
-
-  // ── Meta row (solo Fecha; el proveedor no se imprime: la misma cotización
-  //    suele pedirse a varios proveedores) ──
-  cy += 6;
-  const metaCells = showSupplier && supplierName
-    ? [{ label: "Fecha", value: date }, { label: "Proveedor", value: supplierName }]
-    : [{ label: "Fecha", value: date }];
-  const cellW = MW / metaCells.length;
-  metaCells.forEach((cell, i) => {
-    const cx = MX + i * cellW;
-    doc.font("Helvetica").fontSize(7.5).fillColor(GREY).text(cell.label.toUpperCase(), cx, cy);
-    doc.font("Helvetica-Bold").fontSize(11).fillColor(BLACK).text(cell.value, cx, cy + 9, { width: cellW - 4, ellipsis: true });
-    if (i < metaCells.length - 1) {
-      doc.moveTo(cx + cellW - 2, cy).lineTo(cx + cellW - 2, cy + 22).lineWidth(0.5).strokeColor("#d1d5db").stroke();
-    }
-  });
-
-  // ── Línea bajo meta ──
-  cy += 26;
-  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(1).strokeColor("#d1d5db").stroke();
-  cy += 6;
-
-  // ── Encabezado tabla (sin columna Código: es interno) ──
-  const COL = { num: 26, cant: 170 };
-  COL.prod = MW - COL.num - COL.cant;
-  const colX = {
-    num: MX,
-    prod: MX + COL.num,
-    cant: MX + COL.num + COL.prod,
-  };
-  doc.rect(MX, cy, MW, 20).fill(BLU);
-  doc.font("Helvetica-Bold").fontSize(8).fillColor("#ffffff");
-  doc.text("N°", colX.num, cy + 6, { width: COL.num - 4 });
-  doc.text("PRODUCTO", colX.prod, cy + 6);
-  doc.text("CANTIDAD", colX.cant, cy + 6, { width: COL.cant, align: "right" });
-  cy += 20;
-
-  // ── Filas ──
-  const ROW_H = 20;
-  items.forEach((it, idx) => {
-    if (cy + ROW_H > 800) { doc.addPage(); cy = 36; }
-    if (idx % 2 === 1) doc.rect(MX, cy, MW, ROW_H).fill("#f8fafc");
-    let qty;
-    const upb = Number(it.units_per_bulto) || 1;
-    if (it.qty_label) {
-      // El caller ya armo la etiqueta (compra: bultos exactos, sin redondear).
-      qty = String(it.qty_label);
-    } else {
-    const q = Number(it.quantity) || 0;
-    const pack = it.pack_unit || "bulto";
-    // Mostrar SOLO lo que se cargó, sin aclaraciones ni equivalencias.
-    if (pack === "comprimido") {
-      const cpt = Math.max(1, Number(it.comprimidos_per_unit) || 1);
-      qty = Math.round(q * cpt) + " comp";
-    } else if (porBultos && pack !== "unidad" && upb > 1) {
-      const b = Math.ceil(q / upb);
-      const sing = pack === "caja" ? "caja" : "bulto";
-      const plur = pack === "caja" ? "cajas" : "bultos";
-      qty = b + " " + (b === 1 ? sing : plur);
-    } else {
-      qty = q + " und";
-    }
-    }
-    doc.font("Helvetica").fontSize(9).fillColor(GREY).text(String(idx + 1), colX.num, cy + 6, { width: COL.num - 4 });
-    doc.fillColor(BLACK).font("Helvetica-Bold").text(String(it.product_name || ""), colX.prod, cy + 6, { width: COL.prod - 6, ellipsis: true });
-    doc.font("Helvetica-Bold").fillColor(BLACK).text(qty, colX.cant, cy + 6, { width: COL.cant, align: "right" });
-    [colX.prod, colX.cant].forEach((x) => {
-      doc.moveTo(x - 1, cy).lineTo(x - 1, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
-    });
-    // separador horizontal azul (marca el renglón)
-    doc.moveTo(MX, cy + ROW_H).lineTo(MX + MW, cy + ROW_H).lineWidth(0.5).strokeColor(BLU).stroke();
-    cy += ROW_H;
-  });
-
-  // ── Línea azul cierre ──
-  doc.moveTo(MX, cy).lineTo(MX + MW, cy).lineWidth(2).strokeColor(BLU).stroke();
-  cy += 8;
-
-  // ── Pie ──
-  doc.font("Helvetica-Bold").fontSize(11).fillColor(BLU)
-    .text("Total: " + items.length + " producto" + (items.length !== 1 ? "s" : ""), MX, cy);
-  cy += 18;
-  if (notes) {
-    doc.font("Helvetica-Oblique").fontSize(9).fillColor(GREY).text(notes, MX, cy, { width: MW });
-  }
-
-  doc.end();
-}
 
 // Genera PDF del remito de un pedido — GET /api/admin/orders/:id/pdf
 app.get("/api/admin/orders/:id/pdf", requireVendedorOrAdmin, (req, res) => {
@@ -9832,8 +9713,9 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
  try {
   const body = req.body || {};
   const pConf = body.priceConfig || {};
-  const categoryIds = (Array.isArray(body.categoryIds) && body.categoryIds.length > 0)
+  let categoryIds = (Array.isArray(body.categoryIds) && body.categoryIds.length > 0)
     ? body.categoryIds.map(Number) : [];
+  let onlyActiveCats = false;
   const targetUserId = Number(body.targetUserId) || 0;
   const withImages = body.withImages !== false; // default true
   // Catálogo sin precios: solo el listado de productos (con o sin imágenes).
@@ -9856,6 +9738,17 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
       "SELECT id, full_name, username, level FROM users WHERE id = ? AND level BETWEEN 1 AND 4"
     ).get(Number(pConf.userId));
     if (!cu) return res.status(400).json({ error: "Cliente no encontrado" });
+    // El catálogo de un cliente respeta lo mismo que ve en la app: solo sus
+    // categorías permitidas y solo categorías activas. Se aplica acá (no solo
+    // en el panel) para que un JS viejo en caché no le mande de más.
+    onlyActiveCats = true;
+    const allowed = getUserAllowedCategoryIds(cu.id, cu.level);
+    if (allowed) {
+      categoryIds = categoryIds.length
+        ? categoryIds.filter((id) => allowed.has(id))
+        : Array.from(allowed);
+      if (!categoryIds.length) return res.status(400).json({ error: "Ninguna de las categorías elegidas está habilitada para ese cliente" });
+    }
     const cfg = getEffectivePriceConfig(cu.id, cu.level);
     priceCol = cfg.column;
     const cname = cu.full_name || cu.username || ("Cliente #" + cu.id);
@@ -9903,6 +9796,7 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
     "       c.id AS cat_id, c.name AS cat_name" +
     "  FROM products p JOIN categories c ON c.id = p.category_id" +
     "  WHERE p.stock > 0 AND p.active = 1" + catCond +
+    (onlyActiveCats ? " AND COALESCE(c.active, 1) = 1" : "") +
     "  ORDER BY c.sort_order, c.name, p.name"
   ).all(...categoryIds);
 

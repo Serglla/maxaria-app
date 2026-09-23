@@ -4,15 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Ventas</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260722a" />
-  <script>
-    // Si /ventas se abre embebido como modal flotante desde el catálogo
-    // (?modal=1), ocultamos el topbar para que se vea como un modal limpio.
-    // Se setea en <head> para evitar el parpadeo del topbar al renderizar.
-    if (new URLSearchParams(location.search).get("modal") === "1") {
-      document.documentElement.classList.add("in-modal");
-    }
-  </script>
+  <link rel="stylesheet" href="/css/styles.css?v=20260922g" />
+  <script src="/js/ventas-head.js?v=20260922a"></script>
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -268,6 +261,6 @@
     </div>
   </div>
 
-  <script src="/js/ventas.js?v=20260807a"></script>
+  <script src="/js/ventas.js?v=20260922f"></script>
 </body>
 </html>
