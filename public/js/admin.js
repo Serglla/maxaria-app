@@ -3916,7 +3916,14 @@
         debtLine.textContent = ob < -0.5
           ? "👤 " + who + " ya debe " + fmtPrice(-ob) + " de otros pedidos (sin contar este)"
           : ob > 0.5
-            ? "👤 " + who + " tiene " + fmtPrice(ob) + " a favor en su cuenta"
+            // Saldo a favor = pagos cargados sin asignar a un pedido (típico:
+            // pagó por adelantado desde la pestaña Pagos). No está imputado a
+            // ESTE pedido, por eso el recuadro de abajo lo sigue mostrando
+            // como adeudado: se aclara para no cobrarle dos veces.
+            ? "👤 " + who + " tiene " + fmtPrice(ob) + " a favor (pagos sin asignar a un pedido)" +
+              ((Number(order.balance_due) || Number(order.total) || 0) <= ob + 0.5
+                ? ". Alcanza para este pedido: si ese pago era por este pedido, no le cobres de nuevo."
+                : ". Cubre parte de este pedido.")
             : "👤 " + who + " no debe nada de otros pedidos";
         debtLine.hidden = false;
       }
