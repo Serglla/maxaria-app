@@ -2257,6 +2257,15 @@ button { font: inherit; cursor: pointer; }
   border-radius: 14px;
   padding: 16px 18px;
 }
+/* Viendo precios de COSTO en el celular: la hoja pasa a rojo como advertencia
+   (para no mostrarle el costo a un cliente por error). Solo mobile: en desktop
+   el selector de precio no cambia lo que se ve. */
+@media (max-width: 640px) {
+  #tab-productos.pv-cost-warn {
+    background: #fde2e2;
+    border-color: #f5a3a3;
+  }
+}
 /* ── Toolbar de Productos reorganizada en 3 zonas ── */
 .admin-toolbar2 {
   display: flex;

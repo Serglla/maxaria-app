@@ -4926,6 +4926,9 @@
       const pvCls = String(state.priceView || "minorista").replace("list:", "list-");
       els.prodTable.className = els.prodTable.className.replace(/\bpv-\S+/g, "").trim();
       els.prodTable.classList.add("pv-" + pvCls);
+      // Advertencia visual: viendo costos, la hoja se pinta de rojo (ver CSS).
+      const prodTab = document.getElementById("tab-productos");
+      if (prodTab) prodTab.classList.toggle("pv-cost-warn", pvCls === "costo");
     }
     // Columna extra con el precio de la lista personalizada elegida en el filtro
     // "Precio". curListCfg lo lee rowHtml (se calcula una sola vez por render).
