@@ -857,7 +857,7 @@
         }
         els.tabBtns.forEach((btn) => {
           const tab = btn.dataset.tab;
-          if (tab === "administradores" || tab === "inflacion") {
+          if (tab === "administradores" || tab === "inflacion" || tab === "abandono") {
             // Pestañas exclusivas del superadmin (Administradores e Inflación).
             btn.hidden = !isSuper;
             btn.style.display = isSuper ? "" : "none";
@@ -1584,6 +1584,7 @@
       if (tab === "caja") loadCaja();
       if (tab === "administradores") loadAdmins();
       if (tab === "inflacion") loadInflacion(); // siempre recargar (cambia con compras/ediciones)
+      if (tab === "abandono") loadAbandono();
       if (tab === "ventas") loadVentasOrders(); // siempre recargar (refleja entregas nuevas)
     });
   });
@@ -16252,6 +16253,93 @@
     infEls.from.value = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-01";
     infEls.to.value = now.toISOString().slice(0, 10);
   }
+
+  // ===== Productos que dejan de comprar (solo superadmin) =====
+  let abState = { rows: [], expanded: new Set() };
+  async function loadAbandono() {
+    const tb = document.getElementById("ab-tbody");
+    if (!tb) return;
+    tb.innerHTML = '<tr><td colspan="6" class="muted">Analizando los clientes…</td></tr>';
+    const dias = (document.getElementById("ab-dias") || {}).value || 30;
+    const min = (document.getElementById("ab-min") || {}).value || 2;
+    let d;
+    try {
+      d = await api("/api/admin/reports/abandono?dias=" + dias + "&min=" + min, {}, "el reporte");
+    } catch (err) {
+      tb.innerHTML = '<tr><td colspan="6" class="muted">Error: ' + escapeHtml(err.message) + "</td></tr>";
+      return;
+    }
+    abState.rows = d.rows || [];
+    abState.expanded = new Set();
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set("ab-kpi-lost", fmtPrice(d.total_monthly_lost || 0));
+    set("ab-kpi-lost-sub", abState.rows.length + " productos");
+    set("ab-kpi-clients", String(d.clientes_analizados || 0));
+    set("ab-kpi-comp", String(abState.rows.filter((r) => r.causes.some((c) => c.type === "competencia")).length));
+    renderAbandono();
+  }
+  function abCauseHtml(c) {
+    const cls = c.type === "competencia" ? "ab-c-comp" : (c.type === "precio" ? "ab-c-precio" : "ab-c-stock");
+    let t = c.label;
+    if (c.type === "precio" && c.pct != null) t += " +" + String(c.pct).replace(".", ",") + "%";
+    if (c.date) t += " (" + c.date.split("-").reverse().slice(0, 2).join("/") + ")";
+    return '<span class="ab-cause ' + cls + '">' + escapeHtml(t) + "</span>";
+  }
+  function abFmtDay(s) { return s ? s.split("-").reverse().join("/") : "—"; }
+  function renderAbandono() {
+    const tb = document.getElementById("ab-tbody");
+    if (!tb) return;
+    if (!abState.rows.length) {
+      tb.innerHTML = '<tr><td colspan="6" class="muted">No hay productos que varios clientes hayan dejado de comprar. 👍</td></tr>';
+      return;
+    }
+    tb.innerHTML = abState.rows.map((r) => {
+      const open = abState.expanded.has(r.product_id);
+      let html = '<tr class="ab-row" data-pid="' + r.product_id + '">' +
+        "<td><strong>" + escapeHtml(r.name) + '</strong> <span class="muted small">' + escapeHtml(r.code || "") + "</span>" +
+          (r.category_name ? '<div class="muted small">' + escapeHtml(r.category_name) + "</div>" : "") + "</td>" +
+        '<td class="num"><strong>' + r.clients_count + "</strong></td>" +
+        "<td>" + abFmtDay(r.from) + " → " + abFmtDay(r.to) +
+          (r.together ? ' <span class="ab-together" title="Cortaron en menos de 2 semanas">juntos</span>' : "") + "</td>" +
+        "<td>" + r.causes.map(abCauseHtml).join(" ") + "</td>" +
+        '<td class="num">' + fmtPrice(r.monthly_lost) + "</td>" +
+        '<td><button type="button" class="btn btn-small ab-toggle" data-pid="' + r.product_id + '">' + (open ? "▲" : "▼ Clientes") + "</button></td>" +
+      "</tr>";
+      if (open) {
+        html += '<tr class="ab-detail"><td colspan="6"><table class="ab-sub"><thead><tr><th>Cliente</th><th>Última compra</th><th class="num">Sin pedirlo</th><th class="num">Solía cada</th><th class="num">Cant. típica</th><th class="num">Por mes</th></tr></thead><tbody>' +
+          r.clients.map((c) => "<tr><td>" + escapeHtml(c.name) + "</td><td>" + abFmtDay(c.last_date) + '</td><td class="num">' + c.days_since + ' días</td><td class="num">' + c.cycle_days + ' días</td><td class="num">' + c.qty + '</td><td class="num">' + fmtPrice(c.monthly) + "</td></tr>").join("") +
+          "</tbody></table></td></tr>";
+      }
+      return html;
+    }).join("");
+  }
+  (function wireAbandono() {
+    const tb = document.getElementById("ab-tbody");
+    if (tb) tb.addEventListener("click", (e) => {
+      const b = e.target.closest(".ab-toggle");
+      if (!b) return;
+      const pid = Number(b.dataset.pid);
+      if (abState.expanded.has(pid)) abState.expanded.delete(pid); else abState.expanded.add(pid);
+      renderAbandono();
+    });
+    const ap = document.getElementById("ab-apply-btn");
+    if (ap) ap.addEventListener("click", loadAbandono);
+    const ex = document.getElementById("ab-export-btn");
+    if (ex) ex.addEventListener("click", () => {
+      const lines = [["Codigo", "Producto", "Categoria", "Clientes", "Desde", "Hasta", "Causa probable", "Se pierde por mes", "Clientes (nombres)"].join(";")];
+      abState.rows.forEach((r) => lines.push([
+        r.code || "", r.name, r.category_name || "", r.clients_count, abFmtDay(r.from), abFmtDay(r.to),
+        r.causes.map((c) => c.label + (c.pct != null ? " +" + c.pct + "%" : "") + (c.date ? " " + abFmtDay(c.date) : "")).join(" / "),
+        Math.round(r.monthly_lost), r.clients.map((c) => c.name).join(", "),
+      ].map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(";")));
+      const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "dejan-de-comprar.csv";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+  })();
 
   async function loadInflacion() {
     if (!infEls.tbody) return;

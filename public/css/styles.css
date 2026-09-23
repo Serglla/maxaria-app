@@ -6791,3 +6791,15 @@ html.in-modal .ventas-wrap {
 .ue-pattern-table td { padding: 6px; border-bottom: 1px solid #eef2f6; vertical-align: top; }
 .ue-pattern-table .num { text-align: right; white-space: nowrap; }
 .ue-pattern-flag { display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 999px; background: #fee2e2; color: #b91c1c; font-size: 10.5px; font-weight: 700; }
+
+/* Reporte "Dejan de comprar" (superadmin, 23/9/2026) */
+.ab-cause { display: inline-block; margin: 1px 4px 1px 0; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; border: 1px solid; white-space: nowrap; }
+.ab-c-comp { background: #eef2ff; color: #3730a3; border-color: #c7d2fe; }
+.ab-c-precio { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
+.ab-c-stock { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+.ab-together { display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 10.5px; font-weight: 800; text-transform: uppercase; }
+.ab-detail > td { background: #f8fafc; }
+.ab-sub { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ab-sub th { text-align: left; font-size: 10.5px; text-transform: uppercase; color: #64748b; padding: 4px 6px; border-bottom: 1px solid #e2e8f0; }
+.ab-sub td { padding: 5px 6px; border-bottom: 1px solid #eef2f6; }
+.ab-sub .num { text-align: right; }

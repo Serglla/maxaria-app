@@ -10952,6 +10952,97 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("v
 //    ("sin ventana": primer cambio registrado del producto).
 //  - Neto = revalorizacion - perdida.
 // Con deltas negativos (baja de costo) los signos se invierten solos.
+// ===== PRODUCTOS QUE ESTAN DEJANDO (solo superadmin) =====
+// Cruza el patron de compra de todos los clientes activos (compraron en los
+// ultimos ?dias, default 30) y agrupa por producto los que varios clientes
+// dejaron de reponer. Para cada producto busca la causa probable alrededor de
+// la fecha en que cortaron:
+//  - quiebre de stock (stock_movements con qty_after <= 0 en la ventana, o sin
+//    stock hoy),
+//  - aumento de precio (price_changes con suba del minorista en la ventana),
+//  - si no hay ninguna de las dos: "posible competencia".
+// "Perdido por mes" = sum por cliente de cantidad tipica x precio x (30/ciclo).
+app.get("/api/admin/reports/abandono", requireAdmin, (req, res) => {
+  if (!getAdminPerms(req.session.userId).isSuperadmin) {
+    return res.status(403).json({ error: "Solo el superadmin puede ver este reporte" });
+  }
+  const dias = Math.min(180, Math.max(7, Number(req.query.dias) || 30));
+  const minClientes = Math.min(20, Math.max(1, Number(req.query.min) || 2));
+  const clients = db.prepare(
+    "SELECT u.id, u.level, COALESCE(u.full_name, u.username) AS name FROM users u" +
+    " WHERE u.level BETWEEN 1 AND 4 AND u.active = 1" +
+    "   AND EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.status != 'cancelado'" +
+    "               AND o.created_at >= datetime('now', ?))"
+  ).all("-" + dias + " days");
+
+  const byProduct = new Map();
+  for (const c of clients) {
+    const pat = clientBuyingPattern(c.id, c.level, { admin: true });
+    for (const r of pat.recompra) {
+      let e = byProduct.get(r.product_id);
+      if (!e) {
+        e = { product_id: r.product_id, code: r.code, name: r.name, category_name: r.category_name, clients: [] };
+        byProduct.set(r.product_id, e);
+      }
+      const monthly = (Number(r.qty) || 0) * (Number(r.price) || 0) * (30 / Math.max(1, Number(r.cycle_days) || 30));
+      e.clients.push({
+        id: c.id, name: c.name, last_date: String(r.last_date).slice(0, 10),
+        days_since: r.days_since, cycle_days: r.cycle_days, qty: r.qty,
+        monthly: Math.round(monthly),
+      });
+    }
+  }
+
+  const prodInfo = db.prepare("SELECT stock, price_minorista, cost FROM products WHERE id = ?");
+  const stockOut = db.prepare(
+    "SELECT MIN(created_at) AS d FROM stock_movements WHERE product_id = ? AND qty_after <= 0" +
+    "   AND created_at BETWEEN datetime(?, '-7 days') AND datetime(?, '+14 days')"
+  );
+  const priceUp = db.prepare(
+    "SELECT pu.created_at AS d, pc.old_minorista AS o, pc.new_minorista AS n" +
+    "  FROM price_changes pc JOIN price_updates pu ON pu.id = pc.update_id" +
+    " WHERE pc.product_id = ? AND pc.new_minorista > pc.old_minorista AND pc.old_minorista > 0" +
+    "   AND pu.created_at BETWEEN datetime(?, '-30 days') AND datetime(?, '+7 days')" +
+    " ORDER BY (pc.new_minorista * 1.0 / pc.old_minorista) DESC LIMIT 1"
+  );
+
+  const rows = [];
+  for (const e of byProduct.values()) {
+    if (e.clients.length < minClientes) continue;
+    const dates = e.clients.map((c) => c.last_date).sort();
+    const from = dates[0], to = dates[dates.length - 1];
+    const spanDays = Math.round((Date.parse(to) - Date.parse(from)) / 86400000);
+    const info = prodInfo.get(e.product_id) || {};
+    const causes = [];
+    const so = stockOut.get(e.product_id, from, to);
+    if (so && so.d) causes.push({ type: "stock", label: "Quiebre de stock", date: String(so.d).slice(0, 10) });
+    if (!(Number(info.stock) > 0)) causes.push({ type: "stock_hoy", label: "Sin stock hoy" });
+    const pu = priceUp.get(e.product_id, from, to);
+    if (pu && pu.d) {
+      causes.push({
+        type: "precio", label: "Aumento de precio",
+        date: String(pu.d).slice(0, 10),
+        pct: Math.round((Number(pu.n) / Number(pu.o) - 1) * 1000) / 10,
+      });
+    }
+    if (!causes.length) causes.push({ type: "competencia", label: "Posible competencia" });
+    e.clients.sort((a, b) => a.last_date < b.last_date ? -1 : 1);
+    rows.push({
+      product_id: e.product_id, code: e.code, name: e.name, category_name: e.category_name,
+      clients_count: e.clients.length, from: from, to: to, span_days: spanDays,
+      together: spanDays <= 14,
+      monthly_lost: e.clients.reduce((s, c) => s + c.monthly, 0),
+      stock: info.stock, causes: causes, clients: e.clients,
+    });
+  }
+  rows.sort((a, b) => b.monthly_lost - a.monthly_lost || b.clients_count - a.clients_count);
+  res.json({
+    dias: dias, min_clientes: minClientes, clientes_analizados: clients.length,
+    total_monthly_lost: rows.reduce((s, r) => s + r.monthly_lost, 0),
+    rows: rows,
+  });
+});
+
 app.get("/api/admin/reports/inflation", requireAdmin, (req, res) => {
   const perms = getAdminPerms(req.session.userId);
   if (!perms.isSuperadmin) {

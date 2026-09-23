@@ -505,3 +505,13 @@ test("patrón de compra: detecta el producto que el cliente dejó de reponer", a
   assert.equal(rec.cycle_days, 7);
   assert.ok(r.json.last_order_days <= 1);
 });
+
+test("reporte 'dejan de comprar': solo superadmin y agrupa por producto", async () => {
+  const r = await admin.get("/api/admin/reports/abandono?dias=30&min=1");
+  assert.equal(r.status, 200, r.text);
+  const row = r.json.rows.find((x) => x.code === "S8");
+  assert.ok(row, JSON.stringify(r.json.rows.map((x) => x.code)));
+  assert.equal(row.clients_count, 1);
+  assert.ok(row.causes.length >= 1);
+  assert.ok(row.monthly_lost > 0);
+});

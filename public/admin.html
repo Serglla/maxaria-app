@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260923c" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260923d" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -160,6 +160,9 @@
           </button>
           <button class="tab-btn admin-sidebar-item admin-only superadmin-only" data-tab="inflacion" type="button" hidden>
             <span class="admin-sidebar-item-icon">🔥</span>Inflación
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only superadmin-only" data-tab="abandono" type="button" hidden>
+            <span class="admin-sidebar-item-icon">📉</span>Dejan de comprar
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="actividad" type="button">
             <span class="admin-sidebar-item-icon">📊</span>Actividad
@@ -915,6 +918,67 @@
     </section>
 
     <!-- ===== TAB INFLACIÓN (impacto de cambios de costo, solo superadmin) ===== -->
+    <section class="tab-panel" id="tab-abandono" hidden>
+      <div class="rpt-toolbar">
+        <label class="rpt-filter-label">Clientes que compraron en los últimos
+          <select id="ab-dias" class="admin-input">
+            <option value="30" selected>30 días</option>
+            <option value="60">60 días</option>
+            <option value="90">90 días</option>
+          </select>
+        </label>
+        <label class="rpt-filter-label">Mínimo de clientes
+          <select id="ab-min" class="admin-input">
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </label>
+        <button class="btn btn-primary" id="ab-apply-btn" type="button">Aplicar</button>
+        <button class="btn btn-ghost" id="ab-export-btn" type="button" title="Exportar como CSV">⬇ CSV</button>
+      </div>
+      <p class="muted" style="margin:0 24px 12px;font-size:12.5px">
+        Productos que <strong>varios clientes que siguen comprando</strong> dejaron de reponer (pasó más tiempo que su ciclo habitual).
+        Para cada uno se busca la causa probable cerca de la fecha en que cortaron: <strong>quiebre de stock</strong>,
+        <strong>aumento de precio</strong> o, si no hubo ninguna, <strong>posible competencia</strong>.
+        "Se pierde por mes" estima lo que esos clientes te compraban de ese producto.
+      </p>
+      <div class="dash-kpi-row" style="margin:0 24px 16px">
+        <div class="dash-kpi dash-kpi-danger">
+          <div class="dash-kpi-label">Se pierde por mes (estimado)</div>
+          <div class="dash-kpi-value" id="ab-kpi-lost">—</div>
+          <div class="dash-kpi-sub" id="ab-kpi-lost-sub"></div>
+        </div>
+        <div class="dash-kpi">
+          <div class="dash-kpi-label">Clientes analizados</div>
+          <div class="dash-kpi-value" id="ab-kpi-clients">—</div>
+          <div class="dash-kpi-sub">con pedidos en el período</div>
+        </div>
+        <div class="dash-kpi dash-kpi-accent">
+          <div class="dash-kpi-label">Posible competencia</div>
+          <div class="dash-kpi-value" id="ab-kpi-comp">—</div>
+          <div class="dash-kpi-sub">sin quiebre ni aumento que lo explique</div>
+        </div>
+      </div>
+      <div class="admin-table-wrap" style="margin:0 24px">
+        <table class="admin-table" id="ab-table">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th class="num">Clientes</th>
+              <th>Cortaron entre</th>
+              <th>Causa probable</th>
+              <th class="num">Se pierde por mes</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ab-tbody">
+            <tr><td colspan="6" class="muted">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="tab-panel" id="tab-inflacion" hidden>
       <div class="rpt-toolbar">
         <label class="rpt-filter-label">Desde
@@ -3972,6 +4036,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260923b"></script>
+  <script src="/js/admin.js?v=20260923c"></script>
 </body>
 </html>
