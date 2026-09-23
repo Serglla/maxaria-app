@@ -1266,12 +1266,31 @@
   });
 
   // ---------- Dashboard ----------
+  // Si un número no entra en su tarjeta (montos grandes, pantallas angostas),
+  // se le baja la letra hasta que entre, en vez de dejarlo cortado.
+  function fitDashKpis() {
+    document.querySelectorAll("#tab-dashboard .dash-kpi-value").forEach((el) => {
+      el.style.fontSize = "";
+      let size = parseFloat(getComputedStyle(el).fontSize) || 26;
+      while (el.scrollWidth > el.clientWidth + 1 && size > 13) {
+        size -= 1;
+        el.style.fontSize = size + "px";
+      }
+    });
+  }
+  window.addEventListener("resize", debounce(() => {
+    const tab = document.getElementById("tab-dashboard");
+    if (tab && !tab.hidden) fitDashKpis();
+  }, 200));
+
   async function loadDashboard() {
     try {
       const d = await api("/api/admin/dashboard");
 
       // Helpers
-      const fmt = (n) => "$ " + Number(n).toLocaleString("es-AR");
+      // En las tarjetas del resumen van pesos redondeados: con centavos
+      // ("$ 39.799.358,42") el número no entraba y quedaba cortado.
+      const fmt = (n) => "$ " + Math.round(Number(n) || 0).toLocaleString("es-AR");
       const setV = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
       const setC = (id, cls) => { const el = document.getElementById(id); if (el) { el.classList.remove("dash-kpi-warn","dash-kpi-danger","dash-kpi-good","dash-kpi-accent"); if (cls) el.classList.add(cls); } };
 
@@ -1336,6 +1355,7 @@
       setV("dash-stock-cero", d.stockCero || 0);
       setV("dash-stock-bajo", d.stockBajo || 0);
       setV("dash-stock-ok",   d.stockOk   || 0);
+      fitDashKpis();
 
       // Últimos pedidos (labels/clases: fuente única ORDER_STATUS_*)
       const tbody = document.getElementById("dash-recent-tbody");

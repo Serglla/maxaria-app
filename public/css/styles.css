@@ -5518,6 +5518,7 @@ html.in-modal .ventas-wrap {
 }
 .dash-kpi-value {
   font-size: 26px; font-weight: 800; color: #fff; line-height: 1.1; letter-spacing: -.5px;
+  white-space: nowrap; overflow: hidden; /* fitDashKpis() achica la letra si no entra */
 }
 .dash-kpi-sub { font-size: 11px; color: rgba(255,255,255,.72); margin-top: 6px; font-weight: 500; }
 /* ── Paleta de colores para KPIs ── */
