@@ -3865,6 +3865,8 @@
       : null;
     deliveryOrderInfo = null;
     if (els.deliveryModalOrder) els.deliveryModalOrder.textContent = orderLabel;
+    var debtLine = document.getElementById("delivery-client-debt");
+    if (debtLine) { debtLine.hidden = true; debtLine.textContent = ""; }
     if (els.deliveryFormMsg) els.deliveryFormMsg.textContent = "";
     if (els.deliveryForm) {
       els.deliveryForm.reset();
@@ -3905,6 +3907,19 @@
     // "Pagó el total", el saldo adeudado en vivo y el bloqueo de transferencia.
     api("/api/orders/" + orderId).then(function(order) {
       var pf = order.profitability || {};
+      // Una línea con lo que el cliente ya debe por OTROS pedidos, para
+      // aprovechar la entrega y cobrarle también eso.
+      if (debtLine && order.client_other_balance != null) {
+        var ob = Number(order.client_other_balance) || 0;
+        var who = order.full_name || order.username || "El cliente";
+        debtLine.className = "delivery-client-debt " + (ob < -0.5 ? "dcd-debt" : "dcd-ok");
+        debtLine.textContent = ob < -0.5
+          ? "👤 " + who + " ya debe " + fmtPrice(-ob) + " de otros pedidos (sin contar este)"
+          : ob > 0.5
+            ? "👤 " + who + " tiene " + fmtPrice(ob) + " a favor en su cuenta"
+            : "👤 " + who + " no debe nada de otros pedidos";
+        debtLine.hidden = false;
+      }
       // Comisión del vendedor (si hay) y efectivo ya cobrado por OTRAS vías
       // (otros cobros del pedido), para repartir con "primero lo tuyo".
       var commission = Number(pf.vendor && pf.vendor.earning) || 0;

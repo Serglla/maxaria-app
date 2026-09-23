@@ -3630,6 +3630,16 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
     cash_collected: isAdmin ? cashCollectedForOrder(id) : undefined,
     profitability: profitability,
     pick_changes: pickChanges,
+    // Saldo del cliente en cuenta corriente SIN contar este pedido (para ver
+    // al entregar si además arrastra deuda de otros pedidos). Negativo = debe.
+    client_other_balance: (() => {
+      const r = db.prepare(
+        "SELECT COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE -amount END),0) AS b" +
+        "  FROM account_movements WHERE user_id = (SELECT user_id FROM orders WHERE id = ?)" +
+        "   AND (order_id IS NULL OR order_id != ?)"
+      ).get(id, id);
+      return Math.round((Number(r && r.b) || 0) * 100) / 100;
+    })(),
   }));
 });
 

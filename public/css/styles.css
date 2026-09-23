@@ -6732,3 +6732,8 @@ html.in-modal .ventas-wrap {
 .ventas-table th.vt-sort::after { content: " ⇅"; opacity: .35; font-size: 11px; }
 .ventas-table th.vt-sort.sort-asc::after  { content: " ↑"; opacity: 1; color: #1e3a5f; }
 .ventas-table th.vt-sort.sort-desc::after { content: " ↓"; opacity: 1; color: #1e3a5f; }
+
+/* Registrar entrega: línea con la deuda del cliente por otros pedidos */
+.delivery-client-debt { margin: -4px 0 12px; padding: 7px 10px; border-radius: 8px; font-size: 13px; font-weight: 700; }
+.delivery-client-debt.dcd-debt { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.delivery-client-debt.dcd-ok { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }

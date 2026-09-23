@@ -286,3 +286,15 @@ test("PDFs de documentos (módulo lib/pdf-docs): remito con y sin precios", asyn
     assert.equal(buf.slice(0, 4).toString(), "%PDF");
   }
 });
+
+test("detalle de pedido informa la deuda del cliente por otros pedidos", async () => {
+  const r = await admin.post("/api/admin/orders", {
+    client_id: ids.client,
+    items: [{ product_id: ids.p2, product_code: "1002", product_name: "Producto dos", quantity: 1, unit_price: 300 }],
+  });
+  const oid = r.json.order ? r.json.order.id : r.json.id;
+  const d = await admin.get("/api/orders/" + oid);
+  assert.equal(d.status, 200);
+  // Todo lo que debe el cliente menos este pedido (-300).
+  assert.equal(Math.round(d.json.client_other_balance), (await balanceOf(ids.client)) + 300);
+});
