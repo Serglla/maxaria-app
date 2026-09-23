@@ -395,7 +395,7 @@ test("editar producto con el stock viejo del cache no pisa las ventas del medio"
   assert.equal(stockOf(pid), 45);
 });
 
-test("borrar un pedido del catálogo devuelve el stock y no deja el presupuesto reteniéndolo", async () => {
+test("pedido del catálogo: lleva su propio stock, sin presupuesto sombra; borrarlo lo devuelve", async () => {
   const pid = newProduct("S4", 30);
   const cli = client();
   const lg = await cli.login("cliente1", "Clave123");
@@ -404,33 +404,46 @@ test("borrar un pedido del catálogo devuelve el stock y no deja el presupuesto 
   assert.equal(r.status, 200, r.text);
   const oid = r.json.order.id;
   assert.equal(stockOf(pid), 26);
+  const d = rawDb();
+  assert.equal(d.prepare("SELECT COUNT(*) AS n FROM budgets WHERE order_id = ?").get(oid).n, 0, "no crea presupuesto sombra");
+  assert.equal(d.prepare("SELECT stock_discounted FROM orders WHERE id = ?").get(oid).stock_discounted, 1);
+  d.close();
   const del = await admin.del("/api/admin/orders/" + oid);
   assert.equal(del.status, 200, del.text);
   assert.equal(stockOf(pid), 30);
-  const d = rawDb();
-  const b = d.prepare("SELECT stock_discounted FROM budgets WHERE notes IS NULL ORDER BY id DESC LIMIT 1").get();
-  d.close();
-  assert.equal(b.stock_discounted, 0);
 });
 
-test("cancelar el presupuesto de un pedido del catálogo editado devuelve lo que está afuera", async () => {
+test("pedido del catálogo: entregarlo por estado no re-descuenta y debita la cuenta", async () => {
   const pid = newProduct("S5", 30);
   const cli = client();
   await cli.login("cliente1", "Clave123");
   const r = await cli.post("/api/orders", { items: [{ id: pid, qty: 5 }] });
   const oid = r.json.order.id;
-  const it = (await itemsOf(oid))[0];
-  const e = await admin.put("/api/admin/orders/" + oid + "/items", { items: [{ product_id: pid, quantity: 3, unit_price: it.unit_price }] });
+  assert.equal(stockOf(pid), 25);
+  const e = await admin.patch("/api/orders/" + oid, { status: "entregado" });
   assert.equal(e.status, 200, e.text);
-  assert.equal(stockOf(pid), 27);
+  assert.equal(stockOf(pid), 25);
   const d = rawDb();
-  const bid = d.prepare("SELECT id FROM budgets WHERE order_id = ?").get(oid).id;
+  const deb = d.prepare("SELECT COUNT(*) AS n FROM account_movements WHERE order_id = ? AND type = 'debit'").get(oid).n;
   d.close();
-  const edit = await admin.put("/api/budgets/" + bid, { items: [{ product_id: pid, quantity: 9, unit_price: 1 }] });
-  assert.equal(edit.status, 409, "el presupuesto vinculado no se edita");
-  const c = await admin.patch("/api/budgets/" + bid + "/status", { status: "cancelado" });
-  assert.equal(c.status, 200, c.text);
-  assert.equal(stockOf(pid), 30);
+  assert.equal(deb, 1);
+});
+
+test("Ventas solo lista presupuestos armados en Ventas (los sombra viejos no)", async () => {
+  const d = rawDb();
+  const oid = d.prepare("SELECT id FROM orders ORDER BY id DESC LIMIT 1").get().id;
+  const sombra = d.prepare(
+    "INSERT INTO budgets (number, client_name, status, order_id, source, subtotal, total) VALUES ('9999-1','x','enviado',?,'pedido',0,0)"
+  ).run(oid).lastInsertRowid;
+  d.close();
+  const b = await admin.post("/api/budgets", { client_name: "Mostrador", items: [{ product_id: ids.p1, quantity: 1, unit_price: 10 }] });
+  assert.equal(b.status, 200, b.text);
+  const list = await admin.get("/api/budgets");
+  const listIds = list.json.map((x) => x.id);
+  assert.ok(listIds.includes(b.json.id));
+  assert.ok(!listIds.includes(sombra));
+  const mut = await admin.patch("/api/budgets/" + sombra + "/status", { status: "cancelado" });
+  assert.equal(mut.status, 409);
 });
 
 test("editar items con un producto repetido en dos líneas no infla el pedido ni el stock", async () => {

@@ -2169,3 +2169,10 @@ Disparador: Amoxidal 500 x 8 (1006) quedó en −9 en el sistema con 43 físicas
 **Diagnóstico**: Control de stock suma dos chequeos: "Entregados con armado distinto al pedido (sin aplicar)" (últimos 120 días, con el desvío por producto) y "Pedidos unificados que descontaron stock dos veces". Sirven para encontrar desvíos históricos que el fix no corrige solo.
 
 **Tests**: 7 nuevos en `test/smoke.test.js` (22 en total); 6 fallan contra el código anterior. El del unificado arma el padre a mano, no pasa por `/api/vendedor/dispatch`.
+
+### Pedidos sin presupuesto "sombra" + campanita y pedido habitual en el catálogo (23 septiembre 2026 — `app.js/styles.css?v=20260923a`)
+
+- **Pedidos del catálogo ya no crean presupuesto**: descuentan stock y lo llevan en `orders.stock_discounted = 1`, igual que los del admin. Se borró `backfillOrderBudgets` (creaba un presupuesto por cada pedido). Al entregar por PATCH, el débito de cuenta corriente se asegura aparte del stock (solo si falta y solo clientes 1..4).
+- **`budgets.source`**: `'ventas'` (armado en Ventas, el único que se lista) o `'pedido'` (sombra vieja). Migración idempotente: los vinculados a un pedido no facturado pasan a `'pedido'` y su flag de stock se traslada al pedido (no cambia ninguna cantidad). Los sueltos sin pedido (los 26 que retienen stock) quedan como `'ventas'`, visibles hasta limpiarlos. PUT/PATCH status/invoice/DELETE de una sombra → 409. `stockCurrentlyOut` pasó a `linkedBudgetOut || order.stock_discounted`.
+- **Catálogo**: los recordatorios de recompra y los avisos de estado de pedidos van a una campanita (`#notif-btn`, contador rojo, panel desplegable) en vez de ocupar el arriba de la grilla / la barra fija; el pedido habitual se abre desde el botón ⭐ (`#habitual-btn`) en un drawer (`#habitual-drawer`).
+- `logActivity` serializa `detail` si es objeto (el login por link fallaba con "Too few parameter values").

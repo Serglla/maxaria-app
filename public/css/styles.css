@@ -6737,3 +6737,31 @@ html.in-modal .ventas-wrap {
 .delivery-client-debt { margin: -4px 0 12px; padding: 7px 10px; border-radius: 8px; font-size: 13px; font-weight: 700; }
 .delivery-client-debt.dcd-debt { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
 .delivery-client-debt.dcd-ok { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+
+/* Catálogo: campanita de avisos + botón de pedido habitual (23/9/2026) */
+.cat-notif-wrap { position: relative; display: inline-flex; }
+.cat-notif-btn { position: relative; font-size: 16px; padding-left: 10px; padding-right: 10px; }
+.cat-notif-count {
+  position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px; background: #dc2626; color: #fff; font-size: 11px; font-weight: 800;
+  line-height: 18px; text-align: center; box-shadow: 0 0 0 2px #fff;
+}
+.cat-notif-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; width: 380px; max-height: 70vh; overflow-y: auto;
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 12px 32px rgba(15,23,42,.18);
+  z-index: 1200; color: #111827; text-align: left;
+}
+.cat-notif-head { padding: 11px 14px; font-weight: 800; font-size: 14px; border-bottom: 1px solid #eef0f3; }
+.cat-notif-list { display: flex; flex-direction: column; }
+.cat-notif-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #f1f5f9; }
+.cat-notif-item:last-child { border-bottom: none; }
+.cat-notif-icon { font-size: 18px; line-height: 1; }
+.cat-notif-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.cat-notif-text strong { font-size: 13.5px; font-weight: 700; color: #1f2937; }
+.cat-notif-text span { font-size: 12px; color: #a16207; }
+.cat-notif-empty { margin: 0; padding: 16px 14px; font-size: 13px; color: #64748b; }
+@media (max-width: 720px) {
+  .cat-notif-panel { position: fixed; top: 64px; left: 10px; right: 10px; width: auto; max-height: calc(100dvh - 80px); }
+  .habitual-btn .habitual-btn-label { display: none; }
+  .cat-notif-btn, .habitual-btn { padding-left: 9px !important; padding-right: 9px !important; flex: 0 0 auto !important; }
+}

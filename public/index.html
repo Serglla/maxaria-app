@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Catálogo</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260922j" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260923a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -40,6 +40,18 @@
       <!-- Botones primarios de acción -->
       <div class="topbar-actions topbar-actions-primary">
         <button id="venta-btn" class="btn btn-primary" hidden type="button">🧾 Venta</button>
+        <!-- Pedido habitual del cliente: abre su propio panel (antes ocupaba
+             todo el arriba del catálogo). -->
+        <button id="habitual-btn" class="btn btn-ghost habitual-btn" type="button" hidden title="Lo que pedís siempre">
+          ⭐ <span class="habitual-btn-label">Pedido habitual</span>
+        </button>
+        <!-- Campanita: avisos de recompra y novedades de los pedidos -->
+        <div class="cat-notif-wrap">
+          <button id="notif-btn" class="btn btn-ghost cat-notif-btn" type="button" hidden aria-label="Avisos" title="Avisos">
+            🔔<span id="notif-count" class="cat-notif-count" hidden>0</span>
+          </button>
+          <div id="notif-panel" class="cat-notif-panel" hidden role="dialog" aria-label="Avisos"></div>
+        </div>
         <button id="cart-btn" class="btn btn-ghost" type="button">
           🛒 Carrito <span id="cart-count" class="badge">0</span>
           <span id="cart-total-top" class="cart-total-top" hidden>$0</span>
@@ -158,6 +170,16 @@
     </div>
   </aside>
 
+  <!-- Drawer pedido habitual -->
+  <aside class="drawer drawer-wide" id="habitual-drawer" hidden>
+    <header class="drawer-head">
+      <button class="drawer-back" id="habitual-back" type="button" aria-label="Volver">←</button>
+      <h3 id="habitual-title">Tu pedido habitual</h3>
+      <button class="btn btn-ghost" id="habitual-close" type="button">Cerrar</button>
+    </header>
+    <div class="drawer-body" id="habitual-body"></div>
+  </aside>
+
   <!-- Drawer carrito -->
   <aside class="drawer" id="cart-drawer" hidden>
     <header class="drawer-head">
@@ -240,6 +262,6 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="/js/offline.js"></script>
-  <script src="/js/app.js?v=20260922f"></script>
+  <script src="/js/app.js?v=20260923a"></script>
 </body>
 </html>

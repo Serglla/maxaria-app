@@ -24,6 +24,15 @@
     cartNotes: document.getElementById("cart-notes"),
     ordersBtn: document.getElementById("orders-btn"),
     ordersDrawer: document.getElementById("orders-drawer"),
+    habitualBtn: document.getElementById("habitual-btn"),
+    habitualDrawer: document.getElementById("habitual-drawer"),
+    habitualTitle: document.getElementById("habitual-title"),
+    habitualBody: document.getElementById("habitual-body"),
+    habitualClose: document.getElementById("habitual-close"),
+    habitualBack: document.getElementById("habitual-back"),
+    notifBtn: document.getElementById("notif-btn"),
+    notifCount: document.getElementById("notif-count"),
+    notifPanel: document.getElementById("notif-panel"),
     ordersClose: document.getElementById("orders-close"),
     ordersBack: document.getElementById("orders-back"),
     ordersBody: document.getElementById("orders-body"),
@@ -481,97 +490,154 @@
     // vez que se vuelve a renderizar la accion de un card.
   }
 
-  // ----- Tu pedido habitual + recordatorio de recompra -----
-  // El catálogo deja de ser una lista pasiva: arriba de la grilla aparecen los
-  // productos que este cliente pide siempre (con su cantidad típica) y un aviso
-  // cuando se le pasó el ciclo con el que suele reponer algo. Todo sale de sus
-  // propios pedidos (GET /api/my-suggestions).
-  const SUGG_LS_KEY = "maxaria_sugg_hidden";
+  // ----- Tu pedido habitual + avisos (campanita) -----
+  // Todo sale de los propios pedidos del cliente (GET /api/my-suggestions).
+  // Antes se mostraba arriba de la grilla y saturaba el catálogo; ahora:
+  //  - los recordatorios de recompra van a la campanita (con los avisos de
+  //    estado de los pedidos),
+  //  - el pedido habitual es un botón que abre su propio panel.
+  state.orderNotices = state.orderNotices || [];   // avisos de estado de pedidos
+  let notifSeenKey = "";                            // lo que ya se vio al abrir la campanita
+
+  function suggAudience() {
+    if (!state.me) return false;
+    const lvl = Number(state.me.level);
+    return (lvl >= 1 && lvl <= 4) || (lvl === 5 && !!state.vendedorClient);
+  }
 
   async function loadSuggestions() {
-    const el = document.getElementById("suggestions");
-    if (!el || !state.me) return;
-    const lvl = Number(state.me.level);
-    const esCliente = lvl >= 1 && lvl <= 4;
-    const vendedorConCliente = lvl === 5 && !!state.vendedorClient;
-    if (!esCliente && !vendedorConCliente) { el.hidden = true; return; }
+    const old = document.getElementById("suggestions");
+    if (old) old.hidden = true;
+    if (!suggAudience()) { state.suggestions = null; renderSuggestions(); return; }
     try {
       state.suggestions = await api("/api/my-suggestions");
     } catch (_) {
-      el.hidden = true; return;
+      state.suggestions = null;
     }
     renderSuggestions();
   }
 
-  function suggHidden() {
-    try { return localStorage.getItem(SUGG_LS_KEY) === "1"; } catch (_) { return false; }
+  function addSuggToCart(btn) {
+    const id = Number(btn.dataset.suggAdd);
+    const qty = Math.max(1, Number(btn.dataset.qty) || 1);
+    const actual = state.cart.get(id);
+    setQty(id, (actual ? actual.qty : 0) + qty);
+    btn.textContent = "✓ Agregado";
+    btn.disabled = true;
   }
 
-  function renderSuggestions() {
-    const el = document.getElementById("suggestions");
-    if (!el) return;
-    const s = state.suggestions;
-    // Se muestra solo en la vista limpia: si el usuario está buscando o filtró
-    // una categoría, estorba.
-    const vistaLimpia = state.cat === "all" && !state.query;
-    if (!s || !vistaLimpia || (!s.habitual.length && !s.recompra.length)) { el.hidden = true; return; }
-
-    const quien = state.vendedorClient ? escapeHtml(state.vendedorClient.name) : "Tu";
-    const titulo = state.vendedorClient ? "Lo que suele pedir " + quien : "Tu pedido habitual";
-    let html = "";
-
-    // Recordatorios de recompra (los más atrasados primero).
-    s.recompra.slice(0, 3).forEach(function(r) {
-      html +=
-        '<div class="sugg-remind">' +
-          '<span class="sugg-remind-icon" aria-hidden="true">🔔</span>' +
-          '<div class="sugg-remind-text">' +
-            "<strong>Hace " + r.days_since + " días que no " +
-              (state.vendedorClient ? "pide " : "pedís ") + escapeHtml(r.name) + "</strong>" +
-            "<span>Suele reponerlo cada " + r.cycle_days + " días</span>" +
-          "</div>" +
-          '<button class="sugg-add-btn" data-sugg-add="' + r.product_id + '" data-qty="' + r.qty + '">Agregar ' + r.qty + "</button>" +
-        "</div>";
+  function notifItems() {
+    const items = [];
+    (state.orderNotices || []).forEach(function(n) {
+      items.push({ key: "o" + n.order_id + n.status, html:
+        '<div class="cat-notif-item">' +
+          '<span class="cat-notif-icon" aria-hidden="true">📦</span>' +
+          '<div class="cat-notif-text"><strong>' + escapeHtml(n.message) + "</strong></div>" +
+        "</div>" });
     });
-
-    if (s.habitual.length && !suggHidden()) {
-      html +=
-        '<div class="sugg-box">' +
-          '<div class="sugg-head">' +
-            "<span>" + titulo + "</span>" +
-            '<div class="sugg-head-actions">' +
-              '<button class="sugg-all-btn" id="sugg-add-all" type="button">Agregar todo</button>' +
-              '<button class="sugg-hide-btn" id="sugg-hide" type="button" title="Ocultar esta sección">✕</button>' +
+    const s = state.suggestions;
+    if (s && suggAudience()) {
+      (s.recompra || []).slice(0, 5).forEach(function(r) {
+        items.push({ key: "r" + r.product_id + "-" + r.days_since, html:
+          '<div class="cat-notif-item">' +
+            '<span class="cat-notif-icon" aria-hidden="true">🔔</span>' +
+            '<div class="cat-notif-text">' +
+              "<strong>Hace " + r.days_since + " días que no " +
+                (state.vendedorClient ? "pide " : "pedís ") + escapeHtml(r.name) + "</strong>" +
+              "<span>Suele reponerlo cada " + r.cycle_days + " días</span>" +
             "</div>" +
-          "</div>" +
-          '<div class="sugg-list">' +
-            s.habitual.map(function(h) {
-              return '<div class="sugg-item">' +
-                '<div class="sugg-item-main">' +
-                  '<div class="sugg-item-name">' + escapeHtml(h.name) + "</div>" +
-                  '<div class="sugg-item-meta">Lo pidió ' + h.times_ordered + " de sus últimos " + h.of_orders + " pedidos</div>" +
-                "</div>" +
-                '<span class="sugg-item-price">' + fmtPrice(h.price) + "</span>" +
-                '<button class="sugg-add-btn" data-sugg-add="' + h.product_id + '" data-qty="' + h.qty + '">+ ' + h.qty + "</button>" +
-              "</div>";
-            }).join("") +
-          "</div>" +
-        "</div>";
-    }
-
-    if (!html) { el.hidden = true; return; }
-    el.innerHTML = html;
-    el.hidden = false;
-
-    el.querySelectorAll("[data-sugg-add]").forEach(function(btn) {
-      btn.addEventListener("click", function() {
-        const id = Number(btn.dataset.suggAdd);
-        const qty = Math.max(1, Number(btn.dataset.qty) || 1);
-        const actual = state.cart.get(id);
-        setQty(id, (actual ? actual.qty : 0) + qty);
-        btn.textContent = "✓ Agregado";
-        btn.disabled = true;
+            '<button class="sugg-add-btn" type="button" data-sugg-add="' + r.product_id + '" data-qty="' + r.qty + '">Agregar ' + r.qty + "</button>" +
+          "</div>" });
       });
+    }
+    return items;
+  }
+
+  function renderNotifBell() {
+    if (!els.notifBtn) return;
+    const items = notifItems();
+    const show = suggAudience() || items.length > 0;
+    els.notifBtn.hidden = !show;
+    const key = items.map(function(i) { return i.key; }).join("|");
+    const unread = items.length && key !== notifSeenKey ? items.length : 0;
+    if (els.notifCount) {
+      els.notifCount.textContent = String(unread);
+      els.notifCount.hidden = !unread;
+    }
+    if (els.notifPanel && !els.notifPanel.hidden) fillNotifPanel(items);
+  }
+
+  function fillNotifPanel(items) {
+    const panel = els.notifPanel;
+    panel.innerHTML =
+      '<div class="cat-notif-head">Avisos</div>' +
+      (items.length
+        ? '<div class="cat-notif-list">' + items.map(function(i) { return i.html; }).join("") + "</div>"
+        : '<p class="cat-notif-empty">No tenés avisos por ahora.</p>');
+    panel.querySelectorAll("[data-sugg-add]").forEach(function(btn) {
+      btn.addEventListener("click", function(e) { e.stopPropagation(); addSuggToCart(btn); });
+    });
+  }
+
+  function toggleNotifPanel(force) {
+    if (!els.notifPanel) return;
+    const open = typeof force === "boolean" ? force : els.notifPanel.hidden;
+    if (open) {
+      const items = notifItems();
+      fillNotifPanel(items);
+      els.notifPanel.hidden = false;
+      notifSeenKey = items.map(function(i) { return i.key; }).join("|");
+      if (els.notifCount) els.notifCount.hidden = true;
+    } else {
+      els.notifPanel.hidden = true;
+    }
+  }
+
+  if (els.notifBtn) {
+    els.notifBtn.addEventListener("click", function(e) { e.stopPropagation(); toggleNotifPanel(); });
+    document.addEventListener("click", function(e) {
+      if (els.notifPanel && !els.notifPanel.hidden &&
+          !els.notifPanel.contains(e.target) && e.target !== els.notifBtn) toggleNotifPanel(false);
+    });
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape" && els.notifPanel && !els.notifPanel.hidden) toggleNotifPanel(false);
+    });
+  }
+
+  function renderHabitualDrawer() {
+    const s = state.suggestions;
+    if (!els.habitualBody) return;
+    const titulo = state.vendedorClient
+      ? "Lo que suele pedir " + state.vendedorClient.name
+      : "Tu pedido habitual";
+    if (els.habitualTitle) els.habitualTitle.textContent = titulo;
+    if (!s || !s.habitual || !s.habitual.length) {
+      els.habitualBody.innerHTML = '<p class="muted">Todavía no hay suficientes pedidos para armar el pedido habitual.</p>';
+      return;
+    }
+    els.habitualBody.innerHTML =
+      '<div class="sugg-box">' +
+        '<div class="sugg-head">' +
+          "<span>" + s.habitual.length + " productos que se repiten en los últimos pedidos</span>" +
+          '<div class="sugg-head-actions">' +
+            '<button class="sugg-all-btn" id="sugg-add-all" type="button">Agregar todo</button>' +
+          "</div>" +
+        "</div>" +
+        '<div class="sugg-list">' +
+          s.habitual.map(function(h) {
+            return '<div class="sugg-item">' +
+              '<div class="sugg-item-main">' +
+                '<div class="sugg-item-name">' + escapeHtml(h.name) + "</div>" +
+                '<div class="sugg-item-meta">Lo pidió ' + h.times_ordered + " de sus últimos " + h.of_orders + " pedidos</div>" +
+              "</div>" +
+              '<span class="sugg-item-price">' + fmtPrice(h.price) + "</span>" +
+              '<button class="sugg-add-btn" type="button" data-sugg-add="' + h.product_id + '" data-qty="' + h.qty + '">+ ' + h.qty + "</button>" +
+            "</div>";
+          }).join("") +
+        "</div>" +
+      "</div>";
+    els.habitualBody.querySelectorAll("[data-sugg-add]").forEach(function(btn) {
+      btn.addEventListener("click", function() { addSuggToCart(btn); });
     });
     const allBtn = document.getElementById("sugg-add-all");
     if (allBtn) {
@@ -584,14 +650,30 @@
         allBtn.disabled = true;
       });
     }
-    const hideBtn = document.getElementById("sugg-hide");
-    if (hideBtn) {
-      hideBtn.addEventListener("click", function() {
-        try { localStorage.setItem(SUGG_LS_KEY, "1"); } catch (_) {}
-        renderSuggestions();
-      });
-    }
   }
+
+  // Se llama en cada render de la grilla: mantiene al día el botón del pedido
+  // habitual y la campanita (ya no dibuja nada arriba del catálogo).
+  function renderSuggestions() {
+    const old = document.getElementById("suggestions");
+    if (old) old.hidden = true;
+    const s = state.suggestions;
+    if (els.habitualBtn) {
+      els.habitualBtn.hidden = !(suggAudience() && s && s.habitual && s.habitual.length);
+      const lbl = els.habitualBtn.querySelector(".habitual-btn-label");
+      if (lbl) lbl.textContent = state.vendedorClient ? "Habitual del cliente" : "Pedido habitual";
+    }
+    renderNotifBell();
+  }
+
+  if (els.habitualBtn) {
+    els.habitualBtn.addEventListener("click", function() {
+      renderHabitualDrawer();
+      openDrawer(els.habitualDrawer);
+    });
+  }
+  if (els.habitualClose) els.habitualClose.addEventListener("click", function() { closeDrawers(); });
+  if (els.habitualBack) els.habitualBack.addEventListener("click", function() { closeDrawers(); });
 
   // ----- Flujo vendedor: selección de cliente -----
 
@@ -1686,26 +1768,12 @@
   // al ingresar al catálogo desde /api/my-notifications y se puede cerrar.
   function notifyOrderUpdates(items) {
     if (!items || !items.length) return;
-    let bar = document.getElementById("order-notif-bar");
-    if (!bar) {
-      bar = document.createElement("div");
-      bar.id = "order-notif-bar";
-      bar.setAttribute("role", "status");
-      bar.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:99999;" +
-        "background:#1e3a5f;color:#fff;padding:12px 16px;font-size:14px;line-height:1.4;" +
-        "box-shadow:0 4px 14px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:4px;" +
-        "max-height:60vh;overflow-y:auto";
-      document.body.appendChild(bar);
-    }
-    const lines = items.map((n) =>
-      '<div>📦 ' + escapeHtml(n.message) + '</div>'
-    ).join("");
-    bar.innerHTML = lines +
-      '<button id="order-notif-close" type="button" style="align-self:flex-end;margin-top:4px;' +
-      'background:#fbbf24;color:#1e293b;border:none;border-radius:8px;padding:6px 14px;' +
-      'font-weight:700;cursor:pointer">Entendido</button>';
-    const close = document.getElementById("order-notif-close");
-    if (close) close.addEventListener("click", () => { bar.remove(); });
+    // Van a la campanita (antes era una barra fija que tapaba el catálogo).
+    const seen = new Set((state.orderNotices || []).map(function(n) { return n.order_id + "|" + n.status; }));
+    items.forEach(function(n) {
+      if (!seen.has(n.order_id + "|" + n.status)) state.orderNotices.unshift(n);
+    });
+    renderNotifBell();
   }
 
   function orderCardHtml(o, isAdmin, isTerc) {
@@ -2195,6 +2263,8 @@
     if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
     if (els.clientDrawer) els.clientDrawer.hidden = true;
     if (els.earningsDrawer) els.earningsDrawer.hidden = true;
+    if (els.habitualDrawer) els.habitualDrawer.hidden = true;
+    if (els.notifPanel) els.notifPanel.hidden = true;
     if (els.sidebarEl) els.sidebarEl.classList.remove("sidebar-open");
     drawer.hidden = false;
     els.backdrop.hidden = false;
@@ -2210,6 +2280,7 @@
     if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
     if (els.clientDrawer) els.clientDrawer.hidden = true;
     if (els.earningsDrawer) els.earningsDrawer.hidden = true;
+    if (els.habitualDrawer) els.habitualDrawer.hidden = true;
     if (els.sidebarEl) els.sidebarEl.classList.add("sidebar-open");
     els.backdrop.hidden = false;
     if (!drawerHistoryPushed) {
@@ -2223,6 +2294,7 @@
            (els.priceChangesDrawer && !els.priceChangesDrawer.hidden) ||
            (els.clientDrawer && !els.clientDrawer.hidden) ||
            (els.earningsDrawer && !els.earningsDrawer.hidden) ||
+           (els.habitualDrawer && !els.habitualDrawer.hidden) ||
            (els.sidebarEl && els.sidebarEl.classList.contains("sidebar-open"));
   }
 
@@ -2233,6 +2305,7 @@
     if (els.priceChangesDrawer) els.priceChangesDrawer.hidden = true;
     if (els.clientDrawer) els.clientDrawer.hidden = true;
     if (els.earningsDrawer) els.earningsDrawer.hidden = true;
+    if (els.habitualDrawer) els.habitualDrawer.hidden = true;
     if (els.sidebarEl) els.sidebarEl.classList.remove("sidebar-open");
     els.backdrop.hidden = true;
     if (wasOpen && drawerHistoryPushed && !fromPopState) {

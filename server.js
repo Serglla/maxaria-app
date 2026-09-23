@@ -516,6 +516,31 @@ try { db.exec("ALTER TABLE budgets ADD COLUMN order_id INTEGER REFERENCES orders
 // Indica si el presupuesto ya descontó stock (al crearse). Evita doble descuento
 // en facturar/entregar y permite devolver el stock si se cancela.
 try { db.exec("ALTER TABLE budgets ADD COLUMN stock_discounted INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+// Origen del presupuesto (23/9/2026). 'ventas' = armado en el panel Ventas (es
+// el unico que se lista ahi). 'pedido' = "sombra" que el sistema creaba solo
+// para cada pedido del catalogo / del admin: ya no se crean, y los viejos se
+// ocultan de Ventas. Clasificacion idempotente (solo filas sin origen):
+//  - vinculado a un pedido y no facturado -> sombra ('pedido'). El stock que
+//    tenia anotado pasa al pedido (orders.stock_discounted = 1) para que
+//    cancelar/borrar/editar el pedido lo maneje: NO cambia ninguna cantidad
+//    de stock, solo quien la tiene anotada.
+//  - el resto (incluye facturados y los sueltos sin pedido) -> 'ventas'.
+try { db.exec("ALTER TABLE budgets ADD COLUMN source TEXT"); } catch (_) {}
+try {
+  db.transaction(() => {
+    db.exec(
+      "UPDATE orders SET stock_discounted = 1" +
+      " WHERE status != 'cancelado' AND COALESCE(stock_discounted,0) = 0" +
+      "   AND id IN (SELECT order_id FROM budgets WHERE order_id IS NOT NULL AND source IS NULL" +
+      "              AND status != 'facturado' AND COALESCE(stock_discounted,0) = 1)"
+    );
+    db.exec(
+      "UPDATE budgets SET source = 'pedido', stock_discounted = 0" +
+      " WHERE source IS NULL AND order_id IS NOT NULL AND status != 'facturado'"
+    );
+    db.exec("UPDATE budgets SET source = 'ventas' WHERE source IS NULL");
+  })();
+} catch (e) { console.error("[migracion] origen de presupuestos:", e.message); }
 // Base de precios elegida al armar el presupuesto: "base:<nivel>" (minorista,
 // revendedor, mayorista, vip, publico) o "list:<id>" (lista personalizada).
 // Sirve para reabrir el presupuesto mostrando la lista usada y poder recalcular.
@@ -882,7 +907,11 @@ function logActivity(req, event, detail) {
     var ua = ((req.headers && req.headers["user-agent"]) || "").slice(0, 300) || null;
     db.prepare(
       "INSERT INTO activity_log (user_id, username, event, detail, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(req.session.userId, req.session.username || null, event, detail || null, ip, ua);
+    ).run(req.session.userId, req.session.username || null, event,
+      // Un objeto (p. ej. { via: "link" }) better-sqlite3 lo toma como
+      // parametros con nombre y tira "Too few parameter values": va como JSON.
+      detail == null ? null : (typeof detail === "string" ? detail : JSON.stringify(detail)),
+      ip, ua);
   } catch (e) { console.error("[activity_log] no se pudo registrar el evento", event, "-", e.message); }
 }
 
@@ -896,57 +925,9 @@ function nextBudgetNumber() {
   return "0001-" + String(seq).padStart(8, "0");
 }
 
-// Backfill: crear presupuestos para pedidos que llegaron por carrito/WhatsApp
-// antes de que existiera la auto-creacion de budget en POST /api/orders.
-// Idempotente: solo toca ordenes sin budget vinculado. Se ejecuta en cada
-// arranque pero normalmente no hace nada tras la primera ejecucion.
-(function backfillOrderBudgets() {
-  try {
-    const orders = db.prepare(
-      "SELECT o.id, o.user_id, o.total, o.notes, o.status," +
-      "       o.assigned_vendedor_id, o.created_at," +
-      "       u.full_name, u.username" +
-      "  FROM orders o" +
-      "  JOIN users u ON u.id = o.user_id" +
-      "  WHERE NOT EXISTS (SELECT 1 FROM budgets b WHERE b.order_id = o.id)" +
-      "  AND COALESCE(o.is_unified, 0) = 0" +
-      "  ORDER BY o.id ASC"
-    ).all();
-    if (!orders.length) return;
-    const insBI = db.prepare(
-      "INSERT INTO budget_items (budget_id, product_id, product_code, product_name," +
-      "  quantity, unit_price, discount_percent, subtotal) VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
-    );
-    const tx = db.transaction(() => {
-      for (const order of orders) {
-        const items = db.prepare(
-          "SELECT product_id, product_code, product_name, quantity, unit_price, subtotal" +
-          "  FROM order_items WHERE order_id = ?"
-        ).all(order.id);
-        const clientName = order.full_name || order.username || "Consumidor final";
-        const budgetStatus = order.status === "cancelado" ? "cancelado" : "enviado";
-        const bNum = nextBudgetNumber();
-        const bRes = db.prepare(
-          "INSERT INTO budgets (number, client_id, client_name, vendedor_id, payment_method, currency," +
-          "  discount_percent, surcharge_percent, subtotal, total, notes, status, order_id," +
-          "  created_at, updated_at)" +
-          "  VALUES (?, ?, ?, ?, 'Efectivo', 'ARS', 0, 0, ?, ?, ?, ?, ?, ?, ?)"
-        ).run(bNum, order.user_id, clientName, order.assigned_vendedor_id || null,
-              order.total, order.total, order.notes || null, budgetStatus, order.id,
-              order.created_at, order.created_at);
-        const budgetId = bRes.lastInsertRowid;
-        for (const it of items) {
-          insBI.run(budgetId, it.product_id, it.product_code, it.product_name,
-                    it.quantity, it.unit_price, it.subtotal);
-        }
-      }
-    });
-    tx();
-    console.log("[backfill] creados " + orders.length + " presupuesto(s) para pedidos existentes");
-  } catch (e) {
-    console.error("[backfill] error migrando pedidos a presupuestos:", e.message);
-  }
-})();
+// (23/9/2026) Se elimino el backfill que creaba un presupuesto "sombra" por
+// cada pedido: los pedidos llevan su propio stock y Ventas solo muestra lo que
+// se arma ahi.
 
 // Backfill idempotente de débitos de cuenta corriente para pedidos ENTREGADOS de
 // clientes reales (level 1..4), no unificados, que quedaron SIN débito (creados
@@ -3205,14 +3186,13 @@ app.post("/api/orders", requireLogin, (req, res) => {
   if (!lines.length)
     return res.status(400).json({ error: "Ninguno de los productos del carrito esta disponible" });
 
-  // Nombre del cliente para el presupuesto (snapshot, igual al resto del sistema)
-  const clientRowForBudget = db.prepare("SELECT full_name, username FROM users WHERE id = ?").get(orderUserId);
-  const clientNameForBudget = (clientRowForBudget &&
-    (clientRowForBudget.full_name || clientRowForBudget.username)) || "Consumidor final";
-
+  // El pedido descuenta el stock al ENVIARSE y lo lleva anotado en si mismo
+  // (stock_discounted = 1), igual que los pedidos creados desde el admin.
+  // Antes se creaba un presupuesto "sombra" que tenia el descuento anotado: si
+  // el pedido se borraba, ese presupuesto quedaba reteniendo el stock.
   const insertOrder = db.prepare(
-    "INSERT INTO orders (user_id, status, total, notes, whatsapp_sent_at, assigned_vendedor_id, created_at)" +
-    " VALUES (?, 'enviado', ?, ?, datetime('now'), ?, datetime('now'))"
+    "INSERT INTO orders (user_id, status, total, notes, whatsapp_sent_at, assigned_vendedor_id, stock_discounted, created_at)" +
+    " VALUES (?, 'enviado', ?, ?, datetime('now'), ?, 1, datetime('now'))"
   );
   const insertItem = db.prepare(
     "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit)" +
@@ -3224,31 +3204,10 @@ app.post("/api/orders", requireLogin, (req, res) => {
   db.transaction(() => {
     const r = insertOrder.run(orderUserId, total, (notes || "").slice(0, 500) || null, assignedVendedorId);
     orderId = r.lastInsertRowid;
+    const updStockOrder = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     for (const l of lines) {
       insertItem.run(orderId, l.product_id, l.product_code, l.product_name,
                      l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
-    }
-
-    // Auto-crear presupuesto vinculado a este pedido.
-    // Queda en estado 'enviado' (el WhatsApp ya fue enviado). El admin puede
-    // aceptarlo y despues facturarlo desde la seccion Presupuestos del panel.
-    const bNum = nextBudgetNumber();
-    const bRes = db.prepare(
-      "INSERT INTO budgets (number, client_id, client_name, vendedor_id, payment_method, currency," +
-      "  discount_percent, surcharge_percent, subtotal, total, notes, status, order_id, stock_discounted)" +
-      "  VALUES (?, ?, ?, ?, 'Efectivo', 'ARS', 0, 0, ?, ?, ?, 'enviado', ?, 1)"
-    ).run(bNum, orderUserId, clientNameForBudget, assignedVendedorId || null,
-          total, total, (notes || "").slice(0, 500) || null, orderId);
-    const budgetId = bRes.lastInsertRowid;
-    const insBI = db.prepare(
-      "INSERT INTO budget_items (budget_id, product_id, product_code, product_name," +
-      "  quantity, unit_price, discount_percent, subtotal) VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
-    );
-    const updStockOrder = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
-    for (const l of lines) {
-      insBI.run(budgetId, l.product_id, l.product_code, l.product_name,
-                l.quantity, l.unit_price, l.subtotal);
-      // Descontar stock al crear el presupuesto (no al entregar)
       if (l.product_id) {
         updStockOrder.run(l.quantity, l.product_id);
         logStockMovement(l.product_id, "venta", -l.quantity, orderId, "Pedido #" + orderId + " (catalogo)", orderUserId);
@@ -3540,7 +3499,7 @@ function applyPickChangesTx(orderId, userId) {
   // que es el que se arma). El padre si ajusta: su stock esta afuera desde que
   // los hijos se crearon (stock_discounted = 1 al crearse el unificado).
   const skipStock = order.unified_parent_id != null;
-  const stockCurrentlyOut = anyLinkedBudget ? !!linkedBudgetOut : !!order.stock_discounted;
+  const stockCurrentlyOut = !!linkedBudgetOut || !!order.stock_discounted;
 
   const updItem = db.prepare("UPDATE order_items SET quantity = ?, subtotal = ? WHERE id = ?");
   const delItem = db.prepare("DELETE FROM order_items WHERE id = ?");
@@ -3835,7 +3794,7 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
   const anyLinkedBudget = db.prepare(
     "SELECT id FROM budgets WHERE order_id = ? LIMIT 1"
   ).get(id);
-  const stockCurrentlyOut = anyLinkedBudget ? !!linkedBudgetForOrder : !!order.stock_discounted;
+  const stockCurrentlyOut = !!linkedBudgetForOrder || !!order.stock_discounted;
   // Productos que descontaron stock en esta operación: se revisan después del
   // commit para avisar por push si alguno quedó en cero teniendo demanda.
   const touchedProducts = [];
@@ -3853,8 +3812,8 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
     db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
 
     // Al marcar "entregado": descontar stock y generar debito en cuenta corriente
-    if (status === "entregado" && prevStatus !== "entregado" && !order.stock_discounted) {
-      if (!skipStock) {
+    if (status === "entregado" && prevStatus !== "entregado") {
+      if (!skipStock && !order.stock_discounted) {
         const items = db.prepare(
           "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
         ).all(id);
@@ -3872,11 +3831,22 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
       // El pedido unificado no genera debito en cuenta corriente del vendedor
       // (es solo un consolidado para el admin); los hijos individuales si lo
       // siguen generando contra la cuenta del cliente final.
+      // Debito en cuenta corriente: independiente del stock (los pedidos del
+      // catalogo y del admin ya descontaron stock al crearse). Solo si falta y
+      // solo para clientes reales (1..4), igual que la red de seguridad del
+      // /deliver: un presupuesto de consumidor final facturado queda a nombre
+      // del vendedor/admin y no debe debitarse.
       if (!order.is_unified) {
-        db.prepare(
-          "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
-          " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
-        ).run(order.user_id, order.total, "Pedido #" + id, id);
+        const hasDebit = db.prepare(
+          "SELECT id FROM account_movements WHERE order_id = ? AND type = 'debit' LIMIT 1"
+        ).get(id);
+        const cli = db.prepare("SELECT level FROM users WHERE id = ?").get(order.user_id);
+        if (!hasDebit && cli && cli.level >= 1 && cli.level <= 4) {
+          db.prepare(
+            "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
+            " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
+          ).run(order.user_id, order.total, "Pedido #" + id, id);
+        }
       }
       db.prepare("UPDATE orders SET stock_discounted = 1 WHERE id = ?").run(id);
     }
@@ -4123,7 +4093,7 @@ app.delete("/api/admin/orders/:id", requireAdmin, (req, res) => {
   // stock NO volvia y el presupuesto quedaba huerfano reteniendolo para siempre.
   const linkedBudgets = db.prepare("SELECT id, stock_discounted FROM budgets WHERE order_id = ?").all(id);
   const budgetOut = linkedBudgets.some((b) => Number(b.stock_discounted) === 1);
-  const stockOut = linkedBudgets.length ? budgetOut : !!order.stock_discounted;
+  const stockOut = budgetOut || !!order.stock_discounted;
   // Hijos de un unificado: el stock lo maneja el padre. El padre unificado: el
   // stock lo tienen los hijos (se liberan y vuelven a Pedidos).
   const returnStock = stockOut && order.unified_parent_id == null && !order.is_unified;
@@ -4239,7 +4209,7 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
   // Solo los hijos absorbidos por un unificado no tocan stock; el unificado si
   // (su stock esta afuera desde que se crearon los hijos).
   const skipStock = order.unified_parent_id != null;
-  const stockCurrentlyOut = anyLinkedBudget ? !!linkedBudgetOut : !!order.stock_discounted;
+  const stockCurrentlyOut = !!linkedBudgetOut || !!order.stock_discounted;
 
   // MERGE (no DELETE+INSERT) para conservar el chequeo de armado de los items
   // que no cambian: items sin cambios mantienen pick_checked/picked_qty; los que
@@ -7400,7 +7370,7 @@ function stockConsistencyChecks() {
     "SELECT b.id, b.number, b.client_name, b.total, b.status, " + localDay("b.created_at") + " AS dia" +
     "  FROM budgets b" +
     " WHERE COALESCE(b.stock_discounted,0) = 1 AND b.status NOT IN ('cancelado','facturado')" +
-    "   AND b.order_id IS NULL" +
+    "   AND b.order_id IS NULL AND COALESCE(b.source,'ventas') != 'pedido'" +
     "   AND " + localDay("b.created_at") + " < " + localDay("'now', '-30 days'") +
     " ORDER BY b.id DESC LIMIT 50"
   );
@@ -10505,7 +10475,9 @@ app.get("/api/budgets", requireVendedorOrAdmin, requireSectionForAdmin("ventas")
     "  FROM budgets b" +
     "  LEFT JOIN users v ON v.id = b.vendedor_id" +
     "  LEFT JOIN users u ON u.id = b.client_id" +
-    (isAdmin ? "" : "  WHERE b.vendedor_id = @uid") +
+    // Solo lo armado en Ventas: los "sombra" de pedidos viejos no se listan.
+    "  WHERE COALESCE(b.source, 'ventas') != 'pedido'" +
+    (isAdmin ? "" : "  AND b.vendedor_id = @uid") +
     "  ORDER BY b.id DESC"
   ).all(isAdmin ? {} : { uid: u.id });
   res.json(rows);
@@ -10566,8 +10538,8 @@ app.post("/api/budgets", requireVendedorOrAdmin, requireSectionForAdmin("ventas"
   const insertBudget = db.transaction(() => {
     const r = db.prepare(
       "INSERT INTO budgets (number, client_id, client_name, vendedor_id, payment_method, currency," +
-      "  discount_percent, surcharge_percent, subtotal, total, notes, price_basis, status, stock_discounted)" +
-      "  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)"
+      "  discount_percent, surcharge_percent, subtotal, total, notes, price_basis, status, stock_discounted, source)" +
+      "  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,'ventas')"
     ).run(number, clientId, clientName, vendedorId, payMethod, currency,
           discountPct, surchargePct, subtotal, total, notes, priceBasis, initialStatus);
     const bid = r.lastInsertRowid;
@@ -10620,6 +10592,9 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
+  if (budget.source === "pedido") {
+    return res.status(409).json({ error: "Este registro pertenece a un pedido. Gestionalo desde Pedidos." });
+  }
 
   // En estados finales los items ya no se editan (facturado: los items viven en
   // el pedido; cancelado: el stock ya fue devuelto y un edit lo desincronizaría).
@@ -10715,6 +10690,9 @@ app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, requireSectionForAd
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
+  if (budget.source === "pedido") {
+    return res.status(409).json({ error: "Este registro pertenece a un pedido. Gestionalo desde Pedidos." });
+  }
   const VALID = ["borrador", "enviado", "aceptado", "cancelado"];
   const status = req.body.status;
   if (!VALID.includes(status)) return res.status(400).json({ error: "Estado invalido" });
@@ -10768,6 +10746,9 @@ app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, requireSectionForAd
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
+  if (budget.source === "pedido") {
+    return res.status(409).json({ error: "Este registro pertenece a un pedido. Gestionalo desde Pedidos." });
+  }
   if (budget.status !== "aceptado") {
     return res.status(409).json({ error: "Solo se pueden facturar presupuestos aceptados" });
   }
@@ -10860,6 +10841,9 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("v
   const budget = db.prepare("SELECT * FROM budgets WHERE id = ?").get(req.params.id);
   if (!budget) return res.status(404).json({ error: "No encontrado" });
   if (!canAccessBudget(u, budget)) return res.status(403).json({ error: "Sin permiso" });
+  if (budget.source === "pedido") {
+    return res.status(409).json({ error: "Este registro pertenece a un pedido. Gestionalo desde Pedidos." });
+  }
 
   // El presupuesto descuenta stock al crearse (stock_discounted=1): al borrarlo
   // hay que devolverlo, igual que al cancelar. Excepcion: si esta vinculado a un
