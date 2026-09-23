@@ -363,6 +363,15 @@ try { db.exec("ALTER TABLE order_items ADD COLUMN vendedor_cost_unit INTEGER"); 
 //   evitar doble descuento de stock cuando se entreguen las dos puntas.
 try { db.exec("ALTER TABLE orders ADD COLUMN is_unified INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 try { db.exec("ALTER TABLE orders ADD COLUMN unified_parent_id INTEGER REFERENCES orders(id)"); } catch (_) {}
+// Unificados en curso creados antes del fix (stock_discounted = 0): al
+// entregarlos descontaban el stock por segunda vez. Idempotente.
+try {
+  db.exec(
+    "UPDATE orders SET stock_discounted = 1" +
+    " WHERE COALESCE(is_unified,0) = 1 AND COALESCE(stock_discounted,0) = 0" +
+    "   AND status NOT IN ('entregado','cancelado')"
+  );
+} catch (_) {}
 
 // Migracion: Descuento del pedido (aplicado al entregar, solo admin).
 // - discount_type: 'percent' | 'fixed' | NULL (sin descuento)
@@ -2496,8 +2505,11 @@ app.post("/api/vendedor/dispatch", requireLogin, (req, res) => {
   db.transaction(function () {
     const notesStr = "Unificado de " + uniqueIds.length + " pedido(s): #" + uniqueIds.join(", #");
     const r = db.prepare(
-      "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id, is_unified, created_at)" +
-      " VALUES (?, 'pendiente', ?, ?, ?, 1, datetime('now'))"
+      // stock_discounted = 1: el stock de estos items YA salio cuando se crearon
+      // los pedidos hijos (catalogo / admin / presupuesto). Antes quedaba en 0 y
+      // al entregar el unificado se descontaba todo por segunda vez.
+      "INSERT INTO orders (user_id, status, total, notes, assigned_vendedor_id, is_unified, stock_discounted, created_at)" +
+      " VALUES (?, 'pendiente', ?, ?, ?, 1, 1, datetime('now'))"
     ).run(req.session.userId, round2(total), notesStr, req.session.userId);
     unifiedId = r.lastInsertRowid;
     const insertItem = db.prepare(
@@ -3498,89 +3510,101 @@ app.post("/api/admin/picks/:orderId", requireAdmin, (req, res) => {
 // notificacion del cliente). Stock-aware como PUT /api/admin/orders/:id/items:
 // si el stock ya estaba descontado (presupuesto facturado), se ajusta por la
 // diferencia. Mantiene en sync el débito de cuenta corriente si existe.
-app.post("/api/admin/picks/:orderId/apply", requireAdmin, (req, res) => {
-  const orderId = Number(req.params.orderId);
-  if (!orderId) return res.status(400).json({ error: "ID invalido" });
+// Aplica al pedido las cantidades controladas en el chequeo de armado que
+// difieren de lo pedido. DEBE llamarse dentro de una transaccion. Devuelve
+// { changes: [...], total } (changes vacio si no habia nada para aplicar).
+// Se usa desde el boton "Confirmar chequeo" y, automaticamente, al pasar el
+// pedido a Entregas / entregarlo: si se avanzaba sin confirmar, salia del
+// deposito lo armado pero el sistema descontaba lo pedido y el stock quedaba mal.
+function applyPickChangesTx(orderId, userId) {
   const order = db.prepare(
     "SELECT id, status, total, stock_discounted, unified_parent_id, is_unified FROM orders WHERE id = ?"
   ).get(orderId);
-  if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
-  if (order.status === "cancelado" || order.status === "entregado") {
-    return res.status(409).json({ error: "No se puede modificar un pedido " + order.status });
-  }
-
+  if (!order) return { changes: [], total: 0 };
   const items = db.prepare(
     "SELECT id, product_id, product_code, product_name, quantity, unit_price," +
+    "       COALESCE(discount_percent,0) AS discount_percent," +
     "       COALESCE(picked_qty,0) AS picked_qty, COALESCE(pick_checked,0) AS pick_checked" +
     "  FROM order_items WHERE order_id = ?"
   ).all(orderId);
   const changes = items.filter(
     (i) => Number(i.pick_checked) === 1 && Number(i.picked_qty) !== Number(i.quantity)
   );
-  if (!changes.length) {
-    // Chequeo confirmado sin diferencias: igual queda asentado en actividad.
-    logActivity(req, "pedido", "Pedido #" + orderId + " · chequeo de armado confirmado sin diferencias");
-    return res.json({ ok: true, changed: 0, total: order.total, changes: [] });
-  }
+  if (!changes.length) return { changes: [], total: order.total };
 
   const linkedBudgetOut = db.prepare(
     "SELECT stock_discounted FROM budgets WHERE order_id = ? AND stock_discounted = 1 LIMIT 1"
   ).get(orderId);
   const anyLinkedBudget = db.prepare("SELECT id FROM budgets WHERE order_id = ? LIMIT 1").get(orderId);
-  const skipStock = order.unified_parent_id != null || !!order.is_unified;
+  // Los hijos absorbidos por un unificado no tocan stock (lo maneja el padre,
+  // que es el que se arma). El padre si ajusta: su stock esta afuera desde que
+  // los hijos se crearon (stock_discounted = 1 al crearse el unificado).
+  const skipStock = order.unified_parent_id != null;
   const stockCurrentlyOut = anyLinkedBudget ? !!linkedBudgetOut : !!order.stock_discounted;
 
-  let total = 0;
-  db.transaction(() => {
-    const updItem = db.prepare("UPDATE order_items SET quantity = ?, subtotal = ? WHERE id = ?");
-    const delItem = db.prepare("DELETE FROM order_items WHERE id = ?");
-    const adjStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
-    const insChange = db.prepare(
-      "INSERT INTO pick_changes (order_id, product_code, product_name, old_qty, new_qty, changed_by)" +
-      " VALUES (?, ?, ?, ?, ?, ?)"
-    );
-    for (const it of changes) {
-      const newQty = Number(it.picked_qty);
-      if (newQty <= 0) {
-        // Controlado en 0 = no habia stock: el item se quita del pedido.
-        delItem.run(it.id);
-      } else {
-        updItem.run(newQty, round2(Number(it.unit_price) * newQty), it.id);
-      }
-      // Stock ya descontado: devolver/descontar la diferencia (viejo - nuevo).
-      // Si se armo de mas (newQty > pedido) el delta es negativo y descuenta.
-      if (stockCurrentlyOut && !skipStock && it.product_id) {
-        const deltaPick = Number(it.quantity) - newQty;
-        adjStock.run(deltaPick, it.product_id);
-        logStockMovement(it.product_id, "armado", deltaPick, orderId, "Chequeo de armado del pedido #" + orderId, req.session.userId);
-      }
-      insChange.run(orderId, it.product_code || null, it.product_name || null,
-        Number(it.quantity), newQty, req.session.userId);
+  const updItem = db.prepare("UPDATE order_items SET quantity = ?, subtotal = ? WHERE id = ?");
+  const delItem = db.prepare("DELETE FROM order_items WHERE id = ?");
+  const adjStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
+  const insChange = db.prepare(
+    "INSERT INTO pick_changes (order_id, product_code, product_name, old_qty, new_qty, changed_by)" +
+    " VALUES (?, ?, ?, ?, ?, ?)"
+  );
+  for (const it of changes) {
+    const newQty = Number(it.picked_qty);
+    if (newQty <= 0) {
+      // Controlado en 0 = no habia stock: el item se quita del pedido.
+      delItem.run(it.id);
+    } else {
+      // Respeta el descuento por linea (antes se perdia al aplicar el armado).
+      updItem.run(newQty, round2(Number(it.unit_price) * newQty * (1 - Number(it.discount_percent) / 100)), it.id);
     }
-    total = round2(
-      db.prepare("SELECT COALESCE(SUM(subtotal),0) AS t FROM order_items WHERE order_id = ?").get(orderId).t
-    );
-    db.prepare("UPDATE orders SET total = ? WHERE id = ?").run(total, orderId);
-    if (!order.is_unified) {
-      const deb = db.prepare(
-        "SELECT id FROM account_movements WHERE order_id = ? AND type = 'debit' LIMIT 1"
-      ).get(orderId);
-      if (deb) db.prepare("UPDATE account_movements SET amount = ? WHERE id = ?").run(total, deb.id);
+    // Stock ya descontado: devolver/descontar la diferencia (viejo - nuevo).
+    // Si se armo de mas (newQty > pedido) el delta es negativo y descuenta.
+    if (stockCurrentlyOut && !skipStock && it.product_id) {
+      const deltaPick = Number(it.quantity) - newQty;
+      adjStock.run(deltaPick, it.product_id);
+      logStockMovement(it.product_id, "armado", deltaPick, orderId, "Chequeo de armado del pedido #" + orderId, userId);
     }
-  })();
-
-  logActivity(req, "pedido", "Pedido #" + orderId + " · chequeo de armado confirmado (" +
-    changes.length + " cambios) · nuevo total $" + total);
-  res.json({
-    ok: true,
-    changed: changes.length,
+    insChange.run(orderId, it.product_code || null, it.product_name || null,
+      Number(it.quantity), newQty, userId);
+  }
+  const total = round2(
+    db.prepare("SELECT COALESCE(SUM(subtotal),0) AS t FROM order_items WHERE order_id = ?").get(orderId).t
+  );
+  db.prepare("UPDATE orders SET total = ? WHERE id = ?").run(total, orderId);
+  if (!order.is_unified) {
+    const deb = db.prepare(
+      "SELECT id FROM account_movements WHERE order_id = ? AND type = 'debit' LIMIT 1"
+    ).get(orderId);
+    if (deb) db.prepare("UPDATE account_movements SET amount = ? WHERE id = ?").run(total, deb.id);
+  }
+  return {
     total: total,
     changes: changes.map((c) => ({
       product_name: c.product_name,
       old_qty: Number(c.quantity),
       new_qty: Number(c.picked_qty),
     })),
-  });
+  };
+}
+
+app.post("/api/admin/picks/:orderId/apply", requireAdmin, (req, res) => {
+  const orderId = Number(req.params.orderId);
+  if (!orderId) return res.status(400).json({ error: "ID invalido" });
+  const order = db.prepare("SELECT id, status FROM orders WHERE id = ?").get(orderId);
+  if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+  if (order.status === "cancelado" || order.status === "entregado") {
+    return res.status(409).json({ error: "No se puede modificar un pedido " + order.status });
+  }
+  const result = db.transaction(() => applyPickChangesTx(orderId, req.session.userId))();
+  if (!result.changes.length) {
+    // Chequeo confirmado sin diferencias: igual queda asentado en actividad.
+    logActivity(req, "pedido", "Pedido #" + orderId + " · chequeo de armado confirmado sin diferencias");
+    return res.json({ ok: true, changed: 0, total: result.total, changes: [] });
+  }
+  logActivity(req, "pedido", "Pedido #" + orderId + " · chequeo de armado confirmado (" +
+    result.changes.length + " cambios) · nuevo total $" + result.total);
+  res.json({ ok: true, changed: result.changes.length, total: result.total, changes: result.changes });
 });
 
 app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req, res) => {
@@ -3798,7 +3822,9 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
   const linkedBudgetForOrder = db.prepare(
     "SELECT stock_discounted FROM budgets WHERE order_id = ? AND stock_discounted = 1 LIMIT 1"
   ).get(id);
-  const skipStock = order.unified_parent_id != null || !!linkedBudgetForOrder;
+  // El pedido unificado del tercerizado tampoco: sus hijos (pedidos del
+  // catalogo) ya descontaron stock al crearse.
+  const skipStock = order.unified_parent_id != null || !!order.is_unified || !!linkedBudgetForOrder;
 
   // ¿El stock de este pedido está actualmente descontado? Los pedidos del
   // catálogo descuentan stock al ENVIARSE (al crearse), anotándolo en el
@@ -3813,8 +3839,17 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
   // Productos que descontaron stock en esta operación: se revisan después del
   // commit para avisar por push si alguno quedó en cero teniendo demanda.
   const touchedProducts = [];
+  let pickApplied = null;
 
   db.transaction(() => {
+    // Chequeo de armado con cantidades distintas y sin confirmar: al pasar a
+    // Entregas o entregar se aplica solo (lo armado es lo que sale del deposito).
+    if ((status === "listo" || status === "entregado") &&
+        prevStatus !== "entregado" && prevStatus !== "cancelado") {
+      pickApplied = applyPickChangesTx(id, req.session.userId);
+      if (pickApplied.changes.length) order.total = pickApplied.total;
+    }
+
     db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
 
     // Al marcar "entregado": descontar stock y generar debito en cuenta corriente
@@ -3850,7 +3885,18 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
     // eliminar el débito en cuenta corriente. El stock se descuenta al ENVIAR
     // el pedido (al crearse, anotado en el presupuesto vinculado) o al
     // entregarlo; en ambos casos hay que devolverlo acá.
-    if (status === "cancelado" && prevStatus !== "cancelado" && stockCurrentlyOut) {
+    // Pedido unificado cancelado: el stock lo tienen los hijos (se descontó al
+    // crearlos), así que no se devuelve nada; los hijos se liberan y vuelven a
+    // Pedidos para que el tercerizado los reenvíe o se cancelen uno por uno.
+    if (status === "cancelado" && prevStatus !== "cancelado" && order.is_unified) {
+      db.prepare(
+        "UPDATE orders SET unified_parent_id = NULL, status = 'pendiente'" +
+        " WHERE unified_parent_id = ? AND status NOT IN ('entregado','cancelado')"
+      ).run(id);
+      db.prepare("UPDATE orders SET stock_discounted = 0 WHERE id = ?").run(id);
+    }
+
+    if (status === "cancelado" && prevStatus !== "cancelado" && stockCurrentlyOut && !order.is_unified) {
       // Los hijos absorbidos por un pedido unificado no devuelven stock por su
       // cuenta: lo maneja el pedido padre.
       if (order.unified_parent_id == null) {
@@ -3874,6 +3920,10 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
           "UPDATE budgets SET status = 'cancelado', stock_discounted = 0," +
           "  updated_at = datetime('now') WHERE id = ? AND status != 'facturado'"
         ).run(anyLinkedBudget.id);
+        // Presupuesto facturado: queda facturado, pero sin el flag de stock. Si
+        // quedaba en 1 y despues se borraba el presupuesto, el DELETE devolvia
+        // el stock por segunda vez (el pedido cancelado ya lo habia devuelto).
+        db.prepare("UPDATE budgets SET stock_discounted = 0 WHERE id = ?").run(anyLinkedBudget.id);
       }
       db.prepare(
         "DELETE FROM account_movements WHERE order_id = ? AND type = 'debit'"
@@ -3918,7 +3968,11 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
   })();
 
   notifyStockOut(touchedProducts);
-  res.json({ ok: true, id: id, status: status });
+  if (pickApplied && pickApplied.changes.length) {
+    logActivity(req, "pedido", "Pedido #" + id + " · chequeo de armado aplicado al pasar a " + status +
+      " (" + pickApplied.changes.length + " cambios) · nuevo total $" + pickApplied.total);
+  }
+  res.json({ ok: true, id: id, status: status, pick_applied: pickApplied ? pickApplied.changes.length : 0 });
 });
 
 // ----- Notificaciones de circuito para el cliente -----
@@ -4058,12 +4112,30 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
 app.delete("/api/admin/orders/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID inválido" });
-  const order = db.prepare("SELECT id, status, stock_discounted FROM orders WHERE id = ?").get(id);
+  const order = db.prepare(
+    "SELECT id, status, stock_discounted, unified_parent_id, is_unified FROM orders WHERE id = ?"
+  ).get(id);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
   if (order.status === "entregado") return res.status(409).json({ error: "No se puede eliminar un pedido ya entregado" });
+  // ¿Quien tiene el stock descontado? Los pedidos del catalogo lo anotan en el
+  // presupuesto vinculado (budgets.stock_discounted), no en orders. Antes solo
+  // se miraba orders.stock_discounted: al borrar un pedido del catalogo el
+  // stock NO volvia y el presupuesto quedaba huerfano reteniendolo para siempre.
+  const linkedBudgets = db.prepare("SELECT id, stock_discounted FROM budgets WHERE order_id = ?").all(id);
+  const budgetOut = linkedBudgets.some((b) => Number(b.stock_discounted) === 1);
+  const stockOut = linkedBudgets.length ? budgetOut : !!order.stock_discounted;
+  // Hijos de un unificado: el stock lo maneja el padre. El padre unificado: el
+  // stock lo tienen los hijos (se liberan y vuelven a Pedidos).
+  const returnStock = stockOut && order.unified_parent_id == null && !order.is_unified;
   db.transaction(() => {
+    if (order.is_unified) {
+      db.prepare(
+        "UPDATE orders SET unified_parent_id = NULL, status = 'pendiente'" +
+        " WHERE unified_parent_id = ? AND status NOT IN ('entregado','cancelado')"
+      ).run(id);
+    }
     // Devolver stock si ya había sido descontado.
-    if (order.stock_discounted) {
+    if (returnStock) {
       const ois = db.prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?").all(id);
       const upd = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
       ois.forEach((it) => {
@@ -4072,7 +4144,13 @@ app.delete("/api/admin/orders/:id", requireAdmin, (req, res) => {
       });
     }
     // Desligar presupuestos que referencian este pedido (FK: budgets.order_id).
-    db.prepare("UPDATE budgets SET order_id = NULL WHERE order_id = ?").run(id);
+    // Se les limpia el flag de stock (ya se devolvio arriba, o lo maneja el
+    // unificado) y los no facturados quedan cancelados: sino, al borrar o
+    // cancelar despues el presupuesto, el stock volvia por segunda vez.
+    db.prepare(
+      "UPDATE budgets SET status = CASE WHEN status = 'facturado' THEN status ELSE 'cancelado' END," +
+      "  stock_discounted = 0, order_id = NULL, updated_at = datetime('now') WHERE order_id = ?"
+    ).run(id);
     // Eliminar movimiento de cuenta corriente asociado si existe.
     db.prepare("DELETE FROM account_movements WHERE order_id = ?").run(id);
     db.prepare("DELETE FROM order_items WHERE order_id = ?").run(id);
@@ -4132,6 +4210,22 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
   }
   if (!lines.length) return res.status(400).json({ error: "Ningún item válido" });
 
+  // Un producto repetido en dos lineas (p. ej. "Cambiar producto" por uno que
+  // ya estaba) rompia el merge por product_id de abajo: la segunda linea
+  // pisaba a la primera, el pedido quedaba con cantidades infladas y el stock
+  // se descontaba de mas. Se consolidan en una sola linea sumando cantidades.
+  (function consolidate() {
+    const byPid = new Map();
+    for (const l of lines) {
+      const prev = byPid.get(l.product_id);
+      if (!prev) { byPid.set(l.product_id, l); continue; }
+      prev.quantity += l.quantity;
+      prev.subtotal = round2(prev.subtotal + l.subtotal);
+    }
+    lines.length = 0;
+    byPid.forEach((l) => lines.push(l));
+  })();
+
   // ¿El stock de este pedido ya está descontado? Si lo está (p.ej. un pedido que
   // viene de un presupuesto facturado, que descuenta al crearse), al cambiar los
   // items hay que ajustar el stock por la diferencia para que quede consistente.
@@ -4142,7 +4236,9 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     "SELECT stock_discounted FROM budgets WHERE order_id = ? AND stock_discounted = 1 LIMIT 1"
   ).get(id);
   const anyLinkedBudget = db.prepare("SELECT id FROM budgets WHERE order_id = ? LIMIT 1").get(id);
-  const skipStock = order.unified_parent_id != null || !!order.is_unified;
+  // Solo los hijos absorbidos por un unificado no tocan stock; el unificado si
+  // (su stock esta afuera desde que se crearon los hijos).
+  const skipStock = order.unified_parent_id != null;
   const stockCurrentlyOut = anyLinkedBudget ? !!linkedBudgetOut : !!order.stock_discounted;
 
   // MERGE (no DELETE+INSERT) para conservar el chequeo de armado de los items
@@ -4154,8 +4250,17 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     "SELECT id, product_id, quantity, COALESCE(pick_checked,0) AS pick_checked, product_code, product_name" +
     "  FROM order_items WHERE order_id = ?"
   ).all(id);
+  // Si el pedido ya tenia un producto repetido, se trata como UNA linea con la
+  // cantidad total (las filas extra se borran sin tocar stock: la suma ya esta
+  // contemplada en quantity).
   const oldByProduct = new Map();
-  for (const o of oldItems) if (o.product_id) oldByProduct.set(o.product_id, o);
+  const oldDupRows = [];
+  for (const o of oldItems) {
+    if (!o.product_id) continue;
+    const prev = oldByProduct.get(o.product_id);
+    if (prev) { prev.quantity = Number(prev.quantity) + Number(o.quantity); prev.hadDup = true; oldDupRows.push(o.id); }
+    else oldByProduct.set(o.product_id, Object.assign({}, o));
+  }
 
   // Si el pedido estaba en la cola de Entregas ("listo") y la edición cambia
   // cantidades / agrega / quita items, vuelve a Armado (preparando) para preparar
@@ -4181,8 +4286,13 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
     );
     const delItem = db.prepare("DELETE FROM order_items WHERE id=?");
 
+    // Filas duplicadas viejas: se borran (su cantidad quedo sumada en la primera).
+    for (const dupId of oldDupRows) delItem.run(dupId);
+
     // Items quitados (estaban en el pedido y ya no): borrar + devolver stock.
-    for (const o of oldItems) {
+    for (const o0 of oldItems) {
+      if (oldDupRows.includes(o0.id)) continue;
+      const o = (o0.product_id && oldByProduct.get(o0.product_id)) || o0;
       if (!o.product_id || !newProductIds.has(o.product_id)) {
         delItem.run(o.id);
         if (stockCurrentlyOut && !skipStock && o.product_id) {
@@ -4204,15 +4314,19 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
         }
         hadQtyChange = true;
         changes.push({ product_code: l.product_code, product_name: l.product_name, old_qty: 0, new_qty: l.quantity });
-      } else if (Number(old.quantity) !== Number(l.quantity)) {
+      } else if (Number(old.quantity) !== Number(l.quantity) || old.hadDup) {
         updQtyItem.run(l.product_code, l.product_name, l.quantity, l.unit_price, l.discount_percent, l.subtotal, l.vendedor_cost_unit, old.id);
         if (stockCurrentlyOut && !skipStock) {
           const deltaEdit = Number(old.quantity) - Number(l.quantity);
-          adjStock.run(deltaEdit, l.product_id);
-          logStockMovement(l.product_id, "edicion_pedido", deltaEdit, id, "Edicion de items del pedido #" + id + " (cantidad cambiada)", req.session.userId);
+          if (deltaEdit !== 0) {
+            adjStock.run(deltaEdit, l.product_id);
+            logStockMovement(l.product_id, "edicion_pedido", deltaEdit, id, "Edicion de items del pedido #" + id + " (cantidad cambiada)", req.session.userId);
+          }
         }
-        hadQtyChange = true;
-        changes.push({ product_code: l.product_code, product_name: l.product_name, old_qty: old.quantity, new_qty: l.quantity });
+        if (Number(old.quantity) !== Number(l.quantity)) {
+          hadQtyChange = true;
+          changes.push({ product_code: l.product_code, product_name: l.product_name, old_qty: old.quantity, new_qty: l.quantity });
+        }
       } else {
         // Misma cantidad: actualizar precio/descuento/nombre/código/costo, conservar chequeo.
         updPriceItem.run(l.product_code, l.product_name, l.unit_price, l.discount_percent, l.subtotal, l.vendedor_cost_unit, old.id);
@@ -4432,6 +4546,20 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
       return res.status(400).json({ error: "Categoría inexistente" });
     }
   }
+  // Control de concurrencia del stock: el panel manda el stock que vio al abrir
+  // el producto (stock_expected). Si mientras tanto entro un pedido o una
+  // compra, el valor tipeado se basa en un numero viejo y pisarlo borraria
+  // esos movimientos. Se rechaza para que se vuelva a abrir con el dato fresco.
+  if ("stock" in body && body.stock_expected != null && body.stock_expected !== "") {
+    const cur = db.prepare("SELECT stock FROM products WHERE id = ?").get(id);
+    if (cur && Number(cur.stock) !== Number(body.stock_expected)) {
+      return res.status(409).json({
+        error: "El stock de este producto cambió mientras lo editabas (ahora es " + cur.stock +
+          "). Cerrá y volvé a abrir el producto para ajustarlo.",
+        current_stock: cur.stock,
+      });
+    }
+  }
   const { cols, vals } = buildProductUpdate(body);
   if (!cols.length) return res.status(400).json({ error: "Nada para actualizar" });
 
@@ -4552,10 +4680,22 @@ app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
 
   const priceCols = TRACKED_PRICE_COLS.join(", ");
   let updated = 0, failed = 0;
+  const stockConflicts = []; // productos cuyo stock cambio desde que se cargo la tabla
   const run = db.transaction(() => {
-    for (const p of patches) {
-      const id = Number(p && p.id);
+    for (const p0 of patches) {
+      const id = Number(p0 && p0.id);
       if (!id) { failed++; continue; }
+      let p = p0;
+      // Mismo control que el PATCH individual: si el stock cambio desde que se
+      // cargo la tabla, NO se pisa (se guardan los demas campos del producto).
+      if ("stock" in p && p.stock_expected != null && p.stock_expected !== "") {
+        const cur = db.prepare("SELECT stock FROM products WHERE id = ?").get(id);
+        if (cur && Number(cur.stock) !== Number(p.stock_expected)) {
+          stockConflicts.push({ id: id, current_stock: cur.stock });
+          p = Object.assign({}, p);
+          delete p.stock;
+        }
+      }
       const { cols, vals } = buildProductUpdate(p);
       if (!cols.length) { failed++; continue; }
       const touchesPrice = cols.some((c) => TRACKED_PRICE_COLS.includes(c));
@@ -4605,7 +4745,7 @@ app.post("/api/admin/products/bulk-update", requireAdmin, (req, res) => {
     }
   });
   run();
-  res.json({ ok: true, updated, failed });
+  res.json({ ok: true, updated, failed, stock_conflicts: stockConflicts });
 });
 
 // Subir imagen de un producto. Guarda en public/images/products/product-{id}.{ext}
@@ -6482,6 +6622,19 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
       return res.status(400).json({ error: "La fecha de entrega no puede ser futura" });
   }
 
+  // Chequeo de armado con cantidades distintas a las pedidas y sin confirmar:
+  // se aplica ANTES de entregar (lo armado es lo que sale del deposito). Si no,
+  // el sistema descontaba lo pedido y el stock quedaba mal. Va antes del
+  // calculo del descuento porque el total puede cambiar.
+  if (order.status !== "entregado") {
+    const applied = db.transaction(() => applyPickChangesTx(id, req.session.userId))();
+    if (applied.changes.length) {
+      order.total = applied.total;
+      logActivity(req, "pedido", "Pedido #" + id + " · chequeo de armado aplicado al entregar (" +
+        applied.changes.length + " cambios) · nuevo total $" + applied.total);
+    }
+  }
+
   // Descuento del pedido — SOLO admin. El vendedor no puede descontar; si entrega,
   // se conserva el descuento que el admin haya dejado (no se toca). discount_value
   // es el número crudo (10 → 10% ; 5000 → $5000); discountAmount es en pesos,
@@ -6507,7 +6660,8 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
   const linkedBudgetForDeliver = db.prepare(
     "SELECT stock_discounted FROM budgets WHERE order_id = ? AND stock_discounted = 1 LIMIT 1"
   ).get(id);
-  const skipStock = order.unified_parent_id != null || !!linkedBudgetForDeliver;
+  // El unificado tampoco: sus hijos ya descontaron al crearse.
+  const skipStock = order.unified_parent_id != null || !!order.is_unified || !!linkedBudgetForDeliver;
   const prevStatus = order.status;
 
   // Vendedor TERCERIZADO = "cobra y rinde": le cobra al cliente, se queda su
@@ -7294,7 +7448,37 @@ function stockConsistencyChecks() {
     " GROUP BY p.id ORDER BY vendido DESC LIMIT 50"
   );
 
+  // 7) Pedidos YA ENTREGADOS cuyo armado tuvo cantidades distintas a las
+  //    pedidas y nunca se aplicaron: el sistema desconto lo pedido y salio lo
+  //    armado. Cada fila es el desvio exacto de un producto (hasta el fix del
+  //    23/9/2026 se podia entregar asi con "Seguir igual").
+  const entregadosArmadoDistinto = q(
+    "SELECT o.id, oi.product_code AS code, oi.product_name AS name," +
+    "       oi.quantity AS pedido, oi.picked_qty AS armado," +
+    "       (oi.quantity - oi.picked_qty) AS desvio, " + localDay("o.created_at") + " AS dia" +
+    "  FROM orders o JOIN order_items oi ON oi.order_id = o.id" +
+    " WHERE o.status = 'entregado'" +
+    "   AND COALESCE(oi.pick_checked,0) = 1 AND COALESCE(oi.picked_qty,0) != oi.quantity" +
+    "   AND " + localDay("o.created_at") + " >= " + localDay("'now', '-120 days'") +
+    " ORDER BY o.id DESC LIMIT 100"
+  );
+
+  // 8) Pedidos unificados del tercerizado que descontaron stock al entregarse:
+  //    sus hijos ya lo habian descontado al crearse -> doble descuento (bug
+  //    corregido el 23/9/2026). Cada fila es lo descontado de mas.
+  const unificadosDobleDescuento = q(
+    "SELECT o.id, sm.product_id, p.code, p.name, -SUM(sm.delta) AS descontado," +
+    "       " + localDay("o.created_at") + " AS dia" +
+    "  FROM orders o JOIN stock_movements sm ON sm.source_id = o.id" +
+    "   AND sm.type IN ('venta','entrega') AND sm.delta < 0" +
+    "  LEFT JOIN products p ON p.id = sm.product_id" +
+    " WHERE COALESCE(o.is_unified,0) = 1" +
+    " GROUP BY o.id, sm.product_id ORDER BY o.id DESC LIMIT 100"
+  );
+
   return {
+    entregados_armado_distinto: wrap(entregadosArmadoDistinto),
+    unificados_doble_descuento: wrap(unificadosDobleDescuento),
     entregados_sin_descuento: wrap(entregadosSinDescuento),
     presupuestos_colgados:    wrap(presupuestosColgados),
     armado_sin_confirmar:     wrap(armadoSinConfirmar),
@@ -10415,6 +10599,21 @@ app.post("/api/budgets", requireVendedorOrAdmin, requireSectionForAdmin("ventas"
   }
 });
 
+// Items cuyo stock hay que devolver al cancelar/borrar un presupuesto. Si el
+// presupuesto nacio de un pedido del catalogo que sigue en curso, el stock
+// "vivo" es el de los items ACTUALES del pedido (el armado y la edicion de
+// items ajustan el stock pero no los budget_items): devolver budget_items
+// desfasaba el stock por la diferencia.
+function budgetStockItems(budget) {
+  if (budget.order_id) {
+    const o = db.prepare("SELECT id, status FROM orders WHERE id = ?").get(budget.order_id);
+    if (o && o.status !== "entregado" && o.status !== "cancelado") {
+      return db.prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?").all(o.id);
+    }
+  }
+  return db.prepare("SELECT product_id, quantity FROM budget_items WHERE budget_id = ?").all(budget.id);
+}
+
 // PUT /api/budgets/:id — actualizar presupuesto completo
 app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("ventas"), (req, res) => {
   const u = { id: req.session.userId, level: req.session.level };
@@ -10426,6 +10625,15 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
   // el pedido; cancelado: el stock ya fue devuelto y un edit lo desincronizaría).
   if (budget.status === "facturado" || budget.status === "cancelado") {
     return res.status(409).json({ error: "No se puede editar un presupuesto " + budget.status });
+  }
+  // Presupuesto de un pedido del catalogo: lo que se arma y se entrega son los
+  // items del PEDIDO. Editar el presupuesto movia stock sin cambiar el pedido
+  // (y el pedido se entregaba igual con sus cantidades): stock desfasado.
+  if (budget.order_id) {
+    return res.status(409).json({
+      error: "Este presupuesto está vinculado al pedido #" + budget.order_id +
+        ". Editá los productos desde el pedido (Pedidos → Editar items).",
+    });
   }
 
   const b = req.body || {};
@@ -10511,14 +10719,20 @@ app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, requireSectionForAd
   const status = req.body.status;
   if (!VALID.includes(status)) return res.status(400).json({ error: "Estado invalido" });
   if (budget.status === "facturado") return res.status(409).json({ error: "El presupuesto ya esta facturado" });
+  // Pedido vinculado ya entregado: la mercaderia salio. Cancelar el presupuesto
+  // devolvia al stock algo que ya no esta.
+  if (status === "cancelado" && budget.order_id) {
+    const lo = db.prepare("SELECT status FROM orders WHERE id = ?").get(budget.order_id);
+    if (lo && lo.status === "entregado") {
+      return res.status(409).json({ error: "El pedido #" + budget.order_id + " de este presupuesto ya fue entregado" });
+    }
+  }
 
   db.transaction(() => {
     if (status === "cancelado" && budget.status !== "cancelado") {
       // Al cancelar: devolver stock si fue descontado al crear
       if (budget.stock_discounted) {
-        const budgetItems = db.prepare(
-          "SELECT product_id, quantity FROM budget_items WHERE budget_id = ?"
-        ).all(budget.id);
+        const budgetItems = budgetStockItems(budget);
         const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
         for (const it of budgetItems) {
           if (it.product_id) {
@@ -10536,7 +10750,7 @@ app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, requireSectionForAd
       if (budget.order_id) {
         db.prepare(
           "UPDATE orders SET status = 'cancelado', stock_discounted = 0" +
-          " WHERE id = ? AND status IN ('pendiente','enviado','preparando')"
+          " WHERE id = ? AND status IN ('pendiente','enviado','preparando','listo')"
         ).run(budget.order_id);
       }
     }
@@ -10665,9 +10879,7 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("v
   try {
     db.transaction(() => {
       if (returnStock) {
-        const budgetItems = db.prepare(
-          "SELECT product_id, quantity FROM budget_items WHERE budget_id = ?"
-        ).all(budget.id);
+        const budgetItems = budgetStockItems(budget);
         const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
         for (const it of budgetItems) {
           if (it.product_id) {

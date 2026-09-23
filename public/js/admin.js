@@ -5448,7 +5448,14 @@
   if (els.editSave) els.editSave.addEventListener("click", async () => {
     if (!state.editDirty.size) return;
     const patches = [];
-    state.editDirty.forEach((d, id) => { patches.push(Object.assign({ id: id }, d)); });
+    state.editDirty.forEach((d, id) => {
+      const patch = Object.assign({ id: id }, d);
+      if ("stock" in d) {
+        const orig = (state.products || []).find((x) => x.id === id);
+        if (orig) patch.stock_expected = Number(orig.stock) || 0;
+      }
+      patches.push(patch);
+    });
     const stockChanges = patches.filter((p) => "stock" in p).length;
     const msg = "Se van a guardar cambios en " + patches.length + " producto(s)." +
       (stockChanges ? "\n\n" + stockChanges + " con cambio de stock: queda registrado en el historial como ajuste manual." : "");
@@ -5464,15 +5471,30 @@
       });
       // Reflejar en el cache local sin recargar toda la tabla
       const catName = (id) => ((state.allCategories || []).find((c) => Number(c.id) === Number(id)) || {}).name || null;
+      const conflictIds = new Set((res.stock_conflicts || []).map((c) => c.id));
       state.editDirty.forEach((d, id) => {
         [state.products, state.allProducts].forEach((arr) => {
           const p = Array.isArray(arr) ? arr.find((x) => x.id === id) : null;
           if (!p) return;
-          Object.assign(p, d);
+          const dd = Object.assign({}, d);
+          if (conflictIds.has(id)) {
+            delete dd.stock;
+            const c = res.stock_conflicts.find((x) => x.id === id);
+            if (c) p.stock = c.current_stock;
+          }
+          Object.assign(p, dd);
           if ("category_id" in d) p.category_name = catName(d.category_id);
         });
       });
       showToast("Guardado: " + res.updated + " producto(s)" + (res.failed ? " · " + res.failed + " con error" : ""));
+      if (res.stock_conflicts && res.stock_conflicts.length) {
+        alertModal({
+          title: "Stock no modificado",
+          message: res.stock_conflicts.length + " producto(s) tuvieron movimientos de stock mientras editabas la tabla " +
+            "(pedidos, compras o entregas), así que su stock NO se pisó. Los demás campos sí se guardaron.\n\n" +
+            "Revisá el stock actual y, si hace falta, ajustalo de nuevo.",
+        });
+      }
       setEditMode(false);
       applyFilters(); // re-render con los valores nuevos (y re-aplica orden/filtros)
     } catch (err) {
@@ -8524,9 +8546,9 @@
       message:
         "Pedido #" + o.id + ": hay cantidades armadas distintas a las pedidas que todavía no se aplicaron.\n\n" +
         (detalle ? detalle + "\n\n" : "") +
-        "Si seguís sin confirmar, sale del depósito lo armado pero el sistema descuenta lo pedido: el stock te va a quedar mal.",
+        "Si seguís, el sistema aplica automáticamente lo armado al pedido (cantidades, total y stock) antes de avanzarlo.",
       confirmText: "Abrir el chequeo",
-      cancelText: "Seguir igual",
+      cancelText: "Seguir (aplicar lo armado)",
     });
     if (abrir) { openPickModal(o.id); return false; }
     return true;
@@ -13482,6 +13504,17 @@
   const scState = { data: null, revealed: false };
 
   const SC_CHECK_META = {
+    entregados_armado_distinto: {
+      t: "Entregados con armado distinto al pedido (sin aplicar)",
+      d: "Salió del depósito lo armado pero el sistema descontó lo pedido. Desvío positivo = en el sistema falta stock que físicamente tenés.",
+      row: (r) => "Pedido #" + r.id + " · " + (r.code || "") + " " + (r.name || "") + " · pedido " + r.pedido +
+        " / armado " + r.armado + " → desvío " + (r.desvio > 0 ? "+" : "") + r.desvio + " · " + (r.dia || ""),
+    },
+    unificados_doble_descuento: {
+      t: "Pedidos unificados que descontaron stock dos veces",
+      d: "El stock ya había salido con los pedidos de los clientes del tercerizado. Estas cantidades hay que devolverlas al stock.",
+      row: (r) => "Unificado #" + r.id + " · " + (r.code || "") + " " + (r.name || "") + " · de más " + r.descontado + " · " + (r.dia || ""),
+    },
     entregados_sin_descuento: {
       t: "Pedidos entregados que no descontaron stock",
       d: "Se entregaron pero el stock nunca bajó: es faltante puro.",
@@ -14833,6 +14866,7 @@
     if (prev) sel.value = prev;
   }
 
+  let epOrigStock = null;
   function openEditProdModal(p) {
     editProdId = p.id;
     // z-index normal; el flujo "crear gemelo" lo sube luego para apilarse
@@ -14845,6 +14879,11 @@
     set("ep-code",      p.code      || "");
     set("ep-name",      p.name      || "");
     set("ep-stock",          p.stock          || 0);
+    // Stock que se vio al abrir: solo se manda si el usuario lo cambia, y con
+    // stock_expected para que el server rechace si mientras tanto entro un
+    // pedido/compra (antes, guardar un precio pisaba el stock con el valor
+    // viejo del cache y "deshacia" las ventas del medio).
+    epOrigStock = Number(p.stock) || 0;
     set("ep-stock-min",      p.stock_min      || 0);
     set("ep-units-per-bulto", p.units_per_bulto > 1 ? p.units_per_bulto : 1);
     set("ep-pack-unit",      p.pack_unit || "bulto");
@@ -14917,7 +14956,6 @@
         code,
         name,
         category_id:      epCatSelect && epCatSelect.value ? Number(epCatSelect.value) : null,
-        stock:            Math.max(0, Math.round(Number(get("ep-stock"))     || 0)),
         stock_min:        Math.max(0, Math.round(Number(get("ep-stock-min")) || 0)),
         units_per_bulto:  Math.max(1, Number(get("ep-units-per-bulto")) || 1),
         pack_unit:        get("ep-pack-unit") || "bulto",
@@ -14931,6 +14969,11 @@
         price_publico:    parsePrice(get("ep-publico")),
         active:           activeChk && activeChk.checked ? 1 : 0,
       };
+      const typedStock = Math.round(Number(get("ep-stock")) || 0);
+      if (typedStock !== epOrigStock) {
+        body.stock = typedStock;
+        body.stock_expected = epOrigStock;
+      }
       try {
         epSaveBtn.disabled = true;
         await api("/api/admin/products/" + editProdId, {
@@ -14945,6 +14988,7 @@
           if (opt) catName = opt.text;
         }
         // Actualizar state local (tabla de Productos)
+        delete body.stock_expected;
         const p = state.products.find((x) => x.id === editProdId);
         if (p) { Object.assign(p, body); p.category_name = catName; }
         // Mantener sincronizado el cache del selector de Compras y, si está

@@ -327,3 +327,138 @@ test("pago a cuenta (sin pedido) se reparte entre los pedidos del más viejo al 
   assert.equal(Math.round(d2b.balance_due), 0);
   assert.equal(await balanceOf(cid), 0);
 });
+
+// ---- Stock: bugs corregidos el 23/9/2026 --------------------------------
+function newProduct(code, stock) {
+  const d = rawDb();
+  const cat = d.prepare("SELECT id FROM categories").get().id;
+  const id = d.prepare(
+    "INSERT INTO products (code, category_id, name, cost, price_minorista, price_revendedor, price_mayorista, price_vip, price_publico, stock, active)" +
+    " VALUES (?,?,?,100,200,180,160,150,220,?,1)"
+  ).run(code, cat, "Prod " + code, stock).lastInsertRowid;
+  d.close();
+  return id;
+}
+async function adminOrder(pid, qty) {
+  const r = await admin.post("/api/admin/orders", {
+    client_id: ids.client,
+    items: [{ product_id: pid, product_code: "x", product_name: "x", quantity: qty, unit_price: 100 }],
+  });
+  assert.equal(r.status, 200, r.text);
+  return r.json.order ? r.json.order.id : r.json.id;
+}
+async function itemsOf(oid) {
+  const r = await admin.get("/api/orders/" + oid);
+  assert.equal(r.status, 200, r.text);
+  return r.json.items;
+}
+
+test("armado sin confirmar: al entregar se aplica lo armado (stock = lo que salió)", async () => {
+  const pid = newProduct("S1", 100);
+  const oid = await adminOrder(pid, 10);
+  assert.equal(stockOf(pid), 90);
+  await admin.patch("/api/orders/" + oid, { status: "preparando" });
+  const it = (await itemsOf(oid))[0];
+  const pk = await admin.post("/api/admin/picks/" + oid, { item_id: it.id, picked_qty: 6 });
+  assert.equal(pk.status, 200, pk.text);
+  // Pasa directo a entregado (sin confirmar el chequeo)
+  const d = await admin.post("/api/orders/" + oid + "/deliver", { delivered_to: "X", efectivo_amount: 600, transferencia_amount: 0 });
+  assert.equal(d.status, 200, d.text);
+  assert.equal(stockOf(pid), 94, "sale lo armado (6), no lo pedido (10)");
+  assert.equal((await itemsOf(oid))[0].quantity, 6);
+});
+
+test("armado sin confirmar: pasar a Entregas por PATCH también lo aplica", async () => {
+  const pid = newProduct("S2", 100);
+  const oid = await adminOrder(pid, 10);
+  await admin.patch("/api/orders/" + oid, { status: "preparando" });
+  const it = (await itemsOf(oid))[0];
+  await admin.post("/api/admin/picks/" + oid, { item_id: it.id, picked_qty: 12 });
+  const r = await admin.patch("/api/orders/" + oid, { status: "listo" });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.json.pick_applied, 1);
+  assert.equal(stockOf(pid), 88);
+});
+
+test("editar producto con el stock viejo del cache no pisa las ventas del medio", async () => {
+  const pid = newProduct("S3", 50);
+  await adminOrder(pid, 5); // stock real 45, el modal se abrió viendo 50
+  const stale = await admin.patch("/api/admin/products/" + pid, { stock: 50, stock_expected: 50, name: "Prod S3" });
+  assert.equal(stale.status, 409, stale.text);
+  assert.equal(stockOf(pid), 45);
+  const soloPrecio = await admin.patch("/api/admin/products/" + pid, { price_minorista: 250 });
+  assert.equal(soloPrecio.status, 200, soloPrecio.text);
+  assert.equal(stockOf(pid), 45);
+  const bulk = await admin.post("/api/admin/products/bulk-update", { patches: [{ id: pid, stock: 50, stock_expected: 50, name: "S3b" }] });
+  assert.equal(bulk.status, 200, bulk.text);
+  assert.equal(bulk.json.stock_conflicts.length, 1);
+  assert.equal(stockOf(pid), 45);
+});
+
+test("borrar un pedido del catálogo devuelve el stock y no deja el presupuesto reteniéndolo", async () => {
+  const pid = newProduct("S4", 30);
+  const cli = client();
+  const lg = await cli.login("cliente1", "Clave123");
+  assert.equal(lg.status, 200, lg.text);
+  const r = await cli.post("/api/orders", { items: [{ id: pid, qty: 4 }] });
+  assert.equal(r.status, 200, r.text);
+  const oid = r.json.order.id;
+  assert.equal(stockOf(pid), 26);
+  const del = await admin.del("/api/admin/orders/" + oid);
+  assert.equal(del.status, 200, del.text);
+  assert.equal(stockOf(pid), 30);
+  const d = rawDb();
+  const b = d.prepare("SELECT stock_discounted FROM budgets WHERE notes IS NULL ORDER BY id DESC LIMIT 1").get();
+  d.close();
+  assert.equal(b.stock_discounted, 0);
+});
+
+test("cancelar el presupuesto de un pedido del catálogo editado devuelve lo que está afuera", async () => {
+  const pid = newProduct("S5", 30);
+  const cli = client();
+  await cli.login("cliente1", "Clave123");
+  const r = await cli.post("/api/orders", { items: [{ id: pid, qty: 5 }] });
+  const oid = r.json.order.id;
+  const it = (await itemsOf(oid))[0];
+  const e = await admin.put("/api/admin/orders/" + oid + "/items", { items: [{ product_id: pid, quantity: 3, unit_price: it.unit_price }] });
+  assert.equal(e.status, 200, e.text);
+  assert.equal(stockOf(pid), 27);
+  const d = rawDb();
+  const bid = d.prepare("SELECT id FROM budgets WHERE order_id = ?").get(oid).id;
+  d.close();
+  const edit = await admin.put("/api/budgets/" + bid, { items: [{ product_id: pid, quantity: 9, unit_price: 1 }] });
+  assert.equal(edit.status, 409, "el presupuesto vinculado no se edita");
+  const c = await admin.patch("/api/budgets/" + bid + "/status", { status: "cancelado" });
+  assert.equal(c.status, 200, c.text);
+  assert.equal(stockOf(pid), 30);
+});
+
+test("editar items con un producto repetido en dos líneas no infla el pedido ni el stock", async () => {
+  const pid = newProduct("S6", 100);
+  const oid = await adminOrder(pid, 10);
+  const e = await admin.put("/api/admin/orders/" + oid + "/items", {
+    items: [{ product_id: pid, quantity: 10, unit_price: 100 }, { product_id: pid, quantity: 5, unit_price: 100 }],
+  });
+  assert.equal(e.status, 200, e.text);
+  const items = await itemsOf(oid);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].quantity, 15);
+  assert.equal(stockOf(pid), 85);
+});
+
+test("pedido unificado: al entregarlo no vuelve a descontar el stock de los hijos", async () => {
+  const pid = newProduct("S7", 100);
+  const child = await adminOrder(pid, 10); // el hijo descuenta al crearse
+  assert.equal(stockOf(pid), 90);
+  const d = rawDb();
+  const parent = d.prepare(
+    "INSERT INTO orders (user_id, status, total, is_unified, stock_discounted) VALUES (?, 'pendiente', 1000, 1, 1)"
+  ).run(ids.client).lastInsertRowid;
+  d.prepare("INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal) VALUES (?,?,?,?,10,100,1000)")
+    .run(parent, pid, "S7", "Prod S7");
+  d.prepare("UPDATE orders SET status='enviado', unified_parent_id=? WHERE id=?").run(parent, child);
+  d.close();
+  const r = await admin.patch("/api/orders/" + parent, { status: "entregado" });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(stockOf(pid), 90);
+});

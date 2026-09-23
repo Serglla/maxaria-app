@@ -2075,3 +2075,97 @@ Pedido de Sergio: el informe de Actividad → Por cliente debe ser **por mes**, 
 
 **Pendiente**: `git add/commit/push` + deploy Railway + Ctrl+F5.
 
+
+### 🔴 Fix: la ganancia de "Por cliente" no era la ganancia de Sergio (27 agosto 2026 — `admin.js?v=20260827c`)
+
+Sergio: "en actividad por cliente da una ganancia de 5.482.284,58 pero en reportes da otro número" ($6.113.251,3). Preguntó cuál es la real → **la de Reportes**.
+
+**La causa**: `/api/admin/activity/clients` calculaba
+`costo = COALESCE(oi.vendedor_cost_unit, p.cost)` y `ganancia = (oi.unit_price − COALESCE(oi.vendedor_cost_unit, p.cost))`.
+Para un cliente **con lista personalizada** (tercerizado), `unit_price − vendedor_cost_unit` es **la comisión del vendedor** — literalmente la misma expresión que la pestaña *Por vendedor* usa como ganancia del vendedor (línea ~5327). O sea: el panel mostraba como "ganancia de Sergio" la plata del vendedor, y como "costo" el precio de lista del vendedor en vez del costo real del producto. Para clientes **sin** lista las dos fórmulas coinciden, por eso la diferencia era chica (~$630k) y no saltaba a la vista. Recordatorio de la semántica (comentario en la línea 2320): `vendedor_cost_unit` = **lo que el admin le cobra al tercerizado**, o sea lo que efectivamente entra a Sergio.
+
+**El fix**
+- `NET_EARNING_EXPR` se **movió** de la sección de Reportes a la de Actividad (línea ~5480), arriba de sus dos usos, con un comentario de que es la **única** definición de "ganancia mía" del sistema. Se agregó al lado `VEND_COMMISSION_EXPR` (`CASE WHEN vendedor_cost_unit IS NOT NULL THEN (unit_price − vendedor_cost_unit) * qty ELSE 0 END`).
+- `/activity/clients` pasa a `total_cost = SUM(COALESCE(p.cost,0) * qty)` (costo real) y `total_earning = SUM(NET_EARNING_EXPR)` — idéntico a `/reports/sales`. Devuelve además `total_commission`.
+- **Columna nueva "Comisión vend."** entre Ganancia y Último pedido (sortable por `commission`), en gris y con "—" cuando el cliente no tiene lista personalizada. Así no se pierde el dato que antes estaba mal etiquetado como Ganancia. La tabla pasa a 11 columnas. Tooltips en los `th` de Ganancia y Comisión explicando qué mide cada uno.
+
+**Verificación**: se extrajeron del `server.js` real **las dos queries** (el `aggSql` de Por cliente y el bloque de KPIs de Reportes) y se corrieron con sqlite3 sobre una copia de `data/maxaria.db` con 3 pedidos armados a mano: cliente **con** lista (costo 600 / vcu 900 / precio 1000 × 100 u.), cliente **sin** lista (600/—/1000 × 50) y otro con lista y otro margen (600/750/1000 × 20). Cuenta a mano: ganancia 53.000, comisión 15.000, costo 102.000, ventas 170.000. **Los dos paneles devuelven exactamente eso** (antes Por cliente daba ganancia 35.000 y costo 135.000 — subestimaba la ganancia un 34%). Render de la tabla con el CSS real y screenshot revisado. `node --check` OK en ambos.
+
+**Queda pendiente de decidir** (Sergio no lo respondió): Reportes cuenta **84** pedidos y Por cliente **82**, porque Reportes incluye pedidos de cualquier usuario y Por cliente filtra `u.level BETWEEN 1 AND 4`. Los 2 pedidos de diferencia ($242.895) serían compras hechas por un admin/vendedor/superadmin. Antes de tocar un total conviene identificarlos.
+
+**Pendiente**: `git add/commit/push` + deploy Railway + Ctrl+F5.
+
+### Pulido: precio editable al crear pedido + Ventas por mes + advertencia de costo (22 septiembre 2026 — `admin.js?v=20260922c`, `styles.css?v=20260922c`)
+
+Sesión de Cowork. Tres cambios chicos, cada uno commiteado y pusheado a `master` (Railway redeploya solo).
+
+**1. Precio unitario editable en "Nuevo pedido"** (commit `08c6c61`)
+- La columna P. Unit. del modal `#new-order-modal` era texto; ahora es un `<input class="no-price">` (`noRenderItems`, admin.js). Mismo patrón que la cantidad: en `input` actualiza en el lugar `unit_price`, el subtotal (`.no-sub`) y el total sin re-renderizar (evita el bug del teclado en mobile); en `change` re-renderiza.
+- El server (`POST /api/admin/orders`) ya aceptaba el `unit_price` que manda el front (clampeado a >= 0), no se tocó.
+- Cambiar la lista de precios después de editar un precio a mano lo pisa (`noRepriceItems`), igual que antes: elegir la lista primero.
+- CSS: `.no-price` sumado al recuadro sutil de campos editables de `#no-items-tbody` (mobile).
+
+**2. Ventas: período por defecto = mes corriente** (commit `31f2b17`)
+- `loadVentasOrders`: el default de la primera carga pasó de `"week"` a `"month"` (día 1 al último día del mes). `<option value="month" selected>` en admin.html. Si el usuario cambia el período, se respeta durante la sesión; al recargar la página vuelve al mes.
+
+**3. Productos (mobile): fondo rojo al ver precios de Costo** (commit `f37df9f`)
+- `renderProducts` hace `classList.toggle("pv-cost-warn", pvCls === "costo")` sobre `#tab-productos`.
+- CSS: `@media (max-width:640px) { #tab-productos.pv-cost-warn { background:#fde2e2; border-color:#f5a3a3 } }`. Solo mobile porque en desktop el selector de precio no cambia lo que se ve (la tabla muestra todas las columnas).
+
+**Git desde el sandbox de Cowork**: el mount no deja borrar (`rm`/unlink → Operation not permitted), así que cada comando git deja `index.lock` / `HEAD.lock` / `refs/remotes/origin/master.lock` huérfanos y el siguiente commit falla con "File exists". **Workaround que funciona: renombrarlos** (`mv .git/HEAD.lock .git/HEAD.lock.old<timestamp>`) antes de cada `git add` / `commit` / `push` — el rename sí está permitido. Quedan `*.lock.old*` en `.git`, se limpian desde Windows con `Get-ChildItem .git -Recurse -Filter *.lock* | Remove-Item`.
+
+### Revisión general del sistema (22 septiembre 2026, commit `eac9baa` — `admin.js/styles.css?v=20260922g`, `app.js/ventas.js?v=20260922f`)
+
+Sergio pidió una revisión completa y aplicar todo. Además, ese día: columna **Venta/día** en Productos con Precio=Costo (`GET /api/admin/products-sales-rate`, mismo cálculo ponderado que Reposición; commit `b2d8fb1`).
+
+**Funcionalidad**
+- 🔴 `GET /api/orders` (admin y vendedor) tenía `LIMIT 200` sin mirar el estado: con +200 pedidos, uno viejo pendiente/en armado desaparecía de Pedidos/Armado/Entregas. Ahora `ORDERS_OPERATIVE_WHERE` = todos los no cerrados + los últimos 200 entregados/cancelados. Ventas ya usaba su propio endpoint.
+- Aviso push diario de cobranza: `runDailyDebtPush()` (setInterval 30 min, desde las 9 hora local, idempotente con `settings.debt_push_last_day`) a `adminsForSection("cuentas")`. La lógica FIFO de deudores se extrajo a `computeOverdueDebtors(minDays)` (la usa también `/api/cron/debt-report`).
+- Catálogo PDF con `priceConfig.type==="client"`: intersecta `categoryIds` con `getUserAllowedCategoryIds` del cliente (400 si no queda ninguna) y excluye categorías inactivas.
+- `GET /api/admin/backup/download` (solo superadmin): copia consistente con `db.backup()`; botón "⬇ Descargar copia de la base" en Configuración (`#db-download-wrap`).
+- **Tests**: `npm test` → `test/smoke.test.js` (node:test). Crea una base temporal desde `scripts/schema.sql`, levanta `server.js` en un puerto libre y recorre: login/sesión, alta de cliente, pedido admin (stock + débito), circuito hasta entrega, cancelación, pagos, pedidos >200, permisos/export, link vencido, CSP, reporte de deudores, catálogo por cliente, PDFs. **En Windows corre directo** (better-sqlite3 nativo). Desde el sandbox de Cowork se corre copiando el proyecto a `$HOME/work/app` (fuera del mount) y haciendo `npm ci` ahí.
+- Piloto de partición: `buildRemitoPdf` y `buildCotizacionPdf` pasaron a `lib/pdf-docs.js` (funciones puras, `require("./lib/pdf-docs")`).
+
+**Seguridad**
+- `plain_password`: la columna queda pero se vacía en cada arranque y nunca se escribe. El listado de usuarios ya no la devuelve. En el panel, la clave recién creada/reseteada se guarda solo en memoria (`sessionPasswords` en admin.js) para poder "Compartir acceso" a vendedores/admins en esa sesión; si no, hay que resetearla.
+- `/api/admin/users/export` e `/import`: `requireSuperadminOnly` (el export lleva hashes de todos; el import permite crear admins). La card se oculta a no-superadmins.
+- Login: `startSession()` hace `req.session.regenerate` (fijación de sesión), también en `/c/:token`. Se compara siempre contra un hash (`DUMMY_BCRYPT_HASH`) para no revelar qué usuarios existen.
+- Link de acceso `/c/:token`: vence tras `ACCESS_LINK_IDLE_DAYS` (env, default 90) **sin uso** (`users.access_token_created_at` / `access_token_last_used_at`). Vencido → 410 con página explicativa y se revoca. El modal de usuario muestra el último uso.
+- `sw.js` (CACHE_VERSION v8): al `POST /logout` borra `DATA_CACHE` (datos offline del usuario anterior en un celular compartido).
+- **CSP activa** (helmet): `script-src 'self' https://cdnjs.cloudflare.com`, `script-src-attr 'none'`, estilos inline permitidos, imágenes de cualquier https. Por eso: el `<script>` inline de login.html pasó a `public/js/login.js`, el de ventas.html a `public/js/ventas-head.js`, y los `onclick=` del modal de catálogo a `data-click-for="<id>"` (delegación en admin.js). **Regla: no volver a usar `<script>` inline ni `onclick=`** (el test lo verifica).
+- Pendiente sin tocar: el token de `/api/cron/debt-report` sigue aceptándose por query string (además del header `x-cron-token`) para no romper un llamador existente.
+
+**Estética**
+- 🔴 `[hidden] { display: none !important; }` al principio de styles.css. Varias clases con `display:flex` le ganaban al atributo: las barras "0 seleccionados" y "Sin cambios" de Productos se veían siempre, igual que la barra de Márgenes, el botón de avisos en el celular, el banner de presupuestos pendientes y la caja de sugerencias del catálogo. Con esta regla, **para mostrar algo que tiene `hidden` hay que sacarle el atributo** (`el.hidden = false`), no alcanza con `style.display`.
+- Tarjeta de producto mobile: nuevas áreas (nombre / categoría a todo el ancho / código + precio y stock), ± y 🕒 apilados, y `#prod-tbody > tr.prod-row > td { border:none }` para sacar las rayas azules de la tabla de escritorio.
+- Escritorio: columna Nombre de Productos `position: sticky` al hacer scroll horizontal.
+- Botón de avisos push: 📲 activo / 📵 inactivo (antes 🔔, igual que la campana de notificaciones).
+- `fmtPrice` (admin.js) siempre con 2 decimales (`$ 1.234,50`), `fmtMoney` delega en él; app.js y ventas.js usan el mismo `$ ` con espacio duro.
+- Bug viejo arreglado: `#catalog-changes-wrap` perdía su `display:flex` inline al re-mostrarse (`style.display = ""`).
+
+**Verificación**: 13 tests OK (y 3 fallan contra el código viejo, o sea que detectan los bugs). Chequeo en Chromium headless (Playwright, container de Cowork) a 1300px y 380px: 26 pestañas del admin sin errores JS ni violaciones de CSP, sin scroll horizontal en mobile, ningún elemento con `hidden` visible.
+
+### Pagos "a cuenta" repartidos entre pedidos + deuda en Registrar entrega (22 septiembre 2026, noche)
+
+- **Registrar entrega** muestra una línea con la cuenta del cliente sin contar el pedido (`client_other_balance` en `GET /api/orders/:id`): rojo si debe de otros pedidos, verde si no.
+- Caso real (Rey León): un pago de $1.021.745 cargado desde Pagos **sin elegir pedido** saldaba la cuenta (4 pedidos), pero cada pedido seguía figurando "Debe" y la entrega del #406 pedía cobrar todo de nuevo.
+- Fix: `unassignedCreditAllocations(userIds)` (server.js, arriba de `backfillOrderDebits`) reparte **solo para mostrar** (no escribe nada) el saldo a favor sin asignar (movimientos con `order_id` NULL + lo pagado de más en algún pedido) entre los pedidos que deben, del más viejo al más nuevo (FIFO, mismo criterio que Cuentas). Se aplica en: `GET /api/orders` (admin y cliente), `GET /api/admin/ventas` (`applyUnassignedToRows`), `GET /api/orders/:id` (`balance_due`, `amount_paid`, `paid_on_account`, `prepaid_for_delivery`) y `/api/admin/accounts/:userId/open-orders`. Las filas devuelven `paid_on_account` cuando hubo reparto.
+- Pedido sin débito todavía (catálogo, antes de entregar): lo disponible para él = saldo a favor del cliente sin contar el pedido, topeado al total.
+- Modal de entrega: `deliveryExpectedCollection()` descuenta `prepaid` (pagos imputados con `payment_id` + a cuenta). Si ya estaba todo pagado: "✔ Ya estaba pagado… No hace falta cobrar nada" y se oculta el tilde "Pagó el total".
+- Test nuevo en `test/smoke.test.js` (15 en total).
+
+
+### Auditoría de stock — 6 bugs corregidos (23 septiembre 2026 — `admin.js?v=20260923a`)
+
+Disparador: Amoxidal 500 x 8 (1006) quedó en −9 en el sistema con 43 físicas (ajuste manual +52). El historial era una cadena continua (todo lo que tocó el stock quedó logueado), así que el desvío venía de descuentos que el sistema hizo sin que la mercadería saliera, o al revés.
+
+1. **Armado sin confirmar** (el más probable para este caso): si se armaba una cantidad distinta y se avanzaba con "Seguir igual" —o por el selector de estado del detalle, o un vendedor entregando, que no tenían el aviso— salía lo armado pero se descontaba lo pedido. Ahora `applyPickChangesTx(orderId, userId)` (helper extraído del endpoint `/api/admin/picks/:id/apply`) se aplica **solo** al pasar a `listo`/`entregado` por PATCH y en `/deliver` (antes del cálculo del descuento). El aviso del front ahora dice "Seguir (aplicar lo armado)". Además el apply respeta el descuento por línea al recalcular el subtotal (antes lo perdía).
+2. **Pedido unificado del tercerizado descontaba dos veces**: los hijos (catálogo/admin/presupuesto) ya descuentan al crearse, y el padre se creaba con `stock_discounted=0` → al entregarlo descontaba todo de nuevo. Ahora el dispatch crea el padre con `stock_discounted=1`, migración idempotente para los unificados en curso, `skipStock` incluye `is_unified` en PATCH/deliver, y el padre sí ajusta stock en armado/edición (solo los hijos tienen `skipStock`). Cancelar/borrar un unificado ya no devuelve stock: libera a los hijos (vuelven a `pendiente`).
+3. **Editar producto pisaba el stock con el valor viejo del cache**: el modal mandaba siempre `stock` (y clampeado a ≥0). Guardar un precio "deshacía" las ventas del medio. Ahora solo manda `stock` si se cambió, con `stock_expected`; el server responde 409 si no coincide. Mismo control en `bulk-update` (devuelve `stock_conflicts` y guarda el resto de los campos).
+4. **Borrar un pedido del catálogo no devolvía el stock** (el flag lo tiene el presupuesto, no el pedido) y el presupuesto quedaba huérfano reteniéndolo. Ahora devuelve y cancela/limpia el presupuesto vinculado. Cancelar un pedido ahora limpia el flag también en presupuestos facturados (sino, borrar después el presupuesto devolvía el stock otra vez).
+5. **Presupuesto vs pedido desincronizados**: editar el presupuesto de un pedido del catálogo movía stock sin cambiar el pedido → `PUT /api/budgets/:id` da 409 si tiene `order_id`. Cancelar/borrar ese presupuesto devuelve los items **actuales del pedido** (`budgetStockItems`), no los `budget_items` originales (el armado/edición no los actualiza). No se puede cancelar un presupuesto cuyo pedido ya se entregó; cancelar el presupuesto ahora también cancela el pedido en `listo`.
+6. **Producto repetido en dos líneas** ("Cambiar producto" por uno que ya estaba) rompía el merge de `PUT /api/admin/orders/:id/items`: inflaba el pedido y descontaba de más. Ahora consolida por `product_id` (líneas nuevas y viejas).
+
+**Diagnóstico**: Control de stock suma dos chequeos: "Entregados con armado distinto al pedido (sin aplicar)" (últimos 120 días, con el desvío por producto) y "Pedidos unificados que descontaron stock dos veces". Sirven para encontrar desvíos históricos que el fix no corrige solo.
+
+**Tests**: 7 nuevos en `test/smoke.test.js` (22 en total); 6 fallan contra el código anterior. El del unificado arma el padre a mano, no pasa por `/api/vendedor/dispatch`.
