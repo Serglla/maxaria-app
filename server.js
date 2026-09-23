@@ -947,6 +947,63 @@ function nextBudgetNumber() {
 // descuento, para que el saldo resultante sea EXACTAMENTE el que ya se mostraba
 // (no cambia ningún "Debe/Saldado", solo mueve la fuente de verdad a la cuenta
 // corriente). Idempotente: solo toca pedidos sin débito.
+// ── Pagos "a cuenta" repartidos entre los pedidos (FIFO) ────────────────────
+// Un pago cargado sin elegir pedido (order_id NULL) salda la cuenta del
+// cliente, pero los pedidos seguían figurando "Debe" porque su saldo solo mira
+// los movimientos imputados a cada pedido. Acá se reparte, SOLO para mostrar
+// (no se escribe nada), todo el saldo a favor sin asignar entre los pedidos
+// que deben, del más viejo al más nuevo — mismo criterio FIFO que la pestaña
+// Cuentas usa para la antigüedad de la deuda.
+// El "pozo" de cada cliente = neto de los movimientos sin pedido + lo pagado
+// de más en algún pedido. Devuelve Map(order_id -> monto asignado).
+// userIds: array para limitar a esos clientes (null = todos).
+function unassignedCreditAllocations(userIds) {
+  const out = new Map();
+  let where = "";
+  let params = [];
+  if (Array.isArray(userIds)) {
+    const ids = Array.from(new Set(userIds.map(Number).filter(Boolean)));
+    if (!ids.length) return out;
+    where = " WHERE am.user_id IN (" + ids.map(() => "?").join(",") + ")";
+    params = ids;
+  }
+  const rows = db.prepare(
+    "SELECT am.user_id AS uid, am.order_id AS oid," +
+    "       SUM(CASE WHEN am.type='credit' THEN am.amount ELSE 0 END) AS c," +
+    "       SUM(CASE WHEN am.type='debit'  THEN am.amount ELSE 0 END) AS d," +
+    "       o.created_at AS ocreated" +
+    "  FROM account_movements am LEFT JOIN orders o ON o.id = am.order_id" + where +
+    " GROUP BY am.user_id, am.order_id"
+  ).all(...params);
+  const byUser = new Map();
+  for (const r of rows) {
+    if (!byUser.has(r.uid)) byUser.set(r.uid, []);
+    byUser.get(r.uid).push(r);
+  }
+  for (const list of byUser.values()) {
+    let pool = 0;
+    const due = [];
+    for (const r of list) {
+      const net = (Number(r.c) || 0) - (Number(r.d) || 0);
+      if (r.oid == null) pool += net;
+      else if (net > 0.005) pool += net;
+      else if (net < -0.005) due.push({ oid: r.oid, amount: -net, at: r.ocreated || "" });
+    }
+    if (pool <= 0.005 || !due.length) continue;
+    due.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.oid - b.oid));
+    for (const o of due) {
+      if (pool <= 0.005) break;
+      const take = Math.min(pool, o.amount);
+      out.set(o.oid, Math.round(take * 100) / 100);
+      pool -= take;
+    }
+  }
+  return out;
+}
+function unassignedCreditAllocationsForOrders(orderRows) {
+  return unassignedCreditAllocations(orderRows.map((r) => r.user_id));
+}
+
 (function backfillOrderDebits() {
   try {
     const orphans = db.prepare(
@@ -3194,6 +3251,18 @@ app.post("/api/orders", requireLogin, (req, res) => {
   res.json({ ok: true, order: { id: orderId, total: total, items: lines.length } });
 });
 
+// Suma a amount_paid lo que les toca de los pagos "a cuenta" (ver
+// unassignedCreditAllocations). Las filas tienen que traer user_id.
+function applyUnassignedToRows(rows) {
+  if (!rows || !rows.length) return rows;
+  const alloc = unassignedCreditAllocationsForOrders(rows);
+  for (const r of rows) {
+    const a = alloc.get(r.id) || 0;
+    if (a) { r.amount_paid = (Number(r.amount_paid) || 0) + a; r.paid_on_account = a; }
+  }
+  return rows;
+}
+
 // Vista operativa de pedidos (Pedidos / Armado / Entregas). Antes era
 // "los 200 mas recientes" sin mirar el estado: con mas de 200 pedidos, uno
 // viejo que seguia pendiente o en armado desaparecia de la cola sin aviso.
@@ -3210,7 +3279,7 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
 
   if (isAdmin) {
     const rows = db.prepare(
-      "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at," +
+      "SELECT o.id, o.status, o.total, o.notes, o.created_at, o.whatsapp_sent_at, o.user_id," +
       "       u.username, u.full_name," +
       "       o.assigned_vendedor_id," +
       "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
@@ -3237,6 +3306,7 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
       "  WHERE " + ORDERS_OPERATIVE_WHERE +
       "  ORDER BY o.created_at DESC"
     ).all();
+    applyUnassignedToRows(rows);
     return res.json(rows);
   }
 
@@ -3275,6 +3345,11 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
     "  FROM orders o WHERE o.user_id = ?" +
     "  ORDER BY o.created_at DESC LIMIT 200"
   ).all(req.session.userId);
+  const allocC = unassignedCreditAllocations([req.session.userId]);
+  for (const r of rows) {
+    const a = allocC.get(r.id) || 0;
+    if (a) { r.balance_due = Math.round(((Number(r.balance_due) || 0) - a) * 100) / 100; r.amount_paid = (Number(r.amount_paid) || 0) + a; r.paid_on_account = a; }
+  }
   res.json(rows);
 });
 
@@ -3299,7 +3374,7 @@ app.get("/api/admin/ventas", requireAdmin, (req, res) => {
   if (from) { where.push(dateExpr + " >= ?"); params.push(from); }
   if (to)   { where.push(dateExpr + " <= ?"); params.push(to); }
   const sql =
-    "SELECT o.id, o.status, o.total, COALESCE(o.discount_amount,0) AS discount_amount, o.notes, o.created_at, o.whatsapp_sent_at," +
+    "SELECT o.id, o.status, o.total, COALESCE(o.discount_amount,0) AS discount_amount, o.notes, o.created_at, o.whatsapp_sent_at, o.user_id," +
     "       u.username, u.full_name," +
     "       o.assigned_vendedor_id," +
     "       v.username AS vendedor_username, v.full_name AS vendedor_full_name," +
@@ -3335,6 +3410,7 @@ app.get("/api/admin/ventas", requireAdmin, (req, res) => {
     "  WHERE " + where.join(" AND ") +
     "  ORDER BY COALESCE(d.delivered_at, o.created_at) DESC LIMIT 1000";
   const rows = db.prepare(sql).all(...params);
+  applyUnassignedToRows(rows);
   res.json(rows);
 });
 
@@ -3558,6 +3634,32 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
     "       COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END),0) AS amount_paid" +
     "  FROM account_movements WHERE order_id = ?"
   ).get(id);
+  // Pago "a cuenta" que le toca a este pedido (FIFO) + lo que está disponible
+  // para él si todavía no tiene débito (pedido del catálogo antes de entregar).
+  const orderUser = db.prepare("SELECT user_id FROM orders WHERE id = ?").get(id);
+  const hasDebit = db.prepare("SELECT 1 FROM account_movements WHERE order_id = ? AND type = 'debit' LIMIT 1").get(id);
+  let paidOnAccount = 0;
+  if (orderUser) {
+    if (hasDebit) {
+      paidOnAccount = unassignedCreditAllocations([orderUser.user_id]).get(id) || 0;
+    } else {
+      const ob = db.prepare(
+        "SELECT COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE -amount END),0) AS b" +
+        "  FROM account_movements WHERE user_id = ? AND (order_id IS NULL OR order_id != ?)"
+      ).get(orderUser.user_id, id);
+      paidOnAccount = Math.max(0, Math.min(Number(ob && ob.b) || 0, Number(order.total) || 0));
+    }
+  }
+  paidOnAccount = Math.round(paidOnAccount * 100) / 100;
+  if (hasDebit && paidOnAccount) {
+    pay.balance_due = Math.round(((Number(pay.balance_due) || 0) - paidOnAccount) * 100) / 100;
+    pay.amount_paid = (Number(pay.amount_paid) || 0) + paidOnAccount;
+  }
+  // Pagos imputados a este pedido desde Pagos (no el cobro de la entrega):
+  // para la pantalla de entrega, que tiene que descontarlos de lo a cobrar.
+  const linkedPayments = db.prepare(
+    "SELECT COALESCE(SUM(amount),0) AS s FROM account_movements WHERE order_id = ? AND type = 'credit' AND payment_id IS NOT NULL"
+  ).get(id);
   // Rentabilidad del pedido (SOLO admin): margen bruto contra el costo ACTUAL del
   // producto (products.cost). revenue = Σ unit_price·qty ; cost = Σ cost·qty ;
   // profit = revenue − cost ; margin% = profit/revenue·100. Items cuyo producto
@@ -3626,6 +3728,9 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
     items_discount_total: itemsDiscountTotal,
     balance_due: pay.balance_due,
     amount_paid: pay.amount_paid,
+    paid_on_account: paidOnAccount,
+    // Ya pagado antes de esta entrega (pagos imputados + a cuenta).
+    prepaid_for_delivery: Math.round(((Number(linkedPayments && linkedPayments.s) || 0) + paidOnAccount) * 100) / 100,
     // Efectivo real cobrado del pedido (entrega + pagos), para el split de comisión.
     cash_collected: isAdmin ? cashCollectedForOrder(id) : undefined,
     profitability: profitability,
@@ -8871,6 +8976,11 @@ app.get("/api/admin/accounts/:userId/open-orders", requireAdmin, (req, res) => {
     "  WHERE o.user_id = ? AND o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
     "  ORDER BY o.created_at ASC"
   ).all(userId);
+  const allocO = unassignedCreditAllocations([userId]);
+  for (const r of rows) {
+    const a = allocO.get(r.id) || 0;
+    if (a) { r.balance_due = (Number(r.balance_due) || 0) - a; r.amount_paid = (Number(r.amount_paid) || 0) + a; }
+  }
 
   const out = [];
   for (const r of rows) {

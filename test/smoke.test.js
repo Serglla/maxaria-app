@@ -298,3 +298,32 @@ test("detalle de pedido informa la deuda del cliente por otros pedidos", async (
   // Todo lo que debe el cliente menos este pedido (-300).
   assert.equal(Math.round(d.json.client_other_balance), (await balanceOf(ids.client)) + 300);
 });
+
+test("pago a cuenta (sin pedido) se reparte entre los pedidos del más viejo al más nuevo", async () => {
+  const cr = await admin.post("/api/admin/users", { username: "cliente2", password: "Clave123", full_name: "Cliente Dos", level: 1 });
+  const cid = cr.json.user.id;
+  const mk = async (qty) => {
+    const r = await admin.post("/api/admin/orders", {
+      client_id: cid,
+      items: [{ product_id: ids.p1, product_code: "1001", product_name: "Producto uno", quantity: qty, unit_price: 100 }],
+    });
+    return r.json.order ? r.json.order.id : r.json.id;
+  };
+  const o1 = await mk(1); // $100
+  await new Promise((r) => setTimeout(r, 1100)); // created_at distinto
+  const o2 = await mk(2); // $200
+  const p = await admin.post("/api/admin/payments", { user_id: cid, amount: 150 });
+  assert.equal(p.status, 200, p.text);
+  const d1 = (await admin.get("/api/orders/" + o1)).json;
+  const d2 = (await admin.get("/api/orders/" + o2)).json;
+  assert.equal(Math.round(d1.balance_due), 0, "el más viejo queda saldado");
+  assert.equal(Math.round(d2.balance_due), 150, "al nuevo le toca el resto (50)");
+  assert.equal(Math.round(d2.prepaid_for_delivery), 50);
+  const list = (await admin.get("/api/orders")).json;
+  const l2 = list.find((o) => o.id === o2);
+  assert.equal(Math.round(l2.debit_total - l2.amount_paid), 150);
+  await admin.post("/api/admin/payments", { user_id: cid, amount: 150 });
+  const d2b = (await admin.get("/api/orders/" + o2)).json;
+  assert.equal(Math.round(d2b.balance_due), 0);
+  assert.equal(await balanceOf(cid), 0);
+});

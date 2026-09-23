@@ -3912,9 +3912,15 @@
       if (debtLine && order.client_other_balance != null) {
         var ob = Number(order.client_other_balance) || 0;
         var who = order.full_name || order.username || "El cliente";
+        var poa = Number(order.paid_on_account) || 0;
         debtLine.className = "delivery-client-debt " + (ob < -0.5 ? "dcd-debt" : "dcd-ok");
+        var favorLeft = Math.round((ob - poa) * 100) / 100;
         debtLine.textContent = ob < -0.5
           ? "👤 " + who + " ya debe " + fmtPrice(-ob) + " de otros pedidos (sin contar este)"
+          : poa > 0.5
+            ? "👤 " + who + " ya pagó " + fmtPrice(poa) + " de este pedido por adelantado (pago a cuenta)" +
+              (favorLeft > 0.5 ? " y le quedan " + fmtPrice(favorLeft) + " a favor" : "") +
+              ". No debe nada de otros pedidos."
           : ob > 0.5
             // Saldo a favor = pagos cargados sin asignar a un pedido (típico:
             // pagó por adelantado desde la pestaña Pagos). No está imputado a
@@ -3941,6 +3947,9 @@
         vendor_name: (pf.vendor && pf.vendor.name) || "",
         is_tercerizado: !!(pf.vendor && pf.vendor.is_tercerizado),
         cash_other: Math.max(0, (Number(order.cash_collected) || 0) - existAmt),
+        // Ya pagado antes de la entrega (pagos imputados + pago "a cuenta"):
+        // se descuenta de lo que hay que cobrar al entregar.
+        prepaid: Number(order.prepaid_for_delivery) || 0,
       };
       if (state.isAdmin) {
         // Pre-cargar descuento ya guardado en el pedido (si lo había).
@@ -4055,9 +4064,11 @@
     var net = deliveryNetTotal();
     if (net == null) return null;
     if (deliveryOrderInfo && deliveryOrderInfo.is_tercerizado && deliveryOrderInfo.commission > 0) {
-      return Math.max(0, net - deliveryOrderInfo.commission);
+      net = Math.max(0, net - deliveryOrderInfo.commission);
     }
-    return net;
+    // Lo que el cliente ya pagó antes (a cuenta o imputado a este pedido).
+    var pre = deliveryOrderInfo ? Number(deliveryOrderInfo.prepaid) || 0 : 0;
+    return Math.max(0, Math.round((net - pre) * 100) / 100);
   }
 
   function deliveryAmounts() {
@@ -4076,6 +4087,9 @@
     const amtEl = document.getElementById("delivery-paid-full-amt");
     const neto = deliveryExpectedCollection();
     if (amtEl) amtEl.textContent = neto != null ? "(= " + fmtPrice(neto) + ")" : "";
+    // Si ya estaba todo pagado de antes, el tilde no tiene sentido.
+    const wrapPF = document.getElementById("delivery-paid-full-wrap");
+    if (wrapPF) wrapPF.hidden = neto === 0 && !!(deliveryOrderInfo && deliveryOrderInfo.prepaid > 0);
     if (chk) {
       const a = deliveryAmounts();
       chk.checked = neto != null && neto > 0 && a.ef === neto && a.tr === 0;
@@ -4117,11 +4131,19 @@
       el.textContent = cobrado > 0 ? "Cobrado: " + fmtPrice(cobrado) + breakdown : "";
       return;
     }
-    const deuda = neto - cobrado;
+    const deuda = Math.round((neto - cobrado) * 100) / 100;
+    const pre = deliveryOrderInfo ? Number(deliveryOrderInfo.prepaid) || 0 : 0;
+    if (neto === 0 && cobrado === 0 && pre > 0) {
+      el.classList.add("dcs-ok");
+      el.innerHTML = "✔ Ya estaba pagado: <strong>" + fmtPrice(pre) + "</strong>" +
+        ' <span class="dcs-sub">pago previo del cliente. No hace falta cobrar nada.</span>';
+      return;
+    }
     if (deuda > 0) {
       el.classList.add("dcs-debt");
       el.innerHTML = "⚠ Queda adeudado: <strong>" + fmtPrice(deuda) + "</strong>" +
-        ' <span class="dcs-sub">cobrado ' + fmtPrice(cobrado) + breakdown + " de " + fmtPrice(neto) + "</span>";
+        ' <span class="dcs-sub">cobrado ' + fmtPrice(cobrado) + breakdown + " de " + fmtPrice(neto) +
+        (pre > 0 ? " (ya había pagado " + fmtPrice(pre) + " antes)" : "") + "</span>";
     } else if (deuda === 0) {
       el.classList.add("dcs-ok");
       el.innerHTML = "✔ Pagado completo: <strong>" + fmtPrice(neto) + "</strong>" +
