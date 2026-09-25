@@ -737,7 +737,7 @@
         else resolve(window.confirm(opts.message || ""));
         return;
       }
-      const appName = (state.me && (state.me.app_name || state.me.appName)) || "Maxaria";
+      const appName = (state.me && (state.me.app_name || state.me.appName)) || "ERP Test";
       titleEl.textContent = opts.title || appName;
       bodyEl.textContent = opts.message || "";
       okBtn.textContent = opts.confirmText || (opts.alert ? "Aceptar" : "Confirmar");
@@ -1917,7 +1917,7 @@
   // usuario y contraseña.
   async function shareUserAccess(u) {
     if (!u) return;
-    const appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
+    const appName = (state.me && state.me.app_name) ? state.me.app_name : "ERP Test";
     const origin = location.origin;
     const esCliente = Number(u.level) >= 1 && Number(u.level) <= 4;
     let msg = "¡Hola" + (u.full_name ? " " + u.full_name : "") + "! 👋\n\n";
@@ -3100,9 +3100,9 @@
             '</span>';
         const isNow = i === lastIdx;
         const mesCell = escapeHtml(r.label) + (isNow
-          ? ' <span style="font-size:10px;font-weight:700;color:#1e3a5f;background:#e0e7ff;border-radius:4px;padding:1px 5px">HOY · real</span>'
+          ? ' <span style="font-size:10px;font-weight:700;color:#0f4c5c;background:#dff3f3;border-radius:4px;padding:1px 5px">HOY · real</span>'
           : ' <span class="muted" style="font-size:10px">aprox.</span>');
-        return '<tr' + (isNow ? ' style="background:#f5f7ff"' : '') + '>' +
+        return '<tr' + (isNow ? ' style="background:#f3fbfb"' : '') + '>' +
           '<td>' + mesCell + '</td>' +
           '<td class="num">' + fmtMoney(r.value_cost) + '</td>' +
           '<td class="num">' + dcell + '</td>' +
@@ -3115,7 +3115,7 @@
       if (actStHistChart) { actStHistChart.destroy(); actStHistChart = null; }
       // El último punto (mes actual) es el valor REAL de hoy: lo destacamos.
       const ptRadius = rows.map((r, i) => (i === lastIdx ? 6 : 3));
-      const ptColor = rows.map((r, i) => (i === lastIdx ? "#16a34a" : "#1e3a5f"));
+      const ptColor = rows.map((r, i) => (i === lastIdx ? "#16a34a" : "#0f4c5c"));
       actStHistChart = new Chart(canvas.getContext("2d"), {
         type: "line",
         data: {
@@ -3123,8 +3123,8 @@
           datasets: [{
             label: "Valor a costo",
             data: rows.map((r) => r.value_cost),
-            borderColor: "#1e3a5f",
-            backgroundColor: "rgba(30,58,95,0.08)",
+            borderColor: "#0f4c5c",
+            backgroundColor: "rgba(15,76,92,0.08)",
             fill: true, tension: 0.25, borderWidth: 2,
             pointRadius: ptRadius, pointBackgroundColor: ptColor, pointBorderColor: ptColor,
             pointHoverRadius: rows.map((r, i) => (i === lastIdx ? 8 : 5)),
@@ -6109,9 +6109,9 @@
       '<strong style="font-size:12px;color:#374151">Descuento</strong>' +
       '<span class="oie-disc-unit" style="display:inline-flex;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden">' +
         '<button type="button" class="oie-unit-btn" data-unit="percent" style="border:none;padding:4px 10px;cursor:pointer;font-weight:700;' +
-          (unit !== "amount" ? "background:#1e3a5f;color:#fff" : "background:#fff;color:#374151") + '">%</button>' +
+          (unit !== "amount" ? "background:#0f4c5c;color:#fff" : "background:#fff;color:#374151") + '">%</button>' +
         '<button type="button" class="oie-unit-btn" data-unit="amount" style="border:none;padding:4px 10px;cursor:pointer;font-weight:700;' +
-          (unit === "amount" ? "background:#1e3a5f;color:#fff" : "background:#fff;color:#374151") + '">$</button>' +
+          (unit === "amount" ? "background:#0f4c5c;color:#fff" : "background:#fff;color:#374151") + '">$</button>' +
       '</span>' +
       '<input type="number" class="oie-disc-gen cell-input cell-num" min="0" step="0.01" placeholder="General" ' +
         'style="width:90px" title="Descuento general para todo el pedido">' +
@@ -6135,7 +6135,7 @@
         ctx.setUnit(u);
         barEl.querySelectorAll(".oie-unit-btn").forEach(function(x) {
           var on = x.dataset.unit === u;
-          x.style.background = on ? "#1e3a5f" : "#fff";
+          x.style.background = on ? "#0f4c5c" : "#fff";
           x.style.color = on ? "#fff" : "#374151";
         });
         ctx.rerender();
@@ -7131,7 +7131,7 @@
   // que ya no se invoca desde ningún botón pero se deja por si hace falta.
   function printOrderRemito(order, hidePrices) {
     var statusNames = ORDER_STATUS_LABELS; // fuente única
-    var appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
+    var appName = (state.me && state.me.app_name) ? state.me.app_name : "ERP Test";
     var clientText = order.full_name || order.username || "—";
     var vendText = order.vendedor_full_name || order.vendedor_username || "";
     var date = new Date().toLocaleDateString("es-AR");
@@ -7174,24 +7174,24 @@
       "*{box-sizing:border-box}" +
       "body{font-family:Arial,sans-serif;font-size:13px;margin:28px 32px;color:#111}" +
       ".header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}" +
-      ".header-left h1{font-size:20px;font-weight:800;margin:0 0 2px;color:#1e3a5f}" +
+      ".header-left h1{font-size:20px;font-weight:800;margin:0 0 2px;color:#0f4c5c}" +
       ".header-left .status{font-size:11px;color:#6b7280;margin:0}" +
       ".header-right{text-align:right}" +
       ".header-right .remito-label{font-size:11px;color:#6b7280;margin:0 0 1px;text-transform:uppercase;letter-spacing:.05em}" +
-      ".header-right .remito-num{font-size:22px;font-weight:800;color:#1e3a5f;margin:0}" +
-      ".meta-row{display:flex;gap:0;border-top:2px solid #1e3a5f;border-bottom:1px solid #d1d5db;padding:8px 0;margin-bottom:0;font-size:12.5px}" +
+      ".header-right .remito-num{font-size:22px;font-weight:800;color:#0f4c5c;margin:0}" +
+      ".meta-row{display:flex;gap:0;border-top:2px solid #0f4c5c;border-bottom:1px solid #d1d5db;padding:8px 0;margin-bottom:0;font-size:12.5px}" +
       ".meta-cell{flex:1;padding:0 12px;border-right:1px solid #d1d5db}" +
       ".meta-cell:first-child{padding-left:0}" +
       ".meta-cell:last-child{border-right:none}" +
       ".meta-cell span{display:block;font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;margin-bottom:1px}" +
       ".meta-cell strong{font-size:13px;color:#111}" +
       "table{width:100%;border-collapse:collapse;margin-top:0}" +
-      "thead tr{background:#1e3a5f}" +
+      "thead tr{background:#0f4c5c}" +
       "thead th{color:#fff;font-size:11px;font-weight:700;padding:7px 8px;text-align:left;letter-spacing:.03em;border-right:1px solid rgba(255,255,255,0.25)}" +
       "thead th:last-child{border-right:none}" +
-      "tbody tr{border-bottom:1px solid #1e3a5f}" +
+      "tbody tr{border-bottom:1px solid #0f4c5c}" +
       "tbody tr:nth-child(even){background:#f8fafc}" +
-      "tbody td{padding:6px 8px;font-size:12.5px;vertical-align:middle;border-right:1px solid #1e3a5f}" +
+      "tbody td{padding:6px 8px;font-size:12.5px;vertical-align:middle;border-right:1px solid #0f4c5c}" +
       "tbody td:last-child{border-right:none}" +
       ".col-cod{color:#6b7280;width:60px}" +
       ".col-prod{font-weight:600}" +
@@ -7204,10 +7204,10 @@
       ".chk{display:inline-block;width:14px;height:14px;border:1.5px solid #9ca3af;border-radius:3px}" +
       ".firmas{display:flex;gap:24px;margin-top:46px}" +
       ".firmas div{flex:1;border-top:1px solid #9ca3af;padding-top:4px;font-size:11px;color:#6b7280}" +
-      ".sin-valores{font-size:13px;font-weight:800;color:#1e3a5f;letter-spacing:.04em}" +
-      ".summary-row{display:flex;justify-content:flex-end;align-items:baseline;gap:32px;border-top:2px solid #1e3a5f;padding:10px 8px 0}" +
+      ".sin-valores{font-size:13px;font-weight:800;color:#0f4c5c;letter-spacing:.04em}" +
+      ".summary-row{display:flex;justify-content:flex-end;align-items:baseline;gap:32px;border-top:2px solid #0f4c5c;padding:10px 8px 0}" +
       ".summary-meta{font-size:12px;color:#6b7280}" +
-      ".grand-total{font-size:20px;font-weight:800;color:#1e3a5f}" +
+      ".grand-total{font-size:20px;font-weight:800;color:#0f4c5c}" +
       ".notes{margin-top:12px;font-size:12px;color:#6b7280;font-style:italic}" +
       ".ref{margin-top:10px;font-size:11px;color:#9ca3af;font-style:italic}" +
       "@media print{body{margin:14px 18px}}" +
@@ -13060,7 +13060,7 @@
     if (!list.length) { els.accCobranza.hidden = true; els.accCobranza.innerHTML = ""; return; }
 
     var totalDeuda = list.reduce(function (s, a) { return s + Math.abs(Number(a.balance) || 0); }, 0);
-    var appName = (state.me && state.me.app_name) || "Maxaria";
+    var appName = (state.me && state.me.app_name) || "ERP Test";
 
     var items = list.map(function (a) {
       var nombre = a.full_name || a.username || "";
@@ -14305,7 +14305,7 @@
     }
     bEls.tbody.innerHTML = list.map((b) => {
       // Chip "Del carrito" si el presupuesto fue creado automaticamente desde un pedido
-      const fromCart = b.order_id ? ' <span title="Generado desde carrito" style="font-size:11px;background:#dbeafe;color:#1d4ed8;border-radius:4px;padding:1px 5px">🛒</span>' : "";
+      const fromCart = b.order_id ? ' <span title="Generado desde carrito" style="font-size:11px;background:#d5f1f2;color:#0b6670;border-radius:4px;padding:1px 5px">🛒</span>' : "";
       return '<tr style="cursor:pointer" data-budget-id="' + b.id + '">' +
         '<td style="padding:7px 10px;font-weight:600">' + escapeHtml(b.number) + fromCart + '</td>' +
         '<td style="padding:7px 10px">' + formatDate(b.created_at) + '</td>' +
@@ -14576,7 +14576,7 @@
       const surPct = bEls.surcharge ? bEls.surcharge.value : 0;
       const notes = bEls.notes ? bEls.notes.value : "";
       const date = new Date().toLocaleDateString("es-AR");
-      const appName = (state.me && state.me.app_name) ? state.me.app_name : "Maxaria";
+      const appName = (state.me && state.me.app_name) ? state.me.app_name : "ERP Test";
 
       let subtotal = 0;
       bState.items.forEach((it) => { subtotal += Number(it.subtotal) || 0; });
@@ -14598,7 +14598,7 @@
         "<title>Presupuesto " + num + "</title>" +
         "<style>body{font-family:sans-serif;font-size:13px;margin:24px}" +
         "h1{font-size:18px}table{width:100%;border-collapse:collapse;margin-top:12px}" +
-        "th,td{padding:6px 8px;border-bottom:1px solid #1e3a5f;text-align:left}" +
+        "th,td{padding:6px 8px;border-bottom:1px solid #0f4c5c;text-align:left}" +
         "th{background:#f1f5f9;font-size:12px;color:#6b7280}" +
         ".total-box{margin-top:12px;text-align:right;font-size:14px}" +
         ".grand-total{font-size:18px;font-weight:700;color:#d97706}</style>" +
@@ -15704,7 +15704,7 @@
     const sid = Number(r.source_id) || 0;
     if (sid && r.type === "compra") {
       return '<a href="#" class="stock-mov-detail-link" data-purchase-id="' + sid +
-             '" style="color:#1e3a5f;text-decoration:underline;cursor:pointer;font-weight:600">' + note + '</a>';
+             '" style="color:#0f4c5c;text-decoration:underline;cursor:pointer;font-weight:600">' + note + '</a>';
     }
     return note;
   }
@@ -15947,7 +15947,7 @@
     });
     // Resalta el mes seleccionado en los selectores de período
     const selYm = rptSelYm();
-    const ventasBg = months.map((m) => (m.ym === selYm ? "#1e3a5f" : "#2563eb"));
+    const ventasBg = months.map((m) => (m.ym === selYm ? "#0f4c5c" : "#0e7c86"));
     if (rptChartInstance) { rptChartInstance.destroy(); rptChartInstance = null; }
     rptChartInstance = new Chart(canvas, {
       data: {

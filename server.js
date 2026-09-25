@@ -1328,12 +1328,12 @@ if (getSetting("price_changes_visible_levels") == null) {
 
 // Default: nombre de la aplicacion. Editable desde /admin -> Configuracion.
 if (getSetting("app_name") == null) {
-  setSetting("app_name", "Maxaria");
+  setSetting("app_name", process.env.APP_NAME || "ERP Test");
 }
 
 // Devuelve el nombre de la app configurado (nunca null).
 function getAppName() {
-  return getSetting("app_name", "Maxaria") || "Maxaria";
+  return getSetting("app_name", "ERP Test") || "ERP Test";
 }
 
 // Devuelve un Set de IDs de categoria permitidos para el usuario dado.
@@ -1532,9 +1532,9 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "https://cdnjs.cloudflare.com"],
       scriptSrcAttr: ["'none'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "blob:", "https:"],
-      fontSrc: ["'self'", "data:"],
+      fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
       connectSrc: ["'self'"],
       frameSrc: ["'self'", "blob:"],
       frameAncestors: ["'self'"],

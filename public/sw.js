@@ -201,7 +201,7 @@ self.addEventListener("push", (event) => {
   try { data = event.data ? event.data.json() : {}; } catch (_) {
     data = { body: event.data ? event.data.text() : "" };
   }
-  const title = data.title || "Maxaria";
+  const title = data.title || "ERP Test";
   event.waitUntil(
     self.registration.showNotification(title, {
       body: data.body || "",

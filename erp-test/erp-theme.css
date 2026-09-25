@@ -1,0 +1,164 @@
+/* ============================================================
+   ERP TEST — capa estética de la demo (solo rama erp-test)
+   Se carga DESPUÉS de styles.css. No existe en Maxaria (master).
+   ============================================================ */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+
+:root {
+  --brand:        #0f4c5c;
+  --brand-2:      #14707f;
+  --brand-soft:   #eef7f7;
+  --brand-soft-2: #d3ecee;
+  --brand-line:   #c5e3e5;
+  --accent:       #ea580c;
+  --accent-soft:  #fff4ec;
+
+  --radius:    16px;
+  --radius-sm: 10px;
+  --shadow:       0 1px 2px rgba(15,23,42,.04), 0 6px 20px rgba(15,76,92,.07);
+  --shadow-hover: 0 2px 6px rgba(15,23,42,.06), 0 12px 28px rgba(15,76,92,.12);
+}
+
+/* ---------- Base ---------- */
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  background: #f3f6f6;
+  letter-spacing: -0.005em;
+}
+h1, h2, h3 { letter-spacing: -0.02em; }
+
+/* ---------- Topbar ---------- */
+.topbar {
+  background: linear-gradient(100deg, #0b3d49 0%, #0f4c5c 55%, #14707f 100%);
+  box-shadow: 0 2px 12px rgba(11,61,73,.25);
+}
+.topbar-brand strong { font-weight: 800; letter-spacing: .2px; }
+.topbar-brand strong::before {
+  content: "";
+  display: inline-block;
+  width: 22px; height: 22px;
+  margin-right: 8px;
+  vertical-align: -5px;
+  border-radius: 6px;
+  background: url("/icons/icon-192.png") center / cover no-repeat;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.25);
+}
+
+/* ---------- Botones ---------- */
+.btn { border-radius: 10px; font-weight: 600; }
+.btn-primary {
+  background: var(--brand-2);
+  box-shadow: 0 1px 2px rgba(15,76,92,.2), 0 4px 12px rgba(20,112,127,.18);
+}
+.btn-primary:hover { background: var(--brand); }
+
+/* ---------- Inputs ---------- */
+input[type="text"], input[type="search"], input[type="number"], input[type="email"],
+input[type="password"], input[type="tel"], input[type="date"], select, textarea {
+  border-radius: 10px;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 3px solid rgba(20,112,127,.22);
+  outline-offset: 0;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar { background: #fbfdfd; border-right-color: #e3ecec; }
+
+/* ============================================================
+   LOGIN de demo — pantalla dividida con presentación
+   ============================================================ */
+.login-page.erp-login {
+  display: block;
+  padding: 0;
+  background: #f3f6f6;
+}
+.erp-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+}
+.erp-pitch {
+  position: relative;
+  overflow: hidden;
+  color: #fff;
+  padding: 56px 56px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  background:
+    radial-gradient(circle at 85% 15%, rgba(249,115,22,.14) 0, transparent 38%),
+    radial-gradient(circle at 10% 90%, rgba(45,212,191,.22) 0, transparent 45%),
+    linear-gradient(145deg, #0b3d49 0%, #0f4c5c 50%, #14707f 100%);
+}
+.erp-logo { display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 20px; }
+.erp-logo img { width: 44px; height: 44px; border-radius: 12px; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+.erp-tag {
+  display: inline-block;
+  font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.22);
+  padding: 4px 10px; border-radius: 999px;
+}
+.erp-pitch h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.08; margin: 12px 0 10px; font-weight: 800; }
+.erp-pitch h2 span { color: #fdba74; }
+.erp-pitch p.lead { font-size: 17px; line-height: 1.55; color: #d6eeef; max-width: 520px; margin: 0; }
+.erp-features { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 560px; }
+.erp-features li {
+  display: flex; gap: 10px; align-items: flex-start;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 14px; padding: 12px 14px; font-size: 14px; line-height: 1.35;
+}
+.erp-features li b { display: block; font-size: 14px; }
+.erp-features li small { color: #bfe3e5; }
+.erp-features .ico { font-size: 20px; line-height: 1; }
+.erp-foot { margin-top: auto; font-size: 13px; color: #a9d3d6; }
+
+.erp-access {
+  display: grid;
+  place-items: center;
+  padding: 40px 24px;
+}
+.erp-access .login-card {
+  max-width: 400px;
+  padding: 36px 32px;
+  border-radius: 20px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 20px 50px rgba(15,76,92,.12);
+}
+.erp-access .login-brand { text-align: left; }
+.erp-access .login-brand h1 { font-size: 24px; font-weight: 800; color: var(--ink); }
+.erp-access .login-form input {
+  border-radius: 10px;
+  padding: 11px 12px;
+  border: 1px solid #d5dfe0;
+}
+.erp-access .login-form input:focus { outline: 3px solid rgba(20,112,127,.2); border-color: var(--brand-2); }
+.erp-access .login-form button { padding: 12px; font-size: 15px; }
+
+.erp-demo { margin-top: 22px; border-top: 1px dashed #d5dfe0; padding-top: 18px; }
+.erp-demo h3 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); }
+.erp-demo p { margin: 0 0 12px; font-size: 13px; color: var(--ink-3); }
+.erp-demo-list { display: grid; gap: 8px; }
+.erp-demo-btn {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  text-align: left; background: #fff;
+  border: 1px solid #dde7e8; border-radius: 12px; padding: 10px 12px;
+  transition: border-color .15s, box-shadow .15s, transform .05s;
+}
+.erp-demo-btn:hover { border-color: var(--brand-2); box-shadow: 0 4px 14px rgba(20,112,127,.12); }
+.erp-demo-btn:active { transform: translateY(1px); }
+.erp-demo-btn .av {
+  width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+  font-size: 17px; background: var(--brand-soft); flex-shrink: 0;
+}
+.erp-demo-btn b { display: block; font-size: 14px; color: var(--ink); }
+.erp-demo-btn small { color: var(--ink-2); font-size: 12px; }
+.erp-demo-btn .go { margin-left: auto; white-space: nowrap; color: var(--brand-2); font-weight: 700; font-size: 13px; }
+
+@media (max-width: 900px) {
+  .erp-shell { grid-template-columns: 1fr; }
+  .erp-pitch { padding: 32px 22px 28px; gap: 18px; }
+  .erp-features { display: none; }
+  .erp-pitch p.lead { font-size: 15px; }
+  .erp-foot { display: none; }
+  .erp-access { padding: 24px 16px 40px; }
+}

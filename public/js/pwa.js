@@ -70,7 +70,7 @@
     if (document.getElementById("pwa-install-style")) return;
     var css =
       ".pwa-install{position:fixed;left:10px;right:10px;bottom:10px;z-index:3000;" +
-      "background:#1e3a5f;color:#fff;border-radius:14px;padding:12px 14px;" +
+      "background:#0f4c5c;color:#fff;border-radius:14px;padding:12px 14px;" +
       "box-shadow:0 10px 30px rgba(0,0,0,.35);display:flex;align-items:center;gap:12px;" +
       "font-family:inherit;animation:pwaUp .25s ease-out}" +
       "@keyframes pwaUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}" +
