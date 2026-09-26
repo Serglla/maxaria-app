@@ -351,6 +351,10 @@ try { db.exec("ALTER TABLE orders ADD COLUMN stock_discounted INTEGER NOT NULL D
 //   NULL = el cliente no tenia lista personalizada al momento del pedido, por
 //   lo que no hay ganancia diferencial para el vendedor.
 try { db.exec("ALTER TABLE users ADD COLUMN is_tercerizado INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+// Lista de precios que define el COSTO de un vendedor (catalogo sin cliente,
+// "Ver cambios"). NULL = usa vendedor_price_level (nivel base 1..4).
+// Separada de price_list_id, que es la lista de un CLIENTE.
+try { db.exec("ALTER TABLE users ADD COLUMN vendedor_cost_list_id INTEGER REFERENCES price_lists(id)"); } catch (_) {}
 try { db.exec("ALTER TABLE order_items ADD COLUMN vendedor_cost_unit INTEGER"); } catch (_) {}
 
 // Migracion: Pedido unificado del vendedor tercerizado.
@@ -808,6 +812,138 @@ db.exec(
   "  quantity INTEGER NOT NULL DEFAULT 1" +
   ");"
 );
+
+// ─── Pedidos a proveedor ──────────────────────────────────────────────────────
+// Misma tabla que las cotizaciones, distinguidas por kind. Un PEDIDO es lo que
+// se le pide a un proveedor que no cotiza: se arma, se manda, y despues el
+// proveedor factura lo que tiene (a veces menos, a veces con otro precio y en
+// una o varias facturas). Cada factura se carga como una Compra vinculada
+// (purchase_orders.request_id). Estado de un pedido:
+//   borrador / enviado  -> todavia sin facturas
+//   parcial             -> hay facturas pero falta algo (queda pendiente)
+//   facturado           -> se facturo todo lo pedido
+//   cerrado             -> el admin lo dio por terminado (lo que falta ya no viene)
+// Columnas de los items de cotizacion: se repiten ACA (despues del CREATE TABLE)
+// porque las migraciones de arriba corren antes de que la tabla exista en una
+// base nueva, y ahi fallaban en silencio (instancia nueva sin unit_price).
+try { db.exec("ALTER TABLE purchase_request_items ADD COLUMN unit_price INTEGER"); } catch (_) {}
+try { db.exec("ALTER TABLE purchase_request_items ADD COLUMN pack_mode TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE purchase_request_items ADD COLUMN comprimidos_per_unit INTEGER"); } catch (_) {}
+try { db.exec("ALTER TABLE purchase_requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'cotizacion'"); } catch (_) {}
+try { db.exec("ALTER TABLE purchase_requests ADD COLUMN closed_at TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE purchase_orders ADD COLUMN request_id INTEGER REFERENCES purchase_requests(id)"); } catch (_) {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_purchase_orders_request ON purchase_orders(request_id)"); } catch (_) {}
+// Faltante derivado a otro proveedor: lo que un proveedor no facturo y se le
+// pidio a otro. Deja de estar pendiente en el pedido original (no se cuenta dos
+// veces en Reposicion) y queda el rastro de a que pedido fue.
+db.exec(
+  "CREATE TABLE IF NOT EXISTS purchase_request_moves (" +
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+  "  from_request_id INTEGER NOT NULL REFERENCES purchase_requests(id) ON DELETE CASCADE," +
+  "  from_item_id INTEGER NOT NULL," +
+  "  to_request_id INTEGER NOT NULL REFERENCES purchase_requests(id) ON DELETE CASCADE," +
+  "  product_id INTEGER," +
+  "  quantity REAL NOT NULL," +
+  "  created_by INTEGER," +
+  "  created_at TEXT NOT NULL DEFAULT (datetime('now'))" +
+  ");" +
+  "CREATE INDEX IF NOT EXISTS idx_prm_from ON purchase_request_moves(from_request_id);" +
+  "CREATE INDEX IF NOT EXISTS idx_prm_to ON purchase_request_moves(to_request_id);"
+);
+
+const PEDIDO_OPEN_STATUSES = ["borrador", "enviado", "parcial"];
+// Costo actual de un producto: snapshot del "costo pedido" si no viene precio.
+function pedidoCostOf(productId) {
+  const r = db.prepare("SELECT cost FROM products WHERE id = ?").get(productId);
+  return r && Number(r.cost) > 0 ? Math.round(Number(r.cost)) : null;
+}
+
+// Items de un pedido con lo facturado hasta ahora (suma de las compras
+// vinculadas). Si un producto aparece en dos lineas del pedido, lo facturado se
+// reparte en orden. invoiced_cost = costo unitario promedio facturado.
+function pedidoProgress(requestId) {
+  const items = db.prepare(
+    "SELECT * FROM purchase_request_items WHERE request_id = ? ORDER BY id"
+  ).all(requestId);
+  const inv = new Map();
+  for (const r of db.prepare(
+    "SELECT pi.product_id AS pid, SUM(pi.quantity) AS qty, SUM(pi.subtotal) AS amount" +
+    "  FROM purchase_items pi JOIN purchase_orders po ON po.id = pi.purchase_order_id" +
+    " WHERE po.request_id = ? AND pi.product_id IS NOT NULL GROUP BY pi.product_id"
+  ).all(requestId)) {
+    inv.set(r.pid, { left: Number(r.qty) || 0, qty: Number(r.qty) || 0, amount: Number(r.amount) || 0 });
+  }
+  // Lo derivado a otros proveedores, por item.
+  const moved = new Map();
+  for (const m of db.prepare(
+    "SELECT m.from_item_id AS item_id, SUM(m.quantity) AS qty, GROUP_CONCAT(DISTINCT m.to_request_id) AS to_ids," +
+    "       GROUP_CONCAT(DISTINCT s.name) AS to_names" +
+    "  FROM purchase_request_moves m" +
+    "  LEFT JOIN purchase_requests r ON r.id = m.to_request_id" +
+    "  LEFT JOIN suppliers s ON s.id = r.supplier_id" +
+    " WHERE m.from_request_id = ? GROUP BY m.from_item_id"
+  ).all(requestId)) moved.set(m.item_id, m);
+  let ordered = 0, invoiced = 0, movedTotal = 0;
+  const out = items.map((it) => {
+    const q = Number(it.quantity) || 0;
+    const e = it.product_id ? inv.get(it.product_id) : null;
+    const got = e ? Math.min(q, e.left) : 0;
+    if (e) e.left -= got;
+    const mv = moved.get(it.id);
+    const mq = mv ? Math.min(Math.max(0, q - got), Number(mv.qty) || 0) : 0;
+    ordered += q;
+    invoiced += got;
+    movedTotal += mq;
+    return Object.assign({}, it, {
+      invoiced_qty: got,
+      moved_qty: mq,
+      moved_to: mv ? { ids: String(mv.to_ids || ""), names: mv.to_names || "" } : null,
+      pending_qty: Math.max(0, q - got - mq),
+      invoiced_cost: e && e.qty > 0 ? Math.round((e.amount / e.qty) * 100) / 100 : null,
+    });
+  });
+  // Productos facturados que NO estaban en el pedido (el proveedor mando otra cosa).
+  const extras = [];
+  for (const [pid, e] of inv) {
+    if (!items.some((it) => it.product_id === pid)) extras.push({ product_id: pid, qty: e.qty });
+    else if (e.left > 0) extras.push({ product_id: pid, qty: e.left, over: true });
+  }
+  return { items: out, ordered, invoiced, moved: movedTotal, extras };
+}
+
+// Recalcula el estado de un pedido a partir de sus facturas. No toca los
+// pedidos cerrados a mano (ni las cotizaciones).
+function recomputePedidoStatus(requestId) {
+  if (!requestId) return null;
+  const row = db.prepare("SELECT id, kind, status FROM purchase_requests WHERE id = ?").get(requestId);
+  if (!row || row.kind !== "pedido" || row.status === "cerrado") return row ? row.status : null;
+  const pg = pedidoProgress(requestId);
+  let status;
+  const resolved = pg.invoiced + pg.moved;
+  if (resolved >= pg.ordered && pg.ordered > 0) status = pg.invoiced > 0 ? "facturado" : "derivado";
+  else if (resolved <= 0) status = row.status === "borrador" ? "borrador" : "enviado";
+  else status = "parcial";
+  if (status !== row.status) {
+    db.prepare("UPDATE purchase_requests SET status = ?, closed_at = " +
+      (status === "facturado" || status === "derivado" ? "datetime('now')" : "NULL") + " WHERE id = ?").run(status, requestId);
+  }
+  return status;
+}
+
+// Unidades pedidas a proveedores que todavia no se facturaron (pedidos
+// abiertos). Reposicion las cuenta como "en camino" para no sugerirlas dos veces.
+function pedidosPendingByProduct() {
+  const map = new Map();
+  const ph = PEDIDO_OPEN_STATUSES.map(() => "?").join(",");
+  for (const r of db.prepare(
+    "SELECT id FROM purchase_requests WHERE kind = 'pedido' AND status IN (" + ph + ")"
+  ).all(...PEDIDO_OPEN_STATUSES)) {
+    for (const it of pedidoProgress(r.id).items) {
+      if (it.product_id && it.pending_qty > 0) map.set(it.product_id, (map.get(it.product_id) || 0) + it.pending_qty);
+    }
+  }
+  return map;
+}
 
 // ─── Caja: cuentas y movimientos ─────────────────────────────────────────────
 db.exec(
@@ -1687,6 +1823,20 @@ function priceListWouldCycle(parentId, selfId) {
 //   - Si no: { kind: "level", column }
 //     -> efectivo = products.<column> directo
 // Para nivel admin/vendedor sin contexto, devolvemos config por nivel.
+// Config de precio de la lista de COSTO de un vendedor (users.vendedor_cost_list_id).
+// null si no tiene, si la lista no existe o esta inactiva (cae al nivel base).
+function vendorCostListConfig(listId) {
+  const id = Number(listId) || 0;
+  if (!id) return null;
+  const row = db.prepare(
+    "SELECT id, name, base_level, base_list_id, markup_percent, active FROM price_lists WHERE id = ?"
+  ).get(id);
+  if (!row || !row.active) return null;
+  const r = resolvePriceListConfig(row);
+  if (!r) return null;
+  return { kind: "list", listId: row.id, column: r.column, markup_percent: r.markup_percent };
+}
+
 function getEffectivePriceConfig(userId, level) {
   if (userId && [1, 2, 3, 4].includes(Number(level))) {
     const row = db.prepare(
@@ -1786,6 +1936,8 @@ const ADMIN_SECTIONS = [
   { key: "pagos",       label: "Pagos" },
   { key: "cuentas",     label: "Cuentas" },
   { key: "proveedores", label: "Proveedores" },
+  { key: "cotizaciones", label: "Cotizaciones" },
+  { key: "pedidos-prov", label: "Pedidos a proveedor" },
   { key: "compras",     label: "Compras" },
   { key: "recepcion",   label: "Recepción" },
   { key: "reposicion",  label: "Reposición" },
@@ -1802,6 +1954,7 @@ const ADMIN_SECTION_KEYS = new Set(ADMIN_SECTIONS.map((s) => s.key));
 function sectionForAdminRequest(p) {
   const has = (frag) => p.indexOf("/api/admin/" + frag) === 0;
   if (has("admins"))      return "administradores";
+  if (has("pedidos-prov")) return "pedidos-prov";
   if (has("dashboard"))   return "dashboard";
   if (has("products") || has("import-excel") || has("stock-adjustments") || has("catalog")) return "productos";
   if (has("price-lists")) return "price-lists";
@@ -1834,10 +1987,10 @@ function sectionForAdminRequest(p) {
 // propia. "usuarios" queda AFUERA a proposito (expone datos sensibles); para
 // listar clientes esta /api/clients.
 const SHARED_READ_SECTIONS = {
-  productos:     ["pedidos", "ventas", "compras", "recepcion", "armado", "entregas", "price-lists", "reposicion"],
-  proveedores:   ["compras", "recepcion", "gastos", "reposicion"],
+  productos:     ["pedidos", "ventas", "compras", "recepcion", "armado", "entregas", "price-lists", "reposicion", "cotizaciones", "pedidos-prov"],
+  proveedores:   ["compras", "recepcion", "gastos", "reposicion", "cotizaciones", "pedidos-prov"],
   vendedores:    ["pedidos", "ventas", "entregas", "reportes", "actividad", "cuentas", "pagos", "usuarios"],
-  "price-lists": ["pedidos", "ventas", "usuarios", "productos"],
+  "price-lists": ["pedidos", "ventas", "usuarios", "productos", "vendedores"],
 };
 
 // Permisos efectivos de un usuario level 99: { isSuperadmin, sections:Set }.
@@ -2686,6 +2839,10 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
       };
     }
   }
+  if (!cfg && level === 5 && !req.session.vendedorClientId) {
+    const vr = db.prepare("SELECT vendedor_cost_list_id, is_tercerizado FROM users WHERE id = ?").get(req.session.userId) || {};
+    if (Number(vr.is_tercerizado) === 1) cfg = vendorCostListConfig(vr.vendedor_cost_list_id) || undefined;
+  }
   if (!cfg) {
     const useListConfig = level !== 99;
     cfg = useListConfig ? getEffectivePriceConfig(targetUserId, effectiveLevel) : { kind: "level" };
@@ -2922,10 +3079,13 @@ app.get("/api/products", requireLogin, (req, res) => {
       //     (cartel "Seleccioná un cliente").
       // Lo leemos de la DB para reflejar cambios del admin sin re-login.
       const vRow = db.prepare(
-        "SELECT vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
+        "SELECT vendedor_price_level, vendedor_cost_list_id, is_tercerizado FROM users WHERE id = ?"
       ).get(req.session.userId) || {};
       const vpl = Number(vRow.vendedor_price_level) || 0;
-      if (Number(vRow.is_tercerizado) === 1 && [1, 2, 3, 4].includes(vpl)) {
+      const vCostList = Number(vRow.is_tercerizado) === 1 ? vendorCostListConfig(vRow.vendedor_cost_list_id) : null;
+      if (vCostList) {
+        vendorCostCfg = vCostList;
+      } else if (Number(vRow.is_tercerizado) === 1 && [1, 2, 3, 4].includes(vpl)) {
         vendorCostCfg = { kind: "level", column: priceColumnFor(vpl) };
       } else {
         noPrice = true; // vendedor propio sin cliente, o sin nivel: "Seleccioná un cliente"
@@ -5640,6 +5800,13 @@ app.delete("/api/admin/price-lists/:id", requireAdmin, (req, res) => {
              "Desasignala primero o desactiva la lista."
     });
   }
+  const vUsage = db.prepare("SELECT COUNT(*) AS n FROM users WHERE vendedor_cost_list_id = ?").get(id);
+  if (vUsage.n > 0) {
+    return res.status(409).json({
+      error: "No se puede borrar: hay " + vUsage.n + " vendedor(es) con esta lista como costo. " +
+             "Cambiales el costo primero o desactiva la lista."
+    });
+  }
   const deps = db.prepare("SELECT COUNT(*) AS n FROM price_lists WHERE base_list_id = ?").get(id);
   if (deps.n > 0) {
     return res.status(409).json({
@@ -6403,8 +6570,9 @@ app.get("/api/admin/activity/dead-stock", requireAdmin, (req, res) => {
 app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT u.id, u.username, u.full_name, u.phone, u.whatsapp_number, u.email, u.active," +
-    "       u.vendedor_price_level, u.price_list_id, u.is_tercerizado," +
+    "       u.vendedor_price_level, u.vendedor_cost_list_id, u.price_list_id, u.is_tercerizado," +
     "       u.created_at, u.last_login_at," +
+    "       (SELECT COUNT(*) FROM users c WHERE c.assigned_vendedor_id = u.id AND c.level BETWEEN 1 AND 4) AS clients_count," +
     "       COUNT(DISTINCT o.id) AS total_orders," +
     "       COUNT(DISTINCT d.id) AS total_deliveries" +
     "  FROM users u" +
@@ -6415,6 +6583,119 @@ app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
     "  ORDER BY u.username"
   ).all();
   res.json(rows);
+});
+
+// Clientes (level 1-4) para el modal "Editar vendedor": todos, con el vendedor
+// que tiene asignado cada uno, para poder sumar/quitar desde el vendedor.
+app.get("/api/admin/vendedores/:id/clients", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const v = db.prepare("SELECT id FROM users WHERE id = ? AND level = 5").get(id);
+  if (!v) return res.status(404).json({ error: "Vendedor no encontrado" });
+  const rows = db.prepare(
+    "SELECT c.id, c.username, c.full_name, c.level, c.active, c.assigned_vendedor_id," +
+    "       COALESCE(NULLIF(v.full_name, ''), v.username) AS vendedor_name" +
+    "  FROM users c LEFT JOIN users v ON v.id = c.assigned_vendedor_id" +
+    "  WHERE c.level BETWEEN 1 AND 4" +
+    "  ORDER BY c.active DESC, COALESCE(NULLIF(c.full_name, ''), c.username) COLLATE NOCASE"
+  ).all();
+  res.json(rows);
+});
+
+// Editar un vendedor desde su modal (seccion Vendedores). Todo opcional:
+// username, password, full_name, phone, whatsapp_number, active, is_tercerizado,
+// vendedor_price_level (1..4), vendedor_cost_list_id (null = por nivel) y
+// client_ids (lista COMPLETA de clientes asignados a este vendedor: los que no
+// vienen y hoy son suyos quedan sin vendedor; los de otro vendedor se reasignan).
+app.patch("/api/admin/vendedores/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const v = db.prepare("SELECT id, username FROM users WHERE id = ? AND level = 5").get(id);
+  if (!v) return res.status(404).json({ error: "Vendedor no encontrado" });
+  const b = req.body || {};
+  const sets = [];
+  const vals = [];
+
+  if ("username" in b) {
+    const uname = String(b.username || "").trim().toLowerCase();
+    if (!isValidUsername(uname))
+      return res.status(400).json({ error: "Usuario invalido: 3-32 caracteres, solo letras, numeros, _ . -" });
+    const clash = db.prepare("SELECT id FROM users WHERE username = ? AND id != ?").get(uname, id);
+    if (clash) return res.status(409).json({ error: "Ya existe un usuario con ese nombre" });
+    sets.push("username = ?"); vals.push(uname);
+  }
+  if ("password" in b && b.password != null && String(b.password) !== "") {
+    const pw = String(b.password);
+    if (pw.length < 6) return res.status(400).json({ error: "La contrasena debe tener al menos 6 caracteres" });
+    sets.push("password_hash = ?"); vals.push(bcrypt.hashSync(pw, 10));
+    sets.push("plain_password = NULL");
+  }
+  if ("full_name" in b) { sets.push("full_name = ?"); vals.push(String(b.full_name || "").trim().slice(0, 120) || null); }
+  if ("phone" in b) { sets.push("phone = ?"); vals.push(String(b.phone || "").trim().slice(0, 40) || null); }
+  if ("whatsapp_number" in b) {
+    sets.push("whatsapp_number = ?");
+    vals.push(String(b.whatsapp_number || "").replace(/[^0-9+\s\-()]/g, "").trim().slice(0, 40) || null);
+  }
+  if ("active" in b) { sets.push("active = ?"); vals.push(b.active ? 1 : 0); }
+  if ("is_tercerizado" in b) { sets.push("is_tercerizado = ?"); vals.push(b.is_tercerizado ? 1 : 0); }
+  if ("vendedor_price_level" in b) {
+    const vpl = Number(b.vendedor_price_level);
+    if (![1, 2, 3, 4].includes(vpl)) return res.status(400).json({ error: "Nivel de costo invalido" });
+    sets.push("vendedor_price_level = ?"); vals.push(vpl);
+  }
+  if ("vendedor_cost_list_id" in b) {
+    const raw = b.vendedor_cost_list_id;
+    if (raw === null || raw === "" || raw === 0 || raw === "0") {
+      sets.push("vendedor_cost_list_id = ?"); vals.push(null);
+    } else {
+      const lid = Number(raw);
+      const pl = lid ? db.prepare("SELECT id, active FROM price_lists WHERE id = ?").get(lid) : null;
+      if (!pl) return res.status(400).json({ error: "Lista de precios no encontrada" });
+      if (!pl.active) return res.status(400).json({ error: "La lista de precios esta inactiva" });
+      sets.push("vendedor_cost_list_id = ?"); vals.push(lid);
+    }
+  }
+
+  let clientIds = null;
+  if ("client_ids" in b) {
+    if (!Array.isArray(b.client_ids)) return res.status(400).json({ error: "client_ids debe ser una lista" });
+    clientIds = [...new Set(b.client_ids.map(Number).filter((n) => n > 0))];
+    if (clientIds.length) {
+      const ph = clientIds.map(() => "?").join(",");
+      const ok = db.prepare("SELECT COUNT(*) AS n FROM users WHERE level BETWEEN 1 AND 4 AND id IN (" + ph + ")").get(...clientIds).n;
+      if (ok !== clientIds.length) return res.status(400).json({ error: "Hay clientes invalidos en la lista" });
+    }
+  }
+  if (!sets.length && clientIds === null) return res.status(400).json({ error: "Nada para actualizar" });
+
+  let assigned = 0, removed = 0;
+  try {
+    db.transaction(() => {
+      if (sets.length) {
+        vals.push(id);
+        db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+      }
+      if (clientIds !== null) {
+        const current = db.prepare(
+          "SELECT id FROM users WHERE assigned_vendedor_id = ? AND level BETWEEN 1 AND 4"
+        ).all(id).map((r) => r.id);
+        const want = new Set(clientIds);
+        const unset = db.prepare("UPDATE users SET assigned_vendedor_id = NULL WHERE id = ?");
+        const setV = db.prepare("UPDATE users SET assigned_vendedor_id = ? WHERE id = ?");
+        for (const cid of current) if (!want.has(cid)) { unset.run(cid); removed++; }
+        const cur = new Set(current);
+        for (const cid of clientIds) if (!cur.has(cid)) { setV.run(id, cid); assigned++; }
+      }
+    })();
+  } catch (e) {
+    if (String(e.message || "").includes("UNIQUE")) return res.status(409).json({ error: "Ya existe un usuario con ese nombre" });
+    throw e;
+  }
+  logActivity(req, "vendedor_editado", { vendedor_id: id, assigned, removed });
+  const row = db.prepare(
+    "SELECT id, username, full_name, phone, whatsapp_number, active, vendedor_price_level, vendedor_cost_list_id, is_tercerizado," +
+    "       (SELECT COUNT(*) FROM users c WHERE c.assigned_vendedor_id = users.id AND c.level BETWEEN 1 AND 4) AS clients_count" +
+    "  FROM users WHERE id = ?"
+  ).get(id);
+  res.json({ ok: true, vendedor: row, assigned, removed });
 });
 
 // Asignar (o desasignar) un vendedor a un pedido (solo admin)
@@ -6973,7 +7254,7 @@ app.get("/api/admin/purchases", requireAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT po.id, po.supplier_id, s.name AS supplier_name," +
     "       po.reference, po.notes, po.total_cost, po.received_at, po.created_at," +
-    "       COALESCE(po.received, 0) AS received," +
+    "       COALESCE(po.received, 0) AS received, po.request_id," +
     "       COUNT(pi.id) AS items_count" +
     "  FROM purchase_orders po" +
     "  LEFT JOIN suppliers s ON s.id = po.supplier_id" +
@@ -7043,8 +7324,14 @@ app.post("/api/admin/purchases", requireAdmin, (req, res) => {
   const received_at  = String(b.received_at || "").trim() || null;
   const cost_policy  = PURCHASE_COST_POLICIES.includes(b.cost_policy) ? b.cost_policy : "higher";
   const rawItems     = Array.isArray(b.items) ? b.items : [];
+  // Factura de un pedido a proveedor: la compra queda vinculada al pedido.
+  const request_id   = b.request_id ? Number(b.request_id) : null;
 
   if (!rawItems.length) return res.status(400).json({ error: "La compra debe tener al menos 1 item" });
+  if (request_id) {
+    const pr = db.prepare("SELECT id, kind FROM purchase_requests WHERE id = ?").get(request_id);
+    if (!pr || pr.kind !== "pedido") return res.status(400).json({ error: "Pedido a proveedor no encontrado" });
+  }
 
   if (supplier_id) {
     const sup = db.prepare("SELECT id FROM suppliers WHERE id = ?").get(supplier_id);
@@ -7076,9 +7363,9 @@ app.post("/api/admin/purchases", requireAdmin, (req, res) => {
   let purchaseId;
   db.transaction(() => {
     const r = db.prepare(
-      "INSERT INTO purchase_orders (supplier_id, reference, notes, total_cost, received_at, created_by, created_at)" +
-      " VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')), ?, datetime('now'))"
-    ).run(supplier_id, reference, notes, totalCost, received_at, req.session.userId);
+      "INSERT INTO purchase_orders (supplier_id, reference, notes, total_cost, received_at, created_by, created_at, request_id)" +
+      " VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')), ?, datetime('now'), ?)"
+    ).run(supplier_id, reference, notes, totalCost, received_at, req.session.userId, request_id);
     purchaseId = r.lastInsertRowid;
 
     const insItem = db.prepare(
@@ -7104,6 +7391,7 @@ app.post("/api/admin/purchases", requireAdmin, (req, res) => {
         " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
       ).run(supplier_id, totalCost, "Compra #" + purchaseId + (reference ? " · " + reference : ""), purchaseId);
     }
+    if (request_id) recomputePedidoStatus(request_id);
   })();
 
   const purchase = db.prepare(
@@ -7137,7 +7425,7 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
 
-  const existing = db.prepare("SELECT id, received FROM purchase_orders WHERE id = ?").get(id);
+  const existing = db.prepare("SELECT id, received, request_id FROM purchase_orders WHERE id = ?").get(id);
   if (!existing) return res.status(404).json({ error: "Compra no encontrada" });
   // Solo si la compra ya fue recibida su stock esta impactado: al editarla hay
   // que revertir el stock viejo y sumar el nuevo. Si esta pendiente de recibir,
@@ -7230,6 +7518,7 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
       ).run(supplier_id, totalCost, "Compra #" + id + (reference ? " · " + reference : ""), id);
     }
   })();
+  if (existing.request_id) recomputePedidoStatus(existing.request_id);
 
   const purchase = db.prepare(
     "SELECT po.*, s.name AS supplier_name FROM purchase_orders po" +
@@ -7253,7 +7542,7 @@ app.delete("/api/admin/purchases/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
   const purchase = db.prepare(
-    "SELECT id, supplier_id, reference, COALESCE(received, 0) AS received FROM purchase_orders WHERE id = ?"
+    "SELECT id, supplier_id, reference, COALESCE(received, 0) AS received, request_id FROM purchase_orders WHERE id = ?"
   ).get(id);
   if (!purchase) return res.status(404).json({ error: "Compra no encontrada" });
   const wasReceived = Number(purchase.received) === 1;
@@ -7275,6 +7564,7 @@ app.delete("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     db.prepare("DELETE FROM supplier_movements WHERE purchase_order_id = ? AND type = 'debit'").run(id);
     db.prepare("DELETE FROM purchase_items WHERE purchase_order_id = ?").run(id);
     db.prepare("DELETE FROM purchase_orders WHERE id = ?").run(id);
+    if (purchase.request_id) recomputePedidoStatus(purchase.request_id);
   })();
   res.json({ ok: true, deleted: id, was_received: wasReceived, stock_reverted: stockReverted });
 });
@@ -8048,6 +8338,8 @@ app.get("/api/admin/reposicion", requireAdmin, (req, res) => {
     " WHERE COALESCE(po.received,0) = 0 AND pi.product_id IS NOT NULL" +
     " GROUP BY pi.product_id"
   ).all()) incoming.set(r.pid, Number(r.qty) || 0);
+  // Lo pedido a proveedores y todavia no facturado tambien esta "en camino".
+  for (const [pid, q] of pedidosPendingByProduct()) incoming.set(pid, (incoming.get(pid) || 0) + q);
 
   // Proveedor derivado del historial: el ultimo que vendio ese producto.
   const lastSupplier = new Map();
@@ -8204,7 +8496,8 @@ app.post("/api/admin/reposicion/config", requireAdmin, (req, res) => {
 // POST /api/admin/reposicion/to-cotizacion — arma una cotizacion (borrador) con
 // los productos elegidos. De ahi sigue el circuito que ya existe:
 // cotizacion -> compra -> recepcion -> stock.
-app.post("/api/admin/reposicion/to-cotizacion", requireAdmin, (req, res) => {
+app.post(["/api/admin/reposicion/to-cotizacion", "/api/admin/reposicion/to-pedido"], requireAdmin, (req, res) => {
+  const kind = req.originalUrl.indexOf("to-pedido") >= 0 ? "pedido" : "cotizacion";
   const b = req.body || {};
   const supplier_id = Number(b.supplier_id) || null;
   const items = Array.isArray(b.items) ? b.items : [];
@@ -8214,16 +8507,16 @@ app.post("/api/admin/reposicion/to-cotizacion", requireAdmin, (req, res) => {
   }
   const getProd = db.prepare("SELECT id, code, name, cost, COALESCE(units_per_bulto,1) AS upb, COALESCE(pack_unit,'bulto') AS pack_unit FROM products WHERE id = ?");
   const ins = db.prepare(
-    "INSERT INTO purchase_requests (supplier_id, notes, status, created_by) VALUES (?, ?, 'borrador', ?)"
+    "INSERT INTO purchase_requests (supplier_id, notes, status, created_by, kind) VALUES (?, ?, 'borrador', ?, ?)"
   );
   const insItem = db.prepare(
     "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity, unit_price, pack_mode, comprimidos_per_unit)" +
     " VALUES (?, ?, ?, ?, ?, ?, ?, NULL)"
   );
-  const notes = String(b.notes || "Generada desde Reposición sugerida").trim().slice(0, 1000);
+  const notes = String(b.notes || (kind === "pedido" ? "Generado desde Reposición sugerida" : "Generada desde Reposición sugerida")).trim().slice(0, 1000);
   let newId = null, added = 0;
   db.transaction(() => {
-    newId = ins.run(supplier_id, notes, req.session.userId || null).lastInsertRowid;
+    newId = ins.run(supplier_id, notes, req.session.userId || null, kind).lastInsertRowid;
     for (const it of items) {
       const p = getProd.get(Number(it.product_id) || 0);
       if (!p) continue;
@@ -8610,28 +8903,47 @@ app.get("/api/admin/notifications", requireAdmin, (req, res) => {
   res.json(out);
 });
 
-// ===== Pedidos de cotizacion =====
+// ===== Cotizaciones y Pedidos a proveedor =====
+// Las dos comparten tabla y endpoints: /api/admin/purchase-requests (cotizaciones)
+// y /api/admin/pedidos-prov (pedidos). El kind sale del path.
+const reqKind = (req) => (req.originalUrl.indexOf("/api/admin/pedidos-prov") === 0 ? "pedido" : "cotizacion");
 
-app.get("/api/admin/purchase-requests", requireAdmin, (req, res) => {
+app.get(["/api/admin/purchase-requests", "/api/admin/pedidos-prov"], requireAdmin, (req, res) => {
+  const kind = reqKind(req);
   const rows = db.prepare(
     "SELECT pr.*, s.name AS supplier_name," +
-    "  (SELECT COUNT(*) FROM purchase_request_items WHERE request_id = pr.id) AS items_count" +
+    "  (SELECT COUNT(*) FROM purchase_request_items WHERE request_id = pr.id) AS items_count," +
+    "  (SELECT COUNT(*) FROM purchase_orders WHERE request_id = pr.id) AS invoices_count," +
+    "  (SELECT MAX(received_at) FROM purchase_orders WHERE request_id = pr.id) AS last_invoice_at" +
     "  FROM purchase_requests pr" +
     "  LEFT JOIN suppliers s ON s.id = pr.supplier_id" +
+    "  WHERE COALESCE(pr.kind, 'cotizacion') = ?" +
     "  ORDER BY pr.created_at DESC LIMIT 500"
-  ).all();
+  ).all(kind);
+  if (kind === "pedido") {
+    for (const r of rows) {
+      const pg = pedidoProgress(r.id);
+      r.ordered_units = pg.ordered;
+      r.invoiced_units = pg.invoiced;
+      r.moved_units = pg.moved;
+      r.pending_items = pg.items.filter((it) => it.pending_qty > 0).length;
+      r.derived_from = db.prepare("SELECT DISTINCT from_request_id AS id FROM purchase_request_moves WHERE to_request_id = ?").all(r.id).map((x) => x.id);
+    }
+  }
   res.json(rows);
 });
 
-app.post("/api/admin/purchase-requests", requireAdmin, (req, res) => {
+app.post(["/api/admin/purchase-requests", "/api/admin/pedidos-prov"], requireAdmin, (req, res) => {
+  const kind = reqKind(req);
   const b = req.body || {};
   const supplier_id = Number(b.supplier_id) || null;
   const notes       = String(b.notes || "").trim().slice(0, 1000) || null;
   const items       = Array.isArray(b.items) ? b.items : [];
   if (!items.length) return res.status(400).json({ error: "Agregar al menos un producto" });
 
+  const status0 = b.status === "enviado" ? "enviado" : "borrador";
   const ins = db.prepare(
-    "INSERT INTO purchase_requests (supplier_id, notes, status, created_by) VALUES (?, ?, 'borrador', ?)"
+    "INSERT INTO purchase_requests (supplier_id, notes, status, created_by, kind) VALUES (?, ?, ?, ?, ?)"
   );
   const insItem = db.prepare(
     "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity, unit_price, pack_mode, comprimidos_per_unit)" +
@@ -8639,14 +8951,14 @@ app.post("/api/admin/purchase-requests", requireAdmin, (req, res) => {
   );
   let newId;
   db.transaction(() => {
-    const info = ins.run(supplier_id, notes, req.session.userId || null);
+    const info = ins.run(supplier_id, notes, status0, req.session.userId || null, kind);
     newId = info.lastInsertRowid;
     for (const it of items) {
       const pid   = Number(it.product_id) || null;
       const code  = String(it.product_code || "").trim();
       const name  = String(it.product_name || "").trim();
       const qty   = Math.max(1, Number(it.quantity) || 1);
-      const price = Number(it.unit_price) || null;
+      const price = Number(it.unit_price) || (kind === "pedido" && pid ? pedidoCostOf(pid) : null);
       const pmode = ["unidad", "caja", "bulto", "comprimido"].includes(it.pack_mode) ? it.pack_mode : null;
       const cpu   = Number(it.comprimidos_per_unit) > 1 ? Math.floor(Number(it.comprimidos_per_unit)) : null;
       if (!name && !pid) continue;
@@ -8661,24 +8973,58 @@ app.post("/api/admin/purchase-requests", requireAdmin, (req, res) => {
   res.status(201).json({ ok: true, request: created });
 });
 
-app.get("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
+app.get(["/api/admin/purchase-requests/:id", "/api/admin/pedidos-prov/:id"], requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   const row = db.prepare(
     "SELECT pr.*, s.name AS supplier_name FROM purchase_requests pr" +
     "  LEFT JOIN suppliers s ON s.id = pr.supplier_id WHERE pr.id = ?"
   ).get(id);
   if (!row) return res.status(404).json({ error: "No encontrado" });
+  if (row.kind === "pedido") {
+    const pg = pedidoProgress(id);
+    const nameOf = db.prepare("SELECT code, name FROM products WHERE id = ?");
+    const invoices = db.prepare(
+      "SELECT id, reference, total_cost, received_at, COALESCE(received,0) AS received" +
+      "  FROM purchase_orders WHERE request_id = ? ORDER BY received_at, id"
+    ).all(id);
+    const extras = pg.extras.map((e) => Object.assign({}, e, nameOf.get(e.product_id) || {}));
+    const derivedFrom = db.prepare(
+      "SELECT DISTINCT m.from_request_id AS id, s.name AS supplier_name FROM purchase_request_moves m" +
+      "  LEFT JOIN purchase_requests r ON r.id = m.from_request_id LEFT JOIN suppliers s ON s.id = r.supplier_id" +
+      " WHERE m.to_request_id = ?"
+    ).all(id);
+    return res.json(Object.assign({}, row, {
+      items: pg.items, ordered_units: pg.ordered, invoiced_units: pg.invoiced, moved_units: pg.moved,
+      invoices, extras, derived_from: derivedFrom,
+    }));
+  }
   const items = db.prepare(
     "SELECT * FROM purchase_request_items WHERE request_id = ? ORDER BY id"
   ).all(id);
   res.json(Object.assign({}, row, { items }));
 });
 
-app.patch("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
+app.patch(["/api/admin/purchase-requests/:id", "/api/admin/pedidos-prov/:id"], requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   const b  = req.body || {};
-  const row = db.prepare("SELECT id FROM purchase_requests WHERE id = ?").get(id);
+  const row = db.prepare("SELECT id, kind, status FROM purchase_requests WHERE id = ?").get(id);
   if (!row) return res.status(404).json({ error: "No encontrado" });
+  // Pedidos: cerrar (lo que falta ya no viene) / reabrir (vuelve a su estado segun facturas).
+  if (row.kind === "pedido" && "status" in b) {
+    if (b.status === "cerrado") {
+      db.prepare("UPDATE purchase_requests SET status = 'cerrado', closed_at = datetime('now') WHERE id = ?").run(id);
+    } else if (b.status === "abierto") {
+      db.prepare("UPDATE purchase_requests SET status = 'enviado', closed_at = NULL WHERE id = ?").run(id);
+      recomputePedidoStatus(id);
+    } else if (["borrador", "enviado"].includes(b.status) && ["borrador", "enviado"].includes(row.status)) {
+      db.prepare("UPDATE purchase_requests SET status = ? WHERE id = ?").run(b.status, id);
+    } else {
+      return res.status(400).json({ error: "Estado invalido" });
+    }
+    if ("notes" in b) db.prepare("UPDATE purchase_requests SET notes = ? WHERE id = ?").run(String(b.notes || "").slice(0, 1000) || null, id);
+    const st = db.prepare("SELECT status FROM purchase_requests WHERE id = ?").get(id).status;
+    return res.json({ ok: true, status: st });
+  }
   const allowed = ["status", "notes"];
   const sets = []; const params = [];
   for (const k of allowed) {
@@ -8690,15 +9036,18 @@ app.patch("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-app.put("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
+app.put(["/api/admin/purchase-requests/:id", "/api/admin/pedidos-prov/:id"], requireAdmin, (req, res) => {
   const id  = Number(req.params.id);
   const b   = req.body || {};
-  const row = db.prepare("SELECT id FROM purchase_requests WHERE id = ?").get(id);
+  const row = db.prepare("SELECT id, kind, status FROM purchase_requests WHERE id = ?").get(id);
   if (!row) return res.status(404).json({ error: "No encontrado" });
 
   const supplier_id = Number(b.supplier_id) || null;
   const notes       = String(b.notes || "").trim().slice(0, 1000) || null;
-  const status      = ["borrador","enviado"].includes(b.status) ? b.status : "borrador";
+  // En un pedido ya facturado (parcial/facturado/cerrado) el estado lo manejan
+  // las facturas y el boton Cerrar: editarlo no lo vuelve a borrador.
+  const lockedStatus = row.kind === "pedido" && !["borrador", "enviado"].includes(row.status);
+  const status      = lockedStatus ? row.status : (["borrador","enviado"].includes(b.status) ? b.status : "borrador");
   const items       = Array.isArray(b.items) ? b.items : [];
   if (!items.length) return res.status(400).json({ error: "Agregar al menos un producto" });
 
@@ -8715,12 +9064,13 @@ app.put("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
       const code  = String(it.product_code || "").trim();
       const name  = String(it.product_name || "").trim();
       const qty   = Math.max(1, Number(it.quantity) || 1);
-      const price = Number(it.unit_price) || null;
+      const price = Number(it.unit_price) || (row.kind === "pedido" && pid ? pedidoCostOf(pid) : null);
       const pmode = ["unidad", "caja", "bulto", "comprimido"].includes(it.pack_mode) ? it.pack_mode : null;
       const cpu   = Number(it.comprimidos_per_unit) > 1 ? Math.floor(Number(it.comprimidos_per_unit)) : null;
       if (!name && !pid) continue;
       insItem.run(id, pid, code, name, qty, price, pmode, cpu);
     }
+    if (row.kind === "pedido") recomputePedidoStatus(id);
   })();
   const updated = db.prepare(
     "SELECT pr.*, s.name AS supplier_name FROM purchase_requests pr" +
@@ -8729,9 +9079,81 @@ app.put("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
   res.json({ ok: true, request: updated });
 });
 
-app.delete("/api/admin/purchase-requests/:id", requireAdmin, (req, res) => {
+// Pedir a OTRO proveedor lo que este no facturo. Body:
+//   { supplier_id, items: [{ item_id, quantity }] }   (quantity <= pendiente)
+// Crea un pedido nuevo (borrador) para ese proveedor y deja esas cantidades
+// como "derivadas" en el original (dejan de estar pendientes).
+app.post("/api/admin/pedidos-prov/:id/derivar", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
-  const info = db.prepare("DELETE FROM purchase_requests WHERE id = ?").run(id);
+  const src = db.prepare(
+    "SELECT pr.id, pr.kind, pr.status, pr.supplier_id, s.name AS supplier_name FROM purchase_requests pr" +
+    "  LEFT JOIN suppliers s ON s.id = pr.supplier_id WHERE pr.id = ?"
+  ).get(id);
+  if (!src || src.kind !== "pedido") return res.status(404).json({ error: "Pedido no encontrado" });
+  if (src.status === "cerrado") return res.status(409).json({ error: "El pedido esta cerrado. Reabrilo para derivar lo pendiente." });
+  const b = req.body || {};
+  const supplierId = Number(b.supplier_id) || 0;
+  if (!supplierId || !db.prepare("SELECT id FROM suppliers WHERE id = ?").get(supplierId)) {
+    return res.status(400).json({ error: "Elegí el proveedor al que se lo vas a pedir" });
+  }
+  if (supplierId === Number(src.supplier_id)) return res.status(400).json({ error: "Elegí un proveedor distinto al del pedido" });
+  const want = Array.isArray(b.items) ? b.items : [];
+  const pg = pedidoProgress(id);
+  const byItem = new Map(pg.items.map((it) => [it.id, it]));
+  const lines = [];
+  for (const w of want) {
+    const it = byItem.get(Number(w.item_id));
+    if (!it) continue;
+    const q = Math.min(Number(it.pending_qty) || 0, Math.max(0, Number(w.quantity) || 0));
+    if (q > 0) lines.push({ it, q });
+  }
+  if (!lines.length) return res.status(400).json({ error: "No hay cantidades pendientes para derivar" });
+  let newId;
+  db.transaction(() => {
+    newId = db.prepare(
+      "INSERT INTO purchase_requests (supplier_id, notes, status, created_by, kind) VALUES (?, ?, 'borrador', ?, 'pedido')"
+    ).run(supplierId, ("Faltante del pedido #" + id + (src.supplier_name ? " (" + src.supplier_name + ")" : "")).slice(0, 1000),
+      req.session.userId || null).lastInsertRowid;
+    const insItem = db.prepare(
+      "INSERT INTO purchase_request_items (request_id, product_id, product_code, product_name, quantity, unit_price, pack_mode, comprimidos_per_unit)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+    const insMove = db.prepare(
+      "INSERT INTO purchase_request_moves (from_request_id, from_item_id, to_request_id, product_id, quantity, created_by) VALUES (?, ?, ?, ?, ?, ?)"
+    );
+    for (const { it, q } of lines) {
+      insItem.run(newId, it.product_id, it.product_code || "", it.product_name || "", q,
+        (it.product_id ? pedidoCostOf(it.product_id) : null) || it.unit_price || null, it.pack_mode || null, it.comprimidos_per_unit || null);
+      insMove.run(id, it.id, newId, it.product_id, q, req.session.userId || null);
+    }
+    recomputePedidoStatus(id);
+  })();
+  logActivity(req, "pedido_derivado", { from: id, to: newId, items: lines.length });
+  const created = db.prepare(
+    "SELECT pr.*, s.name AS supplier_name FROM purchase_requests pr LEFT JOIN suppliers s ON s.id = pr.supplier_id WHERE pr.id = ?"
+  ).get(newId);
+  const st = db.prepare("SELECT status FROM purchase_requests WHERE id = ?").get(id).status;
+  res.status(201).json({ ok: true, request: created, items_moved: lines.length, from_status: st });
+});
+
+app.delete(["/api/admin/purchase-requests/:id", "/api/admin/pedidos-prov/:id"], requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const inv = db.prepare("SELECT COUNT(*) AS n FROM purchase_orders WHERE request_id = ?").get(id).n;
+  if (inv > 0) {
+    return res.status(409).json({ error: "El pedido tiene " + inv + " factura(s) cargada(s). Cerralo en vez de borrarlo." });
+  }
+  const origins = db.prepare("SELECT DISTINCT from_request_id AS id FROM purchase_request_moves WHERE to_request_id = ?").all(id).map((r) => r.id);
+  let info;
+  db.transaction(() => {
+    db.prepare("DELETE FROM purchase_request_moves WHERE to_request_id = ? OR from_request_id = ?").run(id, id);
+    info = db.prepare("DELETE FROM purchase_requests WHERE id = ?").run(id);
+    // Si era el pedido al que se derivo un faltante, eso vuelve a quedar pendiente en el original.
+    for (const o of origins) {
+      const st = db.prepare("SELECT status FROM purchase_requests WHERE id = ?").get(o);
+      if (st && st.status === "derivado") db.prepare("UPDATE purchase_requests SET status = 'enviado' WHERE id = ?").run(o);
+      recomputePedidoStatus(o);
+    }
+  })();
   if (!info.changes) return res.status(404).json({ error: "No encontrado" });
   res.json({ ok: true });
 });
@@ -8749,8 +9171,11 @@ app.post("/api/admin/cotizacion/pdf", requireAdmin, (req, res) => {
   const date = new Date().toLocaleDateString("es-AR");
   const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
   const safeSup = (supplierName || "Cotizacion").replace(/[^\w\s\-áéíóúüñÁÉÍÓÚÜÑ]/g, "").trim();
-  res.setHeader("Content-Disposition", 'attachment; filename="Cotizacion ' + safeSup + " " + dateSlug + '.pdf"');
-  buildCotizacionPdf(res, { appName, supplierName, date, porBultos, items, notes });
+  const isPedido = b.kind === "pedido";
+  res.setHeader("Content-Disposition", 'attachment; filename="' + (isPedido ? "Pedido " : "Cotizacion ") + safeSup + " " + dateSlug + '.pdf"');
+  buildCotizacionPdf(res, isPedido
+    ? { appName, supplierName, date, porBultos, items, notes, docLabel: "PEDIDO AL PROVEEDOR", showSupplier: !!supplierName }
+    : { appName, supplierName, date, porBultos, items, notes });
 });
 
 // Misma cotización en .xlsx EDITABLE: para renombrar productos con la

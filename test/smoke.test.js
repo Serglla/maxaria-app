@@ -515,3 +515,82 @@ test("reporte 'dejan de comprar': solo superadmin y agrupa por producto", async 
   assert.ok(row.causes.length >= 1);
   assert.ok(row.monthly_lost > 0);
 });
+
+test("pedido a proveedor: facturas parciales, pendiente, cerrar/reabrir y costo pedido", async () => {
+  const pa = newProduct("PP1", 100);
+  const pb = newProduct("PP2", 200);
+  const sup = await admin.post("/api/admin/suppliers", { name: "Proveedor pedidos" });
+  assert.equal(sup.status < 300, true, sup.text);
+  const supId = (sup.json.supplier || sup.json).id;
+  // Sin precio: toma el costo actual como "costo pedido"
+  const c = await admin.post("/api/admin/pedidos-prov", {
+    supplier_id: supId, status: "enviado",
+    items: [{ product_id: pa, product_name: "PP1", quantity: 10 }, { product_id: pb, product_name: "PP2", quantity: 4, unit_price: 200 }],
+  });
+  assert.equal(c.status, 201, c.text);
+  const pid = c.json.request.id;
+  assert.equal(c.json.request.kind, "pedido");
+  // No aparece entre las cotizaciones
+  const cots = await admin.get("/api/admin/purchase-requests");
+  assert.ok(!cots.json.some((r) => r.id === pid));
+  // Factura 1: vino 6 de PP1 y más caro
+  const f1 = await admin.post("/api/admin/purchases", { supplier_id: supId, request_id: pid, cost_policy: "always", items: [{ product_id: pa, quantity: 6, unit_cost: 110 }] });
+  assert.equal(f1.status, 200, f1.text);
+  let d = (await admin.get("/api/admin/pedidos-prov/" + pid)).json;
+  assert.equal(d.status, "parcial");
+  const ia = d.items.find((i) => i.product_id === pa);
+  assert.equal(ia.unit_price, 100);          // snapshot del costo al pedir
+  assert.equal(ia.invoiced_qty, 6);
+  assert.equal(ia.pending_qty, 4);
+  assert.equal(ia.invoiced_cost, 110);
+  // Factura 2 completa lo que falta -> facturado
+  const f2 = await admin.post("/api/admin/purchases", { supplier_id: supId, request_id: pid, items: [{ product_id: pa, quantity: 4, unit_cost: 110 }, { product_id: pb, quantity: 4, unit_cost: 200 }] });
+  d = (await admin.get("/api/admin/pedidos-prov/" + pid)).json;
+  assert.equal(d.status, "facturado");
+  // Borrar la factura 2 vuelve a parcial; no se puede borrar el pedido con facturas
+  await admin.del("/api/admin/purchases/" + f2.json.purchase.id);
+  d = (await admin.get("/api/admin/pedidos-prov/" + pid)).json;
+  assert.equal(d.status, "parcial");
+  assert.equal((await admin.del("/api/admin/pedidos-prov/" + pid)).status, 409);
+  // Cerrar / reabrir
+  assert.equal((await admin.patch("/api/admin/pedidos-prov/" + pid, { status: "cerrado" })).json.status, "cerrado");
+  assert.equal((await admin.patch("/api/admin/pedidos-prov/" + pid, { status: "abierto" })).json.status, "parcial");
+  // Reposición -> pedido
+  const rp = await admin.post("/api/admin/reposicion/to-pedido", { supplier_id: supId, items: [{ product_id: pa, quantity: 3 }] });
+  assert.equal(rp.status, 201, rp.text);
+  assert.equal(rp.json.request.kind, "pedido");
+});
+
+test("pedido a proveedor: lo que no facturó se deriva a otro proveedor sin contarse dos veces", async () => {
+  const pa = newProduct("PD1", 0);
+  const pb = newProduct("PD2", 0);
+  const s1 = (await admin.post("/api/admin/suppliers", { name: "Prov uno" })).json;
+  const s2 = (await admin.post("/api/admin/suppliers", { name: "Prov dos" })).json;
+  const sup1 = (s1.supplier || s1).id, sup2 = (s2.supplier || s2).id;
+  const c = await admin.post("/api/admin/pedidos-prov", { supplier_id: sup1, status: "enviado",
+    items: [{ product_id: pa, product_name: "PD1", quantity: 10, unit_price: 100 }, { product_id: pb, product_name: "PD2", quantity: 5, unit_price: 100 }] });
+  const pid = c.json.request.id;
+  // Factura parcial: 6 de PD1, nada de PD2
+  await admin.post("/api/admin/purchases", { supplier_id: sup1, request_id: pid, items: [{ product_id: pa, quantity: 6, unit_cost: 100 }] });
+  let d = (await admin.get("/api/admin/pedidos-prov/" + pid)).json;
+  const ia = d.items.find((i) => i.product_id === pa), ib = d.items.find((i) => i.product_id === pb);
+  // Mismo proveedor: no
+  assert.equal((await admin.post("/api/admin/pedidos-prov/" + pid + "/derivar", { supplier_id: sup1, items: [{ item_id: ib.id, quantity: 5 }] })).status, 400);
+  // Derivar a Prov dos: los 4 que faltan de PD1 y los 5 de PD2 (pedir de más se recorta a lo pendiente)
+  const mv = await admin.post("/api/admin/pedidos-prov/" + pid + "/derivar", { supplier_id: sup2, items: [{ item_id: ia.id, quantity: 99 }, { item_id: ib.id, quantity: 5 }] });
+  assert.equal(mv.status, 201, mv.text);
+  const nid = mv.json.request.id;
+  assert.equal(mv.json.request.supplier_id, sup2);
+  d = (await admin.get("/api/admin/pedidos-prov/" + pid)).json;
+  assert.equal(d.status, "facturado");  // lo facturado + lo derivado cubre todo
+  assert.equal(d.items.find((i) => i.product_id === pa).moved_qty, 4);
+  assert.equal(d.items.find((i) => i.product_id === pa).pending_qty, 0);
+  const nd = (await admin.get("/api/admin/pedidos-prov/" + nid)).json;
+  assert.deepEqual(nd.items.map((i) => i.quantity), [4, 5]);
+  assert.equal(nd.derived_from[0].id, pid);
+  // Borrar el pedido derivado (sin facturas) devuelve lo pendiente al original
+  assert.equal((await admin.del("/api/admin/pedidos-prov/" + nid)).status, 200);
+  d = (await admin.get("/api/admin/pedidos-prov/" + pid)).json;
+  assert.equal(d.status, "parcial");
+  assert.equal(d.items.find((i) => i.product_id === pa).pending_qty, 4);
+});

@@ -240,6 +240,8 @@
     vendResetForm: document.getElementById("vend-reset-form"),
     vendResetTarget: document.getElementById("vend-reset-target"),
     vendResetMsg: document.getElementById("vend-reset-msg"),
+    vendEditModal: document.getElementById("vend-edit-modal"),
+    vendEditForm: document.getElementById("vend-edit-form"),
 
     // Actividad (Ganancias por vendedor)
     actCount: document.getElementById("act-count"),
@@ -569,6 +571,11 @@
     supplierCreatedFromCotizacion: false,
     cotizaciones: [],
     cotizacionesLoaded: false,
+    cotMode: "cotizacion",      // el modal de cotizacion tambien arma Pedidos a proveedor
+    pedidoCtx: null,            // pedido abierto en el modal (con lo facturado por item)
+    purchaseFromPedido: null,   // compra que se esta cargando como factura de un pedido
+    pedidosProv: [],
+    pedidosProvLoaded: false,
     cotizacionItems: [],       // items del modal de creación
     cotPickerSelected: new Map(), // product_id -> {qty, product}
     editingCotizacionId: null, // null = nueva, número = editar existente
@@ -1572,6 +1579,7 @@
       }
       if (tab === "proveedores" && !state.suppliersLoaded) loadSuppliers();
       if (tab === "cotizaciones") loadCotizaciones();
+      if (tab === "pedidos-prov") loadPedidosProv(); // siempre recargar (cambia con cada factura)
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
       if (tab === "recepcion") loadRecepcion(); // siempre recargar (cambia con compras nuevas)
       if (tab === "reposicion") loadReposicion(); // siempre recargar (depende de ventas y stock del momento)
@@ -2207,7 +2215,7 @@
   // -------- Vendedores --------
   async function loadVendedores() {
     try {
-      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="11" class="muted">Cargando…</td></tr>';
+      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="12" class="muted">Cargando…</td></tr>';
       // Listas de precios necesarias para el select "Lista de precios" en cada fila.
       // Se cargan en paralelo si todavía no están en cache.
       const [vendedores, priceLists] = await Promise.all([
@@ -2223,7 +2231,7 @@
       state.vendedoresLoaded = true;
       renderVendedores();
     } catch (e) {
-      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="11" class="muted">Error cargando vendedores</td></tr>';
+      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="12" class="muted">Error cargando vendedores</td></tr>';
     }
   }
 
@@ -2236,37 +2244,45 @@
     }
     if (els.vendCount) els.vendCount.textContent = list.length + (list.length === 1 ? " vendedor" : " vendedores");
     if (!list.length) {
-      els.vendTbody.innerHTML = '<tr><td colspan="11" class="muted">Sin resultados</td></tr>';
+      els.vendTbody.innerHTML = '<tr><td colspan="12" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.vendTbody.innerHTML = list.map(vendRowHtml).join("");
   }
 
+  // Etiqueta del costo del vendedor: lista de costo (si tiene) o nivel base.
+  function vendCostLabel(v) {
+    let main;
+    if (v.vendedor_cost_list_id) {
+      const pl = (state.priceLists || []).find((x) => Number(x.id) === Number(v.vendedor_cost_list_id));
+      main = pl ? ("Lista " + pl.name + (pl.active ? "" : " (inactiva)")) : "Lista #" + v.vendedor_cost_list_id;
+    } else {
+      main = PRICE_LEVEL_NAMES[Number(v.vendedor_price_level)] || "Minorista";
+    }
+    const note = Number(v.is_tercerizado) === 1 ? "" : "<small>aplica si es tercerizado</small>";
+    return '<span class="vend-cost-label">' + escapeHtml(main) + note + '</span>';
+  }
+
   function vendRowHtml(v) {
     const lastLogin = v.last_login_at ? formatDate(v.last_login_at) : "—";
-    // Nivel de costo del vendedor: cuando el tercerizado está en el catálogo
-    // sin cliente seleccionado, ve los productos con el precio de ese nivel
-    // (price_minorista/revendedor/mayorista/vip de products). Es el "costo"
-    // que él paga al admin.
-    const plOpts = [1, 2, 3, 4].map((n) =>
-      '<option value="' + n + '"' + (Number(v.vendedor_price_level) === n ? " selected" : "") + '>' + PRICE_LEVEL_NAMES[n] + '</option>'
-    ).join("");
-    return '<tr data-id="' + v.id + '"' + (v.active ? '' : ' class="row-inactive"') + '>' +
+    return '<tr data-id="' + v.id + '"' + (v.active ? '' : ' class="row-inactive"') + ' title="Doble click para editar">' +
       '<td class="cell-code">' + escapeHtml(v.username) + '</td>' +
       '<td><input class="cell-input" data-field="full_name" value="' + escapeHtml(v.full_name || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="phone" value="' + escapeHtml(v.phone || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="whatsapp_number" type="tel" placeholder="ej: 5493442484286" value="' + escapeHtml(v.whatsapp_number || "") + '" title="Numero al que llegan los pedidos de los clientes asignados a este vendedor (formato internacional, sin + ni espacios)." /></td>' +
-      '<td title="Nivel de costo: el catálogo le muestra los productos con este precio cuando no tiene un cliente seleccionado.">' +
-        '<select class="cell-input" data-field="vendedor_price_level">' + plOpts + '</select>' +
-      '</td>' +
+      '<td title="Costo: con qué precio ve el catálogo cuando no tiene un cliente seleccionado. Se cambia con ✏️ Editar.">' + vendCostLabel(v) + '</td>' +
       '<td><label class="cell-toggle" title="Tercerizado: solo ve sus clientes asignados. El vendedor no ve este label.">' +
         '<input type="checkbox" data-field="is_tercerizado"' + (Number(v.is_tercerizado) === 1 ? " checked" : "") + ' /><span></span></label></td>' +
+      '<td class="num">' + (v.clients_count || 0) + '</td>' +
       '<td><label class="cell-toggle">' +
         '<input type="checkbox" data-field="active"' + (v.active ? " checked" : "") + ' /><span></span></label></td>' +
       '<td class="num muted">' + (v.total_orders || 0) + '</td>' +
       '<td class="num muted">' + (v.total_deliveries || 0) + '</td>' +
       '<td class="muted small-cell">' + lastLogin + '</td>' +
-      '<td><button class="btn btn-small btn-reset" data-act="vend-reset" data-id="' + v.id + '" data-username="' + escapeHtml(v.username) + '" type="button">Reset pass</button></td>' +
+      '<td style="white-space:nowrap">' +
+        '<button class="btn btn-small btn-primary" data-act="vend-edit" data-id="' + v.id + '" type="button">✏️ Editar</button> ' +
+        '<button class="btn btn-small btn-reset" data-act="vend-reset" data-id="' + v.id + '" data-username="' + escapeHtml(v.username) + '" type="button">Reset pass</button>' +
+      '</td>' +
     '</tr>';
   }
 
@@ -2287,7 +2303,7 @@
 
       inp.classList.add("saving");
       try {
-        await api("/api/admin/users/" + id, {
+        await api("/api/admin/vendedores/" + id, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ [field]: value }),
@@ -2298,6 +2314,10 @@
         inp.classList.add("saved");
         setTimeout(() => inp.classList.remove("saved"), 1200);
         if (field === "active") tr.classList.toggle("row-inactive", !value);
+        if (field === "is_tercerizado" && idx >= 0) {
+          const cell = tr.children[4];
+          if (cell) cell.innerHTML = vendCostLabel(state.vendedores[idx]);
+        }
       } catch (err) {
         inp.classList.remove("saving");
         inp.classList.add("error");
@@ -2306,7 +2326,15 @@
       }
     });
 
+    els.vendTbody.addEventListener("dblclick", (e) => {
+      if (e.target.closest("input, select, button, label")) return;
+      const tr = e.target.closest("tr[data-id]");
+      if (tr) openVendEditModal(Number(tr.dataset.id));
+    });
+
     els.vendTbody.addEventListener("click", (e) => {
+      const editBtn = e.target.closest('[data-act="vend-edit"]');
+      if (editBtn) { openVendEditModal(Number(editBtn.dataset.id)); return; }
       const resetBtn = e.target.closest('[data-act="vend-reset"]');
       if (!resetBtn) return;
       state.vendResetTargetId = Number(resetBtn.dataset.id);
@@ -2317,6 +2345,196 @@
       setTimeout(() => {
         if (els.vendResetForm) els.vendResetForm.querySelector('[name="password"]').focus();
       }, 50);
+    });
+  }
+
+  // -------- Modal "Editar vendedor": datos, login, costo y clientes --------
+  const veState = { id: null, origUsername: "", clients: [], selected: new Set() };
+  const veEl = (id) => document.getElementById(id);
+
+  function veRenderClients() {
+    const box = veEl("ve-clients-list");
+    if (!box) return;
+    const q = (veEl("ve-clients-search").value || "").trim();
+    const onlyMine = veEl("ve-only-mine").checked;
+    let list = veState.clients;
+    if (onlyMine) list = list.filter((c) => veState.selected.has(c.id));
+    if (q) list = list.filter((c) => matchWords((c.full_name || "") + " " + c.username, q));
+    veEl("ve-clients-count").textContent = veState.selected.size + (veState.selected.size === 1 ? " cliente" : " clientes");
+    if (!list.length) {
+      box.innerHTML = '<div class="muted" style="padding:10px 12px">' +
+        (veState.clients.length ? "Sin resultados" : "No hay clientes cargados") + '</div>';
+      return;
+    }
+    box.innerHTML = list.map((c) => {
+      const mine = veState.selected.has(c.id);
+      const other = !mine && c.assigned_vendedor_id && Number(c.assigned_vendedor_id) !== veState.id
+        ? '<span class="ve-client-other" title="Hoy lo atiende otro vendedor">' + escapeHtml(c.vendedor_name || "otro vendedor") + '</span>' : "";
+      const lvl = PRICE_LEVEL_NAMES[Number(c.level)] || "";
+      return '<label class="ve-client' + (mine ? " ve-mine" : "") + (c.active ? "" : " ve-client-inactive") + '">' +
+        '<input type="checkbox" data-cid="' + c.id + '"' + (mine ? " checked" : "") + ' />' +
+        '<span class="ve-client-name">' + escapeHtml(c.full_name || c.username) +
+          ' <span class="muted small">' + escapeHtml(c.username) + (lvl ? " · " + lvl : "") + (c.active ? "" : " · inactivo") + '</span></span>' +
+        other + '</label>';
+    }).join("");
+  }
+
+  function veUpdateCostHint() {
+    const hint = veEl("ve-cost-hint");
+    if (!hint) return;
+    hint.textContent = veEl("ve-tercerizado").checked
+      ? "El vendedor ve el catálogo con este precio cuando no tiene un cliente elegido. No cambia su comisión: la comisión sale de la lista de cada cliente."
+      : "El costo solo se usa si el vendedor es tercerizado (el vendedor propio necesita elegir un cliente para ver precios).";
+  }
+
+  async function openVendEditModal(id) {
+    const v = state.vendedores.find((x) => x.id === id);
+    if (!v || !els.vendEditModal) return;
+    veState.id = id;
+    veState.origUsername = v.username;
+    veState.clients = [];
+    veState.selected = new Set();
+    veEl("vend-edit-title").textContent = "Editar vendedor · " + (v.full_name || v.username);
+    veEl("ve-username-text").textContent = v.username;
+    veEl("ve-username-text").hidden = false;
+    veEl("ve-username").hidden = true;
+    veEl("ve-username").value = "";
+    veEl("ve-username-edit").hidden = false;
+    veEl("ve-password-text").hidden = false;
+    veEl("ve-password").hidden = true;
+    veEl("ve-password").value = "";
+    veEl("ve-password-edit").hidden = false;
+    veEl("ve-full-name").value = v.full_name || "";
+    veEl("ve-phone").value = v.phone || "";
+    veEl("ve-whatsapp").value = v.whatsapp_number || "";
+    veEl("ve-tercerizado").checked = Number(v.is_tercerizado) === 1;
+    veEl("ve-active").checked = !!v.active;
+    veEl("ve-clients-search").value = "";
+    veEl("ve-only-mine").checked = false;
+    veEl("vend-edit-msg").textContent = "";
+    veEl("ve-clients-list").innerHTML = '<span class="muted" style="display:block;padding:10px 12px">Cargando…</span>';
+    const costSel = veEl("ve-costcfg");
+    costSel.innerHTML = unifiedPriceOptsHtml({
+      level: Number(v.vendedor_price_level) || 1,
+      price_list_id: v.vendedor_cost_list_id || null,
+    });
+    costSel.disabled = false;
+    veUpdateCostHint();
+    els.vendEditModal.hidden = false;
+
+    try {
+      const rows = await api("/api/admin/vendedores/" + id + "/clients", {}, "los clientes");
+      if (veState.id !== id) return;
+      veState.clients = rows || [];
+      veState.clients.forEach((c) => { if (Number(c.assigned_vendedor_id) === id) veState.selected.add(c.id); });
+      veState.clientsOk = true;
+      veRenderClients();
+    } catch (err) {
+      veState.clientsOk = false;
+      veEl("ve-clients-list").innerHTML = '<div class="muted" style="padding:10px 12px">⚠ No se pudieron cargar los clientes. Podés guardar el resto de los cambios igual.</div>';
+    }
+  }
+
+  if (els.vendEditModal) {
+    veEl("ve-username-edit").addEventListener("click", () => {
+      const inp = veEl("ve-username");
+      inp.value = veState.origUsername;
+      inp.hidden = false;
+      veEl("ve-username-text").hidden = true;
+      veEl("ve-username-edit").hidden = true;
+      inp.focus();
+    });
+    veEl("ve-password-edit").addEventListener("click", () => {
+      const inp = veEl("ve-password");
+      inp.value = "";
+      inp.hidden = false;
+      veEl("ve-password-text").hidden = true;
+      veEl("ve-password-edit").hidden = true;
+      inp.focus();
+    });
+    veEl("ve-tercerizado").addEventListener("change", veUpdateCostHint);
+    veEl("ve-clients-search").addEventListener("input", debounce(veRenderClients, 120));
+    veEl("ve-only-mine").addEventListener("change", veRenderClients);
+    veEl("ve-clients-list").addEventListener("change", (e) => {
+      const cb = e.target.closest("[data-cid]");
+      if (!cb) return;
+      const cid = Number(cb.dataset.cid);
+      if (cb.checked) veState.selected.add(cid); else veState.selected.delete(cid);
+      const lbl = cb.closest("label");
+      if (lbl) lbl.classList.toggle("ve-mine", cb.checked);
+      const other = lbl && lbl.querySelector(".ve-client-other");
+      if (other && cb.checked) other.remove();
+      veEl("ve-clients-count").textContent = veState.selected.size + (veState.selected.size === 1 ? " cliente" : " clientes");
+    });
+
+    els.vendEditForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const id = veState.id;
+      const v = state.vendedores.find((x) => x.id === id);
+      if (!v) return;
+      const msg = veEl("vend-edit-msg");
+      msg.textContent = "";
+      const body = {
+        full_name: veEl("ve-full-name").value.trim(),
+        phone: veEl("ve-phone").value.trim(),
+        whatsapp_number: veEl("ve-whatsapp").value.trim(),
+        is_tercerizado: veEl("ve-tercerizado").checked ? 1 : 0,
+        active: veEl("ve-active").checked ? 1 : 0,
+      };
+      const uInp = veEl("ve-username");
+      if (!uInp.hidden) {
+        const un = uInp.value.trim().toLowerCase();
+        if (!un) { msg.textContent = "El usuario no puede quedar vacío."; return; }
+        if (un !== veState.origUsername) body.username = un;
+      }
+      const pInp = veEl("ve-password");
+      let newPass = "";
+      if (!pInp.hidden && pInp.value !== "") {
+        newPass = pInp.value;
+        if (newPass.length < 6) { msg.textContent = "La contraseña debe tener al menos 6 caracteres."; return; }
+        body.password = newPass;
+      }
+      const cost = decodePriceCfg(veEl("ve-costcfg").value);
+      if (cost.price_list_id) {
+        body.vendedor_cost_list_id = cost.price_list_id;
+        const pl = state.priceLists.find((x) => Number(x.id) === Number(cost.price_list_id));
+        if (pl && PRICE_BASE_LEVEL_NUM[pl.effective_base_level || pl.base_level]) {
+          body.vendedor_price_level = PRICE_BASE_LEVEL_NUM[pl.effective_base_level || pl.base_level];
+        }
+      } else {
+        body.vendedor_cost_list_id = null;
+        body.vendedor_price_level = cost.level;
+      }
+      if (veState.clientsOk) body.client_ids = Array.from(veState.selected);
+
+      const saveBtn = veEl("vend-edit-save");
+      if (saveBtn.disabled) return;
+      saveBtn.disabled = true;
+      try {
+        const out = await api("/api/admin/vendedores/" + id, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (out && out.vendedor) Object.assign(v, out.vendedor);
+        if (newPass) sessionPasswords.set(Number(id), newPass);
+        els.vendEditModal.hidden = true;
+        renderVendedores();
+        // Los clientes cambiaron de vendedor: que Usuarios y los selects se refresquen.
+        if (out && (out.assigned || out.removed)) {
+          state.usersLoaded = false;
+          state.orderClientsLoaded = false;
+        }
+        const parts = ["Vendedor guardado"];
+        if (out && out.assigned) parts.push(out.assigned + " cliente(s) asignado(s)");
+        if (out && out.removed) parts.push(out.removed + " quitado(s)");
+        if (newPass) parts.push("contraseña cambiada");
+        showToast(parts.join(" · "), "ok");
+      } catch (err) {
+        msg.textContent = err.message || "No se pudo guardar";
+      } finally {
+        saveBtn.disabled = false;
+      }
     });
   }
 
@@ -6840,11 +7058,13 @@
       '<button type="button" class="btn btn-small od-share" title="El mismo remito sin importes, en PDF, para descargar o mandar por WhatsApp">📤 Compartir remito</button>' +
       '<button type="button" class="btn btn-small od-print-full" title="Imprime el pedido con precios unitarios y total">🖨 Imprimir pp</button>' +
       '<button type="button" class="btn btn-small od-share-full" title="PDF del pedido con precios y total, para descargar o mandar por WhatsApp">📤 Compartir pp</button>';
-    var actionsRow = '<div class="order-items-actions">' +
-      (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar</button>' : "") +
-      (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
-      docsRow +
-      "</div>";
+    // "Editar" va arriba a la derecha, en la fila de Estado/Cliente/Vendedor.
+    var editBtnHtml = orderItemsEditable(order)
+      ? '<button type="button" class="btn btn-small btn-primary order-edit-items" title="Cambiar productos, cantidades, precios o descuentos">✏️ Editar pedido</button>'
+      : "";
+    var actionsInner = (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
+      docsRow;
+    var actionsRow = actionsInner ? '<div class="order-items-actions">' + actionsInner + "</div>" : "";
     var itemsHtml = '<div class="order-items-box">' + itemsTable + balanceHtml + actionsRow + "</div>";
 
     // Rentabilidad del pedido — SOLO admin. Viene calculada del server
@@ -6980,7 +7200,8 @@
     }
 
     detailEl.innerHTML =
-      '<div class="order-detail-meta">' + statusRow + clientRow + vendRow + "</div>" +
+      '<div class="order-detail-meta">' + statusRow + clientRow + vendRow +
+        (editBtnHtml ? '<span class="odm-actions">' + editBtnHtml + "</span>" : "") + "</div>" +
       itemsHtml + pickChgHtml + profitHtml + notesHtml + delivInfo + budgetRef;
   }
 
@@ -7305,6 +7526,10 @@
   async function enterOrderItemsEdit(detailEl, order) {
     var box = detailEl.querySelector(".order-items-box");
     if (!box) return;
+    // Mientras se edita, el botón de arriba no se muestra (vuelve al guardar/cancelar,
+    // que re-renderizan el detalle).
+    var topEdit = detailEl.querySelector(".odm-actions");
+    if (topEdit) topEdit.hidden = true;
     await ensureAllProducts();
     await ensurePriceListsLoaded();
     // Config de precio activa: arranca en la lista por defecto del cliente.
@@ -9348,7 +9573,7 @@
           '<strong class="repo-group-total">' + repoMoney(repoGroupTotal(g)) + "</strong></span>" +
         (g.supplier_id == null
           ? '<span class="muted small-cell">Cargá una compra de estos productos para que aprenda el proveedor</span>'
-          : '<button class="btn btn-primary btn-small repo-to-cot" type="button" data-supplier="' + g.supplier_id + '">→ Cotización</button>') +
+          : '<button class="btn btn-primary btn-small repo-to-cot" type="button" data-supplier="' + g.supplier_id + '">→ Pedido</button>') +
       "</div>" +
       '<div class="admin-table-wrap"><table class="admin-table repo-table"><thead><tr>' +
         "<th></th><th>Producto</th><th>Estado</th>" +
@@ -9471,22 +9696,23 @@
     const supName = found ? (found.group.supplier_name || "el proveedor") : "el proveedor";
     const total = groupEl.querySelector(".repo-group-total");
     const ok = await confirmModal({
-      title: "Pasar a cotización",
-      message: "Se va a crear una cotización en borrador para " + supName + " con " + items.length +
+      title: "Pasar a pedido",
+      message: "Se va a crear un pedido en borrador para " + supName + " con " + items.length +
         (items.length === 1 ? " producto" : " productos") + (total ? " por " + total.textContent : "") +
-        ".\n\nDespués la revisás en la pestaña Cotizaciones (podés ajustar precios) y de ahí pasa a Compra.",
-      confirmText: "Crear cotización",
+        ".\n\nLo revisás en Compras → Pedidos a proveedor, se lo mandás, y cuando llega la factura la cargás desde ahí." +
+        "\nMientras no se facture, esas cantidades cuentan como \"en camino\" y no se vuelven a sugerir.",
+      confirmText: "Crear pedido",
     });
     if (!ok) return;
     btn.disabled = true;
     try {
-      const out = await api("/api/admin/reposicion/to-cotizacion", {
+      const out = await api("/api/admin/reposicion/to-pedido", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ supplier_id: supplierId, items: items }),
       });
-      showToast("Cotización #" + out.request.id + " creada con " + out.items_added + " productos");
-      state.cotizacionesLoaded = false;
+      showToast("Pedido #" + out.request.id + " creado con " + out.items_added + " productos");
+      state.pedidosProvLoaded = false;
       items.forEach((it) => repoState.sel.delete(it.product_id));
       renderReposicion();
     } catch (e) {
@@ -11242,6 +11468,7 @@
   if (els.purCreateBtn) {
     els.purCreateBtn.addEventListener("click", async () => {
       state.purchaseItems = [];
+      state.purchaseFromPedido = null;
       if (els.purchaseCreateForm) els.purchaseCreateForm.reset();
       if (els.purchaseCreateMsg) els.purchaseCreateMsg.textContent = "";
       renderPurchaseItems();
@@ -11268,6 +11495,7 @@
 
   function resetPurchaseModal() {
     state.editingPurchaseId = null;
+    state.purchaseFromPedido = null;
     if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = "Nueva compra";
     if (els.purSubmitBtn) els.purSubmitBtn.textContent = "Guardar compra";
   }
@@ -11478,6 +11706,7 @@
         notes: fd.get("notes"),
         received_at: received_at_raw ? received_at_raw.replace("T", " ") : null,
         cost_policy: fd.get("cost_policy") || "higher",
+        request_id: (!state.editingPurchaseId && state.purchaseFromPedido) ? state.purchaseFromPedido.id : null,
         items: state.purchaseItems.map((it) => ({
           product_id: it.product_id,
           product_code: it.product_code,
@@ -11494,11 +11723,18 @@
       try {
         await api(url, { method: method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         await purPersistUpb();
+        const fromPedido = body.request_id ? state.purchaseFromPedido : null;
+        const savedItems = state.purchaseItems.slice();
         state.purchasesLoaded = false;
         await loadPurchases();
         if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = true;
-        showToast(isEditing ? "Compra actualizada" : "Compra registrada");
+        showToast(isEditing ? "Compra actualizada" : (fromPedido ? "Factura cargada en el pedido #" + fromPedido.id : "Compra registrada"));
         resetPurchaseModal();
+        if (fromPedido) {
+          state.pedidosProvLoaded = false;
+          if (document.getElementById("tab-pedidos-prov") && !document.getElementById("tab-pedidos-prov").hidden) loadPedidosProv();
+          showPedidoInvoiceReport(fromPedido, savedItems);
+        }
         // Refrescar productos por cambio de stock (refetch + re-render de la tabla)
         state.allProductsLoaded = false;
         refreshProductsCache();
@@ -12075,10 +12311,44 @@
     if (els.pcotPickerConfirm) els.pcotPickerConfirm.disabled = n === 0;
   }
 
-  async function openEditCotizacion(id) {
+  // Base de la API segun el modo del modal (cotizacion o pedido a proveedor).
+  function cotBase() {
+    return state.cotMode === "pedido" ? "/api/admin/pedidos-prov" : "/api/admin/purchase-requests";
+  }
+  const PEDIDO_STATUS_LABEL = { borrador: "Borrador", enviado: "Enviado", parcial: "Parcial", facturado: "Facturado", derivado: "Derivado", cerrado: "Cerrado" };
+
+  // Textos del modal segun el modo. status = estado actual (en edicion).
+  function applyCotModeUi(status) {
+    const ped = state.cotMode === "pedido";
+    const lbl = document.getElementById("pcot-items-label");
+    if (lbl) lbl.textContent = ped ? "Productos a pedir" : "Productos a cotizar";
+    const th = document.getElementById("pcot-th-price");
+    if (th) {
+      th.textContent = ped ? "Costo pedido" : "Precio cotiz.";
+      th.title = ped
+        ? "Costo esperado de cada producto (arranca en el costo actual). Al cargar la factura se compara contra lo facturado."
+        : "Precio que te cotiza el proveedor, en el empaque de cada producto (por caja/bulto/unidad)";
+    }
+    if (els.pcotSaveBtn) els.pcotSaveBtn.textContent = ped ? "Guardar pedido" : "Guardar cotización";
+    if (els.pcotConvertBtn) {
+      els.pcotConvertBtn.textContent = ped ? "📥 Cargar factura" : "📥 → Compra";
+      els.pcotConvertBtn.title = ped ? "Abrir una compra con lo pendiente del pedido, para cargar la factura del proveedor" : "Abrir como nueva compra";
+    }
+    if (els.pcotFormStatus) {
+      const locked = ped && status && !["borrador", "enviado"].includes(status);
+      els.pcotFormStatus.innerHTML =
+        '<option value="borrador">Borrador</option><option value="enviado">Enviado</option>' +
+        (locked ? '<option value="' + status + '">' + (PEDIDO_STATUS_LABEL[status] || status) + "</option>" : "");
+      els.pcotFormStatus.value = status || "borrador";
+      els.pcotFormStatus.disabled = !!locked;
+    }
+  }
+
+  async function openEditCotizacion(id, mode) {
+    state.cotMode = mode === "pedido" ? "pedido" : "cotizacion";
     try {
       const [data] = await Promise.all([
-        api("/api/admin/purchase-requests/" + id),
+        api(cotBase() + "/" + id),
         ensureAllProducts(),
         (!state.suppliersLoaded
           ? api("/api/admin/suppliers", null, "los proveedores")
@@ -12105,8 +12375,10 @@
         return obj;
       });
       state.cotPickerSelected = new Map();
-      if (els.pcotModalTitle) els.pcotModalTitle.textContent = "Editar cotización #" + id;
-      if (els.pcotFormStatus)   els.pcotFormStatus.value = data.status || "borrador";
+      state.pedidoCtx = state.cotMode === "pedido" ? data : null;
+      if (els.pcotModalTitle) els.pcotModalTitle.textContent = (state.cotMode === "pedido" ? "Pedido #" : "Editar cotización #") + id +
+        (state.cotMode === "pedido" && data.supplier_name ? " · " + data.supplier_name : "");
+      applyCotModeUi(data.status || "borrador");
       if (els.pcotFormNotes)    els.pcotFormNotes.value  = data.notes  || "";
       if (els.pcotCreateMsg)    { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
       if (els.pcotConvertBtn)   els.pcotConvertBtn.hidden = false;
@@ -12120,14 +12392,19 @@
   function initCotizacionesListeners() {
     if (!els.pcotCreateBtn) return;
 
-    // Abrir modal de creación
-    els.pcotCreateBtn.addEventListener("click", async () => {
+    // Abrir modal de creación (cotización o pedido a proveedor)
+    els.pcotCreateBtn.addEventListener("click", () => openNewCotizacion("cotizacion"));
+    const ppvCreateBtn = document.getElementById("ppv-create-btn");
+    if (ppvCreateBtn) ppvCreateBtn.addEventListener("click", () => openNewCotizacion("pedido"));
+    async function openNewCotizacion(mode) {
+      state.cotMode = mode === "pedido" ? "pedido" : "cotizacion";
+      state.pedidoCtx = null;
       state.editingCotizacionId = null;
       state.cotizacionItems = [];
       state.cotPickerSelected = new Map();
-      if (els.pcotModalTitle)   els.pcotModalTitle.textContent = "Nueva cotización";
+      if (els.pcotModalTitle)   els.pcotModalTitle.textContent = state.cotMode === "pedido" ? "Nuevo pedido a proveedor" : "Nueva cotización";
       if (els.pcotFormSupplier) els.pcotFormSupplier.value = "";
-      if (els.pcotFormStatus)   els.pcotFormStatus.value = "borrador";
+      applyCotModeUi("borrador");
       if (els.pcotFormNotes)    els.pcotFormNotes.value = "";
       if (els.pcotCreateMsg)    { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
       if (els.pcotConvertBtn)   els.pcotConvertBtn.hidden = true;
@@ -12139,7 +12416,7 @@
       populatePcotFormSupplier();
       await ensureAllProducts();
       if (els.pcotCreateModal) els.pcotCreateModal.hidden = false;
-    });
+    }
 
     // Cancelar modal de creación
     if (els.pcotCancelBtn) els.pcotCancelBtn.addEventListener("click", () => {
@@ -12313,12 +12590,20 @@
         comprimidos_per_unit: it.pack_unit === "comprimido" ? cotComprimidos(it) : null,
       }));
       const isEdit   = !!state.editingCotizacionId;
-      const url      = isEdit ? "/api/admin/purchase-requests/" + state.editingCotizacionId : "/api/admin/purchase-requests";
+      const isPedido = state.cotMode === "pedido";
+      const url      = isEdit ? cotBase() + "/" + state.editingCotizacionId : cotBase();
       const method   = isEdit ? "PUT" : "POST";
       els.pcotSaveBtn.disabled = true;
       els.pcotSaveBtn.textContent = "Guardando…";
       try {
         const res = await api(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ supplier_id, notes: notes || null, status, items }) });
+        if (isPedido) {
+          state.pedidosProvLoaded = false;
+          loadPedidosProv();
+          if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
+          showToast("✅ Pedido " + (isEdit ? "actualizado" : "creado"));
+          return;
+        }
         const updated = Object.assign({}, res.request, { items_count: items.length });
         if (isEdit) {
           const idx = state.cotizaciones.findIndex((c) => c.id === state.editingCotizacionId);
@@ -12335,7 +12620,7 @@
         if (els.pcotCreateMsg) { els.pcotCreateMsg.textContent = "Error: " + err.message; els.pcotCreateMsg.className = "config-msg err"; }
       } finally {
         els.pcotSaveBtn.disabled = false;
-        els.pcotSaveBtn.textContent = "Guardar cotización";
+        els.pcotSaveBtn.textContent = state.cotMode === "pedido" ? "Guardar pedido" : "Guardar cotización";
       }
     });
 
@@ -12351,8 +12636,33 @@
           // Siempre crear una compra NUEVA (nunca pisar una que se estuviera editando).
           state.editingPurchaseId = null;
           if (els.purSubmitBtn) els.purSubmitBtn.textContent = "Guardar compra";
+          const isPedido = state.cotMode === "pedido" && !!state.editingCotizacionId;
+          state.purchaseFromPedido = null;
 
-          state.purchaseItems = state.cotizacionItems.map((it) => {
+          // Pedido: la compra arranca con lo PENDIENTE (pedido − ya facturado).
+          let srcItems = state.cotizacionItems;
+          if (isPedido) {
+            const invByPid = new Map();
+            ((state.pedidoCtx && state.pedidoCtx.items) || []).forEach((it) => {
+              if (it.product_id) invByPid.set(it.product_id, (invByPid.get(it.product_id) || 0) + (Number(it.invoiced_qty) || 0));
+            });
+            srcItems = state.cotizacionItems.map((it) => {
+              const got = invByPid.get(it.product_id) || 0;
+              const take = Math.min(got, it.quantity);
+              if (it.product_id) invByPid.set(it.product_id, got - take);
+              return Object.assign({}, it, { quantity: Math.max(0, it.quantity - take) });
+            }).filter((it) => it.quantity > 0);
+            if (!srcItems.length) {
+              await alertModal({ title: "Pedido completo", message: "Todo lo pedido ya está facturado. Si el proveedor mandó algo más, cargalo como una compra común." });
+              return;
+            }
+            state.purchaseFromPedido = {
+              id: state.editingCotizacionId,
+              items: srcItems.map((it) => ({ product_id: it.product_id, product_name: it.product_name, quantity: it.quantity, unit_price: Number(it.unit_price) || 0 })),
+            };
+          }
+
+          state.purchaseItems = srcItems.map((it) => {
             const base = {
               product_id:   it.product_id,
               product_code: it.product_code,
@@ -12398,13 +12708,22 @@
               dtInput.value = now.toISOString().slice(0, 16);
             }
           }
-          if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = "Nueva compra (desde cotización)";
+          if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = isPedido
+            ? "Cargar factura · Pedido #" + state.editingCotizacionId
+            : "Nueva compra (desde cotización)";
+          if (isPedido) {
+            // El costo del producto pasa al facturado (sube o baja).
+            const pol = document.getElementById("pur-cost-policy");
+            if (pol && pol.querySelector('option[value="always"]')) pol.value = "always";
+          }
           renderPurchaseItems();
 
           // Todo listo: recién ahora cerramos la cotización y mostramos la compra.
           if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
           if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = false;
-          showToast("Cotización convertida — revisá y apretá \"Guardar compra\"");
+          showToast(isPedido
+            ? "Corregí cantidades y precios según la factura y apretá \"Guardar compra\". Lo que no vino, borralo de la lista: queda pendiente."
+            : "Cotización convertida — revisá y apretá \"Guardar compra\"");
         } catch (err) {
           showToast("No se pudo abrir la compra: " + (err && err.message ? err.message : err), "err");
         }
@@ -12436,7 +12755,7 @@
         const resp = await fetch("/api/admin/cotizacion/" + ext, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ supplier_name: supName, notes: notas, porBultos, items: payloadItems }),
+          body: JSON.stringify({ supplier_name: supName, notes: notas, porBultos, items: payloadItems, kind: state.cotMode }),
         });
         if (resp.status === 401) { location.href = "/login"; return; }
         if (!resp.ok) {
@@ -12445,7 +12764,7 @@
         }
         const blob = await resp.blob();
         const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
-        const fileName = ("Cotizacion " + (supName || "") + " " + dateSlug + "." + ext).replace(/\s+/g, " ").trim();
+        const fileName = ((state.cotMode === "pedido" ? "Pedido " : "Cotizacion ") + (supName || "") + " " + dateSlug + "." + ext).replace(/\s+/g, " ").trim();
         if (ext === "pdf") { await sharePdfBlob(blob, fileName); return; }
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
@@ -12474,6 +12793,337 @@
   }
 
   initCotizacionesListeners();
+
+  // ========== PEDIDOS A PROVEEDOR ==========
+  // Reusa el modal de cotizacion (state.cotMode = "pedido"). Cada factura del
+  // proveedor se carga como una Compra vinculada al pedido; el server calcula
+  // cuanto se facturo de cada producto y el estado (parcial/facturado).
+  const ppvEl = (id) => document.getElementById(id);
+
+  async function loadPedidosProv() {
+    const tbody = ppvEl("ppv-tbody");
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+    try {
+      state.pedidosProv = await api("/api/admin/pedidos-prov", null, "los pedidos a proveedor");
+      state.pedidosProvLoaded = true;
+      populatePpvSupFilter();
+      renderPedidosProv();
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="8" class="muted">Error cargando pedidos</td></tr>';
+    }
+  }
+
+  function populatePpvSupFilter() {
+    const sel = ppvEl("ppv-sup-filter");
+    if (!sel) return;
+    const cur = sel.value;
+    const seen = new Map();
+    state.pedidosProv.forEach((c) => { if (c.supplier_id && !seen.has(c.supplier_id)) seen.set(c.supplier_id, c.supplier_name || ("Proveedor #" + c.supplier_id)); });
+    sel.innerHTML = '<option value="all">Todos los proveedores</option>' +
+      Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1], "es"))
+        .map(([id, name]) => '<option value="' + id + '">' + escapeHtml(name) + "</option>").join("");
+    if (cur && sel.querySelector('[value="' + cur + '"]')) sel.value = cur;
+  }
+
+  function ppvStatusChip(st) {
+    const cls = { borrador: "tag-draft", enviado: "tag-sent", parcial: "tag-partial", facturado: "tag-done", derivado: "tag-moved", cerrado: "tag-closed" }[st] || "tag-draft";
+    return '<span class="tag ' + cls + '">' + escapeHtml(PEDIDO_STATUS_LABEL[st] || st) + "</span>";
+  }
+
+  function renderPedidosProv() {
+    const tbody = ppvEl("ppv-tbody");
+    if (!tbody) return;
+    const supF = ppvEl("ppv-sup-filter") ? ppvEl("ppv-sup-filter").value : "all";
+    const stF = ppvEl("ppv-status-filter") ? ppvEl("ppv-status-filter").value : "open";
+    let list = state.pedidosProv;
+    if (supF !== "all") list = list.filter((c) => String(c.supplier_id) === supF);
+    if (stF === "open") list = list.filter((c) => ["borrador", "enviado", "parcial"].includes(c.status));
+    else if (stF !== "all") list = list.filter((c) => c.status === stF);
+    const cnt = ppvEl("ppv-count");
+    if (cnt) cnt.textContent = list.length + (list.length === 1 ? " pedido" : " pedidos");
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="muted">' +
+        (state.pedidosProv.length ? "No hay pedidos con ese filtro." : "Todavía no hay pedidos. Creá uno con \"+ Nuevo pedido\" o desde Reposición.") + "</td></tr>";
+      return;
+    }
+    tbody.innerHTML = list.map(pedidoRowHtml).join("");
+  }
+
+  function pedidoRowHtml(c) {
+    const ord = Number(c.ordered_units) || 0;
+    const inv = Number(c.invoiced_units) || 0;
+    const pct = ord > 0 ? Math.min(100, Math.round((inv / ord) * 100)) : 0;
+    const prog = c.invoices_count
+      ? '<div class="ppv-prog" title="' + fmtTabletas(inv) + " de " + fmtTabletas(ord) + ' unidades facturadas"><div class="ppv-prog-bar' +
+          (pct >= 100 ? " done" : "") + '" style="width:' + pct + '%"></div></div>' +
+        '<span class="small-cell">' + pct + "% · " + c.invoices_count + (c.invoices_count === 1 ? " factura" : " facturas") + "</span>"
+      : '<span class="muted small-cell">Sin facturas</span>';
+    const movedNote = Number(c.moved_units) > 0
+      ? '<div class="ppv-moved small-cell">↪ ' + fmtTabletas(c.moved_units) + " un. pedidas a otro proveedor</div>" : "";
+    const open = ["borrador", "enviado", "parcial"].includes(c.status);
+    const canInvoice = c.status !== "cerrado" && c.status !== "facturado" && c.status !== "derivado";
+    const canMove = c.status !== "cerrado" && (Number(c.pending_items) || 0) > 0;
+    return '<tr class="ppv-row pur-row" data-id="' + c.id + '" style="cursor:pointer" title="Clic para ver el detalle">' +
+      '<td class="cell-code">#' + c.id + "</td>" +
+      "<td>" + escapeHtml(c.supplier_name || "—") +
+        (c.notes ? '<div class="muted small-cell">' + escapeHtml(String(c.notes).slice(0, 60)) + "</div>" : "") + "</td>" +
+      "<td>" + ppvStatusChip(c.status) + (c.status === "parcial" && c.pending_items
+        ? '<div class="muted small-cell">' + c.pending_items + (c.pending_items === 1 ? " producto pendiente" : " productos pendientes") + "</div>" : "") + "</td>" +
+      "<td>" + prog + movedNote + "</td>" +
+      '<td class="num">' + (c.items_count || 0) + "</td>" +
+      '<td class="muted small-cell">' + formatDate(c.created_at) + "</td>" +
+      '<td class="muted small-cell">' + (c.last_invoice_at ? formatDate(c.last_invoice_at) : "—") + "</td>" +
+      '<td class="ppv-actions"><div class="ppv-actbox">' +
+        (canInvoice ? '<button class="btn btn-small btn-primary" data-ppv="invoice" data-id="' + c.id + '" type="button" title="Cargar la factura del proveedor">📥 Cargar factura</button>' : "") +
+        (canMove ? '<button class="btn btn-small" data-ppv="move" data-id="' + c.id + '" type="button" title="Lo que este proveedor no te factura, pedíselo a otro">↪ Pedir a otro</button>' : "") +
+        '<button class="btn btn-small" data-ppv="edit" data-id="' + c.id + '" type="button" title="Ver / editar el pedido">✏️</button>' +
+        (open && c.invoices_count ? '<button class="btn btn-small" data-ppv="close" data-id="' + c.id + '" type="button" title="Dar por cerrado: lo que falta ya no viene">🔒</button>' : "") +
+        (c.status === "cerrado" ? '<button class="btn btn-small" data-ppv="reopen" data-id="' + c.id + '" type="button" title="Reabrir: lo pendiente vuelve a esperarse">🔓</button>' : "") +
+        (!c.invoices_count ? '<button class="btn btn-small" data-ppv="delete" data-id="' + c.id + '" type="button" title="Eliminar">🗑</button>' : "") +
+      "</div></td>" +
+    "</tr>" +
+    '<tr class="ppv-detail-row" data-for="' + c.id + '" hidden><td colspan="8" class="pur-detail-cell"><span class="muted">Cargando…</span></td></tr>';
+  }
+
+  function ppvDiffPct(a, b) {
+    const x = Number(a) || 0, y = Number(b) || 0;
+    if (!(x > 0) || !(y > 0)) return null;
+    return ((y - x) / x) * 100;
+  }
+  function ppvPctHtml(pct) {
+    if (pct == null || Math.abs(pct) < 0.5) return '<span class="muted">—</span>';
+    return '<span class="' + (pct > 0 ? "ppv-up" : "ppv-down") + '">' + (pct > 0 ? "▲ +" : "▼ ") +
+      pct.toLocaleString("es-AR", { maximumFractionDigits: 1 }) + "%</span>";
+  }
+
+  async function togglePedidoDetail(id) {
+    const tbody = ppvEl("ppv-tbody");
+    const row = tbody && tbody.querySelector('tr.ppv-detail-row[data-for="' + id + '"]');
+    if (!row) return;
+    if (!row.hidden) { row.hidden = true; return; }
+    row.hidden = false;
+    const td = row.querySelector("td");
+    td.innerHTML = '<span class="muted">Cargando…</span>';
+    try {
+      const d = await api("/api/admin/pedidos-prov/" + id);
+      const items = d.items || [];
+      const rows = items.map((it) => {
+        const pend = Number(it.pending_qty) || 0;
+        const got = Number(it.invoiced_qty) || 0;
+        const mv = Number(it.moved_qty) || 0;
+        const mvCell = mv > 0
+          ? '<span class="ppv-moved" title="Pedido a otro proveedor">↪ ' + fmtTabletas(mv) + (it.moved_to && it.moved_to.ids ? " → #" + escapeHtml(String(it.moved_to.ids).split(",").join(", #")) : "") +
+            (it.moved_to && it.moved_to.names ? '<br><span class="muted">' + escapeHtml(it.moved_to.names) + "</span>" : "") + "</span>"
+          : '<span class="muted">—</span>';
+        const pct = got > 0 ? ppvDiffPct(it.unit_price, it.invoiced_cost) : null;
+        return "<tr" + (pend > 0 && got > 0 ? ' class="ppv-line-partial"' : pend > 0 ? "" : ' class="ppv-line-ok"') + ">" +
+          '<td class="cell-code">' + escapeHtml(it.product_code || "—") + "</td>" +
+          "<td>" + escapeHtml(it.product_name || "") + "</td>" +
+          '<td class="num">' + fmtTabletas(it.quantity) + "</td>" +
+          '<td class="num">' + (got ? fmtTabletas(got) : '<span class="muted">0</span>') + "</td>" +
+          '<td class="num">' + mvCell + "</td>" +
+          '<td class="num">' + (pend ? '<strong class="ppv-pend">' + fmtTabletas(pend) + "</strong>" : "✔") + "</td>" +
+          '<td class="num">' + (it.unit_price ? fmtPrice(it.unit_price) : "—") + "</td>" +
+          '<td class="num">' + (it.invoiced_cost != null ? fmtPrice(it.invoiced_cost) : "—") + "</td>" +
+          '<td class="num">' + ppvPctHtml(pct) + "</td>" +
+        "</tr>";
+      }).join("");
+      const invs = (d.invoices || []).map((f) =>
+        "Compra #" + f.id + (f.reference ? " (" + escapeHtml(f.reference) + ")" : "") + " · " + formatDate(f.received_at) + " · " + fmtPrice(f.total_cost) +
+        (Number(f.received) ? "" : ' <span class="muted">(sin recibir)</span>')
+      ).join("<br>");
+      const extras = (d.extras || []).map((e) => escapeHtml(e.name || ("Producto #" + e.product_id)) + ": " + fmtTabletas(e.qty) +
+        (e.over ? " de más" : " (no estaba en el pedido)")).join("<br>");
+      td.innerHTML =
+        '<table class="admin-table ppv-detail-table"><thead><tr>' +
+          '<th>Código</th><th>Producto</th><th class="num">Pedido</th><th class="num">Facturado</th><th class="num">Derivado</th><th class="num">Pendiente</th>' +
+          '<th class="num">Costo pedido</th><th class="num">Costo facturado</th><th class="num">Dif.</th>' +
+        "</tr></thead><tbody>" + rows + "</tbody></table>" +
+        '<div class="ppv-detail-foot">' +
+          ((d.derived_from || []).length ? '<div><strong>Faltante de:</strong><br>' + d.derived_from.map((o) => "Pedido #" + o.id + (o.supplier_name ? " · " + escapeHtml(o.supplier_name) : "")).join("<br>") + "</div>" : "") +
+          '<div><strong>Facturas:</strong><br>' + (invs || '<span class="muted">Todavía ninguna.</span>') + "</div>" +
+          (extras ? '<div><strong>Facturado fuera del pedido:</strong><br>' + extras + "</div>" : "") +
+        "</div>";
+    } catch (err) {
+      td.innerHTML = '<span class="muted">Error cargando el detalle: ' + escapeHtml(err.message) + "</span>";
+    }
+  }
+
+  // ---- Pedir a otro proveedor lo que no se facturó ----
+  const ppvMove = { id: null, items: [] };
+
+  async function openPpvMove(id) {
+    const modal = ppvEl("ppv-move-modal");
+    if (!modal) return;
+    try {
+      const [d] = await Promise.all([
+        api("/api/admin/pedidos-prov/" + id),
+        state.suppliersLoaded ? Promise.resolve() : api("/api/admin/suppliers", null, "los proveedores")
+          .then((s) => { state.suppliers = s; state.suppliersLoaded = true; })
+          .catch((err) => warnLoadFail("los proveedores", err)),
+      ]);
+      ppvMove.id = id;
+      ppvMove.items = (d.items || []).filter((it) => Number(it.pending_qty) > 0);
+      if (!ppvMove.items.length) { showToast("Este pedido no tiene nada pendiente", "err"); return; }
+      ppvEl("ppv-move-title").textContent = "Pedir el faltante del pedido #" + id + (d.supplier_name ? " (" + d.supplier_name + ")" : "") + " a otro proveedor";
+      const sel = ppvEl("ppv-move-supplier");
+      sel.innerHTML = '<option value="">— Elegí el proveedor —</option>' +
+        (state.suppliers || []).filter((s) => s.active && Number(s.id) !== Number(d.supplier_id))
+          .sort((a, b) => String(a.name).localeCompare(String(b.name), "es"))
+          .map((s) => '<option value="' + s.id + '">' + escapeHtml(s.name) + "</option>").join("");
+      ppvEl("ppv-move-all").checked = true;
+      ppvEl("ppv-move-list").innerHTML = ppvMove.items.map((it) =>
+        '<label class="ppv-move-item">' +
+          '<input type="checkbox" class="ppv-move-cb" data-item="' + it.id + '" checked />' +
+          '<span class="ppv-move-name">' + escapeHtml(it.product_name || "") +
+            ' <span class="muted small">pendiente ' + fmtTabletas(it.pending_qty) + "</span></span>" +
+          '<input type="text" inputmode="decimal" class="cell-input ppv-move-qty" data-item="' + it.id + '" data-max="' + it.pending_qty + '" value="' + fmtTabletas(it.pending_qty) + '" />' +
+        "</label>"
+      ).join("");
+      ppvEl("ppv-move-msg").textContent = "";
+      modal.hidden = false;
+    } catch (err) { showToast("Error: " + err.message, "err"); }
+  }
+
+  (function initPpvMove() {
+    const modal = ppvEl("ppv-move-modal");
+    if (!modal) return;
+    ppvEl("ppv-move-all").addEventListener("change", (e) => {
+      modal.querySelectorAll(".ppv-move-cb").forEach((cb) => { cb.checked = e.target.checked; });
+    });
+    ppvEl("ppv-move-confirm").addEventListener("click", async () => {
+      const msg = ppvEl("ppv-move-msg");
+      msg.textContent = "";
+      const supplierId = Number(ppvEl("ppv-move-supplier").value) || 0;
+      if (!supplierId) { msg.textContent = "Elegí el proveedor al que se lo vas a pedir."; return; }
+      const items = [];
+      let bad = null;
+      modal.querySelectorAll(".ppv-move-cb").forEach((cb) => {
+        if (!cb.checked) return;
+        const inp = modal.querySelector('.ppv-move-qty[data-item="' + cb.dataset.item + '"]');
+        const q = recvParseNum(inp ? inp.value : "");
+        const max = Number(inp ? inp.dataset.max : 0) || 0;
+        if (!(q > 0) || q > max) { bad = inp; return; }
+        items.push({ item_id: Number(cb.dataset.item), quantity: q });
+      });
+      if (bad) { msg.textContent = "Revisá las cantidades: tienen que ser mayores a 0 y no pasar lo pendiente."; bad.focus(); return; }
+      if (!items.length) { msg.textContent = "Tildá al menos un producto."; return; }
+      const btn = ppvEl("ppv-move-confirm");
+      btn.disabled = true;
+      try {
+        const out = await api("/api/admin/pedidos-prov/" + ppvMove.id + "/derivar", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ supplier_id: supplierId, items }),
+        });
+        modal.hidden = true;
+        showToast("Pedido #" + out.request.id + " creado para " + (out.request.supplier_name || "el proveedor") + " con " + out.items_moved + " producto(s)");
+        await loadPedidosProv();
+        const go = await confirmModal({
+          title: "Pedido #" + out.request.id + " creado",
+          message: "Quedó en borrador para " + (out.request.supplier_name || "el proveedor") + ". ¿Lo abrís para revisarlo y mandárselo?",
+          confirmText: "Abrir pedido", cancelText: "Después",
+        });
+        if (go) openEditCotizacion(out.request.id, "pedido");
+      } catch (err) {
+        msg.textContent = err.message || "No se pudo crear el pedido";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  })();
+
+  async function ppvAction(act, id) {
+    if (act === "edit") return openEditCotizacion(id, "pedido");
+    if (act === "move") return openPpvMove(id);
+    if (act === "invoice") {
+      await openEditCotizacion(id, "pedido");
+      if (els.pcotConvertBtn) els.pcotConvertBtn.click();
+      return;
+    }
+    if (act === "close") {
+      const ok = await confirmModal({ title: "Cerrar pedido #" + id, message: "Lo que falta facturar deja de esperarse (y deja de contar como \"en camino\" en Reposición).\n\nSi después llega igual, lo podés reabrir.", confirmText: "Cerrar pedido" });
+      if (!ok) return;
+    }
+    if (act === "delete") {
+      const ok = await confirmModal({ message: "¿Eliminar el pedido #" + id + "?", confirmText: "Eliminar", danger: true });
+      if (!ok) return;
+      try {
+        await api("/api/admin/pedidos-prov/" + id, { method: "DELETE" });
+        showToast("Pedido eliminado");
+        loadPedidosProv();
+      } catch (err) { showToast("Error: " + err.message, "err"); }
+      return;
+    }
+    try {
+      await api("/api/admin/pedidos-prov/" + id, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: act === "close" ? "cerrado" : "abierto" }),
+      });
+      showToast(act === "close" ? "Pedido cerrado" : "Pedido reabierto");
+      loadPedidosProv();
+    } catch (err) { showToast("Error: " + err.message, "err"); }
+  }
+
+  (function initPedidosProv() {
+    const tbody = ppvEl("ppv-tbody");
+    if (!tbody) return;
+    tbody.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-ppv]");
+      if (b) { e.stopPropagation(); ppvAction(b.dataset.ppv, Number(b.dataset.id)); return; }
+      const tr = e.target.closest("tr.ppv-row");
+      if (tr) togglePedidoDetail(Number(tr.dataset.id));
+    });
+    const sf = ppvEl("ppv-sup-filter"), st = ppvEl("ppv-status-filter");
+    if (sf) sf.addEventListener("change", renderPedidosProv);
+    if (st) st.addEventListener("change", renderPedidosProv);
+  })();
+
+  // Despues de cargar la factura de un pedido: que falto y que cambio de precio.
+  async function showPedidoInvoiceReport(ctx, savedItems) {
+    const byPid = new Map();
+    savedItems.forEach((it) => {
+      if (!it.product_id) return;
+      const e = byPid.get(it.product_id) || { qty: 0, amount: 0 };
+      e.qty += Number(it.quantity) || 0;
+      e.amount += (Number(it.unit_cost) || 0) * (Number(it.quantity) || 0);
+      byPid.set(it.product_id, e);
+    });
+    const ups = [], downs = [], short = [], missing = [];
+    ctx.items.forEach((it) => {
+      const e = byPid.get(it.product_id);
+      if (!e || !e.qty) { missing.push(it.product_name + " (" + fmtTabletas(it.quantity) + ")"); return; }
+      if (e.qty < it.quantity) short.push(it.product_name + ": pediste " + fmtTabletas(it.quantity) + ", vinieron " + fmtTabletas(e.qty));
+      const cost = e.amount / e.qty;
+      const pct = ppvDiffPct(it.unit_price, cost);
+      if (pct != null && Math.abs(pct) >= 0.5) {
+        const line = it.product_name + ": " + fmtPrice(it.unit_price) + " → " + fmtPrice(cost) + " (" + (pct > 0 ? "+" : "") +
+          pct.toLocaleString("es-AR", { maximumFractionDigits: 1 }) + "%)";
+        (pct > 0 ? ups : downs).push(line);
+      }
+    });
+    if (!ups.length && !downs.length && !short.length && !missing.length) {
+      showToast("✅ La factura coincide con el pedido");
+      return;
+    }
+    const lim = (arr) => arr.slice(0, 12).join("\n") + (arr.length > 12 ? "\n… y " + (arr.length - 12) + " más" : "");
+    let msg = "";
+    if (ups.length) msg += "🔺 AUMENTARON (" + ups.length + ")\n" + lim(ups) + "\n\n";
+    if (downs.length) msg += "🔻 BAJARON (" + downs.length + ")\n" + lim(downs) + "\n\n";
+    if (short.length) msg += "📦 VINO MENOS (" + short.length + ")\n" + lim(short) + "\n\n";
+    if (missing.length) msg += "⏳ NO VINO (" + missing.length + ")\n" + lim(missing) + "\n\n";
+    if (short.length || missing.length) msg += "Lo que falta queda pendiente en el pedido #" + ctx.id + ". Si se lo vas a pedir a otro proveedor, usá ↪ Pedir a otro; si ya no va a venir, cerralo con 🔒.\n";
+    if (ups.length || downs.length) msg += "El costo de esos productos ya quedó en el precio facturado.";
+    if (ups.length) {
+      const go = await confirmModal({ title: "Factura del pedido #" + ctx.id, message: msg.trim() + "\n\n¿Querés revisar los precios de venta en Márgenes?", confirmText: "Ir a Márgenes", cancelText: "Cerrar" });
+      if (go) {
+        const btn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "margenes");
+        if (btn && btn.style.display !== "none") btn.click();
+      }
+    } else {
+      await alertModal({ title: "Factura del pedido #" + ctx.id, message: msg.trim() });
+    }
+  }
 
   // ========== PAGOS ==========
 
