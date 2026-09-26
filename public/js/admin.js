@@ -571,6 +571,11 @@
     supplierCreatedFromCotizacion: false,
     cotizaciones: [],
     cotizacionesLoaded: false,
+    cotMode: "cotizacion",      // el modal de cotizacion tambien arma Pedidos a proveedor
+    pedidoCtx: null,            // pedido abierto en el modal (con lo facturado por item)
+    purchaseFromPedido: null,   // compra que se esta cargando como factura de un pedido
+    pedidosProv: [],
+    pedidosProvLoaded: false,
     cotizacionItems: [],       // items del modal de creación
     cotPickerSelected: new Map(), // product_id -> {qty, product}
     editingCotizacionId: null, // null = nueva, número = editar existente
@@ -1574,6 +1579,7 @@
       }
       if (tab === "proveedores" && !state.suppliersLoaded) loadSuppliers();
       if (tab === "cotizaciones") loadCotizaciones();
+      if (tab === "pedidos-prov") loadPedidosProv(); // siempre recargar (cambia con cada factura)
       if (tab === "compras" && !state.purchasesLoaded) loadPurchases();
       if (tab === "recepcion") loadRecepcion(); // siempre recargar (cambia con compras nuevas)
       if (tab === "reposicion") loadReposicion(); // siempre recargar (depende de ventas y stock del momento)
@@ -9567,7 +9573,7 @@
           '<strong class="repo-group-total">' + repoMoney(repoGroupTotal(g)) + "</strong></span>" +
         (g.supplier_id == null
           ? '<span class="muted small-cell">Cargá una compra de estos productos para que aprenda el proveedor</span>'
-          : '<button class="btn btn-primary btn-small repo-to-cot" type="button" data-supplier="' + g.supplier_id + '">→ Cotización</button>') +
+          : '<button class="btn btn-primary btn-small repo-to-cot" type="button" data-supplier="' + g.supplier_id + '">→ Pedido</button>') +
       "</div>" +
       '<div class="admin-table-wrap"><table class="admin-table repo-table"><thead><tr>' +
         "<th></th><th>Producto</th><th>Estado</th>" +
@@ -9690,22 +9696,23 @@
     const supName = found ? (found.group.supplier_name || "el proveedor") : "el proveedor";
     const total = groupEl.querySelector(".repo-group-total");
     const ok = await confirmModal({
-      title: "Pasar a cotización",
-      message: "Se va a crear una cotización en borrador para " + supName + " con " + items.length +
+      title: "Pasar a pedido",
+      message: "Se va a crear un pedido en borrador para " + supName + " con " + items.length +
         (items.length === 1 ? " producto" : " productos") + (total ? " por " + total.textContent : "") +
-        ".\n\nDespués la revisás en la pestaña Cotizaciones (podés ajustar precios) y de ahí pasa a Compra.",
-      confirmText: "Crear cotización",
+        ".\n\nLo revisás en Compras → Pedidos a proveedor, se lo mandás, y cuando llega la factura la cargás desde ahí." +
+        "\nMientras no se facture, esas cantidades cuentan como \"en camino\" y no se vuelven a sugerir.",
+      confirmText: "Crear pedido",
     });
     if (!ok) return;
     btn.disabled = true;
     try {
-      const out = await api("/api/admin/reposicion/to-cotizacion", {
+      const out = await api("/api/admin/reposicion/to-pedido", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ supplier_id: supplierId, items: items }),
       });
-      showToast("Cotización #" + out.request.id + " creada con " + out.items_added + " productos");
-      state.cotizacionesLoaded = false;
+      showToast("Pedido #" + out.request.id + " creado con " + out.items_added + " productos");
+      state.pedidosProvLoaded = false;
       items.forEach((it) => repoState.sel.delete(it.product_id));
       renderReposicion();
     } catch (e) {
@@ -11461,6 +11468,7 @@
   if (els.purCreateBtn) {
     els.purCreateBtn.addEventListener("click", async () => {
       state.purchaseItems = [];
+      state.purchaseFromPedido = null;
       if (els.purchaseCreateForm) els.purchaseCreateForm.reset();
       if (els.purchaseCreateMsg) els.purchaseCreateMsg.textContent = "";
       renderPurchaseItems();
@@ -11487,6 +11495,7 @@
 
   function resetPurchaseModal() {
     state.editingPurchaseId = null;
+    state.purchaseFromPedido = null;
     if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = "Nueva compra";
     if (els.purSubmitBtn) els.purSubmitBtn.textContent = "Guardar compra";
   }
@@ -11697,6 +11706,7 @@
         notes: fd.get("notes"),
         received_at: received_at_raw ? received_at_raw.replace("T", " ") : null,
         cost_policy: fd.get("cost_policy") || "higher",
+        request_id: (!state.editingPurchaseId && state.purchaseFromPedido) ? state.purchaseFromPedido.id : null,
         items: state.purchaseItems.map((it) => ({
           product_id: it.product_id,
           product_code: it.product_code,
@@ -11713,11 +11723,18 @@
       try {
         await api(url, { method: method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         await purPersistUpb();
+        const fromPedido = body.request_id ? state.purchaseFromPedido : null;
+        const savedItems = state.purchaseItems.slice();
         state.purchasesLoaded = false;
         await loadPurchases();
         if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = true;
-        showToast(isEditing ? "Compra actualizada" : "Compra registrada");
+        showToast(isEditing ? "Compra actualizada" : (fromPedido ? "Factura cargada en el pedido #" + fromPedido.id : "Compra registrada"));
         resetPurchaseModal();
+        if (fromPedido) {
+          state.pedidosProvLoaded = false;
+          if (document.getElementById("tab-pedidos-prov") && !document.getElementById("tab-pedidos-prov").hidden) loadPedidosProv();
+          showPedidoInvoiceReport(fromPedido, savedItems);
+        }
         // Refrescar productos por cambio de stock (refetch + re-render de la tabla)
         state.allProductsLoaded = false;
         refreshProductsCache();
@@ -12294,10 +12311,44 @@
     if (els.pcotPickerConfirm) els.pcotPickerConfirm.disabled = n === 0;
   }
 
-  async function openEditCotizacion(id) {
+  // Base de la API segun el modo del modal (cotizacion o pedido a proveedor).
+  function cotBase() {
+    return state.cotMode === "pedido" ? "/api/admin/pedidos-prov" : "/api/admin/purchase-requests";
+  }
+  const PEDIDO_STATUS_LABEL = { borrador: "Borrador", enviado: "Enviado", parcial: "Parcial", facturado: "Facturado", derivado: "Derivado", cerrado: "Cerrado" };
+
+  // Textos del modal segun el modo. status = estado actual (en edicion).
+  function applyCotModeUi(status) {
+    const ped = state.cotMode === "pedido";
+    const lbl = document.getElementById("pcot-items-label");
+    if (lbl) lbl.textContent = ped ? "Productos a pedir" : "Productos a cotizar";
+    const th = document.getElementById("pcot-th-price");
+    if (th) {
+      th.textContent = ped ? "Costo pedido" : "Precio cotiz.";
+      th.title = ped
+        ? "Costo esperado de cada producto (arranca en el costo actual). Al cargar la factura se compara contra lo facturado."
+        : "Precio que te cotiza el proveedor, en el empaque de cada producto (por caja/bulto/unidad)";
+    }
+    if (els.pcotSaveBtn) els.pcotSaveBtn.textContent = ped ? "Guardar pedido" : "Guardar cotización";
+    if (els.pcotConvertBtn) {
+      els.pcotConvertBtn.textContent = ped ? "📥 Cargar factura" : "📥 → Compra";
+      els.pcotConvertBtn.title = ped ? "Abrir una compra con lo pendiente del pedido, para cargar la factura del proveedor" : "Abrir como nueva compra";
+    }
+    if (els.pcotFormStatus) {
+      const locked = ped && status && !["borrador", "enviado"].includes(status);
+      els.pcotFormStatus.innerHTML =
+        '<option value="borrador">Borrador</option><option value="enviado">Enviado</option>' +
+        (locked ? '<option value="' + status + '">' + (PEDIDO_STATUS_LABEL[status] || status) + "</option>" : "");
+      els.pcotFormStatus.value = status || "borrador";
+      els.pcotFormStatus.disabled = !!locked;
+    }
+  }
+
+  async function openEditCotizacion(id, mode) {
+    state.cotMode = mode === "pedido" ? "pedido" : "cotizacion";
     try {
       const [data] = await Promise.all([
-        api("/api/admin/purchase-requests/" + id),
+        api(cotBase() + "/" + id),
         ensureAllProducts(),
         (!state.suppliersLoaded
           ? api("/api/admin/suppliers", null, "los proveedores")
@@ -12324,8 +12375,10 @@
         return obj;
       });
       state.cotPickerSelected = new Map();
-      if (els.pcotModalTitle) els.pcotModalTitle.textContent = "Editar cotización #" + id;
-      if (els.pcotFormStatus)   els.pcotFormStatus.value = data.status || "borrador";
+      state.pedidoCtx = state.cotMode === "pedido" ? data : null;
+      if (els.pcotModalTitle) els.pcotModalTitle.textContent = (state.cotMode === "pedido" ? "Pedido #" : "Editar cotización #") + id +
+        (state.cotMode === "pedido" && data.supplier_name ? " · " + data.supplier_name : "");
+      applyCotModeUi(data.status || "borrador");
       if (els.pcotFormNotes)    els.pcotFormNotes.value  = data.notes  || "";
       if (els.pcotCreateMsg)    { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
       if (els.pcotConvertBtn)   els.pcotConvertBtn.hidden = false;
@@ -12339,14 +12392,19 @@
   function initCotizacionesListeners() {
     if (!els.pcotCreateBtn) return;
 
-    // Abrir modal de creación
-    els.pcotCreateBtn.addEventListener("click", async () => {
+    // Abrir modal de creación (cotización o pedido a proveedor)
+    els.pcotCreateBtn.addEventListener("click", () => openNewCotizacion("cotizacion"));
+    const ppvCreateBtn = document.getElementById("ppv-create-btn");
+    if (ppvCreateBtn) ppvCreateBtn.addEventListener("click", () => openNewCotizacion("pedido"));
+    async function openNewCotizacion(mode) {
+      state.cotMode = mode === "pedido" ? "pedido" : "cotizacion";
+      state.pedidoCtx = null;
       state.editingCotizacionId = null;
       state.cotizacionItems = [];
       state.cotPickerSelected = new Map();
-      if (els.pcotModalTitle)   els.pcotModalTitle.textContent = "Nueva cotización";
+      if (els.pcotModalTitle)   els.pcotModalTitle.textContent = state.cotMode === "pedido" ? "Nuevo pedido a proveedor" : "Nueva cotización";
       if (els.pcotFormSupplier) els.pcotFormSupplier.value = "";
-      if (els.pcotFormStatus)   els.pcotFormStatus.value = "borrador";
+      applyCotModeUi("borrador");
       if (els.pcotFormNotes)    els.pcotFormNotes.value = "";
       if (els.pcotCreateMsg)    { els.pcotCreateMsg.textContent = ""; els.pcotCreateMsg.className = "config-msg"; }
       if (els.pcotConvertBtn)   els.pcotConvertBtn.hidden = true;
@@ -12358,7 +12416,7 @@
       populatePcotFormSupplier();
       await ensureAllProducts();
       if (els.pcotCreateModal) els.pcotCreateModal.hidden = false;
-    });
+    }
 
     // Cancelar modal de creación
     if (els.pcotCancelBtn) els.pcotCancelBtn.addEventListener("click", () => {
@@ -12532,12 +12590,20 @@
         comprimidos_per_unit: it.pack_unit === "comprimido" ? cotComprimidos(it) : null,
       }));
       const isEdit   = !!state.editingCotizacionId;
-      const url      = isEdit ? "/api/admin/purchase-requests/" + state.editingCotizacionId : "/api/admin/purchase-requests";
+      const isPedido = state.cotMode === "pedido";
+      const url      = isEdit ? cotBase() + "/" + state.editingCotizacionId : cotBase();
       const method   = isEdit ? "PUT" : "POST";
       els.pcotSaveBtn.disabled = true;
       els.pcotSaveBtn.textContent = "Guardando…";
       try {
         const res = await api(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ supplier_id, notes: notes || null, status, items }) });
+        if (isPedido) {
+          state.pedidosProvLoaded = false;
+          loadPedidosProv();
+          if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
+          showToast("✅ Pedido " + (isEdit ? "actualizado" : "creado"));
+          return;
+        }
         const updated = Object.assign({}, res.request, { items_count: items.length });
         if (isEdit) {
           const idx = state.cotizaciones.findIndex((c) => c.id === state.editingCotizacionId);
@@ -12554,7 +12620,7 @@
         if (els.pcotCreateMsg) { els.pcotCreateMsg.textContent = "Error: " + err.message; els.pcotCreateMsg.className = "config-msg err"; }
       } finally {
         els.pcotSaveBtn.disabled = false;
-        els.pcotSaveBtn.textContent = "Guardar cotización";
+        els.pcotSaveBtn.textContent = state.cotMode === "pedido" ? "Guardar pedido" : "Guardar cotización";
       }
     });
 
@@ -12570,8 +12636,33 @@
           // Siempre crear una compra NUEVA (nunca pisar una que se estuviera editando).
           state.editingPurchaseId = null;
           if (els.purSubmitBtn) els.purSubmitBtn.textContent = "Guardar compra";
+          const isPedido = state.cotMode === "pedido" && !!state.editingCotizacionId;
+          state.purchaseFromPedido = null;
 
-          state.purchaseItems = state.cotizacionItems.map((it) => {
+          // Pedido: la compra arranca con lo PENDIENTE (pedido − ya facturado).
+          let srcItems = state.cotizacionItems;
+          if (isPedido) {
+            const invByPid = new Map();
+            ((state.pedidoCtx && state.pedidoCtx.items) || []).forEach((it) => {
+              if (it.product_id) invByPid.set(it.product_id, (invByPid.get(it.product_id) || 0) + (Number(it.invoiced_qty) || 0));
+            });
+            srcItems = state.cotizacionItems.map((it) => {
+              const got = invByPid.get(it.product_id) || 0;
+              const take = Math.min(got, it.quantity);
+              if (it.product_id) invByPid.set(it.product_id, got - take);
+              return Object.assign({}, it, { quantity: Math.max(0, it.quantity - take) });
+            }).filter((it) => it.quantity > 0);
+            if (!srcItems.length) {
+              await alertModal({ title: "Pedido completo", message: "Todo lo pedido ya está facturado. Si el proveedor mandó algo más, cargalo como una compra común." });
+              return;
+            }
+            state.purchaseFromPedido = {
+              id: state.editingCotizacionId,
+              items: srcItems.map((it) => ({ product_id: it.product_id, product_name: it.product_name, quantity: it.quantity, unit_price: Number(it.unit_price) || 0 })),
+            };
+          }
+
+          state.purchaseItems = srcItems.map((it) => {
             const base = {
               product_id:   it.product_id,
               product_code: it.product_code,
@@ -12617,13 +12708,22 @@
               dtInput.value = now.toISOString().slice(0, 16);
             }
           }
-          if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = "Nueva compra (desde cotización)";
+          if (els.purchaseModalTitle) els.purchaseModalTitle.textContent = isPedido
+            ? "Cargar factura · Pedido #" + state.editingCotizacionId
+            : "Nueva compra (desde cotización)";
+          if (isPedido) {
+            // El costo del producto pasa al facturado (sube o baja).
+            const pol = document.getElementById("pur-cost-policy");
+            if (pol && pol.querySelector('option[value="always"]')) pol.value = "always";
+          }
           renderPurchaseItems();
 
           // Todo listo: recién ahora cerramos la cotización y mostramos la compra.
           if (els.pcotCreateModal) els.pcotCreateModal.hidden = true;
           if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = false;
-          showToast("Cotización convertida — revisá y apretá \"Guardar compra\"");
+          showToast(isPedido
+            ? "Corregí cantidades y precios según la factura y apretá \"Guardar compra\". Lo que no vino, borralo de la lista: queda pendiente."
+            : "Cotización convertida — revisá y apretá \"Guardar compra\"");
         } catch (err) {
           showToast("No se pudo abrir la compra: " + (err && err.message ? err.message : err), "err");
         }
@@ -12655,7 +12755,7 @@
         const resp = await fetch("/api/admin/cotizacion/" + ext, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ supplier_name: supName, notes: notas, porBultos, items: payloadItems }),
+          body: JSON.stringify({ supplier_name: supName, notes: notas, porBultos, items: payloadItems, kind: state.cotMode }),
         });
         if (resp.status === 401) { location.href = "/login"; return; }
         if (!resp.ok) {
@@ -12664,7 +12764,7 @@
         }
         const blob = await resp.blob();
         const dateSlug = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, "-");
-        const fileName = ("Cotizacion " + (supName || "") + " " + dateSlug + "." + ext).replace(/\s+/g, " ").trim();
+        const fileName = ((state.cotMode === "pedido" ? "Pedido " : "Cotizacion ") + (supName || "") + " " + dateSlug + "." + ext).replace(/\s+/g, " ").trim();
         if (ext === "pdf") { await sharePdfBlob(blob, fileName); return; }
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
@@ -12693,6 +12793,337 @@
   }
 
   initCotizacionesListeners();
+
+  // ========== PEDIDOS A PROVEEDOR ==========
+  // Reusa el modal de cotizacion (state.cotMode = "pedido"). Cada factura del
+  // proveedor se carga como una Compra vinculada al pedido; el server calcula
+  // cuanto se facturo de cada producto y el estado (parcial/facturado).
+  const ppvEl = (id) => document.getElementById(id);
+
+  async function loadPedidosProv() {
+    const tbody = ppvEl("ppv-tbody");
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+    try {
+      state.pedidosProv = await api("/api/admin/pedidos-prov", null, "los pedidos a proveedor");
+      state.pedidosProvLoaded = true;
+      populatePpvSupFilter();
+      renderPedidosProv();
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="8" class="muted">Error cargando pedidos</td></tr>';
+    }
+  }
+
+  function populatePpvSupFilter() {
+    const sel = ppvEl("ppv-sup-filter");
+    if (!sel) return;
+    const cur = sel.value;
+    const seen = new Map();
+    state.pedidosProv.forEach((c) => { if (c.supplier_id && !seen.has(c.supplier_id)) seen.set(c.supplier_id, c.supplier_name || ("Proveedor #" + c.supplier_id)); });
+    sel.innerHTML = '<option value="all">Todos los proveedores</option>' +
+      Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1], "es"))
+        .map(([id, name]) => '<option value="' + id + '">' + escapeHtml(name) + "</option>").join("");
+    if (cur && sel.querySelector('[value="' + cur + '"]')) sel.value = cur;
+  }
+
+  function ppvStatusChip(st) {
+    const cls = { borrador: "tag-draft", enviado: "tag-sent", parcial: "tag-partial", facturado: "tag-done", derivado: "tag-moved", cerrado: "tag-closed" }[st] || "tag-draft";
+    return '<span class="tag ' + cls + '">' + escapeHtml(PEDIDO_STATUS_LABEL[st] || st) + "</span>";
+  }
+
+  function renderPedidosProv() {
+    const tbody = ppvEl("ppv-tbody");
+    if (!tbody) return;
+    const supF = ppvEl("ppv-sup-filter") ? ppvEl("ppv-sup-filter").value : "all";
+    const stF = ppvEl("ppv-status-filter") ? ppvEl("ppv-status-filter").value : "open";
+    let list = state.pedidosProv;
+    if (supF !== "all") list = list.filter((c) => String(c.supplier_id) === supF);
+    if (stF === "open") list = list.filter((c) => ["borrador", "enviado", "parcial"].includes(c.status));
+    else if (stF !== "all") list = list.filter((c) => c.status === stF);
+    const cnt = ppvEl("ppv-count");
+    if (cnt) cnt.textContent = list.length + (list.length === 1 ? " pedido" : " pedidos");
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="muted">' +
+        (state.pedidosProv.length ? "No hay pedidos con ese filtro." : "Todavía no hay pedidos. Creá uno con \"+ Nuevo pedido\" o desde Reposición.") + "</td></tr>";
+      return;
+    }
+    tbody.innerHTML = list.map(pedidoRowHtml).join("");
+  }
+
+  function pedidoRowHtml(c) {
+    const ord = Number(c.ordered_units) || 0;
+    const inv = Number(c.invoiced_units) || 0;
+    const pct = ord > 0 ? Math.min(100, Math.round((inv / ord) * 100)) : 0;
+    const prog = c.invoices_count
+      ? '<div class="ppv-prog" title="' + fmtTabletas(inv) + " de " + fmtTabletas(ord) + ' unidades facturadas"><div class="ppv-prog-bar' +
+          (pct >= 100 ? " done" : "") + '" style="width:' + pct + '%"></div></div>' +
+        '<span class="small-cell">' + pct + "% · " + c.invoices_count + (c.invoices_count === 1 ? " factura" : " facturas") + "</span>"
+      : '<span class="muted small-cell">Sin facturas</span>';
+    const movedNote = Number(c.moved_units) > 0
+      ? '<div class="ppv-moved small-cell">↪ ' + fmtTabletas(c.moved_units) + " un. pedidas a otro proveedor</div>" : "";
+    const open = ["borrador", "enviado", "parcial"].includes(c.status);
+    const canInvoice = c.status !== "cerrado" && c.status !== "facturado" && c.status !== "derivado";
+    const canMove = c.status !== "cerrado" && (Number(c.pending_items) || 0) > 0;
+    return '<tr class="ppv-row pur-row" data-id="' + c.id + '" style="cursor:pointer" title="Clic para ver el detalle">' +
+      '<td class="cell-code">#' + c.id + "</td>" +
+      "<td>" + escapeHtml(c.supplier_name || "—") +
+        (c.notes ? '<div class="muted small-cell">' + escapeHtml(String(c.notes).slice(0, 60)) + "</div>" : "") + "</td>" +
+      "<td>" + ppvStatusChip(c.status) + (c.status === "parcial" && c.pending_items
+        ? '<div class="muted small-cell">' + c.pending_items + (c.pending_items === 1 ? " producto pendiente" : " productos pendientes") + "</div>" : "") + "</td>" +
+      "<td>" + prog + movedNote + "</td>" +
+      '<td class="num">' + (c.items_count || 0) + "</td>" +
+      '<td class="muted small-cell">' + formatDate(c.created_at) + "</td>" +
+      '<td class="muted small-cell">' + (c.last_invoice_at ? formatDate(c.last_invoice_at) : "—") + "</td>" +
+      '<td class="ppv-actions"><div class="ppv-actbox">' +
+        (canInvoice ? '<button class="btn btn-small btn-primary" data-ppv="invoice" data-id="' + c.id + '" type="button" title="Cargar la factura del proveedor">📥 Cargar factura</button>' : "") +
+        (canMove ? '<button class="btn btn-small" data-ppv="move" data-id="' + c.id + '" type="button" title="Lo que este proveedor no te factura, pedíselo a otro">↪ Pedir a otro</button>' : "") +
+        '<button class="btn btn-small" data-ppv="edit" data-id="' + c.id + '" type="button" title="Ver / editar el pedido">✏️</button>' +
+        (open && c.invoices_count ? '<button class="btn btn-small" data-ppv="close" data-id="' + c.id + '" type="button" title="Dar por cerrado: lo que falta ya no viene">🔒</button>' : "") +
+        (c.status === "cerrado" ? '<button class="btn btn-small" data-ppv="reopen" data-id="' + c.id + '" type="button" title="Reabrir: lo pendiente vuelve a esperarse">🔓</button>' : "") +
+        (!c.invoices_count ? '<button class="btn btn-small" data-ppv="delete" data-id="' + c.id + '" type="button" title="Eliminar">🗑</button>' : "") +
+      "</div></td>" +
+    "</tr>" +
+    '<tr class="ppv-detail-row" data-for="' + c.id + '" hidden><td colspan="8" class="pur-detail-cell"><span class="muted">Cargando…</span></td></tr>';
+  }
+
+  function ppvDiffPct(a, b) {
+    const x = Number(a) || 0, y = Number(b) || 0;
+    if (!(x > 0) || !(y > 0)) return null;
+    return ((y - x) / x) * 100;
+  }
+  function ppvPctHtml(pct) {
+    if (pct == null || Math.abs(pct) < 0.5) return '<span class="muted">—</span>';
+    return '<span class="' + (pct > 0 ? "ppv-up" : "ppv-down") + '">' + (pct > 0 ? "▲ +" : "▼ ") +
+      pct.toLocaleString("es-AR", { maximumFractionDigits: 1 }) + "%</span>";
+  }
+
+  async function togglePedidoDetail(id) {
+    const tbody = ppvEl("ppv-tbody");
+    const row = tbody && tbody.querySelector('tr.ppv-detail-row[data-for="' + id + '"]');
+    if (!row) return;
+    if (!row.hidden) { row.hidden = true; return; }
+    row.hidden = false;
+    const td = row.querySelector("td");
+    td.innerHTML = '<span class="muted">Cargando…</span>';
+    try {
+      const d = await api("/api/admin/pedidos-prov/" + id);
+      const items = d.items || [];
+      const rows = items.map((it) => {
+        const pend = Number(it.pending_qty) || 0;
+        const got = Number(it.invoiced_qty) || 0;
+        const mv = Number(it.moved_qty) || 0;
+        const mvCell = mv > 0
+          ? '<span class="ppv-moved" title="Pedido a otro proveedor">↪ ' + fmtTabletas(mv) + (it.moved_to && it.moved_to.ids ? " → #" + escapeHtml(String(it.moved_to.ids).split(",").join(", #")) : "") +
+            (it.moved_to && it.moved_to.names ? '<br><span class="muted">' + escapeHtml(it.moved_to.names) + "</span>" : "") + "</span>"
+          : '<span class="muted">—</span>';
+        const pct = got > 0 ? ppvDiffPct(it.unit_price, it.invoiced_cost) : null;
+        return "<tr" + (pend > 0 && got > 0 ? ' class="ppv-line-partial"' : pend > 0 ? "" : ' class="ppv-line-ok"') + ">" +
+          '<td class="cell-code">' + escapeHtml(it.product_code || "—") + "</td>" +
+          "<td>" + escapeHtml(it.product_name || "") + "</td>" +
+          '<td class="num">' + fmtTabletas(it.quantity) + "</td>" +
+          '<td class="num">' + (got ? fmtTabletas(got) : '<span class="muted">0</span>') + "</td>" +
+          '<td class="num">' + mvCell + "</td>" +
+          '<td class="num">' + (pend ? '<strong class="ppv-pend">' + fmtTabletas(pend) + "</strong>" : "✔") + "</td>" +
+          '<td class="num">' + (it.unit_price ? fmtPrice(it.unit_price) : "—") + "</td>" +
+          '<td class="num">' + (it.invoiced_cost != null ? fmtPrice(it.invoiced_cost) : "—") + "</td>" +
+          '<td class="num">' + ppvPctHtml(pct) + "</td>" +
+        "</tr>";
+      }).join("");
+      const invs = (d.invoices || []).map((f) =>
+        "Compra #" + f.id + (f.reference ? " (" + escapeHtml(f.reference) + ")" : "") + " · " + formatDate(f.received_at) + " · " + fmtPrice(f.total_cost) +
+        (Number(f.received) ? "" : ' <span class="muted">(sin recibir)</span>')
+      ).join("<br>");
+      const extras = (d.extras || []).map((e) => escapeHtml(e.name || ("Producto #" + e.product_id)) + ": " + fmtTabletas(e.qty) +
+        (e.over ? " de más" : " (no estaba en el pedido)")).join("<br>");
+      td.innerHTML =
+        '<table class="admin-table ppv-detail-table"><thead><tr>' +
+          '<th>Código</th><th>Producto</th><th class="num">Pedido</th><th class="num">Facturado</th><th class="num">Derivado</th><th class="num">Pendiente</th>' +
+          '<th class="num">Costo pedido</th><th class="num">Costo facturado</th><th class="num">Dif.</th>' +
+        "</tr></thead><tbody>" + rows + "</tbody></table>" +
+        '<div class="ppv-detail-foot">' +
+          ((d.derived_from || []).length ? '<div><strong>Faltante de:</strong><br>' + d.derived_from.map((o) => "Pedido #" + o.id + (o.supplier_name ? " · " + escapeHtml(o.supplier_name) : "")).join("<br>") + "</div>" : "") +
+          '<div><strong>Facturas:</strong><br>' + (invs || '<span class="muted">Todavía ninguna.</span>') + "</div>" +
+          (extras ? '<div><strong>Facturado fuera del pedido:</strong><br>' + extras + "</div>" : "") +
+        "</div>";
+    } catch (err) {
+      td.innerHTML = '<span class="muted">Error cargando el detalle: ' + escapeHtml(err.message) + "</span>";
+    }
+  }
+
+  // ---- Pedir a otro proveedor lo que no se facturó ----
+  const ppvMove = { id: null, items: [] };
+
+  async function openPpvMove(id) {
+    const modal = ppvEl("ppv-move-modal");
+    if (!modal) return;
+    try {
+      const [d] = await Promise.all([
+        api("/api/admin/pedidos-prov/" + id),
+        state.suppliersLoaded ? Promise.resolve() : api("/api/admin/suppliers", null, "los proveedores")
+          .then((s) => { state.suppliers = s; state.suppliersLoaded = true; })
+          .catch((err) => warnLoadFail("los proveedores", err)),
+      ]);
+      ppvMove.id = id;
+      ppvMove.items = (d.items || []).filter((it) => Number(it.pending_qty) > 0);
+      if (!ppvMove.items.length) { showToast("Este pedido no tiene nada pendiente", "err"); return; }
+      ppvEl("ppv-move-title").textContent = "Pedir el faltante del pedido #" + id + (d.supplier_name ? " (" + d.supplier_name + ")" : "") + " a otro proveedor";
+      const sel = ppvEl("ppv-move-supplier");
+      sel.innerHTML = '<option value="">— Elegí el proveedor —</option>' +
+        (state.suppliers || []).filter((s) => s.active && Number(s.id) !== Number(d.supplier_id))
+          .sort((a, b) => String(a.name).localeCompare(String(b.name), "es"))
+          .map((s) => '<option value="' + s.id + '">' + escapeHtml(s.name) + "</option>").join("");
+      ppvEl("ppv-move-all").checked = true;
+      ppvEl("ppv-move-list").innerHTML = ppvMove.items.map((it) =>
+        '<label class="ppv-move-item">' +
+          '<input type="checkbox" class="ppv-move-cb" data-item="' + it.id + '" checked />' +
+          '<span class="ppv-move-name">' + escapeHtml(it.product_name || "") +
+            ' <span class="muted small">pendiente ' + fmtTabletas(it.pending_qty) + "</span></span>" +
+          '<input type="text" inputmode="decimal" class="cell-input ppv-move-qty" data-item="' + it.id + '" data-max="' + it.pending_qty + '" value="' + fmtTabletas(it.pending_qty) + '" />' +
+        "</label>"
+      ).join("");
+      ppvEl("ppv-move-msg").textContent = "";
+      modal.hidden = false;
+    } catch (err) { showToast("Error: " + err.message, "err"); }
+  }
+
+  (function initPpvMove() {
+    const modal = ppvEl("ppv-move-modal");
+    if (!modal) return;
+    ppvEl("ppv-move-all").addEventListener("change", (e) => {
+      modal.querySelectorAll(".ppv-move-cb").forEach((cb) => { cb.checked = e.target.checked; });
+    });
+    ppvEl("ppv-move-confirm").addEventListener("click", async () => {
+      const msg = ppvEl("ppv-move-msg");
+      msg.textContent = "";
+      const supplierId = Number(ppvEl("ppv-move-supplier").value) || 0;
+      if (!supplierId) { msg.textContent = "Elegí el proveedor al que se lo vas a pedir."; return; }
+      const items = [];
+      let bad = null;
+      modal.querySelectorAll(".ppv-move-cb").forEach((cb) => {
+        if (!cb.checked) return;
+        const inp = modal.querySelector('.ppv-move-qty[data-item="' + cb.dataset.item + '"]');
+        const q = recvParseNum(inp ? inp.value : "");
+        const max = Number(inp ? inp.dataset.max : 0) || 0;
+        if (!(q > 0) || q > max) { bad = inp; return; }
+        items.push({ item_id: Number(cb.dataset.item), quantity: q });
+      });
+      if (bad) { msg.textContent = "Revisá las cantidades: tienen que ser mayores a 0 y no pasar lo pendiente."; bad.focus(); return; }
+      if (!items.length) { msg.textContent = "Tildá al menos un producto."; return; }
+      const btn = ppvEl("ppv-move-confirm");
+      btn.disabled = true;
+      try {
+        const out = await api("/api/admin/pedidos-prov/" + ppvMove.id + "/derivar", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ supplier_id: supplierId, items }),
+        });
+        modal.hidden = true;
+        showToast("Pedido #" + out.request.id + " creado para " + (out.request.supplier_name || "el proveedor") + " con " + out.items_moved + " producto(s)");
+        await loadPedidosProv();
+        const go = await confirmModal({
+          title: "Pedido #" + out.request.id + " creado",
+          message: "Quedó en borrador para " + (out.request.supplier_name || "el proveedor") + ". ¿Lo abrís para revisarlo y mandárselo?",
+          confirmText: "Abrir pedido", cancelText: "Después",
+        });
+        if (go) openEditCotizacion(out.request.id, "pedido");
+      } catch (err) {
+        msg.textContent = err.message || "No se pudo crear el pedido";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  })();
+
+  async function ppvAction(act, id) {
+    if (act === "edit") return openEditCotizacion(id, "pedido");
+    if (act === "move") return openPpvMove(id);
+    if (act === "invoice") {
+      await openEditCotizacion(id, "pedido");
+      if (els.pcotConvertBtn) els.pcotConvertBtn.click();
+      return;
+    }
+    if (act === "close") {
+      const ok = await confirmModal({ title: "Cerrar pedido #" + id, message: "Lo que falta facturar deja de esperarse (y deja de contar como \"en camino\" en Reposición).\n\nSi después llega igual, lo podés reabrir.", confirmText: "Cerrar pedido" });
+      if (!ok) return;
+    }
+    if (act === "delete") {
+      const ok = await confirmModal({ message: "¿Eliminar el pedido #" + id + "?", confirmText: "Eliminar", danger: true });
+      if (!ok) return;
+      try {
+        await api("/api/admin/pedidos-prov/" + id, { method: "DELETE" });
+        showToast("Pedido eliminado");
+        loadPedidosProv();
+      } catch (err) { showToast("Error: " + err.message, "err"); }
+      return;
+    }
+    try {
+      await api("/api/admin/pedidos-prov/" + id, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: act === "close" ? "cerrado" : "abierto" }),
+      });
+      showToast(act === "close" ? "Pedido cerrado" : "Pedido reabierto");
+      loadPedidosProv();
+    } catch (err) { showToast("Error: " + err.message, "err"); }
+  }
+
+  (function initPedidosProv() {
+    const tbody = ppvEl("ppv-tbody");
+    if (!tbody) return;
+    tbody.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-ppv]");
+      if (b) { e.stopPropagation(); ppvAction(b.dataset.ppv, Number(b.dataset.id)); return; }
+      const tr = e.target.closest("tr.ppv-row");
+      if (tr) togglePedidoDetail(Number(tr.dataset.id));
+    });
+    const sf = ppvEl("ppv-sup-filter"), st = ppvEl("ppv-status-filter");
+    if (sf) sf.addEventListener("change", renderPedidosProv);
+    if (st) st.addEventListener("change", renderPedidosProv);
+  })();
+
+  // Despues de cargar la factura de un pedido: que falto y que cambio de precio.
+  async function showPedidoInvoiceReport(ctx, savedItems) {
+    const byPid = new Map();
+    savedItems.forEach((it) => {
+      if (!it.product_id) return;
+      const e = byPid.get(it.product_id) || { qty: 0, amount: 0 };
+      e.qty += Number(it.quantity) || 0;
+      e.amount += (Number(it.unit_cost) || 0) * (Number(it.quantity) || 0);
+      byPid.set(it.product_id, e);
+    });
+    const ups = [], downs = [], short = [], missing = [];
+    ctx.items.forEach((it) => {
+      const e = byPid.get(it.product_id);
+      if (!e || !e.qty) { missing.push(it.product_name + " (" + fmtTabletas(it.quantity) + ")"); return; }
+      if (e.qty < it.quantity) short.push(it.product_name + ": pediste " + fmtTabletas(it.quantity) + ", vinieron " + fmtTabletas(e.qty));
+      const cost = e.amount / e.qty;
+      const pct = ppvDiffPct(it.unit_price, cost);
+      if (pct != null && Math.abs(pct) >= 0.5) {
+        const line = it.product_name + ": " + fmtPrice(it.unit_price) + " → " + fmtPrice(cost) + " (" + (pct > 0 ? "+" : "") +
+          pct.toLocaleString("es-AR", { maximumFractionDigits: 1 }) + "%)";
+        (pct > 0 ? ups : downs).push(line);
+      }
+    });
+    if (!ups.length && !downs.length && !short.length && !missing.length) {
+      showToast("✅ La factura coincide con el pedido");
+      return;
+    }
+    const lim = (arr) => arr.slice(0, 12).join("\n") + (arr.length > 12 ? "\n… y " + (arr.length - 12) + " más" : "");
+    let msg = "";
+    if (ups.length) msg += "🔺 AUMENTARON (" + ups.length + ")\n" + lim(ups) + "\n\n";
+    if (downs.length) msg += "🔻 BAJARON (" + downs.length + ")\n" + lim(downs) + "\n\n";
+    if (short.length) msg += "📦 VINO MENOS (" + short.length + ")\n" + lim(short) + "\n\n";
+    if (missing.length) msg += "⏳ NO VINO (" + missing.length + ")\n" + lim(missing) + "\n\n";
+    if (short.length || missing.length) msg += "Lo que falta queda pendiente en el pedido #" + ctx.id + ". Si se lo vas a pedir a otro proveedor, usá ↪ Pedir a otro; si ya no va a venir, cerralo con 🔒.\n";
+    if (ups.length || downs.length) msg += "El costo de esos productos ya quedó en el precio facturado.";
+    if (ups.length) {
+      const go = await confirmModal({ title: "Factura del pedido #" + ctx.id, message: msg.trim() + "\n\n¿Querés revisar los precios de venta en Márgenes?", confirmText: "Ir a Márgenes", cancelText: "Cerrar" });
+      if (go) {
+        const btn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "margenes");
+        if (btn && btn.style.display !== "none") btn.click();
+      }
+    } else {
+      await alertModal({ title: "Factura del pedido #" + ctx.id, message: msg.trim() });
+    }
+  }
 
   // ========== PAGOS ==========
 

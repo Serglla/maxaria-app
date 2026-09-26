@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260926c" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260926g" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -115,6 +115,9 @@
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="cotizaciones" type="button">
             <span class="admin-sidebar-item-icon">📋</span>Cotizaciones
+          </button>
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="pedidos-prov" type="button">
+            <span class="admin-sidebar-item-icon">🛒</span>Pedidos a proveedor
           </button>
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="compras" type="button">
             <span class="admin-sidebar-item-icon">📥</span>Compras
@@ -1671,6 +1674,67 @@
         </table>
       </div>
     </section>
+
+    <!-- ===== TAB PEDIDOS A PROVEEDOR ===== -->
+    <section class="tab-panel" id="tab-pedidos-prov" hidden>
+      <p class="muted small ppv-help">Para proveedores que no cotizan: armás el pedido, se lo mandás, y cuando llega la factura tocás <strong>📥 Cargar factura</strong> (se abre una compra con lo pendiente para que corrijas cantidades y precios). Lo que no vino queda pendiente hasta que lo cierres.</p>
+      <div class="admin-toolbar">
+        <select id="ppv-sup-filter" class="admin-select" title="Filtrar por proveedor">
+          <option value="all">Todos los proveedores</option>
+        </select>
+        <select id="ppv-status-filter" class="admin-select" title="Filtrar por estado">
+          <option value="open">Abiertos (sin facturar o parciales)</option>
+          <option value="all">Todos</option>
+          <option value="borrador">Borrador</option>
+          <option value="enviado">Enviado</option>
+          <option value="parcial">Parcial</option>
+          <option value="facturado">Facturado</option>
+          <option value="derivado">Derivado a otro proveedor</option>
+          <option value="cerrado">Cerrado</option>
+        </select>
+        <span class="admin-spacer"></span>
+        <span id="ppv-count" class="muted">…</span>
+        <button class="btn btn-primary" id="ppv-create-btn" type="button">+ Nuevo pedido</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="ppv-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Proveedor</th>
+              <th>Estado</th>
+              <th title="Unidades facturadas sobre pedidas">Facturado</th>
+              <th class="num">Productos</th>
+              <th>Fecha</th>
+              <th>Última factura</th>
+              <th style="width:210px"></th>
+            </tr>
+          </thead>
+          <tbody id="ppv-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Modal: pedir a otro proveedor lo que no se facturó -->
+    <div class="admin-modal" id="ppv-move-modal" hidden style="z-index:1300">
+      <div class="admin-modal-box" style="max-width:640px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
+        <h3 id="ppv-move-title">Pedir el faltante a otro proveedor</h3>
+        <p class="muted small" style="margin:0 0 10px">Se crea un pedido nuevo para el proveedor que elijas. En este pedido esas cantidades dejan de estar pendientes (quedan como "derivado"), así no se cuentan dos veces.</p>
+        <label class="ppv-move-sup">Proveedor
+          <select id="ppv-move-supplier" class="admin-select"></select>
+        </label>
+        <div class="ppv-move-list-head">
+          <label class="ppv-move-all"><input type="checkbox" id="ppv-move-all" checked /> Todo lo pendiente</label>
+        </div>
+        <div id="ppv-move-list" class="ppv-move-list"></div>
+        <p id="ppv-move-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="button" class="btn btn-primary" id="ppv-move-confirm">Crear pedido</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ===== TAB COMPRAS ===== -->
     <section class="tab-panel" id="tab-compras" hidden>
@@ -3254,7 +3318,7 @@
         </label>
         <div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">Productos a cotizar</span>
+            <span id="pcot-items-label" style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">Productos a cotizar</span>
             <button type="button" class="btn btn-primary" id="pcot-add-btn" style="font-size:12px;padding:4px 10px">+ Agregar productos</button>
           </div>
           <div style="overflow-x:auto">
@@ -3264,7 +3328,7 @@
               <th class="pcot-sort" id="pcot-th-name" data-cot-sort="name" title="Clic para ordenar por nombre de producto">Producto <span class="pcot-sort-ar"></span></th>
               <th style="text-align:right;width:90px">Costo act.</th>
               <th style="text-align:right;width:58px" title="Stock actual del producto">Stock</th>
-              <th style="text-align:right;width:100px" title="Precio que te cotiza el proveedor, en el empaque de cada producto (por caja/bulto/unidad)">Precio cotiz.</th>
+              <th id="pcot-th-price" style="text-align:right;width:100px" title="Precio que te cotiza el proveedor, en el empaque de cada producto (por caja/bulto/unidad)">Precio cotiz.</th>
               <th style="text-align:right;width:65px">Cant.</th>
               <th style="text-align:right;width:95px">Subtotal</th>
               <th style="text-align:right;width:85px">Diferencia</th>
@@ -4100,6 +4164,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260926b"></script>
+  <script src="/js/admin.js?v=20260926g"></script>
 </body>
 </html>
