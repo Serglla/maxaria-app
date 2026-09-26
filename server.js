@@ -351,6 +351,10 @@ try { db.exec("ALTER TABLE orders ADD COLUMN stock_discounted INTEGER NOT NULL D
 //   NULL = el cliente no tenia lista personalizada al momento del pedido, por
 //   lo que no hay ganancia diferencial para el vendedor.
 try { db.exec("ALTER TABLE users ADD COLUMN is_tercerizado INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+// Lista de precios que define el COSTO de un vendedor (catalogo sin cliente,
+// "Ver cambios"). NULL = usa vendedor_price_level (nivel base 1..4).
+// Separada de price_list_id, que es la lista de un CLIENTE.
+try { db.exec("ALTER TABLE users ADD COLUMN vendedor_cost_list_id INTEGER REFERENCES price_lists(id)"); } catch (_) {}
 try { db.exec("ALTER TABLE order_items ADD COLUMN vendedor_cost_unit INTEGER"); } catch (_) {}
 
 // Migracion: Pedido unificado del vendedor tercerizado.
@@ -1687,6 +1691,20 @@ function priceListWouldCycle(parentId, selfId) {
 //   - Si no: { kind: "level", column }
 //     -> efectivo = products.<column> directo
 // Para nivel admin/vendedor sin contexto, devolvemos config por nivel.
+// Config de precio de la lista de COSTO de un vendedor (users.vendedor_cost_list_id).
+// null si no tiene, si la lista no existe o esta inactiva (cae al nivel base).
+function vendorCostListConfig(listId) {
+  const id = Number(listId) || 0;
+  if (!id) return null;
+  const row = db.prepare(
+    "SELECT id, name, base_level, base_list_id, markup_percent, active FROM price_lists WHERE id = ?"
+  ).get(id);
+  if (!row || !row.active) return null;
+  const r = resolvePriceListConfig(row);
+  if (!r) return null;
+  return { kind: "list", listId: row.id, column: r.column, markup_percent: r.markup_percent };
+}
+
 function getEffectivePriceConfig(userId, level) {
   if (userId && [1, 2, 3, 4].includes(Number(level))) {
     const row = db.prepare(
@@ -1837,7 +1855,7 @@ const SHARED_READ_SECTIONS = {
   productos:     ["pedidos", "ventas", "compras", "recepcion", "armado", "entregas", "price-lists", "reposicion"],
   proveedores:   ["compras", "recepcion", "gastos", "reposicion"],
   vendedores:    ["pedidos", "ventas", "entregas", "reportes", "actividad", "cuentas", "pagos", "usuarios"],
-  "price-lists": ["pedidos", "ventas", "usuarios", "productos"],
+  "price-lists": ["pedidos", "ventas", "usuarios", "productos", "vendedores"],
 };
 
 // Permisos efectivos de un usuario level 99: { isSuperadmin, sections:Set }.
@@ -2686,6 +2704,10 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
       };
     }
   }
+  if (!cfg && level === 5 && !req.session.vendedorClientId) {
+    const vr = db.prepare("SELECT vendedor_cost_list_id, is_tercerizado FROM users WHERE id = ?").get(req.session.userId) || {};
+    if (Number(vr.is_tercerizado) === 1) cfg = vendorCostListConfig(vr.vendedor_cost_list_id) || undefined;
+  }
   if (!cfg) {
     const useListConfig = level !== 99;
     cfg = useListConfig ? getEffectivePriceConfig(targetUserId, effectiveLevel) : { kind: "level" };
@@ -2922,10 +2944,13 @@ app.get("/api/products", requireLogin, (req, res) => {
       //     (cartel "Seleccioná un cliente").
       // Lo leemos de la DB para reflejar cambios del admin sin re-login.
       const vRow = db.prepare(
-        "SELECT vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
+        "SELECT vendedor_price_level, vendedor_cost_list_id, is_tercerizado FROM users WHERE id = ?"
       ).get(req.session.userId) || {};
       const vpl = Number(vRow.vendedor_price_level) || 0;
-      if (Number(vRow.is_tercerizado) === 1 && [1, 2, 3, 4].includes(vpl)) {
+      const vCostList = Number(vRow.is_tercerizado) === 1 ? vendorCostListConfig(vRow.vendedor_cost_list_id) : null;
+      if (vCostList) {
+        vendorCostCfg = vCostList;
+      } else if (Number(vRow.is_tercerizado) === 1 && [1, 2, 3, 4].includes(vpl)) {
         vendorCostCfg = { kind: "level", column: priceColumnFor(vpl) };
       } else {
         noPrice = true; // vendedor propio sin cliente, o sin nivel: "Seleccioná un cliente"
@@ -5640,6 +5665,13 @@ app.delete("/api/admin/price-lists/:id", requireAdmin, (req, res) => {
              "Desasignala primero o desactiva la lista."
     });
   }
+  const vUsage = db.prepare("SELECT COUNT(*) AS n FROM users WHERE vendedor_cost_list_id = ?").get(id);
+  if (vUsage.n > 0) {
+    return res.status(409).json({
+      error: "No se puede borrar: hay " + vUsage.n + " vendedor(es) con esta lista como costo. " +
+             "Cambiales el costo primero o desactiva la lista."
+    });
+  }
   const deps = db.prepare("SELECT COUNT(*) AS n FROM price_lists WHERE base_list_id = ?").get(id);
   if (deps.n > 0) {
     return res.status(409).json({
@@ -6403,8 +6435,9 @@ app.get("/api/admin/activity/dead-stock", requireAdmin, (req, res) => {
 app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
   const rows = db.prepare(
     "SELECT u.id, u.username, u.full_name, u.phone, u.whatsapp_number, u.email, u.active," +
-    "       u.vendedor_price_level, u.price_list_id, u.is_tercerizado," +
+    "       u.vendedor_price_level, u.vendedor_cost_list_id, u.price_list_id, u.is_tercerizado," +
     "       u.created_at, u.last_login_at," +
+    "       (SELECT COUNT(*) FROM users c WHERE c.assigned_vendedor_id = u.id AND c.level BETWEEN 1 AND 4) AS clients_count," +
     "       COUNT(DISTINCT o.id) AS total_orders," +
     "       COUNT(DISTINCT d.id) AS total_deliveries" +
     "  FROM users u" +
@@ -6415,6 +6448,119 @@ app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
     "  ORDER BY u.username"
   ).all();
   res.json(rows);
+});
+
+// Clientes (level 1-4) para el modal "Editar vendedor": todos, con el vendedor
+// que tiene asignado cada uno, para poder sumar/quitar desde el vendedor.
+app.get("/api/admin/vendedores/:id/clients", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const v = db.prepare("SELECT id FROM users WHERE id = ? AND level = 5").get(id);
+  if (!v) return res.status(404).json({ error: "Vendedor no encontrado" });
+  const rows = db.prepare(
+    "SELECT c.id, c.username, c.full_name, c.level, c.active, c.assigned_vendedor_id," +
+    "       COALESCE(NULLIF(v.full_name, ''), v.username) AS vendedor_name" +
+    "  FROM users c LEFT JOIN users v ON v.id = c.assigned_vendedor_id" +
+    "  WHERE c.level BETWEEN 1 AND 4" +
+    "  ORDER BY c.active DESC, COALESCE(NULLIF(c.full_name, ''), c.username) COLLATE NOCASE"
+  ).all();
+  res.json(rows);
+});
+
+// Editar un vendedor desde su modal (seccion Vendedores). Todo opcional:
+// username, password, full_name, phone, whatsapp_number, active, is_tercerizado,
+// vendedor_price_level (1..4), vendedor_cost_list_id (null = por nivel) y
+// client_ids (lista COMPLETA de clientes asignados a este vendedor: los que no
+// vienen y hoy son suyos quedan sin vendedor; los de otro vendedor se reasignan).
+app.patch("/api/admin/vendedores/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const v = db.prepare("SELECT id, username FROM users WHERE id = ? AND level = 5").get(id);
+  if (!v) return res.status(404).json({ error: "Vendedor no encontrado" });
+  const b = req.body || {};
+  const sets = [];
+  const vals = [];
+
+  if ("username" in b) {
+    const uname = String(b.username || "").trim().toLowerCase();
+    if (!isValidUsername(uname))
+      return res.status(400).json({ error: "Usuario invalido: 3-32 caracteres, solo letras, numeros, _ . -" });
+    const clash = db.prepare("SELECT id FROM users WHERE username = ? AND id != ?").get(uname, id);
+    if (clash) return res.status(409).json({ error: "Ya existe un usuario con ese nombre" });
+    sets.push("username = ?"); vals.push(uname);
+  }
+  if ("password" in b && b.password != null && String(b.password) !== "") {
+    const pw = String(b.password);
+    if (pw.length < 6) return res.status(400).json({ error: "La contrasena debe tener al menos 6 caracteres" });
+    sets.push("password_hash = ?"); vals.push(bcrypt.hashSync(pw, 10));
+    sets.push("plain_password = NULL");
+  }
+  if ("full_name" in b) { sets.push("full_name = ?"); vals.push(String(b.full_name || "").trim().slice(0, 120) || null); }
+  if ("phone" in b) { sets.push("phone = ?"); vals.push(String(b.phone || "").trim().slice(0, 40) || null); }
+  if ("whatsapp_number" in b) {
+    sets.push("whatsapp_number = ?");
+    vals.push(String(b.whatsapp_number || "").replace(/[^0-9+\s\-()]/g, "").trim().slice(0, 40) || null);
+  }
+  if ("active" in b) { sets.push("active = ?"); vals.push(b.active ? 1 : 0); }
+  if ("is_tercerizado" in b) { sets.push("is_tercerizado = ?"); vals.push(b.is_tercerizado ? 1 : 0); }
+  if ("vendedor_price_level" in b) {
+    const vpl = Number(b.vendedor_price_level);
+    if (![1, 2, 3, 4].includes(vpl)) return res.status(400).json({ error: "Nivel de costo invalido" });
+    sets.push("vendedor_price_level = ?"); vals.push(vpl);
+  }
+  if ("vendedor_cost_list_id" in b) {
+    const raw = b.vendedor_cost_list_id;
+    if (raw === null || raw === "" || raw === 0 || raw === "0") {
+      sets.push("vendedor_cost_list_id = ?"); vals.push(null);
+    } else {
+      const lid = Number(raw);
+      const pl = lid ? db.prepare("SELECT id, active FROM price_lists WHERE id = ?").get(lid) : null;
+      if (!pl) return res.status(400).json({ error: "Lista de precios no encontrada" });
+      if (!pl.active) return res.status(400).json({ error: "La lista de precios esta inactiva" });
+      sets.push("vendedor_cost_list_id = ?"); vals.push(lid);
+    }
+  }
+
+  let clientIds = null;
+  if ("client_ids" in b) {
+    if (!Array.isArray(b.client_ids)) return res.status(400).json({ error: "client_ids debe ser una lista" });
+    clientIds = [...new Set(b.client_ids.map(Number).filter((n) => n > 0))];
+    if (clientIds.length) {
+      const ph = clientIds.map(() => "?").join(",");
+      const ok = db.prepare("SELECT COUNT(*) AS n FROM users WHERE level BETWEEN 1 AND 4 AND id IN (" + ph + ")").get(...clientIds).n;
+      if (ok !== clientIds.length) return res.status(400).json({ error: "Hay clientes invalidos en la lista" });
+    }
+  }
+  if (!sets.length && clientIds === null) return res.status(400).json({ error: "Nada para actualizar" });
+
+  let assigned = 0, removed = 0;
+  try {
+    db.transaction(() => {
+      if (sets.length) {
+        vals.push(id);
+        db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+      }
+      if (clientIds !== null) {
+        const current = db.prepare(
+          "SELECT id FROM users WHERE assigned_vendedor_id = ? AND level BETWEEN 1 AND 4"
+        ).all(id).map((r) => r.id);
+        const want = new Set(clientIds);
+        const unset = db.prepare("UPDATE users SET assigned_vendedor_id = NULL WHERE id = ?");
+        const setV = db.prepare("UPDATE users SET assigned_vendedor_id = ? WHERE id = ?");
+        for (const cid of current) if (!want.has(cid)) { unset.run(cid); removed++; }
+        const cur = new Set(current);
+        for (const cid of clientIds) if (!cur.has(cid)) { setV.run(id, cid); assigned++; }
+      }
+    })();
+  } catch (e) {
+    if (String(e.message || "").includes("UNIQUE")) return res.status(409).json({ error: "Ya existe un usuario con ese nombre" });
+    throw e;
+  }
+  logActivity(req, "vendedor_editado", { vendedor_id: id, assigned, removed });
+  const row = db.prepare(
+    "SELECT id, username, full_name, phone, whatsapp_number, active, vendedor_price_level, vendedor_cost_list_id, is_tercerizado," +
+    "       (SELECT COUNT(*) FROM users c WHERE c.assigned_vendedor_id = users.id AND c.level BETWEEN 1 AND 4) AS clients_count" +
+    "  FROM users WHERE id = ?"
+  ).get(id);
+  res.json({ ok: true, vendedor: row, assigned, removed });
 });
 
 // Asignar (o desasignar) un vendedor a un pedido (solo admin)

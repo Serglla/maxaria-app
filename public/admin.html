@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260923d" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260926c" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -804,8 +804,9 @@
               <th>Nombre</th>
               <th>Teléfono</th>
               <th title="Número al que llegarán los pedidos de los clientes asignados a este vendedor.">WhatsApp</th>
-              <th title="Nivel de costo del vendedor: cuando no tiene un cliente seleccionado, el catálogo le muestra los productos con ese precio (minorista/revendedor/mayorista/VIP).">Nivel de costo</th>
+              <th title="Costo del vendedor: con qué precio ve el catálogo cuando no tiene un cliente seleccionado (un nivel base o una lista de precios). Se cambia con ✏️ Editar.">Costo</th>
               <th title="Solo lo ve el admin. Si está marcado, el vendedor sólo verá sus clientes asignados.">Tercerizado</th>
+              <th class="num" title="Clientes asignados a este vendedor. Se cambian con ✏️ Editar.">Clientes</th>
               <th>Activo</th>
               <th class="num">Pedidos asig.</th>
               <th class="num">Entregas</th>
@@ -813,7 +814,7 @@
               <th>Acciones</th>
             </tr>
           </thead>
-          <tbody id="vend-tbody"><tr><td colspan="11" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="vend-tbody"><tr><td colspan="12" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -2754,6 +2755,69 @@
     </div>
   </div>
 
+  <!-- Modal editar vendedor: datos, login, costo y clientes asignados -->
+  <div class="admin-modal" id="vend-edit-modal" hidden>
+    <div class="admin-modal-box vend-edit-box">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
+      <h3 id="vend-edit-title">Editar vendedor</h3>
+      <form id="vend-edit-form" class="user-form" autocomplete="off">
+        <div class="ue-grid">
+          <label>Usuario <span class="muted small">(login)</span>
+            <div class="ue-uname-wrap">
+              <span id="ve-username-text" class="ue-uname-text"></span>
+              <button type="button" class="btn btn-small" id="ve-username-edit">✏️ Cambiar</button>
+              <input type="text" id="ve-username" hidden autocomplete="off" autocapitalize="off" spellcheck="false" />
+            </div>
+          </label>
+          <label>Contraseña
+            <div class="ue-uname-wrap">
+              <span id="ve-password-text" class="ue-uname-text muted">••••••</span>
+              <button type="button" class="btn btn-small" id="ve-password-edit">🔑 Cambiar</button>
+              <input type="text" id="ve-password" hidden autocomplete="new-password" autocapitalize="off" spellcheck="false" placeholder="nueva, mínimo 6" />
+            </div>
+          </label>
+          <label>Nombre completo
+            <input type="text" id="ve-full-name" />
+          </label>
+          <label>Costo <span class="muted small">(precio con que ve el catálogo sin cliente)</span>
+            <select id="ve-costcfg"></select>
+          </label>
+          <label>Teléfono
+            <input type="tel" id="ve-phone" />
+          </label>
+          <label>WhatsApp <span class="muted small">(le llegan los pedidos de sus clientes)</span>
+            <input type="tel" id="ve-whatsapp" placeholder="ej: 5493442484286" />
+          </label>
+          <label class="ue-active-row">
+            <input type="checkbox" id="ve-tercerizado" /> Tercerizado <span class="muted small">(solo ve sus clientes)</span>
+          </label>
+          <label class="ue-active-row">
+            <input type="checkbox" id="ve-active" /> Vendedor activo
+          </label>
+        </div>
+        <p id="ve-cost-hint" class="muted small ve-hint"></p>
+
+        <div class="ve-clients">
+          <div class="ve-clients-head">
+            <strong>Clientes asignados</strong>
+            <span id="ve-clients-count" class="tb-count">0</span>
+            <span class="admin-spacer"></span>
+            <label class="ve-only-mine"><input type="checkbox" id="ve-only-mine" /> Ver solo los suyos</label>
+          </div>
+          <input type="search" id="ve-clients-search" class="admin-search" placeholder="Buscar cliente…" autocomplete="off" />
+          <div id="ve-clients-list" class="ve-clients-list"><span class="muted">Cargando…</span></div>
+          <p class="muted small ve-hint">Tildá los clientes que atiende este vendedor. Si un cliente ya tiene otro vendedor, al tildarlo se le cambia a este.</p>
+        </div>
+
+        <p id="vend-edit-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="vend-edit-save">Guardar cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal crear proveedor -->
   <div class="admin-modal" id="supplier-create-modal" hidden>
     <div class="admin-modal-box">
@@ -4036,6 +4100,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260923c"></script>
+  <script src="/js/admin.js?v=20260926b"></script>
 </body>
 </html>

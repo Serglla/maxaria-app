@@ -240,6 +240,8 @@
     vendResetForm: document.getElementById("vend-reset-form"),
     vendResetTarget: document.getElementById("vend-reset-target"),
     vendResetMsg: document.getElementById("vend-reset-msg"),
+    vendEditModal: document.getElementById("vend-edit-modal"),
+    vendEditForm: document.getElementById("vend-edit-form"),
 
     // Actividad (Ganancias por vendedor)
     actCount: document.getElementById("act-count"),
@@ -2207,7 +2209,7 @@
   // -------- Vendedores --------
   async function loadVendedores() {
     try {
-      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="11" class="muted">Cargando…</td></tr>';
+      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="12" class="muted">Cargando…</td></tr>';
       // Listas de precios necesarias para el select "Lista de precios" en cada fila.
       // Se cargan en paralelo si todavía no están en cache.
       const [vendedores, priceLists] = await Promise.all([
@@ -2223,7 +2225,7 @@
       state.vendedoresLoaded = true;
       renderVendedores();
     } catch (e) {
-      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="11" class="muted">Error cargando vendedores</td></tr>';
+      if (els.vendTbody) els.vendTbody.innerHTML = '<tr><td colspan="12" class="muted">Error cargando vendedores</td></tr>';
     }
   }
 
@@ -2236,37 +2238,45 @@
     }
     if (els.vendCount) els.vendCount.textContent = list.length + (list.length === 1 ? " vendedor" : " vendedores");
     if (!list.length) {
-      els.vendTbody.innerHTML = '<tr><td colspan="11" class="muted">Sin resultados</td></tr>';
+      els.vendTbody.innerHTML = '<tr><td colspan="12" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.vendTbody.innerHTML = list.map(vendRowHtml).join("");
   }
 
+  // Etiqueta del costo del vendedor: lista de costo (si tiene) o nivel base.
+  function vendCostLabel(v) {
+    let main;
+    if (v.vendedor_cost_list_id) {
+      const pl = (state.priceLists || []).find((x) => Number(x.id) === Number(v.vendedor_cost_list_id));
+      main = pl ? ("Lista " + pl.name + (pl.active ? "" : " (inactiva)")) : "Lista #" + v.vendedor_cost_list_id;
+    } else {
+      main = PRICE_LEVEL_NAMES[Number(v.vendedor_price_level)] || "Minorista";
+    }
+    const note = Number(v.is_tercerizado) === 1 ? "" : "<small>aplica si es tercerizado</small>";
+    return '<span class="vend-cost-label">' + escapeHtml(main) + note + '</span>';
+  }
+
   function vendRowHtml(v) {
     const lastLogin = v.last_login_at ? formatDate(v.last_login_at) : "—";
-    // Nivel de costo del vendedor: cuando el tercerizado está en el catálogo
-    // sin cliente seleccionado, ve los productos con el precio de ese nivel
-    // (price_minorista/revendedor/mayorista/vip de products). Es el "costo"
-    // que él paga al admin.
-    const plOpts = [1, 2, 3, 4].map((n) =>
-      '<option value="' + n + '"' + (Number(v.vendedor_price_level) === n ? " selected" : "") + '>' + PRICE_LEVEL_NAMES[n] + '</option>'
-    ).join("");
-    return '<tr data-id="' + v.id + '"' + (v.active ? '' : ' class="row-inactive"') + '>' +
+    return '<tr data-id="' + v.id + '"' + (v.active ? '' : ' class="row-inactive"') + ' title="Doble click para editar">' +
       '<td class="cell-code">' + escapeHtml(v.username) + '</td>' +
       '<td><input class="cell-input" data-field="full_name" value="' + escapeHtml(v.full_name || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="phone" value="' + escapeHtml(v.phone || "") + '" /></td>' +
       '<td><input class="cell-input" data-field="whatsapp_number" type="tel" placeholder="ej: 5493442484286" value="' + escapeHtml(v.whatsapp_number || "") + '" title="Numero al que llegan los pedidos de los clientes asignados a este vendedor (formato internacional, sin + ni espacios)." /></td>' +
-      '<td title="Nivel de costo: el catálogo le muestra los productos con este precio cuando no tiene un cliente seleccionado.">' +
-        '<select class="cell-input" data-field="vendedor_price_level">' + plOpts + '</select>' +
-      '</td>' +
+      '<td title="Costo: con qué precio ve el catálogo cuando no tiene un cliente seleccionado. Se cambia con ✏️ Editar.">' + vendCostLabel(v) + '</td>' +
       '<td><label class="cell-toggle" title="Tercerizado: solo ve sus clientes asignados. El vendedor no ve este label.">' +
         '<input type="checkbox" data-field="is_tercerizado"' + (Number(v.is_tercerizado) === 1 ? " checked" : "") + ' /><span></span></label></td>' +
+      '<td class="num">' + (v.clients_count || 0) + '</td>' +
       '<td><label class="cell-toggle">' +
         '<input type="checkbox" data-field="active"' + (v.active ? " checked" : "") + ' /><span></span></label></td>' +
       '<td class="num muted">' + (v.total_orders || 0) + '</td>' +
       '<td class="num muted">' + (v.total_deliveries || 0) + '</td>' +
       '<td class="muted small-cell">' + lastLogin + '</td>' +
-      '<td><button class="btn btn-small btn-reset" data-act="vend-reset" data-id="' + v.id + '" data-username="' + escapeHtml(v.username) + '" type="button">Reset pass</button></td>' +
+      '<td style="white-space:nowrap">' +
+        '<button class="btn btn-small btn-primary" data-act="vend-edit" data-id="' + v.id + '" type="button">✏️ Editar</button> ' +
+        '<button class="btn btn-small btn-reset" data-act="vend-reset" data-id="' + v.id + '" data-username="' + escapeHtml(v.username) + '" type="button">Reset pass</button>' +
+      '</td>' +
     '</tr>';
   }
 
@@ -2287,7 +2297,7 @@
 
       inp.classList.add("saving");
       try {
-        await api("/api/admin/users/" + id, {
+        await api("/api/admin/vendedores/" + id, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ [field]: value }),
@@ -2298,6 +2308,10 @@
         inp.classList.add("saved");
         setTimeout(() => inp.classList.remove("saved"), 1200);
         if (field === "active") tr.classList.toggle("row-inactive", !value);
+        if (field === "is_tercerizado" && idx >= 0) {
+          const cell = tr.children[4];
+          if (cell) cell.innerHTML = vendCostLabel(state.vendedores[idx]);
+        }
       } catch (err) {
         inp.classList.remove("saving");
         inp.classList.add("error");
@@ -2306,7 +2320,15 @@
       }
     });
 
+    els.vendTbody.addEventListener("dblclick", (e) => {
+      if (e.target.closest("input, select, button, label")) return;
+      const tr = e.target.closest("tr[data-id]");
+      if (tr) openVendEditModal(Number(tr.dataset.id));
+    });
+
     els.vendTbody.addEventListener("click", (e) => {
+      const editBtn = e.target.closest('[data-act="vend-edit"]');
+      if (editBtn) { openVendEditModal(Number(editBtn.dataset.id)); return; }
       const resetBtn = e.target.closest('[data-act="vend-reset"]');
       if (!resetBtn) return;
       state.vendResetTargetId = Number(resetBtn.dataset.id);
@@ -2317,6 +2339,196 @@
       setTimeout(() => {
         if (els.vendResetForm) els.vendResetForm.querySelector('[name="password"]').focus();
       }, 50);
+    });
+  }
+
+  // -------- Modal "Editar vendedor": datos, login, costo y clientes --------
+  const veState = { id: null, origUsername: "", clients: [], selected: new Set() };
+  const veEl = (id) => document.getElementById(id);
+
+  function veRenderClients() {
+    const box = veEl("ve-clients-list");
+    if (!box) return;
+    const q = (veEl("ve-clients-search").value || "").trim();
+    const onlyMine = veEl("ve-only-mine").checked;
+    let list = veState.clients;
+    if (onlyMine) list = list.filter((c) => veState.selected.has(c.id));
+    if (q) list = list.filter((c) => matchWords((c.full_name || "") + " " + c.username, q));
+    veEl("ve-clients-count").textContent = veState.selected.size + (veState.selected.size === 1 ? " cliente" : " clientes");
+    if (!list.length) {
+      box.innerHTML = '<div class="muted" style="padding:10px 12px">' +
+        (veState.clients.length ? "Sin resultados" : "No hay clientes cargados") + '</div>';
+      return;
+    }
+    box.innerHTML = list.map((c) => {
+      const mine = veState.selected.has(c.id);
+      const other = !mine && c.assigned_vendedor_id && Number(c.assigned_vendedor_id) !== veState.id
+        ? '<span class="ve-client-other" title="Hoy lo atiende otro vendedor">' + escapeHtml(c.vendedor_name || "otro vendedor") + '</span>' : "";
+      const lvl = PRICE_LEVEL_NAMES[Number(c.level)] || "";
+      return '<label class="ve-client' + (mine ? " ve-mine" : "") + (c.active ? "" : " ve-client-inactive") + '">' +
+        '<input type="checkbox" data-cid="' + c.id + '"' + (mine ? " checked" : "") + ' />' +
+        '<span class="ve-client-name">' + escapeHtml(c.full_name || c.username) +
+          ' <span class="muted small">' + escapeHtml(c.username) + (lvl ? " · " + lvl : "") + (c.active ? "" : " · inactivo") + '</span></span>' +
+        other + '</label>';
+    }).join("");
+  }
+
+  function veUpdateCostHint() {
+    const hint = veEl("ve-cost-hint");
+    if (!hint) return;
+    hint.textContent = veEl("ve-tercerizado").checked
+      ? "El vendedor ve el catálogo con este precio cuando no tiene un cliente elegido. No cambia su comisión: la comisión sale de la lista de cada cliente."
+      : "El costo solo se usa si el vendedor es tercerizado (el vendedor propio necesita elegir un cliente para ver precios).";
+  }
+
+  async function openVendEditModal(id) {
+    const v = state.vendedores.find((x) => x.id === id);
+    if (!v || !els.vendEditModal) return;
+    veState.id = id;
+    veState.origUsername = v.username;
+    veState.clients = [];
+    veState.selected = new Set();
+    veEl("vend-edit-title").textContent = "Editar vendedor · " + (v.full_name || v.username);
+    veEl("ve-username-text").textContent = v.username;
+    veEl("ve-username-text").hidden = false;
+    veEl("ve-username").hidden = true;
+    veEl("ve-username").value = "";
+    veEl("ve-username-edit").hidden = false;
+    veEl("ve-password-text").hidden = false;
+    veEl("ve-password").hidden = true;
+    veEl("ve-password").value = "";
+    veEl("ve-password-edit").hidden = false;
+    veEl("ve-full-name").value = v.full_name || "";
+    veEl("ve-phone").value = v.phone || "";
+    veEl("ve-whatsapp").value = v.whatsapp_number || "";
+    veEl("ve-tercerizado").checked = Number(v.is_tercerizado) === 1;
+    veEl("ve-active").checked = !!v.active;
+    veEl("ve-clients-search").value = "";
+    veEl("ve-only-mine").checked = false;
+    veEl("vend-edit-msg").textContent = "";
+    veEl("ve-clients-list").innerHTML = '<span class="muted" style="display:block;padding:10px 12px">Cargando…</span>';
+    const costSel = veEl("ve-costcfg");
+    costSel.innerHTML = unifiedPriceOptsHtml({
+      level: Number(v.vendedor_price_level) || 1,
+      price_list_id: v.vendedor_cost_list_id || null,
+    });
+    costSel.disabled = false;
+    veUpdateCostHint();
+    els.vendEditModal.hidden = false;
+
+    try {
+      const rows = await api("/api/admin/vendedores/" + id + "/clients", {}, "los clientes");
+      if (veState.id !== id) return;
+      veState.clients = rows || [];
+      veState.clients.forEach((c) => { if (Number(c.assigned_vendedor_id) === id) veState.selected.add(c.id); });
+      veState.clientsOk = true;
+      veRenderClients();
+    } catch (err) {
+      veState.clientsOk = false;
+      veEl("ve-clients-list").innerHTML = '<div class="muted" style="padding:10px 12px">⚠ No se pudieron cargar los clientes. Podés guardar el resto de los cambios igual.</div>';
+    }
+  }
+
+  if (els.vendEditModal) {
+    veEl("ve-username-edit").addEventListener("click", () => {
+      const inp = veEl("ve-username");
+      inp.value = veState.origUsername;
+      inp.hidden = false;
+      veEl("ve-username-text").hidden = true;
+      veEl("ve-username-edit").hidden = true;
+      inp.focus();
+    });
+    veEl("ve-password-edit").addEventListener("click", () => {
+      const inp = veEl("ve-password");
+      inp.value = "";
+      inp.hidden = false;
+      veEl("ve-password-text").hidden = true;
+      veEl("ve-password-edit").hidden = true;
+      inp.focus();
+    });
+    veEl("ve-tercerizado").addEventListener("change", veUpdateCostHint);
+    veEl("ve-clients-search").addEventListener("input", debounce(veRenderClients, 120));
+    veEl("ve-only-mine").addEventListener("change", veRenderClients);
+    veEl("ve-clients-list").addEventListener("change", (e) => {
+      const cb = e.target.closest("[data-cid]");
+      if (!cb) return;
+      const cid = Number(cb.dataset.cid);
+      if (cb.checked) veState.selected.add(cid); else veState.selected.delete(cid);
+      const lbl = cb.closest("label");
+      if (lbl) lbl.classList.toggle("ve-mine", cb.checked);
+      const other = lbl && lbl.querySelector(".ve-client-other");
+      if (other && cb.checked) other.remove();
+      veEl("ve-clients-count").textContent = veState.selected.size + (veState.selected.size === 1 ? " cliente" : " clientes");
+    });
+
+    els.vendEditForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const id = veState.id;
+      const v = state.vendedores.find((x) => x.id === id);
+      if (!v) return;
+      const msg = veEl("vend-edit-msg");
+      msg.textContent = "";
+      const body = {
+        full_name: veEl("ve-full-name").value.trim(),
+        phone: veEl("ve-phone").value.trim(),
+        whatsapp_number: veEl("ve-whatsapp").value.trim(),
+        is_tercerizado: veEl("ve-tercerizado").checked ? 1 : 0,
+        active: veEl("ve-active").checked ? 1 : 0,
+      };
+      const uInp = veEl("ve-username");
+      if (!uInp.hidden) {
+        const un = uInp.value.trim().toLowerCase();
+        if (!un) { msg.textContent = "El usuario no puede quedar vacío."; return; }
+        if (un !== veState.origUsername) body.username = un;
+      }
+      const pInp = veEl("ve-password");
+      let newPass = "";
+      if (!pInp.hidden && pInp.value !== "") {
+        newPass = pInp.value;
+        if (newPass.length < 6) { msg.textContent = "La contraseña debe tener al menos 6 caracteres."; return; }
+        body.password = newPass;
+      }
+      const cost = decodePriceCfg(veEl("ve-costcfg").value);
+      if (cost.price_list_id) {
+        body.vendedor_cost_list_id = cost.price_list_id;
+        const pl = state.priceLists.find((x) => Number(x.id) === Number(cost.price_list_id));
+        if (pl && PRICE_BASE_LEVEL_NUM[pl.effective_base_level || pl.base_level]) {
+          body.vendedor_price_level = PRICE_BASE_LEVEL_NUM[pl.effective_base_level || pl.base_level];
+        }
+      } else {
+        body.vendedor_cost_list_id = null;
+        body.vendedor_price_level = cost.level;
+      }
+      if (veState.clientsOk) body.client_ids = Array.from(veState.selected);
+
+      const saveBtn = veEl("vend-edit-save");
+      if (saveBtn.disabled) return;
+      saveBtn.disabled = true;
+      try {
+        const out = await api("/api/admin/vendedores/" + id, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (out && out.vendedor) Object.assign(v, out.vendedor);
+        if (newPass) sessionPasswords.set(Number(id), newPass);
+        els.vendEditModal.hidden = true;
+        renderVendedores();
+        // Los clientes cambiaron de vendedor: que Usuarios y los selects se refresquen.
+        if (out && (out.assigned || out.removed)) {
+          state.usersLoaded = false;
+          state.orderClientsLoaded = false;
+        }
+        const parts = ["Vendedor guardado"];
+        if (out && out.assigned) parts.push(out.assigned + " cliente(s) asignado(s)");
+        if (out && out.removed) parts.push(out.removed + " quitado(s)");
+        if (newPass) parts.push("contraseña cambiada");
+        showToast(parts.join(" · "), "ok");
+      } catch (err) {
+        msg.textContent = err.message || "No se pudo guardar";
+      } finally {
+        saveBtn.disabled = false;
+      }
     });
   }
 
@@ -6840,11 +7052,13 @@
       '<button type="button" class="btn btn-small od-share" title="El mismo remito sin importes, en PDF, para descargar o mandar por WhatsApp">📤 Compartir remito</button>' +
       '<button type="button" class="btn btn-small od-print-full" title="Imprime el pedido con precios unitarios y total">🖨 Imprimir pp</button>' +
       '<button type="button" class="btn btn-small od-share-full" title="PDF del pedido con precios y total, para descargar o mandar por WhatsApp">📤 Compartir pp</button>';
-    var actionsRow = '<div class="order-items-actions">' +
-      (orderItemsEditable(order) ? '<button type="button" class="btn btn-small order-edit-items">✏️ Editar</button>' : "") +
-      (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
-      docsRow +
-      "</div>";
+    // "Editar" va arriba a la derecha, en la fila de Estado/Cliente/Vendedor.
+    var editBtnHtml = orderItemsEditable(order)
+      ? '<button type="button" class="btn btn-small btn-primary order-edit-items" title="Cambiar productos, cantidades, precios o descuentos">✏️ Editar pedido</button>'
+      : "";
+    var actionsInner = (canCharge ? '<button type="button" class="btn btn-small btn-primary order-charge">💵 Registrar cobro</button>' : "") +
+      docsRow;
+    var actionsRow = actionsInner ? '<div class="order-items-actions">' + actionsInner + "</div>" : "";
     var itemsHtml = '<div class="order-items-box">' + itemsTable + balanceHtml + actionsRow + "</div>";
 
     // Rentabilidad del pedido — SOLO admin. Viene calculada del server
@@ -6980,7 +7194,8 @@
     }
 
     detailEl.innerHTML =
-      '<div class="order-detail-meta">' + statusRow + clientRow + vendRow + "</div>" +
+      '<div class="order-detail-meta">' + statusRow + clientRow + vendRow +
+        (editBtnHtml ? '<span class="odm-actions">' + editBtnHtml + "</span>" : "") + "</div>" +
       itemsHtml + pickChgHtml + profitHtml + notesHtml + delivInfo + budgetRef;
   }
 
@@ -7305,6 +7520,10 @@
   async function enterOrderItemsEdit(detailEl, order) {
     var box = detailEl.querySelector(".order-items-box");
     if (!box) return;
+    // Mientras se edita, el botón de arriba no se muestra (vuelve al guardar/cancelar,
+    // que re-renderizan el detalle).
+    var topEdit = detailEl.querySelector(".odm-actions");
+    if (topEdit) topEdit.hidden = true;
     await ensureAllProducts();
     await ensurePriceListsLoaded();
     // Config de precio activa: arranca en la lista por defecto del cliente.

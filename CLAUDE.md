@@ -2176,3 +2176,45 @@ Disparador: Amoxidal 500 x 8 (1006) quedó en −9 en el sistema con 43 físicas
 - **`budgets.source`**: `'ventas'` (armado en Ventas, el único que se lista) o `'pedido'` (sombra vieja). Migración idempotente: los vinculados a un pedido no facturado pasan a `'pedido'` y su flag de stock se traslada al pedido (no cambia ninguna cantidad). Los sueltos sin pedido (los 26 que retienen stock) quedan como `'ventas'`, visibles hasta limpiarlos. PUT/PATCH status/invoice/DELETE de una sombra → 409. `stockCurrentlyOut` pasó a `linkedBudgetOut || order.stock_discounted`.
 - **Catálogo**: los recordatorios de recompra y los avisos de estado de pedidos van a una campanita (`#notif-btn`, contador rojo, panel desplegable) en vez de ocupar el arriba de la grilla / la barra fija; el pedido habitual se abre desde el botón ⭐ (`#habitual-btn`) en un drawer (`#habitual-drawer`).
 - `logActivity` serializa `detail` si es objeto (el login por link fallaba con "Too few parameter values").
+
+### ERP Test — demo para clientes publicada en la rama `erp-test` (25 septiembre 2026)
+
+Versión de prueba de Maxaria para pasarle a un cliente potencial. **Vive solo en la rama `erp-test`; `master` y producción no se tocan.**
+
+**Kit** (carpeta `erp-test/`, versionada solo en esa rama): `erp_test_bazar.xlsx` (44 artículos de bazar, precios ficticios, 7 categorías), `start.js` (arranque de la demo: `SEED_ON_EMPTY=true` + `EXCEL_PATH` al Excel de bazar, después de levantar pone `app_name = ERP Test`, crea `vendedor/vendedor1234` y le asigna los clientes; `DEMO_RESET=true` borra la base antes de arrancar), `apply-theme.js` (idempotente, aborta si estás en master: paleta azul → petróleo `#0f4c5c`, textos "Maxaria" → "ERP Test", agrega `erp-theme.css` a los HTML, copia login/íconos, manifest, default de `app_name` en server.js, `npm start` → `node erp-test/start.js`), `erp-theme.css` (fuente Inter, topbar degradé, look moderno), `login.html` + `login-erp.js` (login de venta con botones de perfil de prueba: admin/admin1234, vendedor/vendedor1234, mayorista/mayorista1234) e `icons/`.
+
+**Fixes de esta sesión** (la demo del 15/9 se había roto con la CSP del 22/9): el `<script>` inline del login pasó a `erp-test/login-erp.js` → `public/js/login-erp.js`; `apply-theme.js` ahora también parchea la CSP de server.js para permitir Google Fonts (`styleSrc` + `https://fonts.googleapis.com`, `fontSrc` + `https://fonts.gstatic.com`) — solo en la demo. Además reemplaza los fallbacks `app_name : "Maxaria"` de los JS.
+
+**Verificado**: arranque desde base vacía (seed + usuarios), login de los 3 perfiles, catálogo con 44 productos, pedido del mayorista (stock 30→28, visible para el vendedor), CSP sin violaciones y capturas en Chromium a 1300px y 390px.
+
+**Git**: en GitHub ya existía una `erp-test` del 15/9 (commit `3bdc64a`, sobre un master viejo `98df0e5`). La nueva (`335f004`, sobre master `6755688`) se unió con `merge -s ours` (commit `bc614b8`) → push fast-forward, sin force. Se trabajó en un clon fuera del mount (`$HOME/erp` en la VM) para no tocar el working tree de master; la rama se trajo al repo con `git fetch <clon> erp-test:erp-test`. Para eso hubo que mover a `.git/_stale_locks/` los `.lock` viejos (uno estaba dentro de `refs/remotes/origin/` y rompía el fetch con "bad object").
+
+**Traer novedades de master a la demo** (en la rama erp-test): `git merge master` (conflictos en `public/` → quedarse con master) → `node erp-test/apply-theme.js` → commit → push.
+
+**Pendiente**:
+1. Crear el servicio en Railway: New → GitHub Repo `maxaria-app`, branch **`erp-test`**, Volume en `/data`, variables `NODE_ENV=production`, `SESSION_SECRET` nuevo, `DB_PATH=/data/demo.db`, `WHATSAPP_NUMBER=549…` (sin WA global el cliente no puede enviar el pedido), Generate Domain.
+2. Limpiar desde Windows: `_erp-snap.tgz`, `erp-test.bundle` (raíz), `.git\_stale_locks\` y la carpeta `erp-test/` suelta en master (ya está versionada en la rama).
+3. Opcional ofrecido: cargar pedidos/pagos de ejemplo del último mes en `start.js` para que el dashboard no arranque en $0.
+
+### Vendedores: modal "Editar vendedor" con usuario, clave, costo por lista y clientes (26 septiembre 2026 — `admin.js?v=20260926a`, `styles.css?v=20260926a`)
+
+Pedido de Sergio: un botón por vendedor para editarlo, cambiarle el costo (también a una lista de precios, no solo los 4 niveles), manejar sus clientes desde ahí y cambiarle usuario y contraseña. Antes el costo era el select inline "Nivel de costo" y los clientes se asignaban uno por uno desde Usuarios.
+
+**Schema**: `users.vendedor_cost_list_id` (FK price_lists, migración idempotente junto a is_tercerizado). Columna **propia**, separada de `price_list_id` (que es la lista de un CLIENTE y define la comisión): la lista de costo del vendedor solo cambia con qué precio ve el catálogo sin cliente y "Ver cambios". **No toca la comisión** (sigue saliendo de la lista de cada cliente / `vendedor_cost_unit`).
+
+**Server**:
+- Helper `vendorCostListConfig(listId)` (junto a getEffectivePriceConfig): config `kind:"list"` resolviendo cadena; null si no existe o está inactiva (cae a `vendedor_price_level`).
+- `GET /api/products` (vendedor tercerizado sin cliente) y `GET /api/price-changes` (vendedor sin cliente) usan la lista de costo si tiene.
+- `GET /api/admin/vendedores` suma `vendedor_cost_list_id` y `clients_count`.
+- Nuevos `GET /api/admin/vendedores/:id/clients` (todos los clientes 1-4 con su vendedor actual) y `PATCH /api/admin/vendedores/:id` (username con unicidad, password ≥6 → hash, full_name, phone, whatsapp_number, active, is_tercerizado, vendedor_price_level, vendedor_cost_list_id, y `client_ids` = lista COMPLETA de sus clientes: los que faltan quedan sin vendedor, los de otro vendedor se reasignan; todo en transacción). Van bajo `/api/admin/vendedores` → sección **vendedores** (antes los cambios inline pegaban a `/api/admin/users` → exigían sección usuarios; ahora también usan el endpoint nuevo).
+- `price-lists` agregado a la lectura compartida de la sección vendedores. Borrar una lista usada como costo de un vendedor → 409.
+
+**Frontend**: columna "Nivel de costo" (select) → **"Costo"** solo lectura (nombre de la lista o nivel; "aplica si es tercerizado" si no lo es) + columna **Clientes** (tabla a 12 columnas). Botón **✏️ Editar** por fila (y doble click) abre `#vend-edit-modal`: usuario y contraseña con botón "Cambiar" (mismo truco que el modal de clientes para que el gestor de contraseñas no pise el usuario), nombre, teléfono, WhatsApp, costo con selector unificado (niveles + listas activas, reutiliza `unifiedPriceOptsHtml`/`decodePriceCfg`; con una lista se guarda también el nivel raíz como fallback), tercerizado, activo, y lista de clientes con buscador, "Ver solo los suyos" y badge del vendedor actual de cada cliente. Si falla la carga de clientes, se guarda el resto sin tocar asignaciones. Al reasignar clientes invalida `usersLoaded`/`orderClientsLoaded`.
+
+**Verificado**: API en VM con copia de la base (cambio de usuario/clave, login viejo rechazado, costo por lista = precio mayorista/0,95, asignar/quitar clientes, 409 usuario repetido, 400 clave corta, 404 si no es vendedor, 409 al borrar lista en uso); UI en Chromium 1300px y 390px sin errores JS; `npm test` 26/26.
+
+Subido a master junto con el cambio de abajo.
+
+### Detalle del pedido: "✏️ Editar pedido" arriba a la derecha (26 septiembre 2026 — `admin.js?v=20260926b`, `styles.css?v=20260926c`)
+
+Pedido de Sergio (captura de Armado): el botón Editar quedaba abajo de la tabla de items. `renderOrderDetail` ahora lo pone en la fila de Estado/Cliente/Vendedor (`.odm-actions`, `margin-left:auto`), como "✏️ Editar pedido" (azul). En celular va arriba de los desplegables a todo el ancho (`order:-1`). La clase `.order-edit-items` se mantuvo, así que el wiring no cambió. `enterOrderItemsEdit` oculta ese botón mientras se edita (guardar/cancelar re-renderizan el detalle y vuelve). La fila `.order-items-actions` de abajo solo se dibuja si queda algo (Registrar cobro / botones de documentos del modal).

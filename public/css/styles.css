@@ -6803,3 +6803,29 @@ html.in-modal .ventas-wrap {
 .ab-sub th { text-align: left; font-size: 10.5px; text-transform: uppercase; color: #64748b; padding: 4px 6px; border-bottom: 1px solid #e2e8f0; }
 .ab-sub td { padding: 5px 6px; border-bottom: 1px solid #eef2f6; }
 .ab-sub .num { text-align: right; }
+
+/* ===== Modal Editar vendedor (26 sep 2026) ===== */
+.vend-edit-box { max-width: 760px; }
+.ve-hint { margin: 6px 0 0; font-size: 12px; line-height: 1.4; color: #6b7280; }
+.ve-clients { margin-top: 14px; border-top: 1px solid #e5e7eb; padding-top: 12px; }
+.ve-clients-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ve-only-mine { display: flex !important; flex-direction: row !important; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; }
+.ve-clients-list { max-height: 260px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 10px; margin-top: 8px; }
+label.ve-client { display: flex !important; flex-direction: row !important; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 13.5px; font-weight: 500; margin: 0; }
+label.ve-client:last-child { border-bottom: none; }
+label.ve-client:hover { background: #f8fafc; }
+label.ve-client.ve-mine { background: #eff6ff; }
+.ve-client-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ve-client-other { font-size: 11px; color: #b45309; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.ve-client-inactive { opacity: .55; }
+.vend-cost-label { font-weight: 600; }
+.vend-cost-label small { display: block; font-weight: 400; color: #6b7280; font-size: 11px; }
+@media (max-width: 640px) {
+  .vend-edit-box .ue-grid { grid-template-columns: 1fr; }
+  .ve-clients-list { max-height: 45vh; }
+}
+
+/* Detalle del pedido: botón "Editar pedido" arriba a la derecha (26 sep 2026) */
+.order-detail-meta .odm-actions { margin-left: auto; align-self: center; }
+.order-detail-meta .odm-actions .order-edit-items { white-space: nowrap; }
+@media (max-width: 640px) { .order-detail-meta .odm-actions { width: 100%; order: -1; } .order-detail-meta .odm-actions .order-edit-items { width: 100%; min-height: 40px; } }
