@@ -6866,3 +6866,13 @@ label.ppv-move-item:last-child { border-bottom: none; }
 .ppv-actbox { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 .ppv-actbox .btn { margin-left: 0; }
 #ppv-table td.ppv-actions { white-space: normal; min-width: 190px; }
+
+/* Finanzas: secciones agrupadas (Caja+Gastos, Saldos+Cobros) */
+.admin-sidebar-item.sidebar-sub { display: none !important; }
+.admin-sidebar-item[hidden] { display: none !important; }
+.fin-subtabs { display: flex; gap: 6px; margin: 0 0 14px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; flex-wrap: wrap; }
+.fin-subtabs[hidden] { display: none; }
+.fin-subtab { border: 1px solid #d1d5db; background: #fff; color: #374151; font-size: 13px; font-weight: 600; padding: 7px 14px; border-radius: 999px; cursor: pointer; }
+.fin-subtab:hover:not(.active) { background: #f3f4f6; }
+.fin-subtab.active { background: #1e3a5f; border-color: #1e3a5f; color: #fff; }
+.fin-subtab[hidden] { display: none; }

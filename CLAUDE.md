@@ -2247,3 +2247,13 @@ Sergio: muchas veces lo que un proveedor no factura se le pide a otro. Sin esto,
 - Verificado: `npm test` 28/28 (test nuevo: derivar, recorte a lo pendiente, mismo proveedor 400, original pasa a facturado, borrar el derivado vuelve a parcial) + UI en Chromium sin errores.
 
 Subido a master (Pedidos a proveedor + derivar).
+
+### Finanzas simplificada: de 5 secciones a 3 (27 septiembre 2026 — `admin.js?v=20260927b`, `styles.css?v=20260927b`)
+
+El menú de Finanzas queda en **Caja** · **Cuentas a cobrar** · **Cuentas a pagar**. Solo cambian las pantallas y el menú: las secciones y endpoints del server y los permisos (`caja`, `gastos`, `cuentas`, `pagos`, `ctacte-prov`) no se tocaron.
+- **Gastos** pasa a ser una pestaña dentro de Caja (Cajas / Gastos) y **Pagos** una pestaña dentro de Cuentas a cobrar (Saldos / Cobros). Los botones `data-tab="gastos"` y `data-tab="pagos"` siguen en el menú con la clase `sidebar-sub` (ocultos) y `data-parent`, así todo el código que los clickea sigue andando. Las barras `.fin-subtabs` (4, una arriba de cada panel) navegan clickeando esos botones; `syncFinSubtabs(tab)` marca la activa y oculta las pestañas no permitidas (y la barra si queda una sola).
+- Si un admin tiene la sección de adentro pero no la de afuera (ej. `gastos` sin `caja`), el ítem del menú igual aparece con `data-fallback` y lo lleva directo a la que sí puede ver.
+- "Pagos" de clientes pasó a decir **Cobros** ("+ Registrar cobro"). Cobros ahora recarga siempre al entrar (se cobra también desde Saldos).
+- **Bug viejo arreglado**: en computadora el menú no le ocultaba a un admin limitado las secciones no permitidas, porque `.admin-sidebar-item { display:flex !important }` le ganaba al `style.display="none"` del gating (el server igual devolvía 403). Ahora el gating también pone `hidden` y hay una regla `.admin-sidebar-item[hidden] { display:none !important }`. Además se ocultan los títulos de grupo que quedan sin secciones.
+- **Bug viejo detectado, sin arreglar**: `bootstrap()` pide `/api/admin/products` junto con `/api/me`; un admin **sin** la sección `productos` recibe 403, el bootstrap corta antes del gating y ve todo el menú. Hoy no pasa porque los admins limitados tienen `productos`.
+- Verificado con Playwright contra una base de prueba (superadmin; admin con solo `gastos,pagos`; admin con `caja,gastos,cuentas`), 1300px y 390px, sin errores JS ni desborde. `npm test` 28/28.

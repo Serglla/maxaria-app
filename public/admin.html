@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260926g" />
+  <link rel="stylesheet" href="/css/styles.css?v=20260927b" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -139,21 +139,18 @@
 
         <div class="admin-sidebar-group">
           <div class="admin-sidebar-group-title">Finanzas</div>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="caja" type="button">
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="caja" data-group="gastos" type="button" title="Cajas y gastos">
             <span class="admin-sidebar-item-icon">💰</span>Caja
           </button>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="pagos" type="button">
-            <span class="admin-sidebar-item-icon">💵</span>Pagos
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="cuentas" data-group="pagos" type="button" title="Lo que te deben los clientes y los cobros">
+            <span class="admin-sidebar-item-icon">👥</span>Cuentas a cobrar
           </button>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="cuentas" type="button">
-            <span class="admin-sidebar-item-icon">📈</span>Cuentas
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="ctacte-prov" type="button" title="Lo que le debés a los proveedores y los pagos">
+            <span class="admin-sidebar-item-icon">🏭</span>Cuentas a pagar
           </button>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="ctacte-prov" type="button">
-            <span class="admin-sidebar-item-icon">🧾</span>Ctacte Proveedores
-          </button>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="gastos" type="button">
-            <span class="admin-sidebar-item-icon">💸</span>Gastos
-          </button>
+          <!-- Secciones que viven como pestaña dentro de otra (no se ven en el menú) -->
+          <button class="tab-btn admin-sidebar-item admin-only sidebar-sub" data-tab="gastos" data-parent="caja" type="button">Gastos</button>
+          <button class="tab-btn admin-sidebar-item admin-only sidebar-sub" data-tab="pagos" data-parent="cuentas" type="button">Cobros</button>
         </div>
 
         <div class="admin-sidebar-group">
@@ -512,6 +509,7 @@
 
     <!-- ===== TAB CAJA ===== -->
     <section class="tab-panel" id="tab-caja" hidden>
+      <div class="fin-subtabs" data-group="caja"><button type="button" class="fin-subtab" data-go="caja">💰 Cajas</button><button type="button" class="fin-subtab" data-go="gastos">💸 Gastos</button></div>
       <!-- Pestañas: General + una por responsable (orden editable) -->
       <div class="caja-tabs-bar">
         <div class="caja-tabs" id="caja-tabs"></div>
@@ -2015,6 +2013,7 @@
 
     <!-- ===== TAB GASTOS ===== -->
     <section class="tab-panel" id="tab-gastos" hidden>
+      <div class="fin-subtabs" data-group="caja"><button type="button" class="fin-subtab" data-go="caja">💰 Cajas</button><button type="button" class="fin-subtab" data-go="gastos">💸 Gastos</button></div>
       <div class="admin-toolbar">
         <label class="admin-filter">Desde <input type="date" id="exp-from" class="admin-input" /></label>
         <label class="admin-filter">Hasta <input type="date" id="exp-to" class="admin-input" /></label>
@@ -2149,6 +2148,7 @@
 
     <!-- ===== TAB PAGOS ===== -->
     <section class="tab-panel" id="tab-pagos" hidden>
+      <div class="fin-subtabs" data-group="cuentas"><button type="button" class="fin-subtab" data-go="cuentas">📊 Saldos</button><button type="button" class="fin-subtab" data-go="pagos">💵 Cobros</button></div>
       <div class="admin-toolbar">
         <input type="search" id="pay-search" class="admin-search" placeholder="Buscar cliente..." autocomplete="off" />
         <select id="pay-method-filter" class="admin-select" title="Filtrar por método">
@@ -2160,7 +2160,7 @@
         </select>
         <span class="admin-spacer"></span>
         <span id="pay-count" class="muted">…</span>
-        <button class="btn btn-primary" id="pay-create-btn" type="button">+ Registrar pago</button>
+        <button class="btn btn-primary" id="pay-create-btn" type="button">+ Registrar cobro</button>
       </div>
       <div class="admin-table-wrap">
         <table class="admin-table" id="pay-table">
@@ -2183,6 +2183,7 @@
 
     <!-- ===== TAB CUENTAS ===== -->
     <section class="tab-panel" id="tab-cuentas" hidden>
+      <div class="fin-subtabs" data-group="cuentas"><button type="button" class="fin-subtab" data-go="cuentas">📊 Saldos</button><button type="button" class="fin-subtab" data-go="pagos">💵 Cobros</button></div>
       <div class="dash-kpi-row" id="acc-kpis" style="margin-bottom:14px"></div>
       <!-- Panel de cobranza: clientes con deuda vencida (+N dias). Se oculta solo si no hay ninguno. -->
       <div id="acc-cobranza" class="acc-cobranza" hidden></div>
@@ -3159,7 +3160,7 @@
   <div class="admin-modal" id="payment-create-modal" hidden>
     <div class="admin-modal-box">
         <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
-      <h3>Registrar pago de cliente</h3>
+      <h3>Registrar cobro</h3>
       <form id="payment-create-form" class="user-form">
         <label>Cliente <span class="muted">(requerido)</span>
           <select name="user_id" id="pay-form-client" required>
@@ -4164,6 +4165,6 @@
   <!-- Mini-toast -->
   <div id="toast" class="admin-toast" hidden></div>
 
-  <script src="/js/admin.js?v=20260927a"></script>
+  <script src="/js/admin.js?v=20260927b"></script>
 </body>
 </html>

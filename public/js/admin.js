@@ -873,7 +873,27 @@
           // Si el server mandó la lista de secciones (admin común), ocultar las no permitidas.
           if (!isSuper && allowed && !allowed.includes(tab)) {
             btn.style.display = "none";
+            btn.hidden = true; // el CSS del menú fuerza display:flex; [hidden] sí lo oculta
           }
+        });
+        // Finanzas: Gastos vive dentro de Caja y Cobros dentro de Cuentas a cobrar.
+        // Si el admin tiene la sección de adentro pero no la de afuera, el ítem
+        // del menú igual se muestra y lo lleva directo a la que sí puede ver.
+        els.tabBtns.forEach((btn) => {
+          const child = btn.dataset.group;
+          if (!child || btn.style.display !== "none") return;
+          const cb = Array.from(els.tabBtns).find((b) => b.dataset.tab === child);
+          if (cb && cb.style.display !== "none") {
+            btn.style.display = "";
+            btn.hidden = false;
+            btn.dataset.fallback = child;
+          }
+        });
+        // Títulos de grupo del menú sin ninguna sección visible: ocultarlos.
+        document.querySelectorAll(".admin-sidebar-group").forEach((g) => {
+          const any = Array.from(g.querySelectorAll(".admin-sidebar-item"))
+            .some((b) => !b.hidden && b.style.display !== "none" && !b.classList.contains("sidebar-sub"));
+          g.hidden = !any;
         });
         // Acciones exclusivas del superadmin dentro de una pestaña (hoy: la
         // descarga de la base en Control de stock).
@@ -1540,12 +1560,44 @@
   const dashReloadBtn = document.getElementById("dash-reload");
   if (dashReloadBtn) dashReloadBtn.addEventListener("click", () => { loadDashboard(); loadDebtHistory(); });
 
+  // ---------- Finanzas: pestañas internas (Cajas/Gastos, Saldos/Cobros) ----------
+  function finTabAllowed(tab) {
+    const b = Array.from(els.tabBtns).find((x) => x.dataset.tab === tab);
+    return !!b && b.style.display !== "none" && !b.hidden && !b.dataset.fallback;
+  }
+  function syncFinSubtabs(activeTab) {
+    document.querySelectorAll(".fin-subtabs").forEach((bar) => {
+      let visible = 0;
+      bar.querySelectorAll(".fin-subtab").forEach((sb) => {
+        const ok = finTabAllowed(sb.dataset.go);
+        sb.hidden = !ok;
+        if (ok) visible++;
+        sb.classList.toggle("active", sb.dataset.go === activeTab);
+      });
+      bar.hidden = visible < 2;
+    });
+  }
+  document.addEventListener("click", (e) => {
+    const sb = e.target.closest(".fin-subtab");
+    if (!sb) return;
+    const b = Array.from(els.tabBtns).find((x) => x.dataset.tab === sb.dataset.go);
+    if (b) b.click();
+  });
+
   // ---------- tabs ----------
   els.tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       if (btn.disabled) return;
+      // Ítem del menú cuya sección propia no está permitida: ir a la de adentro.
+      if (btn.dataset.fallback) {
+        const fb = Array.from(els.tabBtns).find((x) => x.dataset.tab === btn.dataset.fallback);
+        if (fb) { fb.click(); return; }
+      }
       const tab = btn.dataset.tab;
-      els.tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
+      // Las secciones que viven dentro de otra marcan activo el ítem del menú de afuera.
+      const parentTab = btn.dataset.parent || "";
+      els.tabBtns.forEach((b) => b.classList.toggle("active", b === btn || (parentTab && b.dataset.tab === parentTab)));
+      syncFinSubtabs(tab);
       // Sacar el focus para que el browser no muestre el outline azul
       // sobre el tab anterior (el "doble seleccionado" visual).
       try { btn.blur(); } catch (_) {}
@@ -1585,7 +1637,7 @@
       if (tab === "reposicion") loadReposicion(); // siempre recargar (depende de ventas y stock del momento)
       if (tab === "margenes") loadMargenes(); // siempre recargar (depende de costos y ventas del momento)
       if (tab === "control-stock") loadStockControl(); // siempre recargar (chequeos en vivo)
-      if (tab === "pagos" && !state.paymentsLoaded) loadPayments();
+      if (tab === "pagos") { state.paymentsLoaded = false; loadPayments(); } // siempre recargar: se cobra también desde Cuentas a cobrar
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas") { state.accountsLoaded = false; loadAccounts(); } // siempre recargar (refleja entregas/cobros nuevos)
       if (tab === "ctacte-prov") loadSupplierAccounts(); // siempre recargar (cambia con compras/pagos)
@@ -13147,9 +13199,9 @@
     if (q) {
       list = list.filter((p) => matchWords((p.client_username || "") + " " + (p.client_full_name || "") + " " + (p.reference || ""), q));
     }
-    if (els.payCount) els.payCount.textContent = list.length + (list.length === 1 ? " pago" : " pagos");
+    if (els.payCount) els.payCount.textContent = list.length + (list.length === 1 ? " cobro" : " cobros");
     if (!list.length) {
-      els.payTbody.innerHTML = '<tr><td colspan="8" class="muted">Sin pagos registrados.</td></tr>';
+      els.payTbody.innerHTML = '<tr><td colspan="8" class="muted">Sin cobros registrados.</td></tr>';
       return;
     }
     els.payTbody.innerHTML = list.map(paymentRowHtml).join("");
