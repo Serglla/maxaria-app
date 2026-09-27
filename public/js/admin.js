@@ -9699,7 +9699,7 @@
       title: "Pasar a pedido",
       message: "Se va a crear un pedido en borrador para " + supName + " con " + items.length +
         (items.length === 1 ? " producto" : " productos") + (total ? " por " + total.textContent : "") +
-        ".\n\nLo revisás en Compras → Pedidos a proveedor, se lo mandás, y cuando llega la factura la cargás desde ahí." +
+        ".\n\nLo revisás en Compras → Pedidos, se lo mandás, y cuando llega la factura la cargás desde ahí." +
         "\nMientras no se facture, esas cantidades cuentan como \"en camino\" y no se vuelven a sugerir.",
       confirmText: "Crear pedido",
     });
