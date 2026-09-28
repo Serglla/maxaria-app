@@ -15497,20 +15497,28 @@
     }
     return round2(parseFloat(str)) || 0;
   }
-  // ── Montos en pesos (enteros) con separador de miles es-AR ──
-  // Para inputs de dinero: pagos, gastos, cobros, movimientos de caja.
-  // Formatea EN VIVO mientras se tipea ("1000" → "1.000", "1000000" → "1.000.000").
-  function fmtMiles(n) { return (Math.round(Number(n) || 0)).toLocaleString("es-AR"); }
-  // Lee un input/valor formateado y devuelve el entero (descarta todo lo que no sea dígito).
-  // Los precios son enteros: si el valor trae decimales ("1.500,50" pegado, o
-  // "1500.50"), se descartan. Antes se limpiaba TODO junto y "1.500,50" se
-  // convertía en 150050 (×100 silencioso). Regla: un grupo final de 1-2 dígitos
-  // tras coma o punto es decimal (el punto de miles es-AR siempre agrupa de a 3).
+  // ── Montos en pesos con separador de miles es-AR y centavos opcionales ──
+  // Para inputs de dinero: pagos, gastos, cobros, entregas, movimientos de caja.
+  // Formatea EN VIVO mientras se tipea ("1000" → "1.000"); la coma es el
+  // separador decimal (hasta 2 decimales: "1.500,50"). El punto del teclado
+  // numérico también se toma como coma.
+  function fmtMiles(n) {
+    var v = Math.round((Number(n) || 0) * 100) / 100;
+    if (Number.isInteger(v)) return v.toLocaleString("es-AR");
+    return v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  // Lee un input/valor formateado y devuelve el monto con hasta 2 decimales.
+  // Un grupo final de 1-2 dígitos tras coma o punto es decimal (el punto de
+  // miles es-AR siempre agrupa de a 3): "1.500,50" → 1500.5, "1500.5" → 1500.5,
+  // "1.500" → 1500.
   function parseMoney(s) {
     var str = String(s == null ? "" : s).trim();
+    var dec = "";
     var m = str.match(/^(.*?)[.,](\d{1,2})$/);
-    if (m) str = m[1];
-    return Math.round(Number(str.replace(/[^\d]/g, "")) || 0);
+    if (m) { str = m[1]; dec = m[2]; }
+    else if (/,$/.test(str)) str = str.slice(0, -1);
+    var n = Number((str.replace(/[^\d]/g, "") || "0") + (dec ? "." + dec : ""));
+    return Math.round((n || 0) * 100) / 100;
   }
   // Setea un input de dinero con el valor ya formateado (0 → "0").
   function setMoney(el, n) { if (el) el.value = fmtMiles(n); }
@@ -15519,11 +15527,24 @@
     if (!el || el._moneyFmt) return;
     el._moneyFmt = true;
     el.type = "text";
-    el.setAttribute("inputmode", "numeric");
+    el.setAttribute("inputmode", "decimal");
     el.autocomplete = "off";
-    const reformat = () => {
-      const digits = el.value.replace(/[^\d]/g, "");
-      el.value = digits ? Number(digits).toLocaleString("es-AR") : "";
+    const reformat = (e) => {
+      let v = el.value;
+      // El punto recién tipeado (teclado numérico) se toma como coma decimal.
+      if (e && e.data === "." && v.indexOf(",") < 0) {
+        const pos = el.selectionStart || v.length;
+        if (v.charAt(pos - 1) === ".") v = v.slice(0, pos - 1) + "," + v.slice(pos);
+      }
+      const ci = v.indexOf(",");
+      if (ci >= 0) {
+        const intD = v.slice(0, ci).replace(/[^\d]/g, "");
+        const decD = v.slice(ci + 1).replace(/[^\d]/g, "").slice(0, 2);
+        el.value = (intD ? Number(intD).toLocaleString("es-AR") : "0") + "," + decD;
+      } else {
+        const digits = v.replace(/[^\d]/g, "");
+        el.value = digits ? Number(digits).toLocaleString("es-AR") : "";
+      }
     };
     el.addEventListener("input", reformat);
     reformat(); // formato inicial (por si trae value)
@@ -17973,7 +17994,7 @@
     const a = supState.list.find((x) => x.id === supplierId);
     const amtInput = supEls.payForm ? supEls.payForm.querySelector('[name="amount"]') : null;
     attachMoneyInput(amtInput);
-    if (amtInput && a && Number(a.balance) > 0) setMoney(amtInput, Math.round(Number(a.balance)));
+    if (amtInput && a && Number(a.balance) > 0) setMoney(amtInput, Number(a.balance));
     if (supEls.payModal) supEls.payModal.hidden = false;
   }
 
