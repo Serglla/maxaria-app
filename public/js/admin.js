@@ -11056,57 +11056,60 @@
       const qtyTitle = isComp ? "Cantidad en comprimidos"
                      : "Cantidad en " + (mode === "unidad" ? "unidades" : "tabletas (unidades)");
       const modeSel =
-        '<select class="admin-input pur-mode" data-idx="' + idx + '" style="font-size:11px;padding:3px 4px;width:120px">' +
+        '<select class="admin-input pur-mode pc-mode" data-idx="' + idx + '">' +
           '<option value="tableta"' + (mode === "tableta" ? " selected" : "") + '>por tableta</option>' +
           '<option value="unidad"' + (mode === "unidad" ? " selected" : "") + '>por unidad</option>' +
           '<option value="comprimido"' + (isComp ? " selected" : "") + '>por comprimido</option>' +
         '</select>';
       const compExtra = isComp
-        ? '<div style="display:flex;align-items:center;gap:4px;justify-content:flex-end">' +
+        ? '<div style="display:flex;align-items:center;gap:4px">' +
             '<input type="number" class="cell-input cell-num pur-cpt" min="1" step="1" value="' + cpt + '" data-idx="' + idx + '" style="width:54px;text-align:center" title="Comprimidos por tableta (detectado del nombre, editable)" />' +
             '<span style="font-size:11px;color:#9ca3af;font-weight:500">c/tab</span>' +
           '</div>' +
           '<div style="font-size:11px;' + (tabIsInt ? "color:#9ca3af" : "color:#dc2626;font-weight:700") + '">= ' + fmtTabletas(it.quantity) + ' tabl' + (tabIsInt ? "" : " ⚠") + '</div>'
         : "";
 
-      // ── Celda BULTOS: cuántos bultos se compraron × cuántas unidades trae ──
-      const bultosCell =
-        '<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px">' +
-          '<input type="number" class="cell-input cell-num pur-bultos" min="0" step="any" value="' + fmtTabletasRaw(bultos) + '" data-idx="' + idx + '" style="width:96px;text-align:center;font-size:16px;font-weight:600;padding:6px 8px" title="Cantidad de bultos comprados" />' +
-          '<div style="display:flex;align-items:center;gap:4px;justify-content:flex-end">' +
-            '<span style="font-size:11px;color:#9ca3af;font-weight:500">×</span>' +
-            '<input type="number" class="cell-input cell-num pur-upb" min="1" step="1" value="' + upb + '" data-idx="' + idx + '" style="width:54px;text-align:center" title="Unidades por bulto del producto (se guarda en el producto al guardar la compra)" />' +
-            '<span style="font-size:11px;color:#9ca3af;font-weight:500">u/blt</span>' +
-          '</div>' +
-          (upb > 1
-            ? '<div class="pur-blt-note" style="font-size:11px;' + purBltNoteStyle(it) + '">' + purBltNoteText(it) + '</div>'
-            : '<div class="pur-blt-note" style="font-size:11px;color:#d1d5db">suelto</div>') +
-        '</div>';
-
-      const costBultoRow = upb > 1
-        ? '<div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:3px">' +
-            '<span style="font-size:10px;color:#9ca3af">$/blt</span>' +
-            '<input type="number" class="cell-input cell-num pur-cost-bulto" min="0" step="0.01" value="' + Math.round((Number(it.unit_cost) || 0) * upb) + '" data-idx="' + idx + '" style="width:90px" title="Costo por bulto (lo que cotiza el proveedor). Recalcula el costo unitario." />' +
-          '</div>'
+      // Tarjeta de dos renglones: arriba producto + subtotal, abajo los
+      // controles (bultos · cantidad/empaque · costo). Sigue siendo un <tr>
+      // con un solo <td> para no tocar los handlers (closest("tr") + data-idx).
+      const note = upb > 1
+        ? '<span class="pur-blt-note" style="font-size:11px;' + purBltNoteStyle(it) + '">' + purBltNoteText(it) + '</span>'
+        : '<span class="pur-blt-note" style="font-size:11px;color:#9ca3af">suelto</span>';
+      const costBulto = upb > 1
+        ? '<span class="pc-lbl">$/blt</span>' +
+          '<input type="number" class="cell-input cell-num pur-cost-bulto pc-in pc-cost" min="0" step="0.01" value="' + Math.round((Number(it.unit_cost) || 0) * upb) + '" data-idx="' + idx + '" title="Costo por bulto (lo que cotiza el proveedor). Recalcula el costo unitario." />'
         : "";
 
-      return '<tr data-idx="' + idx + '">' +
-        '<td><code>' + escapeHtml(it.product_code || "") + '</code></td>' +
-        '<td>' + escapeHtml(it.product_name || "") + '</td>' +
-        '<td class="num">' + bultosCell + '</td>' +
-        '<td class="num">' +
-          '<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px">' +
-            modeSel +
-            '<input type="number" class="cell-input cell-num pur-qty" min="0" step="' + (isComp ? "1" : "any") + '" value="' + qtyVal + '" data-idx="' + idx + '" style="width:120px;text-align:center;font-size:16px;font-weight:600;padding:6px 8px' + (qtyIsInt ? "" : ";border-color:#dc2626") + '" title="' + qtyTitle + '" />' +
-            compExtra +
+      return '<tr data-idx="' + idx + '" class="pur-card-row"><td colspan="7">' +
+        '<div class="pur-card">' +
+          '<div class="pc-top">' +
+            '<div class="pc-name"><span class="pc-code">' + escapeHtml(it.product_code || "") + '</span>' + escapeHtml(it.product_name || "") + '</div>' +
+            '<span class="pur-subtotal pc-sub">' + fmtPrice(it.subtotal) + '</span>' +
+            '<button type="button" class="pur-remove pc-x" data-idx="' + idx + '" title="Quitar producto" aria-label="Quitar producto">✕</button>' +
           '</div>' +
-        '</td>' +
-        '<td class="num"><input type="number" class="cell-input cell-num pur-cost" min="0" step="0.01" value="' + costVal + '" data-idx="' + idx + '" style="width:90px" />' +
-          (isComp ? '<div style="font-size:10px;color:#9ca3af">$/comp</div>' : "") + costBultoRow +
-        '</td>' +
-        '<td class="num pur-subtotal">' + fmtPrice(it.subtotal) + '</td>' +
-        '<td><button type="button" class="btn btn-small pur-remove" data-idx="' + idx + '">✕</button></td>' +
-      '</tr>';
+          '<div class="pc-bot">' +
+            '<div class="pc-grp">' +
+              '<span class="pc-lbl">Bultos</span>' +
+              '<input type="number" class="cell-input cell-num pur-bultos pc-in pc-big" min="0" step="any" value="' + fmtTabletasRaw(bultos) + '" data-idx="' + idx + '" title="Cantidad de bultos comprados" />' +
+              '<span class="pc-lbl">×</span>' +
+              '<input type="number" class="cell-input cell-num pur-upb pc-in pc-upb" min="1" step="1" value="' + upb + '" data-idx="' + idx + '" title="Unidades por bulto del producto (se guarda en el producto al guardar la compra)" />' +
+              '<span class="pc-lbl">u/blt</span>' + note +
+            '</div>' +
+            '<span class="pc-sep"></span>' +
+            '<div class="pc-grp">' +
+              '<span class="pc-lbl">Cant.</span>' +
+              '<input type="number" class="cell-input cell-num pur-qty pc-in pc-big" min="0" step="' + (isComp ? "1" : "any") + '" value="' + qtyVal + '" data-idx="' + idx + '" style="' + (qtyIsInt ? "" : "border-color:#dc2626") + '" title="' + qtyTitle + '" />' +
+              modeSel + compExtra +
+            '</div>' +
+            '<span class="pc-sep"></span>' +
+            '<div class="pc-grp">' +
+              '<span class="pc-lbl">' + (isComp ? "$/comp" : "Costo") + '</span>' +
+              '<input type="number" class="cell-input cell-num pur-cost pc-in pc-cost" min="0" step="0.01" value="' + costVal + '" data-idx="' + idx + '" />' +
+              costBulto +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</td></tr>';
     }).join("");
     recalcPurchaseTotal();
   }

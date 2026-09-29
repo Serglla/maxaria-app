@@ -4623,19 +4623,43 @@ label.cats-check input[type="checkbox"] {
 #pur-items-table {
   min-width: 0;
 }
-/* Con la columna BULTOS son 7 columnas: en pantallas chicas los inputs grandes
-   (bultos y cantidad) desbordan el modal. Se achican y la tabla puede scrollear
-   horizontal dentro de su seccion en vez de romper el layout. */
-.purchase-items-section { overflow-x: auto; }
+/* Items de la compra: tarjeta de dos renglones por producto (arriba nombre +
+   subtotal, abajo bultos / cantidad / costo). Cada item es un <tr> con un solo
+   <td>; el thead queda oculto. */
+#pur-items-table { border-collapse: separate; border-spacing: 0 8px; width: 100%; table-layout: fixed; }
+#pur-items-table thead { display: none; }
+#pur-items-table tbody tr, #pur-items-table tbody tr:nth-child(even) { background: transparent; }
+#pur-items-table tbody td { padding: 0; border: none; background: transparent; }
+#pur-items-table #pur-items-empty td { padding: 14px 8px; }
+.pur-card { border: 1px solid #dbe3ee; border-radius: 10px; background: #fff; padding: 10px 12px; }
+.pur-card:hover { border-color: #b8c7db; }
+.pur-card:focus-within { border-color: #1e3a5f; box-shadow: 0 0 0 3px rgba(30,58,95,.08); }
+.pc-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.pc-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-code { font-family: ui-monospace, Consolas, monospace; font-size: 11px; font-weight: 600; color: #6b7280; background: #f3f4f6; border-radius: 4px; padding: 1px 6px; margin-right: 8px; }
+.pc-sub { font-size: 15px; font-weight: 800; color: #1e3a5f; white-space: nowrap; }
+.pc-x { border: none; background: transparent; color: #9ca3af; font-size: 15px; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; flex: 0 0 auto; }
+.pc-x:hover { background: #fee2e2; color: #dc2626; }
+.pc-bot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
+.pc-grp { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.pc-sep { width: 1px; height: 22px; background: #e5e7eb; }
+.pc-lbl { font-size: 11px; color: #6b7280; font-weight: 600; }
+#pur-items-table .pc-in { height: 32px; padding: 4px 6px; border: 1.5px solid #cbd5e1; border-radius: 6px; background: #f8fafc; text-align: center; }
+#pur-items-table .pc-in:focus { border-color: #1e3a5f; background: #fff; outline: none; }
+#pur-items-table .pc-big { width: 64px; font-size: 15px; font-weight: 700; }
+#pur-items-table .pc-upb { width: 42px; }
+#pur-items-table .pc-cost { width: 78px; text-align: right; }
+#pur-items-table .pc-mode { width: auto; height: 32px; font-size: 12px; padding: 2px 4px; }
+#pur-items-table tfoot td { border: none; border-top: 2px solid #1e3a5f; padding: 8px 4px 0; text-align: right; white-space: nowrap; }
+#pur-items-table #pur-items-total { font-size: 16px; color: #1e3a5f; }
 @media (max-width: 700px) {
-  #pur-items-table { font-size: 12px; }
-  #pur-items-table th, #pur-items-table td { padding: 4px 5px; }
-  #pur-items-table .pur-bultos,
-  #pur-items-table .pur-qty { width: 74px !important; font-size: 14px !important; padding: 5px 4px !important; }
-  #pur-items-table .pur-cost,
-  #pur-items-table .pur-cost-bulto { width: 68px !important; }
-  #pur-items-table .pur-upb { width: 42px !important; }
-  #pur-items-table .pur-mode { width: 96px !important; }
+  .pc-sep { display: none; }
+  .pc-bot { gap: 8px; }
+  .pc-grp { width: 100%; }
+  .pc-name { white-space: normal; }
+  .pur-card { padding: 10px; }
+  .pc-grp .pur-blt-note { flex-basis: 100%; }
+  #pur-items-table .pc-big { width: 64px; }
 }
 .pur-supplier-row {
   display: flex;

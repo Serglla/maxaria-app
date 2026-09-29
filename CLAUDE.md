@@ -2257,3 +2257,13 @@ El menú de Finanzas queda en **Caja** · **Cuentas a cobrar** · **Cuentas a pa
 - **Bug viejo arreglado**: en computadora el menú no le ocultaba a un admin limitado las secciones no permitidas, porque `.admin-sidebar-item { display:flex !important }` le ganaba al `style.display="none"` del gating (el server igual devolvía 403). Ahora el gating también pone `hidden` y hay una regla `.admin-sidebar-item[hidden] { display:none !important }`. Además se ocultan los títulos de grupo que quedan sin secciones.
 - **Bug viejo detectado, sin arreglar**: `bootstrap()` pide `/api/admin/products` junto con `/api/me`; un admin **sin** la sección `productos` recibe 403, el bootstrap corta antes del gating y ve todo el menú. Hoy no pasa porque los admins limitados tienen `productos`.
 - Verificado con Playwright contra una base de prueba (superadmin; admin con solo `gastos,pagos`; admin con `caja,gastos,cuentas`), 1300px y 390px, sin errores JS ni desborde. `npm test` 28/28.
+
+
+### Montos con centavos en pagos, cobros, gastos, entregas y caja (28 septiembre 2026 — `admin.js?v=20260928a`)
+
+Los inputs de dinero (Registrar cobro, pago a proveedor, gastos, efectivo/transferencia de la entrega, movimientos de caja) pasan por `attachMoneyInput`/`parseMoney`/`fmtMiles`, que redondeaban a enteros: no se podían cargar centavos y el saldo precargado ($ 7.491.018,60) se redondeaba. Ahora la **coma es el separador decimal** (hasta 2 decimales; el punto del teclado numérico se toma como coma), `parseMoney` devuelve el monto con 2 decimales ("1.500,50" → 1500.5; "1.500" sigue siendo 1500) y `fmtMiles` muestra ",50" solo si hay centavos. El precargado del pago a proveedor ya no hace `Math.round` del saldo. El server ya aceptaba decimales (`Number(b.amount)`), no se tocó. Commit `9e9078e`.
+
+
+### Items de la compra en tarjetas de dos renglones (29 septiembre 2026 — `admin.js/styles.css?v=20260929a`)
+
+Sergio eligió la propuesta 3 de 5 para el modal Nueva/Editar compra. `renderPurchaseItems` ahora dibuja cada item como una tarjeta: arriba van código, nombre, subtotal y la ✕, y abajo **Bultos × u/blt (nota) · Cant. + empaque · Costo ($/blt si upb>1)**. Sigue siendo un `<tr data-idx>` con un solo `<td colspan=7>` y conserva todas las clases (`pur-bultos`, `pur-upb`, `pur-qty`, `pur-mode`, `pur-cost`, `pur-cost-bulto`, `pur-subtotal`, `pur-blt-note`, `pur-remove`), así que los handlers delegados y `purSyncRow` no cambiaron. CSS `.pur-card`/`.pc-*`: thead oculto, `table-layout:fixed`, y en ≤700px los grupos se apilan. Verificado con Chromium a 900px y 390px.
