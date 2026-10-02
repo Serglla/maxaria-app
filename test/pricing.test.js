@@ -17,20 +17,6 @@ function oldComputeEffectivePrice(basePrice, markup) {
   if (denom <= 0) return p;
   return round2(p / denom);
 }
-function oldOrderEffPrice(base, m) {
-  base = Math.max(0, Number(base) || 0);
-  m = Number(m) || 0;
-  if (!m) return base;
-  const denom = 1 - m / 100;
-  if (denom <= 0) return base;
-  return Math.round(base / denom);
-}
-function oldPriceViewListPrice(base, m) {
-  base = Number(base) || 0;
-  const d = 1 - (Number(m) || 0) / 100;
-  if (d <= 0) return base;
-  return Math.round(base / d);
-}
 function oldServerChain(row, get) {
   const visited = new Set(); const chain = [];
   let divisor = 1, ownDivisor = 1, rootBase = "minorista", cur = row;
@@ -71,14 +57,15 @@ const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
 const MARGINS = [0, 5, 6, -2, 10, 12.5, 33.33, -90, 95, 99.99, 100, 120, "", null, "7"];
 const randBase = () => pick([0, 1, 999, 1000, 3832, 1234.56, 0.5, -10, "1500", null, Math.round(rnd() * 500000) / 100]);
 
-test("precio con ganancia sobre venta: igual a las tres formulas viejas", () => {
+test("precio con ganancia sobre venta: igual a la formula del servidor, en el servidor y en el panel", () => {
   for (let i = 0; i < 20000; i++) {
     const base = randBase(), m = pick(MARGINS);
     assert.equal(Pricing.sellPrice(Number(base) || 0, m, 2), oldComputeEffectivePrice(base, m), `servidor ${base} ${m}`);
+    // Desde el 2/10/2026 el panel redondea a centavos, igual que el servidor
+    // (antes a pesos enteros: oldOrderEffPrice / oldPriceViewListPrice).
     const b0 = Math.max(0, Number(base) || 0);
-    const panel = !(Number(m) || 0) ? b0 : Pricing.sellPrice(b0, m, 0);
-    assert.equal(panel, oldOrderEffPrice(base, m), `pedido ${base} ${m}`);
-    assert.equal(Pricing.sellPrice(Number(base) || 0, m, 0), oldPriceViewListPrice(base, m), `productos ${base} ${m}`);
+    const panel = !(Number(m) || 0) ? b0 : Pricing.sellPrice(b0, m, 2);
+    assert.equal(panel, !(Number(m) || 0) ? b0 : oldComputeEffectivePrice(b0, m), `pedido ${base} ${m}`);
   }
 });
 

@@ -5485,9 +5485,9 @@
   }
   // Precio de un producto para esa lista: base / (1 - ganancia/100), entero.
   // La formula vive en /js/shared/pricing.js (la misma que usa el servidor).
-  // decimals 0: el panel muestra estos precios en pesos enteros.
+  // A centavos (2 decimales), igual que el servidor.
   function priceViewListPrice(p, cfg) {
-    return MaxPricing.sellPrice(Number(p[cfg.column]) || 0, cfg.markup, 0);
+    return MaxPricing.sellPrice(Number(p[cfg.column]) || 0, cfg.markup, 2);
   }
 
   function cardPriceHtml(p) {
@@ -6225,7 +6225,7 @@
     if (!prod || !cfg) return 0;
     var base = Math.max(0, Number(prod[cfg.column]) || 0);
     if (!(Number(cfg.markup) || 0)) return base;
-    return MaxPricing.sellPrice(base, cfg.markup, 0);
+    return MaxPricing.sellPrice(base, cfg.markup, 2);
   }
 
   // Resuelve la config efectiva de una lista siguiendo la cadena base_list_id
