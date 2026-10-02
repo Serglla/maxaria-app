@@ -2924,7 +2924,7 @@
     loadActClients();
   }
   const MESES_LARGOS = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
-  function fmtMonthLabel(key) {
+  function fmtMonthLabelLong(key) {
     if (!/^\d{4}-\d{2}$/.test(String(key || ""))) return "";
     const [y, m] = key.split("-").map(Number);
     return MESES_LARGOS[m - 1] + " " + y;
@@ -2943,7 +2943,7 @@
       actState.clientsRows = data.rows || [];
       actState.clientsMeta = data;
       if (els.actCliVs) {
-        els.actCliVs.textContent = data.prev_month ? "vs. " + fmtMonthLabel(data.prev_month) : "";
+        els.actCliVs.textContent = data.prev_month ? "vs. " + fmtMonthLabelLong(data.prev_month) : "";
       }
       renderActClients();
     } catch (e) {
@@ -3091,8 +3091,8 @@
         : actCliMonthValue();
       if (els.actCliDetailTitle) els.actCliDetailTitle.textContent = "Pedidos de " + name;
       if (els.actCliDetailSub) {
-        els.actCliDetailSub.textContent = "Mes: " + fmtMonthLabel(detMonth) +
-          (btn.dataset.prev ? " (sin compras en " + fmtMonthLabel(actCliMonthValue()) + ")" : "");
+        els.actCliDetailSub.textContent = "Mes: " + fmtMonthLabelLong(detMonth) +
+          (btn.dataset.prev ? " (sin compras en " + fmtMonthLabelLong(actCliMonthValue()) + ")" : "");
       }
       if (els.actCliDetailTbody) els.actCliDetailTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
       if (els.actCliDetailTfoot) els.actCliDetailTfoot.innerHTML = "";

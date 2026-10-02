@@ -1660,6 +1660,34 @@ app.set("trust proxy", 1);
 // un <script> en un nombre de producto o cliente, no se ejecuta. Los estilos
 // inline se permiten (el panel los usa mucho); las imágenes de producto pueden
 // venir de cualquier https (se cargan desde yourfiles.cloud y similares).
+// ===== INDICES DE RENDIMIENTO =====
+// Columnas que se filtran en casi todas las pantallas (saldo por pedido, pedidos
+// por vendedor/estado, ventas por producto) y no tenian indice: con un año de
+// datos, Ventas tardaba ~0,5 s y la lista de pedidos ~0,1 s. Idempotentes.
+[
+  "CREATE INDEX IF NOT EXISTS idx_am_order ON account_movements(order_id)",
+  "CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id)",
+  "CREATE INDEX IF NOT EXISTS idx_orders_vendedor ON orders(assigned_vendedor_id)",
+  "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)",
+  "CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id)",
+  "CREATE INDEX IF NOT EXISTS idx_users_vendedor ON users(assigned_vendedor_id)",
+  "CREATE INDEX IF NOT EXISTS idx_cash_mov_source ON cash_movements(source, related_id)",
+  "CREATE INDEX IF NOT EXISTS idx_pi_product ON purchase_items(product_id)",
+  "CREATE INDEX IF NOT EXISTS idx_pri_request ON purchase_request_items(request_id)",
+].forEach((sql) => {
+  try { db.exec(sql); } catch (e) { console.error("[indices] " + e.message); }
+});
+try { db.exec("PRAGMA optimize"); } catch (_) {}
+
+// Compresion gzip de las respuestas (admin.js pesa ~860 KB sin comprimir y
+// ~210 KB comprimido). Si el paquete no esta instalado, la app sigue andando.
+try {
+  const compression = require("compression");
+  app.use(compression());
+} catch (e) {
+  console.warn("[compression] no instalado: las respuestas van sin comprimir. Correr npm install.");
+}
+
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
   contentSecurityPolicy: {
@@ -6573,13 +6601,12 @@ app.get("/api/admin/vendedores", requireAdmin, (req, res) => {
     "       u.vendedor_price_level, u.vendedor_cost_list_id, u.price_list_id, u.is_tercerizado," +
     "       u.created_at, u.last_login_at," +
     "       (SELECT COUNT(*) FROM users c WHERE c.assigned_vendedor_id = u.id AND c.level BETWEEN 1 AND 4) AS clients_count," +
-    "       COUNT(DISTINCT o.id) AS total_orders," +
-    "       COUNT(DISTINCT d.id) AS total_deliveries" +
+    // Subconsultas en vez de JOIN: el JOIN pedidos x entregas multiplicaba las
+    // filas (pedidos * entregas por vendedor) y tardaba ~1 s con un año de datos.
+    "       (SELECT COUNT(*) FROM orders o WHERE o.assigned_vendedor_id = u.id) AS total_orders," +
+    "       (SELECT COUNT(*) FROM deliveries d WHERE d.vendedor_id = u.id) AS total_deliveries" +
     "  FROM users u" +
-    "  LEFT JOIN orders o ON o.assigned_vendedor_id = u.id" +
-    "  LEFT JOIN deliveries d ON d.vendedor_id = u.id" +
     "  WHERE u.level = 5" +
-    "  GROUP BY u.id" +
     "  ORDER BY u.username"
   ).all();
   res.json(rows);

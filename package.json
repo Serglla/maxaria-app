@@ -21,6 +21,7 @@
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.2.0",
+    "compression": "^1.8.2",
     "cookie-parser": "^1.4.6",
     "express": "^4.21.0",
     "express-session": "^1.18.0",

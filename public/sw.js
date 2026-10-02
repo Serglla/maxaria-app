@@ -10,7 +10,7 @@
  * Versionar CACHE_VERSION fuerza la invalidación de caches viejos al hacer deploy.
  */
 
-const CACHE_VERSION = "maxaria-v8";
+const CACHE_VERSION = "maxaria-v9";
 const STATIC_CACHE  = CACHE_VERSION + "-static";
 const PAGES_CACHE   = CACHE_VERSION + "-pages";
 const IMAGES_CACHE  = CACHE_VERSION + "-images";
@@ -125,6 +125,13 @@ self.addEventListener("fetch", (event) => {
   // que el panel mostrara números de una versión anterior del código y pareciera
   // un descuadre. Con network-first se ve siempre lo último y el cache queda
   // solo como fallback offline.
+  // Excepcion: si la URL trae version (?v=20260929a) el archivo NUNCA cambia con
+  // esa URL (cada deploy bumpea la version en el HTML, que es network-first), asi
+  // que se sirve desde el cache sin volver a bajarlo. Ahorra ~1 MB por carga.
+  if ((url.pathname.startsWith("/js/") || url.pathname.startsWith("/css/")) && url.searchParams.has("v")) {
+    event.respondWith(cacheVersioned(req, url));
+    return;
+  }
   if (url.pathname.startsWith("/js/") || url.pathname.startsWith("/css/")) {
     event.respondWith(networkFirst(req, STATIC_CACHE, false));
     return;
@@ -161,6 +168,25 @@ async function networkFirst(req, cacheName, htmlFallback = true) {
       { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } }
     );
   }
+}
+
+// Archivo versionado (?v=...): cache-first, y al bajar una version nueva se
+// borran las versiones anteriores del mismo archivo para no acumularlas.
+async function cacheVersioned(req, url) {
+  const cache = await caches.open(STATIC_CACHE);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+  const fresh = await fetch(req);
+  if (fresh && fresh.ok) {
+    await cache.put(req, fresh.clone());
+    try {
+      for (const k of await cache.keys()) {
+        const ku = new URL(k.url);
+        if (ku.pathname === url.pathname && ku.search !== url.search) await cache.delete(k);
+      }
+    } catch (_) {}
+  }
+  return fresh;
 }
 
 async function cacheFirst(req, cacheName) {
