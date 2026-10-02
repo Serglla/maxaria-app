@@ -97,9 +97,31 @@ test("backup externo: sube la base comprimida y anota el resultado; si R2 falla,
   assert.equal(off.status().last_error, "");
 
   const mal = createOffsite({ db, env, getSetting, setSetting,
-    fetchImpl: async () => ({ ok: false, status: 403, text: async () => "AccessDenied" }) });
+    fetchImpl: async () => ({ ok: false, status: 403, text: async () => "<Error><Code>AccessDenied</Code></Error>" }) });
   await assert.rejects(() => mal.run("2026-11-02"), /R2 respondio 403/);
   assert.match(off.status().last_error, /AccessDenied/);
   assert.equal(createOffsite({ db, env: {}, getSetting, setSetting }).enabled(), false, "sin variables queda apagado");
+  db.close(); fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("diagnostico de R2: recorta espacios, muestra lo cargado sin revelar claves y prueba la lectura", async () => {
+  const env = { R2_ACCOUNT_ID: " abcdef0123456789abcdef0123456789\n", R2_ACCESS_KEY_ID: "KEYID12345", R2_SECRET_ACCESS_KEY: "s".repeat(64), R2_BUCKET: "maxaria-backups " };
+  const d = createOffsite.describe(env);
+  assert.equal(d.account_id, "abcdef… (32 caracteres)");
+  assert.equal(d.bucket, "maxaria-backups");
+  assert.equal(d.secret_length, 64);
+  assert.deepEqual(d.had_spaces, ["R2_ACCOUNT_ID", "R2_BUCKET"]);
+  assert.ok(!JSON.stringify(d).includes("ssss"), "no expone la clave secreta");
+  const { db, dir } = newDbFile();
+  const settings = new Map();
+  const urls = [];
+  const fake = async (url, opts) => {
+    urls.push(url);
+    if (opts.method === "PUT") return { ok: false, status: 403, text: async () => "<Error><Code>AccessDenied</Code></Error>" };
+    return { ok: true, status: 200, text: async () => "" };
+  };
+  const off = createOffsite({ db, env, getSetting: (k, x) => (settings.has(k) ? settings.get(k) : x), setSetting: (k, v) => settings.set(k, v), fetchImpl: fake });
+  await assert.rejects(() => off.run("2026-10-02"), /403 AccessDenied .*Lectura del bucket: OK/);
+  assert.ok(urls[0].startsWith("https://abcdef0123456789abcdef0123456789.r2.cloudflarestorage.com/maxaria-backups/"), "sin espacios en la URL");
   db.close(); fs.rmSync(dir, { recursive: true, force: true });
 });

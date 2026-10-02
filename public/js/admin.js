@@ -1241,7 +1241,12 @@
     } else {
       const ok = o.last_ok ? "último: " + escapeHtml(formatDate(o.last_ok)) + " · " + fmtSize(o.last_bytes) : "todavía no corrió";
       const err = o.last_error ? '<br><span class="text-danger small">Último error: ' + escapeHtml(o.last_error) + "</span>" : "";
-      els.dbinfoOffsite.innerHTML = '<span class="persistent">ACTIVO</span> <span class="muted">diario · ' + ok + "</span>" + err;
+      const ck = o.check;
+      const chk = ck ? '<br><span class="muted small">Datos cargados: cuenta ' + escapeHtml(ck.account_id) +
+        ' · clave ' + escapeHtml(ck.access_key_id) + ' · secreta de ' + ck.secret_length + ' caracteres · bucket "' +
+        escapeHtml(ck.bucket) + '"' + (ck.had_spaces && ck.had_spaces.length ? ' · tenían espacios: ' + escapeHtml(ck.had_spaces.join(", ")) + ' (ya se ignoran)' : '') +
+        '</span>' : "";
+      els.dbinfoOffsite.innerHTML = '<span class="persistent">ACTIVO</span> <span class="muted">diario · ' + ok + "</span>" + err + chk;
     }
     if (els.offsiteTestWrap) els.offsiteTestWrap.hidden = !(state.me && state.me.isSuperadmin);
   }
