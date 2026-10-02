@@ -1,0 +1,451 @@
+{
+ "steps": [
+  {
+   "name": "entrega propio dos cajas",
+   "commission_warning": null,
+   "discount_amount": 253
+  },
+  {
+   "name": "edita entrega propio",
+   "commission_warning": null,
+   "discount_amount": 500
+  },
+  {
+   "name": "entrega tercerizado neto",
+   "commission_warning": null,
+   "discount_amount": 0
+  },
+  {
+   "name": "entrega parcial",
+   "commission_warning": null,
+   "discount_amount": 0
+  },
+  {
+   "name": "cobro resto con descuento",
+   "commission_warning": null,
+   "discount_amount": 255
+  },
+  {
+   "name": "borra cobro",
+   "commission_warning": null
+  },
+  {
+   "name": "tercerizado parcial",
+   "commission_warning": null,
+   "discount_amount": 0
+  },
+  {
+   "name": "tercerizado cobro resto",
+   "commission_warning": null,
+   "discount_amount": 0
+  },
+  {
+   "name": "propio sin caja",
+   "commission_warning": {
+    "warning": "sin_caja",
+    "amount": 505
+   },
+   "discount_amount": 0
+  },
+  {
+   "name": "propio parcial",
+   "commission_warning": null,
+   "discount_amount": 0
+  },
+  {
+   "name": "propio cobro resto",
+   "commission_warning": null,
+   "discount_amount": 0
+  },
+  {
+   "name": "a cuenta",
+   "commission_warning": null,
+   "discount_amount": 0
+  },
+  {
+   "name": "entrega sin vendedor",
+   "commission_warning": null,
+   "discount_amount": 0
+  },
+  {
+   "name": "borra a cuenta",
+   "commission_warning": null
+  }
+ ],
+ "account_movements": [
+  {
+   "user_id": 4,
+   "type": "debit",
+   "amount": 5061.11,
+   "description": "Pedido #1",
+   "order_id": 1,
+   "has_payment": 0
+  },
+  {
+   "user_id": 4,
+   "type": "credit",
+   "amount": 3000,
+   "description": "Cobro entrega #1 (efectivo $3.000)",
+   "order_id": 1,
+   "has_payment": 0
+  },
+  {
+   "user_id": 4,
+   "type": "credit",
+   "amount": 500,
+   "description": "Descuento pedido #1 ($500)",
+   "order_id": 1,
+   "has_payment": 0
+  },
+  {
+   "user_id": 5,
+   "type": "debit",
+   "amount": 5061.11,
+   "description": "Pedido #2",
+   "order_id": 2,
+   "has_payment": 0
+  },
+  {
+   "user_id": 5,
+   "type": "credit",
+   "amount": 3400,
+   "description": "Cobro entrega #2 (efectivo $3.400)",
+   "order_id": 2,
+   "has_payment": 0
+  },
+  {
+   "user_id": 5,
+   "type": "credit",
+   "amount": 377,
+   "description": "Comisión rendida vendedor #2 (vTerc)",
+   "order_id": 2,
+   "has_payment": 0
+  },
+  {
+   "user_id": 4,
+   "type": "debit",
+   "amount": 5061.11,
+   "description": "Pedido #3",
+   "order_id": 3,
+   "has_payment": 0
+  },
+  {
+   "user_id": 4,
+   "type": "credit",
+   "amount": 1000,
+   "description": "Cobro entrega #3 (efectivo $1.000)",
+   "order_id": 3,
+   "has_payment": 0
+  },
+  {
+   "user_id": 5,
+   "type": "debit",
+   "amount": 5061.11,
+   "description": "Pedido #4",
+   "order_id": 4,
+   "has_payment": 0
+  },
+  {
+   "user_id": 5,
+   "type": "credit",
+   "amount": 1500,
+   "description": "Cobro entrega #4 (efectivo $1.500)",
+   "order_id": 4,
+   "has_payment": 0
+  },
+  {
+   "user_id": 5,
+   "type": "credit",
+   "amount": 1900,
+   "description": "Cobro pedido #4 · efectivo",
+   "order_id": 4,
+   "has_payment": 1
+  },
+  {
+   "user_id": 5,
+   "type": "credit",
+   "amount": 377,
+   "description": "Comisión rendida vendedor #4 (vTerc)",
+   "order_id": 4,
+   "has_payment": 0
+  },
+  {
+   "user_id": 4,
+   "type": "debit",
+   "amount": 5061.11,
+   "description": "Pedido #5",
+   "order_id": 5,
+   "has_payment": 0
+  },
+  {
+   "user_id": 4,
+   "type": "credit",
+   "amount": 5061.11,
+   "description": "Cobro entrega #5 (efectivo $5.061,11)",
+   "order_id": 5,
+   "has_payment": 0
+  },
+  {
+   "user_id": 4,
+   "type": "debit",
+   "amount": 5061.11,
+   "description": "Pedido #6",
+   "order_id": 6,
+   "has_payment": 0
+  },
+  {
+   "user_id": 4,
+   "type": "credit",
+   "amount": 3000,
+   "description": "Cobro entrega #6 (efectivo $3.000)",
+   "order_id": 6,
+   "has_payment": 0
+  },
+  {
+   "user_id": 4,
+   "type": "credit",
+   "amount": 2061.11,
+   "description": "Cobro pedido #6 · efectivo",
+   "order_id": 6,
+   "has_payment": 1
+  },
+  {
+   "user_id": 6,
+   "type": "debit",
+   "amount": 5061.11,
+   "description": "Pedido #7",
+   "order_id": 7,
+   "has_payment": 0
+  },
+  {
+   "user_id": 6,
+   "type": "credit",
+   "amount": 2954.54,
+   "description": "Cobro entrega #7 (efectivo $2.954,54)",
+   "order_id": 7,
+   "has_payment": 0
+  }
+ ],
+ "cash_movements": [
+  {
+   "account_id": 2,
+   "type": "ingreso",
+   "amount": 3000,
+   "description": "Cobro entrega #1 (efectivo)",
+   "source": "entrega",
+   "related_id": 1
+  },
+  {
+   "account_id": 1,
+   "type": "ingreso",
+   "amount": 3400,
+   "description": "Cobro entrega #2 (efectivo)",
+   "source": "entrega",
+   "related_id": 2
+  },
+  {
+   "account_id": 1,
+   "type": "ingreso",
+   "amount": 1000,
+   "description": "Cobro entrega #3 (efectivo)",
+   "source": "entrega",
+   "related_id": 3
+  },
+  {
+   "account_id": 1,
+   "type": "ingreso",
+   "amount": 1500,
+   "description": "Cobro entrega #4 (efectivo)",
+   "source": "entrega",
+   "related_id": 4
+  },
+  {
+   "account_id": 1,
+   "type": "ingreso",
+   "amount": 1900,
+   "description": "Cobro cTerc",
+   "source": "cobro",
+   "related_id": 2
+  },
+  {
+   "account_id": 1,
+   "type": "ingreso",
+   "amount": 3000,
+   "description": "Cobro entrega #6 (efectivo)",
+   "source": "entrega",
+   "related_id": 6
+  },
+  {
+   "account_id": 2,
+   "type": "ingreso",
+   "amount": 2061.11,
+   "description": "Cobro cProp",
+   "source": "cobro",
+   "related_id": 3
+  },
+  {
+   "account_id": 2,
+   "type": "egreso",
+   "amount": 505,
+   "description": "Comisión vendedor pedido #6 (vProp)",
+   "source": "comision",
+   "related_id": 6
+  },
+  {
+   "account_id": 1,
+   "type": "ingreso",
+   "amount": 2954.54,
+   "description": "Cobro entrega #7 (efectivo)",
+   "source": "entrega",
+   "related_id": 7
+  }
+ ],
+ "orders": [
+  {
+   "id": 1,
+   "user_id": 4,
+   "status": "entregado",
+   "total": 5061.11,
+   "discount_type": "fixed",
+   "discount_value": 500,
+   "discount_amount": 500,
+   "assigned_vendedor_id": 2,
+   "stock_discounted": 1
+  },
+  {
+   "id": 2,
+   "user_id": 5,
+   "status": "entregado",
+   "total": 5061.11,
+   "discount_type": null,
+   "discount_value": null,
+   "discount_amount": 0,
+   "assigned_vendedor_id": 3,
+   "stock_discounted": 1
+  },
+  {
+   "id": 3,
+   "user_id": 4,
+   "status": "entregado",
+   "total": 5061.11,
+   "discount_type": null,
+   "discount_value": null,
+   "discount_amount": 0,
+   "assigned_vendedor_id": 2,
+   "stock_discounted": 1
+  },
+  {
+   "id": 4,
+   "user_id": 5,
+   "status": "entregado",
+   "total": 5061.11,
+   "discount_type": null,
+   "discount_value": null,
+   "discount_amount": 0,
+   "assigned_vendedor_id": 3,
+   "stock_discounted": 1
+  },
+  {
+   "id": 5,
+   "user_id": 4,
+   "status": "entregado",
+   "total": 5061.11,
+   "discount_type": null,
+   "discount_value": null,
+   "discount_amount": 0,
+   "assigned_vendedor_id": 2,
+   "stock_discounted": 1
+  },
+  {
+   "id": 6,
+   "user_id": 4,
+   "status": "entregado",
+   "total": 5061.11,
+   "discount_type": null,
+   "discount_value": null,
+   "discount_amount": 0,
+   "assigned_vendedor_id": 2,
+   "stock_discounted": 1
+  },
+  {
+   "id": 7,
+   "user_id": 6,
+   "status": "entregado",
+   "total": 5061.11,
+   "discount_type": null,
+   "discount_value": null,
+   "discount_amount": 0,
+   "assigned_vendedor_id": null,
+   "stock_discounted": 1
+  }
+ ],
+ "payments": [
+  {
+   "id": 2,
+   "user_id": 5,
+   "amount": 1900,
+   "method": "efectivo",
+   "caja_id": 1,
+   "order_id": 4
+  },
+  {
+   "id": 3,
+   "user_id": 4,
+   "amount": 2061.11,
+   "method": "efectivo",
+   "caja_id": 2,
+   "order_id": 6
+  }
+ ],
+ "deliveries": [
+  {
+   "order_id": 1,
+   "efectivo_amount": 3000,
+   "transferencia_amount": 0,
+   "caja_id": 2,
+   "caja_transfer_id": null
+  },
+  {
+   "order_id": 2,
+   "efectivo_amount": 3400,
+   "transferencia_amount": 0,
+   "caja_id": 1,
+   "caja_transfer_id": null
+  },
+  {
+   "order_id": 3,
+   "efectivo_amount": 1000,
+   "transferencia_amount": 0,
+   "caja_id": 1,
+   "caja_transfer_id": null
+  },
+  {
+   "order_id": 4,
+   "efectivo_amount": 1500,
+   "transferencia_amount": 0,
+   "caja_id": 1,
+   "caja_transfer_id": null
+  },
+  {
+   "order_id": 5,
+   "efectivo_amount": 5061.11,
+   "transferencia_amount": 0,
+   "caja_id": null,
+   "caja_transfer_id": null
+  },
+  {
+   "order_id": 6,
+   "efectivo_amount": 3000,
+   "transferencia_amount": 0,
+   "caja_id": 1,
+   "caja_transfer_id": null
+  },
+  {
+   "order_id": 7,
+   "efectivo_amount": 2954.54,
+   "transferencia_amount": 0,
+   "caja_id": 1,
+   "caja_transfer_id": null
+  }
+ ]
+}
