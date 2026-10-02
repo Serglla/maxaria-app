@@ -594,3 +594,23 @@ test("pedido a proveedor: lo que no facturó se deriva a otro proveedor sin cont
   assert.equal(d.status, "parcial");
   assert.equal(d.items.find((i) => i.product_id === pa).pending_qty, 4);
 });
+
+test("historial de stock: cada movimiento continua donde termino el anterior", () => {
+  // Corre al final, despues de todos los circuitos de arriba. Si algun camino
+  // mueve el stock sin pasar por moveStock/logStockMovement, la cadena se corta.
+  const db = new Database(DB_PATH, { readonly: true });
+  const rows = db.prepare(
+    "SELECT product_id, delta, qty_before, qty_after FROM stock_movements ORDER BY product_id, id"
+  ).all();
+  db.close();
+  assert.ok(rows.length > 10, "hubo movimientos para revisar");
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    assert.equal(r.qty_after - r.qty_before, r.delta, "delta de la fila " + i);
+    const prev = rows[i - 1];
+    if (prev && prev.product_id === r.product_id) {
+      assert.equal(r.qty_before, prev.qty_after, "cadena del producto " + r.product_id);
+    }
+  }
+});
+

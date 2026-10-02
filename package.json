@@ -13,7 +13,8 @@
     "export-prices": "node scripts/export-prices.js",
     "backup": "node scripts/backup-db.js",
     "debt-reminder": "node scripts/debt-reminder.js",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "lint": "eslint server.js lib public/js public/sw.js scripts test"
   },
   "engines": {
     "node": ">=18"
@@ -31,5 +32,9 @@
     "sharp": "^0.34.5",
     "web-push": "^3.6.7",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "globals": "^16.5.0"
   }
 }

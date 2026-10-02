@@ -8,6 +8,7 @@ const crypto = require("crypto");
 const express = require("express");
 const session = require("express-session");
 const helmet = require("helmet");
+const Pricing = require("./public/js/shared/pricing"); // formulas de precio (las comparte el panel)
 const cookieParser = require("cookie-parser");
 const Database = require("better-sqlite3");
 const bcrypt = require("bcryptjs");
@@ -791,6 +792,17 @@ function logStockMovement(productId, type, delta, sourceId, note, userId) {
     "INSERT INTO stock_movements (product_id, type, delta, qty_before, qty_after, source_id, note, registered_by)" +
     " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(productId, String(type || "otro"), d, qtyBefore, qtyAfter, sourceId || null, note || null, userId || null);
+}
+
+// Mueve el stock de un producto Y lo deja en el historial, siempre juntos.
+// Mismos argumentos que logStockMovement: delta positivo suma, negativo resta.
+// Es el camino para TODO cambio relativo de stock: un UPDATE suelto sin su
+// registro deja el historial de stock_movements sin cuadrar.
+function moveStock(productId, type, delta, sourceId, note, userId) {
+  const q = Number(delta) || 0;
+  if (!productId || !q) return;
+  db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(q, productId);
+  logStockMovement(productId, type, q, sourceId, note, userId);
 }
 
 // ─── Pedidos de cotizacion ────────────────────────────────────────────────────
@@ -1786,43 +1798,21 @@ function resolvePriceListConfig(listOrId) {
     const full = db.prepare(selectSql).get(row.id);
     if (full) row = full;
   }
-  const visited = new Set();
-  const chain = [];
-  let divisor = 1;
-  let ownDivisor = 1; // solo el margen propio de ESTA lista (primer eslabon)
-  let rootBase = "minorista";
-  let cur = row;
-  while (cur) {
-    if (visited.has(cur.id) || visited.size >= 6) break; // ciclo o cadena demasiado larga
-    visited.add(cur.id);
-    chain.push(cur.name);
-    const m = Number(cur.markup_percent) || 0;
-    const d = 1 - m / 100;
-    if (d > 0) divisor *= d; // margen invalido (>=100): se ignora, igual que computeEffectivePrice
-    if (visited.size === 1) ownDivisor = d > 0 ? d : 1;
-    rootBase = cur.base_level || "minorista";
-    if (!cur.base_list_id) break;
-    const parent = db.prepare(selectSql).get(Number(cur.base_list_id));
-    if (!parent) break; // padre borrado: cae al base_level denormalizado de esta lista
-    cur = parent;
-  }
-  // Margen efectivo de la cadena SIN el eslabon propio = el de la lista padre.
-  // Sirve para el snapshot del "costo del vendedor" (vendedor_cost_unit): con
-  // listas encadenadas, lo que gana el vendedor es SOLO su margen propio, no la
-  // diferencia contra la raiz. Ej: vip -> BC (-2%) -> Suc_Leon (6%): el costo de
-  // una venta a Suc_Leon es el precio de BC, asi la comision da 6% exacto.
-  // Sin padre (lista basada en un nivel) queda 0 -> costo = precio raiz (igual
-  // que antes del encadenamiento).
-  const parentDivisor = ownDivisor > 0 ? divisor / ownDivisor : divisor;
+  // La cadena y la combinacion de ganancias viven en public/js/shared/pricing.js
+  // (el panel usa la misma funcion). parent_markup_percent es el costo del
+  // vendedor: con listas encadenadas lo que gana es SOLO su margen propio. Ej:
+  // vip -> BC (-2%) -> Suc_Leon (6%): el costo de una venta a Suc_Leon es el
+  // precio de BC, asi la comision da 6% exacto. Sin padre queda 0.
+  const r = Pricing.resolveChain(row, (id) => db.prepare(selectSql).get(id));
   return {
     listId: row.id,
     name: row.name,
-    base_level: rootBase,
-    column: priceColumnForBaseLevel(rootBase),
-    markup_percent: 100 * (1 - divisor), // % efectivo equivalente de toda la cadena
-    own_markup_percent: 100 * (1 - ownDivisor), // margen propio de esta lista
-    parent_markup_percent: 100 * (1 - parentDivisor), // efectivo de la lista padre
-    chain: chain,
+    base_level: r.base_level,
+    column: priceColumnForBaseLevel(r.base_level),
+    markup_percent: r.markup_percent, // % efectivo equivalente de toda la cadena
+    own_markup_percent: r.own_markup_percent, // margen propio de esta lista
+    parent_markup_percent: r.parent_markup_percent, // efectivo de la lista padre
+    chain: r.chain,
   };
 }
 
@@ -1897,9 +1887,8 @@ function costUnitFromBase(basePrice, config) {
   if (!config || config.kind !== "list") return null;
   const p = Number(basePrice) || 0;
   const m = Number(config.cost_markup_percent) || 0;
-  const denom = 1 - m / 100;
-  if (denom <= 0) return round2(p);
-  return round2(p / denom);
+  if (1 - m / 100 <= 0) return round2(p);
+  return Pricing.sellPrice(p, m, 2);
 }
 
 // Calcula el precio efectivo aplicando margen sobre venta (siempre entero).
@@ -1910,10 +1899,7 @@ function costUnitFromBase(basePrice, config) {
 function computeEffectivePrice(basePrice, config) {
   const p = Number(basePrice) || 0;
   if (!config || config.kind !== "list") return p;
-  const m = Number(config.markup_percent) || 0;
-  const denom = 1 - m / 100;
-  if (denom <= 0) return p; // proteccion: margen >= 100% no es valido
-  return round2(p / denom);
+  return Pricing.sellPrice(p, config.markup_percent, 2);
 }
 
 // SQL expression que devuelve el precio efectivo para una columna de producto
@@ -1947,79 +1933,14 @@ function levelName(level) {
   }
 }
 // ===== Superadmin / permisos por seccion del panel admin =====
-// Las claves coinciden con los data-tab del sidebar de admin.html.
-// "administradores" es exclusiva del superadmin y NO es asignable a un admin comun.
-const ADMIN_SECTIONS = [
-  { key: "dashboard",   label: "Dashboard" },
-  { key: "productos",   label: "Productos" },
-  { key: "price-lists", label: "Listas de precios" },
-  { key: "pedidos",     label: "Pedidos" },
-  { key: "armado",      label: "Armado" },
-  { key: "entregas",    label: "Entregas" },
-  { key: "ventas",      label: "Ventas" },
-  { key: "usuarios",    label: "Usuarios" },
-  { key: "vendedores",  label: "Vendedores" },
-  { key: "reportes",    label: "Reportes" },
-  { key: "actividad",   label: "Actividad" },
-  { key: "pagos",       label: "Pagos" },
-  { key: "cuentas",     label: "Cuentas" },
-  { key: "proveedores", label: "Proveedores" },
-  { key: "cotizaciones", label: "Cotizaciones" },
-  { key: "pedidos-prov", label: "Pedidos a proveedor" },
-  { key: "compras",     label: "Compras" },
-  { key: "recepcion",   label: "Recepción" },
-  { key: "reposicion",  label: "Reposición" },
-  { key: "margenes",    label: "Márgenes" },
-  { key: "control-stock", label: "Control de stock" },
-  { key: "gastos",      label: "Gastos" },
-  { key: "caja",        label: "Caja" },
-  { key: "config",      label: "Configuración" },
-];
-const ADMIN_SECTION_KEYS = new Set(ADMIN_SECTIONS.map((s) => s.key));
-
-// Mapea un path de /api/admin/* a la clave de seccion que lo gobierna.
-// Devuelve null si no esta mapeado (endpoints compartidos => se permiten).
-function sectionForAdminRequest(p) {
-  const has = (frag) => p.indexOf("/api/admin/" + frag) === 0;
-  if (has("admins"))      return "administradores";
-  if (has("pedidos-prov")) return "pedidos-prov";
-  if (has("dashboard"))   return "dashboard";
-  if (has("products") || has("import-excel") || has("stock-adjustments") || has("catalog")) return "productos";
-  if (has("price-lists")) return "price-lists";
-  if (has("ventas"))      return "ventas";
-  if (has("picks"))       return "armado";
-  if (has("orders"))      return "pedidos";
-  if (has("deliveries"))  return "entregas";
-  if (has("users"))       return "usuarios";
-  if (has("vendedores"))  return "vendedores";
-  if (has("reports"))     return "reportes";
-  if (has("earnings") || has("activity")) return "actividad";
-  if (has("payments"))    return "pagos";
-  if (has("accounts"))    return "cuentas";
-  if (has("suppliers"))   return "proveedores";
-  if (has("reception"))   return "recepcion";
-  if (has("reposicion"))  return "reposicion";
-  if (has("margins"))     return "margenes";
-  if (has("stock-control")) return "control-stock";
-  if (has("purchases"))   return "compras";
-  if (has("expenses") || has("expense-categories")) return "gastos";
-  if (has("caja"))        return "caja";
-  if (has("settings") || has("dbinfo") || has("categories")) return "config";
-  return null;
-}
-
-// Secciones que se pueden LEER (solo GET) desde otras secciones que las
-// necesitan para trabajar. Sin esto, un admin limitado a Pedidos abria el picker
-// de productos vacio (403 silencioso), o uno limitado a Compras no veia ningun
-// proveedor. Es solo lectura: para crear/editar sigue haciendo falta la seccion
-// propia. "usuarios" queda AFUERA a proposito (expone datos sensibles); para
-// listar clientes esta /api/clients.
-const SHARED_READ_SECTIONS = {
-  productos:     ["pedidos", "ventas", "compras", "recepcion", "armado", "entregas", "price-lists", "reposicion", "cotizaciones", "pedidos-prov"],
-  proveedores:   ["compras", "recepcion", "gastos", "reposicion", "cotizaciones", "pedidos-prov"],
-  vendedores:    ["pedidos", "ventas", "entregas", "reportes", "actividad", "cuentas", "pagos", "usuarios"],
-  "price-lists": ["pedidos", "ventas", "usuarios", "productos", "vendedores"],
-};
+// Definidos en lib/permissions.js (secciones, mapa ruta -> seccion y lecturas
+// compartidas). requireAdmin, mas abajo, los aplica en cada request.
+const {
+  ADMIN_SECTIONS,
+  ADMIN_SECTION_KEYS,
+  SHARED_READ_SECTIONS,
+  sectionForAdminRequest,
+} = require("./lib/permissions");
 
 // Permisos efectivos de un usuario level 99: { isSuperadmin, sections:Set }.
 function getAdminPerms(userId) {
@@ -3452,13 +3373,11 @@ app.post("/api/orders", requireLogin, (req, res) => {
   db.transaction(() => {
     const r = insertOrder.run(orderUserId, total, (notes || "").slice(0, 500) || null, assignedVendedorId);
     orderId = r.lastInsertRowid;
-    const updStockOrder = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     for (const l of lines) {
       insertItem.run(orderId, l.product_id, l.product_code, l.product_name,
                      l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
       if (l.product_id) {
-        updStockOrder.run(l.quantity, l.product_id);
-        logStockMovement(l.product_id, "venta", -l.quantity, orderId, "Pedido #" + orderId + " (catalogo)", orderUserId);
+        moveStock(l.product_id, "venta", -l.quantity, orderId, "Pedido #" + orderId + " (catalogo)", orderUserId);
       }
     }
   })();
@@ -3742,7 +3661,6 @@ function applyPickChangesTx(orderId, userId) {
   const linkedBudgetOut = db.prepare(
     "SELECT stock_discounted FROM budgets WHERE order_id = ? AND stock_discounted = 1 LIMIT 1"
   ).get(orderId);
-  const anyLinkedBudget = db.prepare("SELECT id FROM budgets WHERE order_id = ? LIMIT 1").get(orderId);
   // Los hijos absorbidos por un unificado no tocan stock (lo maneja el padre,
   // que es el que se arma). El padre si ajusta: su stock esta afuera desde que
   // los hijos se crearon (stock_discounted = 1 al crearse el unificado).
@@ -3751,7 +3669,6 @@ function applyPickChangesTx(orderId, userId) {
 
   const updItem = db.prepare("UPDATE order_items SET quantity = ?, subtotal = ? WHERE id = ?");
   const delItem = db.prepare("DELETE FROM order_items WHERE id = ?");
-  const adjStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
   const insChange = db.prepare(
     "INSERT INTO pick_changes (order_id, product_code, product_name, old_qty, new_qty, changed_by)" +
     " VALUES (?, ?, ?, ?, ?, ?)"
@@ -3769,8 +3686,7 @@ function applyPickChangesTx(orderId, userId) {
     // Si se armo de mas (newQty > pedido) el delta es negativo y descuenta.
     if (stockCurrentlyOut && !skipStock && it.product_id) {
       const deltaPick = Number(it.quantity) - newQty;
-      adjStock.run(deltaPick, it.product_id);
-      logStockMovement(it.product_id, "armado", deltaPick, orderId, "Chequeo de armado del pedido #" + orderId, userId);
+      moveStock(it.product_id, "armado", deltaPick, orderId, "Chequeo de armado del pedido #" + orderId, userId);
     }
     insChange.run(orderId, it.product_code || null, it.product_name || null,
       Number(it.quantity), newQty, userId);
@@ -4065,13 +3981,9 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
         const items = db.prepare(
           "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
         ).all(id);
-        const updStock = db.prepare(
-          "UPDATE products SET stock = stock - ? WHERE id = ?"
-        );
         for (const it of items) {
           if (it.product_id) {
-            updStock.run(it.quantity, it.product_id);
-            logStockMovement(it.product_id, "venta", -it.quantity, id, "Pedido #" + id + " entregado", req.session.userId);
+            moveStock(it.product_id, "venta", -it.quantity, id, "Pedido #" + id + " entregado", req.session.userId);
             touchedProducts.push(it.product_id);
           }
         }
@@ -4121,13 +4033,9 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
         const items = db.prepare(
           "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
         ).all(id);
-        const retStock = db.prepare(
-          "UPDATE products SET stock = stock + ? WHERE id = ?"
-        );
         for (const it of items) {
           if (it.product_id) {
-            retStock.run(it.quantity, it.product_id);
-            logStockMovement(it.product_id, "cancelacion", it.quantity, id, "Pedido #" + id + " cancelado", req.session.userId);
+            moveStock(it.product_id, "cancelacion", it.quantity, id, "Pedido #" + id + " cancelado", req.session.userId);
           }
         }
       }
@@ -4286,7 +4194,6 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
       "INSERT INTO order_items (order_id,product_id,product_code,product_name,quantity,unit_price,discount_percent,subtotal,vendedor_cost_unit) " +
       "VALUES (?,?,?,?,?,?,?,?,?)"
     );
-    const updStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     items.forEach((it) => {
       const qty = Math.max(1, Math.round(Number(it.quantity) || 1));
       const price = Math.max(0, round2(Number(it.unit_price) || 0));
@@ -4299,8 +4206,7 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
       }
       ins.run(orderId, it.product_id || null, it.product_code || "", it.product_name || "", qty, price, disc, sub, costUnit);
       if (it.product_id) {
-        updStock.run(qty, it.product_id);
-        logStockMovement(it.product_id, "venta", -qty, orderId, "Pedido #" + orderId + " (creado desde admin)", req.session.userId);
+        moveStock(it.product_id, "venta", -qty, orderId, "Pedido #" + orderId + " (creado desde admin)", req.session.userId);
       }
     });
     // Si el pedido es a nombre de un cliente real, debitar su cuenta corriente
@@ -4355,10 +4261,8 @@ app.delete("/api/admin/orders/:id", requireAdmin, (req, res) => {
     // Devolver stock si ya había sido descontado.
     if (returnStock) {
       const ois = db.prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?").all(id);
-      const upd = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
       ois.forEach((it) => {
-        upd.run(it.quantity, it.product_id);
-        if (it.product_id) logStockMovement(it.product_id, "cancelacion", it.quantity, id, "Pedido #" + id + " eliminado", req.session.userId);
+        if (it.product_id) moveStock(it.product_id, "cancelacion", it.quantity, id, "Pedido #" + id + " eliminado", req.session.userId);
       });
     }
     // Desligar presupuestos que referencian este pedido (FK: budgets.order_id).
@@ -4453,7 +4357,6 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
   const linkedBudgetOut = db.prepare(
     "SELECT stock_discounted FROM budgets WHERE order_id = ? AND stock_discounted = 1 LIMIT 1"
   ).get(id);
-  const anyLinkedBudget = db.prepare("SELECT id FROM budgets WHERE order_id = ? LIMIT 1").get(id);
   // Solo los hijos absorbidos por un unificado no tocan stock; el unificado si
   // (su stock esta afuera desde que se crearon los hijos).
   const skipStock = order.unified_parent_id != null;
@@ -4490,7 +4393,6 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
 
   db.transaction(() => {
     const newProductIds = new Set(lines.map((l) => l.product_id));
-    const adjStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
     const insItem = db.prepare(
       "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal, vendedor_cost_unit, pick_checked, picked_qty)" +
       " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)"
@@ -4514,8 +4416,7 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
       if (!o.product_id || !newProductIds.has(o.product_id)) {
         delItem.run(o.id);
         if (stockCurrentlyOut && !skipStock && o.product_id) {
-          adjStock.run(o.quantity, o.product_id);
-          logStockMovement(o.product_id, "edicion_pedido", o.quantity, id, "Edicion de items del pedido #" + id + " (item quitado)", req.session.userId);
+          moveStock(o.product_id, "edicion_pedido", o.quantity, id, "Edicion de items del pedido #" + id + " (item quitado)", req.session.userId);
         }
         hadQtyChange = true;
         changes.push({ product_code: o.product_code, product_name: o.product_name, old_qty: o.quantity, new_qty: 0 });
@@ -4527,8 +4428,7 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
       if (!old) {
         insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_price, l.discount_percent, l.subtotal, l.vendedor_cost_unit);
         if (stockCurrentlyOut && !skipStock) {
-          adjStock.run(-l.quantity, l.product_id);
-          logStockMovement(l.product_id, "edicion_pedido", -l.quantity, id, "Edicion de items del pedido #" + id + " (item agregado)", req.session.userId);
+          moveStock(l.product_id, "edicion_pedido", -l.quantity, id, "Edicion de items del pedido #" + id + " (item agregado)", req.session.userId);
         }
         hadQtyChange = true;
         changes.push({ product_code: l.product_code, product_name: l.product_name, old_qty: 0, new_qty: l.quantity });
@@ -4537,8 +4437,7 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
         if (stockCurrentlyOut && !skipStock) {
           const deltaEdit = Number(old.quantity) - Number(l.quantity);
           if (deltaEdit !== 0) {
-            adjStock.run(deltaEdit, l.product_id);
-            logStockMovement(l.product_id, "edicion_pedido", deltaEdit, id, "Edicion de items del pedido #" + id + " (cantidad cambiada)", req.session.userId);
+            moveStock(l.product_id, "edicion_pedido", deltaEdit, id, "Edicion de items del pedido #" + id + " (cantidad cambiada)", req.session.userId);
           }
         }
         if (Number(old.quantity) !== Number(l.quantity)) {
@@ -7069,13 +6968,9 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
         const items = db.prepare(
           "SELECT product_id, quantity FROM order_items WHERE order_id = ?"
         ).all(id);
-        const updStock = db.prepare(
-          "UPDATE products SET stock = stock - ? WHERE id = ?"
-        );
         for (const it of items) {
           if (it.product_id) {
-            updStock.run(it.quantity, it.product_id);
-            logStockMovement(it.product_id, "entrega", -it.quantity, id, "Pedido #" + id + " entregado", req.session.userId);
+            moveStock(it.product_id, "entrega", -it.quantity, id, "Pedido #" + id + " entregado", req.session.userId);
             touchedProducts.push(it.product_id);
           }
         }
@@ -7495,11 +7390,9 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     // Revertir stock de items anteriores SOLO si la compra ya estaba recibida.
     if (wasReceived) {
       const oldItems = db.prepare("SELECT product_id, quantity FROM purchase_items WHERE purchase_order_id = ?").all(id);
-      const decStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
       for (const oi of oldItems) {
         if (oi.product_id) {
-          decStock.run(oi.quantity, oi.product_id);
-          logStockMovement(oi.product_id, "compra", -oi.quantity, id, "Edicion de compra #" + id + " (revierte items anteriores)", req.session.userId);
+          moveStock(oi.product_id, "compra", -oi.quantity, id, "Edicion de compra #" + id + " (revierte items anteriores)", req.session.userId);
         }
       }
     }
@@ -7518,7 +7411,6 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
       "INSERT INTO purchase_items (purchase_order_id, product_id, product_code, product_name, quantity, unit_cost, subtotal)" +
       " VALUES (?, ?, ?, ?, ?, ?, ?)"
     );
-    const incStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
     for (const l of lines) {
       insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_cost, l.subtotal);
       if (l.product_id) {
@@ -7527,8 +7419,7 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
         // recepcion).
         applyPurchaseCostUpdate(l.product_id, l.unit_cost, cost_policy, id);
         if (wasReceived) {
-          incStock.run(l.quantity, l.product_id);
-          logStockMovement(l.product_id, "compra", l.quantity, id, "Edicion de compra #" + id + (reference ? " · " + reference : ""), req.session.userId);
+          moveStock(l.product_id, "compra", l.quantity, id, "Edicion de compra #" + id + (reference ? " · " + reference : ""), req.session.userId);
         }
       }
     }
@@ -7579,12 +7470,10 @@ app.delete("/api/admin/purchases/:id", requireAdmin, (req, res) => {
       const items = db.prepare(
         "SELECT product_id, quantity FROM purchase_items WHERE purchase_order_id = ?"
       ).all(id);
-      const decStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
       for (const it of items) {
         if (it.product_id) {
-          decStock.run(it.quantity, it.product_id);
           stockReverted += Number(it.quantity) || 0;
-          logStockMovement(it.product_id, "compra_eliminada", -it.quantity, id, "Compra #" + id + " eliminada (revierte stock)", req.session.userId);
+          moveStock(it.product_id, "compra_eliminada", -it.quantity, id, "Compra #" + id + " eliminada (revierte stock)", req.session.userId);
         }
       }
     }
@@ -8746,7 +8635,6 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
   const changeNotes = []; // resumen de diferencias para dejar en las notas
   db.transaction(() => {
     const updItem  = db.prepare("UPDATE purchase_items SET quantity = ?, subtotal = ? WHERE id = ?");
-    const incStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
     for (const r of recv) {
       const it = r.it, rq = r.rq;
       if (rq !== Number(it.quantity)) {
@@ -8757,8 +8645,7 @@ app.post("/api/admin/reception/:purchaseId/apply", requireAdmin, (req, res) => {
       }
       // El stock entra AHORA: la compra no lo habia sumado al cargarse.
       if (it.product_id && rq > 0) {
-        incStock.run(rq, it.product_id);
-        logStockMovement(it.product_id, "compra", rq, purchaseId, "Recepcion de compra #" + purchaseId + (purchase.reference ? " · " + purchase.reference : ""), req.session.userId);
+        moveStock(it.product_id, "compra", rq, purchaseId, "Recepcion de compra #" + purchaseId + (purchase.reference ? " · " + purchase.reference : ""), req.session.userId);
       }
     }
     total = round2(
@@ -9887,7 +9774,7 @@ app.get("/api/admin/accounts/:userId/pdf", requireAdmin, (req, res) => {
   const doc = new PDFDocument({ size: "A4", margin: 0, autoFirstPage: true });
   doc.pipe(res);
 
-  const BLU = "#1e3a5f", AMB = "#d97706", GRN = "#16a34a", RED = "#dc2626";
+  const BLU = "#1e3a5f", GRN = "#16a34a", RED = "#dc2626";
   const GREY = "#6b7280", LGR = "#f1f5f9", BLK = "#111111";
   const MX = 40, MY = 40, PW = 595, PH = 841;
   const CW = PW - MX * 2; // content width = 515
@@ -9958,7 +9845,6 @@ app.get("/api/admin/accounts/:userId/pdf", requireAdmin, (req, res) => {
   cy = drawTableHeader(cy);
 
   // Filas de movimientos + saldo acumulado
-  var running = 0;
   movements.forEach(function(m, idx) {
     if (cy + ROW_H > PH - 60) {
       doc.addPage();
@@ -9969,7 +9855,6 @@ app.get("/api/admin/accounts/:userId/pdf", requireAdmin, (req, res) => {
       cy += 14;
       cy = drawTableHeader(cy);
     }
-    running += (m.type === "credit" ? m.amount : -m.amount);
     const isDebit = m.type === "debit";
     if (idx % 2 === 0) doc.rect(MX, cy, CW, ROW_H).fill(LGR);
     doc.font("Helvetica").fontSize(8.5).fillColor(GREY).text(fmtDate(m.created_at), CX.fecha, cy + 5, { width: COL.fecha });
@@ -11062,14 +10947,12 @@ app.post("/api/budgets", requireVendedorOrAdmin, requireSectionForAdmin("ventas"
     // El stock puede quedar negativo (sobreventa / productos a reponer). Sin clamp
     // en 0 para todos los actores: así el descuento y la devolución al cancelar son
     // simétricos y el número refleja la realidad (ej: -3 si se vendieron 3 de más).
-    const updStockBudget = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     for (const it of computedItems) {
       insItem.run(bid, it.product_id || null, it.product_code || "", it.product_name || "",
                   it.quantity, it.unit_price, it.discount_percent, it.subtotal);
       // Descontar stock al crear el presupuesto
       if (it.product_id) {
-        updStockBudget.run(it.quantity, it.product_id);
-        logStockMovement(it.product_id, "presupuesto", -it.quantity, bid, "Presupuesto #" + bid + " creado", u.id);
+        moveStock(it.product_id, "presupuesto", -it.quantity, bid, "Presupuesto #" + bid + " creado", u.id);
       }
     }
     return bid;
@@ -11156,11 +11039,9 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
       const oldItems = db.prepare(
         "SELECT product_id, quantity FROM budget_items WHERE budget_id = ?"
       ).all(budget.id);
-      const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
       for (const oi of oldItems) {
         if (oi.product_id) {
-          retStock.run(oi.quantity, oi.product_id);
-          logStockMovement(oi.product_id, "presupuesto", oi.quantity, budget.id, "Edicion de presupuesto #" + budget.id + " (revierte items anteriores)", u.id);
+          moveStock(oi.product_id, "presupuesto", oi.quantity, budget.id, "Edicion de presupuesto #" + budget.id + " (revierte items anteriores)", u.id);
         }
       }
     }
@@ -11177,13 +11058,11 @@ app.put("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("vent
     );
     // Mismo criterio que al crear: el stock puede quedar negativo (sin clamp en 0
     // para ningún actor), así el descuento es simétrico con la devolución.
-    const decStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
     for (const it of computedItems) {
       insItem.run(budget.id, it.product_id || null, it.product_code || "", it.product_name || "",
                   it.quantity, it.unit_price, it.discount_percent, it.subtotal);
       if (budget.stock_discounted && it.product_id) {
-        decStock.run(it.quantity, it.product_id);
-        logStockMovement(it.product_id, "presupuesto", -it.quantity, budget.id, "Edicion de presupuesto #" + budget.id + " (nuevos items)", u.id);
+        moveStock(it.product_id, "presupuesto", -it.quantity, budget.id, "Edicion de presupuesto #" + budget.id + " (nuevos items)", u.id);
       }
     }
   });
@@ -11223,11 +11102,9 @@ app.patch("/api/budgets/:id/status", requireVendedorOrAdmin, requireSectionForAd
       // Al cancelar: devolver stock si fue descontado al crear
       if (budget.stock_discounted) {
         const budgetItems = budgetStockItems(budget);
-        const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
         for (const it of budgetItems) {
           if (it.product_id) {
-            retStock.run(it.quantity, it.product_id);
-            logStockMovement(it.product_id, "cancelacion", it.quantity, budget.id, "Presupuesto #" + budget.id + " cancelado", u.id);
+            moveStock(it.product_id, "cancelacion", it.quantity, budget.id, "Presupuesto #" + budget.id + " cancelado", u.id);
           }
         }
         db.prepare("UPDATE budgets SET stock_discounted = 0 WHERE id = ?").run(budget.id);
@@ -11376,11 +11253,9 @@ app.delete("/api/budgets/:id", requireVendedorOrAdmin, requireSectionForAdmin("v
     db.transaction(() => {
       if (returnStock) {
         const budgetItems = budgetStockItems(budget);
-        const retStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
         for (const it of budgetItems) {
           if (it.product_id) {
-            retStock.run(it.quantity, it.product_id);
-            logStockMovement(it.product_id, "presupuesto_eliminado", it.quantity, budget.id, "Presupuesto #" + budget.id + " eliminado", u.id);
+            moveStock(it.product_id, "presupuesto_eliminado", it.quantity, budget.id, "Presupuesto #" + budget.id + " eliminado", u.id);
           }
         }
       }
@@ -11962,13 +11837,6 @@ app.post("/api/admin/stock-adjustments", requireAdmin, (req, res) => {
 // ===== CAJA =====
 
 // Helper: saldo de una cuenta
-function cajaSaldo(accountId) {
-  const r = db.prepare(
-    "SELECT COALESCE(SUM(CASE WHEN type='ingreso' THEN amount ELSE -amount END),0) AS saldo" +
-    " FROM cash_movements WHERE account_id=?"
-  ).get(accountId);
-  return r ? r.saldo : 0;
-}
 
 // GET /api/admin/caja — cuentas con saldo + orden de pestañas por responsable
 app.get("/api/admin/caja", requireAdmin, (req, res) => {
