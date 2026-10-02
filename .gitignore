@@ -20,3 +20,8 @@ decode-backup.js
 
 # Grafo de conocimiento de Graphify (regenerable con `graphify .`)
 graphify-out/
+
+# Bases de datos y copias (datos de clientes: nunca al repo)
+data/*.db
+data/*.db-*
+*.db.gz
