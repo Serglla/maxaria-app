@@ -733,7 +733,12 @@
           <dt>Usuarios / Productos / Pedidos:</dt><dd id="dbinfo-counts">…</dd>
           <dt>Carpeta de backups:</dt><dd><code id="dbinfo-backups-dir">…</code></dd>
           <dt>Backups en disco:</dt><dd id="dbinfo-backups">…</dd>
+          <dt>Backup externo (R2):</dt><dd id="dbinfo-offsite">…</dd>
         </dl>
+        <div id="offsite-test-wrap" class="config-row" hidden>
+          <button type="button" class="btn" id="offsite-test-btn">☁ Probar backup externo ahora</button>
+          <span class="muted small" id="offsite-test-msg">Sube una copia comprimida a Cloudflare R2.</span>
+        </div>
         <div id="db-download-wrap" class="config-row" hidden>
           <a class="btn btn-primary" id="db-download-btn" href="/api/admin/backup/download" download>⬇ Descargar copia de la base</a>
           <span class="muted small">Guardala fuera de Railway (Drive, un pendrive). Conviene una vez por semana.</span>
@@ -4001,6 +4006,6 @@
   <div id="toast" class="admin-toast" hidden></div>
 
   <script src="/js/shared/pricing.js?v=20261002b"></script>
-  <script src="/js/admin.js?v=20261002c"></script>
+  <script src="/js/admin.js?v=20261002d"></script>
 </body>
 </html>

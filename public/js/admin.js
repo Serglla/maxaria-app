@@ -162,6 +162,10 @@
     dbinfoCounts: document.getElementById("dbinfo-counts"),
     dbinfoBackupsDir: document.getElementById("dbinfo-backups-dir"),
     dbinfoBackups: document.getElementById("dbinfo-backups"),
+    dbinfoOffsite: document.getElementById("dbinfo-offsite"),
+    offsiteTestWrap: document.getElementById("offsite-test-wrap"),
+    offsiteTestBtn: document.getElementById("offsite-test-btn"),
+    offsiteTestMsg: document.getElementById("offsite-test-msg"),
     usersExportBtn: document.getElementById("users-export-btn"),
     usersImportFile: document.getElementById("users-import-file"),
     usersIoMsg: document.getElementById("users-io-msg"),
@@ -1228,6 +1232,38 @@
     }
   }
 
+  // Estado del backup diario a Cloudflare R2 (lib/offsite-backup.js).
+  function renderOffsiteStatus(o) {
+    if (!els.dbinfoOffsite) return;
+    if (!o || !o.enabled) {
+      els.dbinfoOffsite.innerHTML = '<span class="ephemeral">APAGADO</span> ' +
+        '<span class="muted">faltan las variables R2_* en Railway</span>';
+    } else {
+      const ok = o.last_ok ? "último: " + escapeHtml(formatDate(o.last_ok)) + " · " + fmtSize(o.last_bytes) : "todavía no corrió";
+      const err = o.last_error ? '<br><span class="text-danger small">Último error: ' + escapeHtml(o.last_error) + "</span>" : "";
+      els.dbinfoOffsite.innerHTML = '<span class="persistent">ACTIVO</span> <span class="muted">diario · ' + ok + "</span>" + err;
+    }
+    if (els.offsiteTestWrap) els.offsiteTestWrap.hidden = !(state.me && state.me.isSuperadmin);
+  }
+  if (els.offsiteTestBtn) {
+    els.offsiteTestBtn.addEventListener("click", async () => {
+      els.offsiteTestBtn.disabled = true;
+      els.offsiteTestMsg.textContent = "Subiendo…";
+      try {
+        const r = await fetch("/api/admin/backup/offsite", { method: "POST", credentials: "same-origin" });
+        const data = await r.json().catch(() => ({}));
+        if (data.status) renderOffsiteStatus(data.status);
+        els.offsiteTestMsg.textContent = r.ok
+          ? "Listo: " + data.keys.join(", ") + " (" + fmtSize(data.bytes) + ")"
+          : "No se pudo: " + (data.error || r.status);
+      } catch (e) {
+        els.offsiteTestMsg.textContent = "No se pudo: " + e.message;
+      } finally {
+        els.offsiteTestBtn.disabled = false;
+      }
+    });
+  }
+
   function fmtSize(bytes) {
     if (!bytes) return "—";
     if (bytes < 1024) return bytes + " B";
@@ -1253,6 +1289,7 @@
     els.dbinfoCounts.textContent =
       info.counts.users + " · " + info.counts.products + " · " + info.counts.orders;
     els.dbinfoBackupsDir.textContent = info.backupsDir;
+    renderOffsiteStatus(info.offsite);
     if (info.backups && info.backups.length) {
       const list = info.backups.slice(0, 7).map((b) =>
         '<li><code>' + escapeHtml(b.name) + '</code> · ' +

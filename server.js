@@ -123,6 +123,8 @@ db.pragma("foreign_keys = ON");
 // los errores se tragaban). Las tareas de mantenimiento de cada arranque
 // siguen mas abajo, en este archivo.
 require("./lib/db/migrate").runMigrations(db);
+// Estado compartido entre procesos (intentos de login, avisos, candado de tareas).
+const Shared = require("./lib/shared-state")(db);
 
 
 
@@ -643,16 +645,13 @@ function notifyNewOrder(orderId, actorUserId) {
 // Aviso de QUIEBRE DE STOCK: producto que llega a 0 y se venia vendiendo. Se
 // avisa una vez por producto por dia (dedupe en memoria; si el server
 // reinicia, a lo sumo se repite un aviso).
-const stockOutNotified = new Map(); // product_id -> timestamp
+// Avisos de 'sin stock' ya enviados: marcas en la base (notify_marks), 24 h.
 function notifyStockOut(productIds) {
   if (!PUSH_READY) return;
   const ids = Array.from(new Set((productIds || []).map(Number).filter(Boolean)));
   if (!ids.length) return;
   const now = Date.now();
-  const fresh = ids.filter((id) => {
-    const t = stockOutNotified.get(id);
-    return !t || now - t > 24 * 3600 * 1000;
-  });
+  const fresh = ids.filter((id) => !Shared.markRecent("stockout:" + id, 24 * 3600 * 1000));
   if (!fresh.length) return;
   try {
     const ph = fresh.map(() => "?").join(",");
@@ -670,7 +669,7 @@ function notifyStockOut(productIds) {
       "  FROM products p WHERE p.active = 1 AND p.stock <= 0 AND p.id IN (" + ph + ")"
     ).all(since, ...fresh).filter((r) => Number(r.sold) > 0);
     if (!rows.length) return;
-    for (const r of rows) stockOutNotified.set(r.id, now);
+    for (const r of rows) Shared.setMark("stockout:" + r.id);
     const names = rows.map((r) => r.name).slice(0, 3).join(", ");
     sendPushTo(adminsForOrders(), {
       title: rows.length === 1 ? "Se quedó sin stock" : "Se quedaron sin stock (" + rows.length + ")",
@@ -1388,24 +1387,16 @@ app.get("/login", (req, res) => {
 // Barrido periodico para que el Map no crezca indefinidamente.
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
-const loginAttempts = new Map(); // ip -> { count, first }
-function loginRateOk(ip) {
-  const e = loginAttempts.get(ip);
-  if (!e) return true;
-  if (Date.now() - e.first > LOGIN_WINDOW_MS) { loginAttempts.delete(ip); return true; }
-  return e.count < LOGIN_MAX_ATTEMPTS;
-}
-function loginRateFail(ip) {
-  const now = Date.now();
-  const e = loginAttempts.get(ip);
-  if (!e || now - e.first > LOGIN_WINDOW_MS) loginAttempts.set(ip, { count: 1, first: now });
-  else e.count += 1;
-}
+// Guardado en la base (tabla login_attempts) para que lo compartan todos los
+// procesos y no se reinicie con cada deploy.
+const loginLimiter = Shared.loginLimiter(LOGIN_WINDOW_MS, LOGIN_MAX_ATTEMPTS);
+function loginRateOk(ip) { return loginLimiter.ok(ip); }
+function loginRateFail(ip) { loginLimiter.fail(ip); }
 setInterval(() => {
-  const now = Date.now();
-  for (const [ip, e] of loginAttempts) {
-    if (now - e.first > LOGIN_WINDOW_MS) loginAttempts.delete(ip);
-  }
+  try {
+    loginLimiter.sweep();
+    Shared.sweepMarks(7 * 24 * 3600 * 1000);
+  } catch (e) { console.error("[estado] limpieza:", e.message); }
 }, 10 * 60 * 1000).unref();
 
 // Hash de una clave aleatoria: solo sirve para igualar el tiempo del login.
@@ -1447,7 +1438,7 @@ app.post("/login", (req, res) => {
     loginRateFail(ip);
     return res.status(401).json({ error: "Usuario o contrasena incorrectos" });
   }
-  loginAttempts.delete(ip);
+  loginLimiter.clear(ip);
   db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").run(user.id);
   startSession(req, user, (err) => {
     if (err) return res.status(500).json({ error: "No se pudo iniciar la sesion" });
@@ -1537,7 +1528,7 @@ app.get("/c/:token", (req, res) => {
     db.prepare("UPDATE users SET access_token = NULL WHERE id = ?").run(user.id);
     return res.status(410).type("html").send(accessLinkExpiredHtml());
   }
-  loginAttempts.delete(ip);
+  loginLimiter.clear(ip);
   db.prepare("UPDATE users SET last_login_at = datetime('now'), access_token_last_used_at = datetime('now') WHERE id = ?").run(user.id);
   startSession(req, user, (err) => {
     if (err) return res.status(500).send("No se pudo iniciar la sesion");
@@ -1601,7 +1592,7 @@ app.post("/api/me/password", requireLogin, (req, res) => {
   // plain_password queda en NULL: mostrar una clave desactualizada en el panel
   // es peor que no mostrar ninguna (y el campo esta pendiente de eliminarse).
   db.prepare("UPDATE users SET password_hash = ?, plain_password = NULL WHERE id = ?").run(hash, me.id);
-  loginAttempts.delete(ip);
+  loginLimiter.clear(ip);
   logActivity(req, "password_change", null);
   res.json({ ok: true });
 });
@@ -4706,6 +4697,7 @@ app.get("/api/admin/dbinfo", requireAdmin, (req, res) => {
     backupsDir: backupsDir,
     backups: backups,
     counts: counts,
+    offsite: OffsiteBackup.status(),
   });
 });
 
@@ -6959,6 +6951,7 @@ app.post("/api/admin/stock-control/count", requireAdmin, (req, res) => {
   const next = pickStockControlProduct(productId);
   setSetting("stock_control_product_id", next ? next.id : "");
   setSetting("stock_control_notified_at", "");
+  db.prepare("DELETE FROM job_runs WHERE name = 'stock_control'").run();
 
   logActivity(req, "stock", "Control físico · " + (prod.name || "") +
     " · sistema " + expected + " / contado " + countedInt +
@@ -7001,6 +6994,7 @@ function stockControlReminderTick() {
     if (getSetting("stock_control_notified_at", "") === today) return;
     const prod = stockControlCurrent(cfg);
     if (!prod) return;
+    if (!Shared.claimJob("stock_control", today)) return;
     setSetting("stock_control_notified_at", today);
     sendPushTo(adminsForSection("control-stock"), {
       title: getAppName() + " · control de stock",
@@ -9097,7 +9091,9 @@ function runDailyDebtPush() {
     const now = nowLocal();
     if (now.getUTCHours() < 9) return;
     const today = localDayIso(now);
-    if (getSetting("debt_push_last_day", "") === today) return;
+    // Candado en la base: aunque haya dos procesos (ej. durante un deploy), el
+    // aviso sale una sola vez por dia.
+    if (!Shared.claimJob("debt_push", today)) return;
     setSetting("debt_push_last_day", today);
     const list = computeOverdueDebtors(30);
     if (!list.length) return;
@@ -9115,6 +9111,41 @@ function runDailyDebtPush() {
 }
 setInterval(runDailyDebtPush, 30 * 60 * 1000).unref();
 setTimeout(runDailyDebtPush, 60 * 1000).unref();
+
+// ── Backup diario externo (Cloudflare R2) ──────────────────────────────────
+// lib/offsite-backup.js. Corre una vez por dia desde las 3 hora local, si
+// estan las variables R2_*. Si falla, libera el candado y reintenta en la
+// proxima vuelta (cada 30 min); el ultimo error queda en Configuracion.
+const OffsiteBackup = require("./lib/offsite-backup")({ db, env: process.env, getSetting, setSetting });
+function offsiteBackupTick() {
+  if (!OffsiteBackup.enabled()) return;
+  const now = nowLocal();
+  if (now.getUTCHours() < 3) return;
+  const today = localDayIso(now);
+  if (!Shared.claimJob("offsite_backup", today)) return;
+  OffsiteBackup.run(today)
+    .then((r) => console.log("[backup externo] ok: " + r.keys.join(", ") + " (" + r.bytes + " bytes)"))
+    .catch((e) => {
+      console.error("[backup externo] fallo:", e.message);
+      db.prepare("DELETE FROM job_runs WHERE name = 'offsite_backup' AND period = ?").run(today);
+    });
+}
+setInterval(offsiteBackupTick, 30 * 60 * 1000).unref();
+setTimeout(offsiteBackupTick, 2 * 60 * 1000).unref();
+
+// Probar el backup externo ahora (solo superadmin), desde Configuracion.
+app.post("/api/admin/backup/offsite", requireAdmin, requireSuperadminOnly, async (req, res) => {
+  if (!OffsiteBackup.enabled()) {
+    return res.status(400).json({ error: "Faltan las variables R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY y R2_BUCKET en Railway." });
+  }
+  try {
+    const r = await OffsiteBackup.run(localDayIso());
+    logActivity(req, "backup_externo", r.keys.join(", "));
+    res.json({ ok: true, keys: r.keys, bytes: r.bytes, status: OffsiteBackup.status() });
+  } catch (e) {
+    res.status(502).json({ error: e.message, status: OffsiteBackup.status() });
+  }
+});
 
 // ── Endpoint para tarea programada de deudores ─────────────────────────────
 // Protegido con token (variable de entorno CRON_SECRET). No requiere sesion.

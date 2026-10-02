@@ -20,6 +20,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "aws4": "^1.13.2",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.2.0",
     "compression": "^1.8.2",
