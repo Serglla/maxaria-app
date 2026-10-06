@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20260929a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20261006a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -3613,6 +3613,10 @@
             <span>Categoría</span>
             <select id="ep-category" class="admin-select"></select>
           </label>
+          <label class="np-label np-col-full" id="ep-origin-wrap" hidden>
+            <span>Categoría real de la oferta <span class="np-note" title="Un cliente con categorías restringidas ve esta oferta solo si tiene habilitada OFERTAS y también esta categoría. Vacío = la ve cualquiera que tenga OFERTAS.">(?)</span></span>
+            <select id="ep-origin-category" class="admin-select"></select>
+          </label>
           <label class="np-label np-col-full">
             <span>Nombre <span class="req">*</span></span>
             <input type="text" id="ep-name" class="admin-input" placeholder="Nombre del producto" />
@@ -4006,6 +4010,6 @@
   <div id="toast" class="admin-toast" hidden></div>
 
   <script src="/js/shared/pricing.js?v=20261002b"></script>
-  <script src="/js/admin.js?v=20261002e"></script>
+  <script src="/js/admin.js?v=20261006a"></script>
 </body>
 </html>

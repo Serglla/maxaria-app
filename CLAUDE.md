@@ -2267,3 +2267,12 @@ Los inputs de dinero (Registrar cobro, pago a proveedor, gastos, efectivo/transf
 ### Items de la compra en tarjetas de dos renglones (29 septiembre 2026 — `admin.js/styles.css?v=20260929a`)
 
 Sergio eligió la propuesta 3 de 5 para el modal Nueva/Editar compra. `renderPurchaseItems` ahora dibuja cada item como una tarjeta: arriba van código, nombre, subtotal y la ✕, y abajo **Bultos × u/blt (nota) · Cant. + empaque · Costo ($/blt si upb>1)**. Sigue siendo un `<tr data-idx>` con un solo `<td colspan=7>` y conserva todas las clases (`pur-bultos`, `pur-upb`, `pur-qty`, `pur-mode`, `pur-cost`, `pur-cost-bulto`, `pur-subtotal`, `pur-blt-note`, `pur-remove`), así que los handlers delegados y `purSyncRow` no cambiaron. CSS `.pur-card`/`.pc-*`: thead oculto, `table-layout:fixed`, y en ≤700px los grupos se apilan. Verificado con Chromium a 900px y 390px.
+
+### Ofertas con categoría real (6 octubre 2026 — `admin.js/styles.css?v=20261006a`)
+
+Problema: las ofertas son productos aparte en la categoría OFERTAS y pierden su rubro, así que un cliente con OFERTAS habilitada veía ofertas de categorías que tiene vedadas.
+- Migración `004_ofertas_categoria_origen`: `products.origin_category_id` (NULL = sin rubro, se comporta como antes).
+- Helpers en server.js (junto a `getUserAllowedCategoryIds`): `productCatAllowed(allowed, cat, origin)` y `allowedCatsSql(allowed, alias)`. Regla: un cliente restringido ve el producto si tiene habilitada su categoría **y** su rubro real.
+- Aplicado en `/api/products`, `/api/price-changes`, `/api/my-suggestions`, validación de `POST /api/orders` y catálogo PDF por cliente. `/api/categories` oculta una categoría si todos sus productos con stock tienen rubro real y ninguno es visible para el cliente.
+- Panel: en Editar producto aparece "Categoría real de la oferta" cuando la categoría se llama *ofert*; si se saca el producto de OFERTAS se limpia. La tabla de Productos muestra "→ RUBRO" o "⚠ sin rubro" en las ofertas. Duplicar producto copia el rubro.
+- Test nuevo en smoke.test.js (48/48 OK).

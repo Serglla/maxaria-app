@@ -5610,7 +5610,12 @@
       '<td class="col-img"><button class="prod-img-btn" type="button" data-act="edit-img" data-id="' + p.id + '" data-name="' + escapeHtml(p.name) + '" title="Cambiar imagen">' + imgThumb + '</button></td>' +
       '<td class="cell-code">' + escapeHtml(p.code || "") + '</td>' +
       '<td class="cell-name">' + escapeHtml(p.name) + '</td>' +
-      '<td class="muted cell-cat">' + escapeHtml(p.category_name || "—") + '</td>' +
+      '<td class="muted cell-cat">' + escapeHtml(p.category_name || "—") +
+        (/ofert/i.test(p.category_name || "")
+          ? (p.origin_category_name
+              ? ' <span class="cat-origin" title="Categoría real de la oferta">→ ' + escapeHtml(p.origin_category_name) + '</span>'
+              : ' <span class="cat-origin cat-origin-missing" title="Sin categoría real: la ve cualquier cliente que tenga OFERTAS">⚠ sin rubro</span>')
+          : "") + '</td>' +
       '<td class="num cell-stock' + stockCls + '"' + stockTitle + '>' + fmtNum(p.stock) + (stockLow ? " ⚠" : "") + '</td>' +
       moneyCell(p, "cost", "muted") +
       salesRateCell(p) +
@@ -14995,7 +15000,24 @@
           .sort((a, b) => a.name.localeCompare(b.name));
     epCatSelect.innerHTML = '<option value="">— Sin categoría —</option>' +
       allCats.map((c) => '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>').join("");
+    const originSel = document.getElementById("ep-origin-category");
+    if (originSel) {
+      originSel.innerHTML = '<option value="">— Sin indicar (la ve todo el que tenga la oferta) —</option>' +
+        allCats.filter((c) => !isOfferCategoryName(c.name))
+          .map((c) => '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>').join("");
+    }
   }
+
+  // Ofertas: los productos de una categoria "vitrina" (OFERTAS) llevan aparte
+  // su categoria real, para que un cliente sin ese rubro habilitado no los vea.
+  function isOfferCategoryName(name) { return /ofert/i.test(String(name || "")); }
+  function epSyncOriginVisibility() {
+    const wrap = document.getElementById("ep-origin-wrap");
+    if (!wrap || !epCatSelect) return;
+    const opt = epCatSelect.options[epCatSelect.selectedIndex];
+    wrap.hidden = !(opt && epCatSelect.value && isOfferCategoryName(opt.text));
+  }
+  if (epCatSelect) epCatSelect.addEventListener("change", epSyncOriginVisibility);
 
   // Proveedor fijo del producto (lo usa Reposición para agrupar la compra).
   // Vacío = automático: se deduce del último proveedor que lo vendió.
@@ -15056,6 +15078,8 @@
       if (pctEl) pctEl.value = epPriceToPct(cost, prices[priceId] || 0);
     });
     if (epCatSelect) epCatSelect.value = p.category_id || "";
+    set("ep-origin-category", p.origin_category_id || "");
+    epSyncOriginVisibility();
     const activeChk = document.getElementById("ep-active");
     if (activeChk) activeChk.checked = !!p.active;
     // Botón de borrar: solo para el superadmin.
@@ -15106,6 +15130,13 @@
         units_per_bulto:  Math.max(1, Number(get("ep-units-per-bulto")) || 1),
         pack_unit:        get("ep-pack-unit") || "bulto",
         supplier_id:      get("ep-supplier") ? Number(get("ep-supplier")) : null,
+        // Categoria real: solo aplica si el producto esta en OFERTAS; si se lo
+        // saca de ahi, se limpia.
+        origin_category_id: (function () {
+          const w = document.getElementById("ep-origin-wrap");
+          const v = get("ep-origin-category");
+          return w && !w.hidden && v ? Number(v) : null;
+        })(),
         expiry_alert_months: (function(){ const n = Math.round(Number(get("ep-expiry-alert"))); return isFinite(n) && n >= 0 ? n : 3; })(),
         cost:             round2(Number(get("ep-cost")))       || 0,
         price_minorista:  parsePrice(get("ep-minorista")),
@@ -15136,7 +15167,10 @@
         // Actualizar state local (tabla de Productos)
         delete body.stock_expected;
         const p = state.products.find((x) => x.id === editProdId);
-        if (p) { Object.assign(p, body); p.category_name = catName; }
+        const originSelEl = document.getElementById("ep-origin-category");
+        const originName = body.origin_category_id && originSelEl
+          ? (originSelEl.options[originSelEl.selectedIndex] || {}).text || "" : null;
+        if (p) { Object.assign(p, body); p.category_name = catName; p.origin_category_name = originName; }
         // Mantener sincronizado el cache del selector de Compras y, si está
         // abierto, re-renderizarlo para reflejar los cambios del gemelo.
         const ap = (state.allProducts || []).find((x) => x.id === editProdId);

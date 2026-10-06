@@ -614,3 +614,48 @@ test("historial de stock: cada movimiento continua donde termino el anterior", (
   }
 });
 
+
+test("ofertas: el cliente solo ve las ofertas de los rubros que tiene habilitados", async () => {
+  const d = rawDb();
+  const insC = d.prepare("INSERT INTO categories (name) VALUES (?)");
+  const ofertas = Number(insC.run("OFERTAS").lastInsertRowid);
+  const perfu = Number(insC.run("PERFUMERIA").lastInsertRowid);
+  const libre = Number(insC.run("LIBRERIA").lastInsertRowid);
+  const insP = d.prepare("INSERT INTO products (code, category_id, origin_category_id, name, cost, price_minorista, stock, active) VALUES (?,?,?,?,1,10,5,1)");
+  const oPerfu = Number(insP.run("OF-1", ofertas, perfu, "Desodorante oferta").lastInsertRowid);
+  const oLibre = Number(insP.run("OF-2", ofertas, libre, "Regla oferta").lastInsertRowid);
+  const oSin = Number(insP.run("OF-3", ofertas, null, "Oferta sin rubro").lastInsertRowid);
+  const hash = bcrypt.hashSync("Cliente123!", 4);
+  const cli = Number(d.prepare("INSERT INTO users (username, password_hash, full_name, level, active) VALUES ('ofertas_cli', ?, 'Cliente ofertas', 1, 1)").run(hash).lastInsertRowid);
+  const acc = d.prepare("INSERT INTO user_category_access (user_id, category_id) VALUES (?, ?)");
+  acc.run(cli, ofertas); acc.run(cli, libre);
+  d.close();
+
+  const c = client();
+  assert.equal((await c.login("ofertas_cli", "Cliente123!")).status < 400, true);
+  const prods = (await c.get("/api/products")).json.map((p) => p.id);
+  assert.ok(prods.includes(oLibre), "ve la oferta de un rubro habilitado");
+  assert.ok(prods.includes(oSin), "ve la oferta sin rubro cargado");
+  assert.ok(!prods.includes(oPerfu), "no ve la oferta de un rubro vedado");
+
+  const cats = (await c.get("/api/categories")).json.map((x) => x.id);
+  assert.ok(cats.includes(ofertas));
+
+  // Por API tampoco la puede pedir.
+  const bad = await c.post("/api/orders", { items: [{ id: oPerfu, qty: 1 }] });
+  assert.equal(bad.status, 400, "no se puede pedir una oferta de un rubro vedado");
+
+  // Si todas sus ofertas visibles se quedan sin stock y solo queda la vedada,
+  // la pestaña OFERTAS desaparece.
+  const d2 = rawDb();
+  d2.prepare("UPDATE products SET stock = 0 WHERE id IN (?, ?)").run(oLibre, oSin);
+  d2.close();
+  const cats2 = (await c.get("/api/categories")).json.map((x) => x.id);
+  assert.ok(!cats2.includes(ofertas), "OFERTAS vacía para el cliente se oculta");
+
+  // El admin carga el rubro real desde el producto (con validación).
+  const ok = await admin.patch("/api/admin/products/" + oSin, { origin_category_id: perfu });
+  assert.equal(ok.status, 200);
+  const no = await admin.patch("/api/admin/products/" + oSin, { origin_category_id: 999999 });
+  assert.equal(no.status, 400);
+});

@@ -825,6 +825,29 @@ function getUserAllowedCategoryIds(userId, level) {
   return new Set(rows.map((r) => r.category_id));
 }
 
+// Ofertas: un producto puede estar en una categoria "vitrina" (OFERTAS) y tener
+// su rubro real en products.origin_category_id. Un cliente con categorias
+// restringidas lo ve solo si tiene habilitadas LAS DOS. allowed = null (sin
+// restriccion) deja pasar todo.
+function productCatAllowed(allowed, categoryId, originCategoryId) {
+  if (allowed == null) return true;
+  if (categoryId == null || !allowed.has(categoryId)) return false;
+  return originCategoryId == null || allowed.has(originCategoryId);
+}
+// Mismo criterio que productCatAllowed, como condicion SQL sobre el alias de
+// products. Devuelve { sql, params } para concatenar despues de un WHERE.
+function allowedCatsSql(allowed, alias) {
+  if (allowed == null) return { sql: "", params: [] };
+  const ids = Array.from(allowed);
+  if (!ids.length) return { sql: " AND 0", params: [] };
+  const ph = ids.map(() => "?").join(",");
+  return {
+    sql: " AND " + alias + ".category_id IN (" + ph + ")" +
+         " AND (" + alias + ".origin_category_id IS NULL OR " + alias + ".origin_category_id IN (" + ph + "))",
+    params: ids.concat(ids),
+  };
+}
+
 // Parsea un valor del setting a un Set de niveles validos (1..4).
 // Si recibe basura, devuelve un set vacio (= nadie ve la solapa).
 function parseVisibleLevels(raw) {
@@ -2150,7 +2173,7 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     "       pc." + cols.old + " AS old_price," +
     "       pc." + cols.new + " AS new_price," +
     "       p.image_url, p.stock, p.active," +
-    "       p.category_id," +
+    "       p.category_id, p.origin_category_id," +
     "       COALESCE(c.active, 1) AS category_active," +
     "       COALESCE(c.name, '') AS category_name" +
     "  FROM price_changes pc" +
@@ -2165,7 +2188,7 @@ app.get("/api/price-changes", requireLogin, (req, res) => {
     let rows = rowsStmt.all(u.id);
     // Filtrar por categorías permitidas si el cliente tiene restricción
     if (allowedCats !== null) {
-      rows = rows.filter((r) => r.category_id != null && allowedCats.has(r.category_id));
+      rows = rows.filter((r) => productCatAllowed(allowedCats, r.category_id, r.origin_category_id));
     }
     // Filtrar categorías desactivadas globalmente
     if (hideInactiveCats) {
@@ -2263,6 +2286,22 @@ app.get("/api/categories", requireLogin, (req, res) => {
   }
   if (allowedIds !== null) {
     rows = rows.filter((c) => allowedIds.has(c.id));
+    // Ofertas: una categoria "vitrina" (OFERTAS) cuyos productos tienen todos
+    // su rubro real fuera de lo habilitado queda vacia para este cliente: se
+    // oculta. Solo se mira en categorias que tienen productos con rubro real
+    // cargado, asi una categoria comun sin stock se sigue comportando igual.
+    const ids = Array.from(allowedIds);
+    if (ids.length) {
+      const ph = ids.map(() => "?").join(",");
+      const vis = db.prepare(
+        "SELECT category_id," +
+        "       SUM(CASE WHEN origin_category_id IS NOT NULL THEN 1 ELSE 0 END) AS with_origin," +
+        "       SUM(CASE WHEN origin_category_id IS NULL OR origin_category_id IN (" + ph + ") THEN 1 ELSE 0 END) AS visible" +
+        "  FROM products WHERE active = 1 AND stock > 0 GROUP BY category_id"
+      ).all(...ids);
+      const empty = new Set(vis.filter((v) => v.with_origin > 0 && v.visible === 0).map((v) => v.category_id));
+      if (empty.size) rows = rows.filter((c) => !empty.has(c.id));
+    }
   }
   res.json(rows);
 });
@@ -2381,13 +2420,11 @@ app.get("/api/products", requireLogin, (req, res) => {
     sql += " AND COALESCE(c.active, 1) = 1";
   }
   const params = [...priceParams];
-  if (allowedIds !== null && allowedIds.size > 0) {
-    const placeholders = Array.from(allowedIds).map(() => "?").join(",");
-    sql += " AND p.category_id IN (" + placeholders + ")";
-    params.push(...Array.from(allowedIds));
-  } else if (allowedIds !== null && allowedIds.size === 0) {
-    return res.json([]);
-  }
+  if (allowedIds !== null && allowedIds.size === 0) return res.json([]);
+  // Categorias permitidas (incluye el rubro real de las ofertas).
+  const catF = allowedCatsSql(allowedIds, "p");
+  sql += catF.sql;
+  params.push(...catF.params);
   sql += "  ORDER BY c.sort_order, c.name, p.name";
   res.json(db.prepare(sql).all(...params));
 });
@@ -2482,7 +2519,7 @@ function clientBuyingPattern(targetId, targetLevel, opts) {
   const pids = Array.from(byProduct.keys());
   const pph = pids.map(() => "?").join(",");
   let psql =
-    "SELECT p.id, p.code, p.name, p.image_url, p.stock, p.active, p.category_id," +
+    "SELECT p.id, p.code, p.name, p.image_url, p.stock, p.active, p.category_id, p.origin_category_id," +
     "       COALESCE(c.active,1) AS cat_active," +
     "       c.name AS category_name, " + pe.expr + " AS price" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
@@ -2490,10 +2527,9 @@ function clientBuyingPattern(targetId, targetLevel, opts) {
   const pparams = [...pe.params, ...pids];
   if (!admin) {
     psql += " AND p.active = 1 AND p.stock > 0 AND COALESCE(c.active,1) = 1";
-    if (allowedIds !== null) {
-      psql += " AND p.category_id IN (" + Array.from(allowedIds).map(() => "?").join(",") + ")";
-      pparams.push(...Array.from(allowedIds));
-    }
+    const catF = allowedCatsSql(allowedIds, "p");
+    psql += catF.sql;
+    pparams.push(...catF.params);
   }
   const prods = new Map();
   for (const p of db.prepare(psql).all(...pparams)) prods.set(p.id, p);
@@ -2516,7 +2552,7 @@ function clientBuyingPattern(targetId, targetLevel, opts) {
     if (admin) {
       if (!Number(p.active) || !Number(p.cat_active)) unavailable = "inactivo";
       else if (!(Number(p.stock) > 0)) unavailable = "sin stock";
-      else if (allowedIds !== null && !allowedIds.has(p.category_id)) unavailable = "categoría no habilitada";
+      else if (!productCatAllowed(allowedIds, p.category_id, p.origin_category_id)) unavailable = "categoría no habilitada";
     }
     if (timesOrdered >= SUGG_MIN_ORDERS && !unavailable) {
       habitual.push({
@@ -2622,7 +2658,7 @@ app.post("/api/orders", requireLogin, (req, res) => {
   // (precio_<base_level>) como snapshot del "costo" del vendedor para ese item.
   const cfg = getEffectivePriceConfig(orderUserId, priceLevel);
   const getProd = db.prepare(
-    "SELECT id, code, name, category_id, " + cfg.column + " AS base_price, stock" +
+    "SELECT id, code, name, category_id, origin_category_id, " + cfg.column + " AS base_price, stock" +
     "  FROM products WHERE id = ? AND active = 1"
   );
 
@@ -2644,7 +2680,7 @@ app.post("/api/orders", requireLogin, (req, res) => {
     // Producto fuera de las categorias habilitadas para este cliente: se ignora
     // (mismo criterio que sin stock). Si no queda ninguna linea, el endpoint
     // responde 400 "Ninguno de los productos del carrito esta disponible".
-    if (allowedCats && !allowedCats.has(p.category_id)) continue;
+    if (!productCatAllowed(allowedCats, p.category_id, p.origin_category_id)) continue;
     const unitPrice = computeEffectivePrice(p.base_price, cfg);
     const subtotal = round2(unitPrice * qty);
     // Si el cliente tenia lista personalizada, el "costo" del vendedor es el
@@ -3817,8 +3853,9 @@ app.get("/api/admin/products", requireAdmin, (req, res) => {
     "       p.cost, p.price_minorista, p.price_revendedor, p.price_mayorista," +
     "       p.price_vip, p.price_publico, p.stock, p.stock_min, p.active, p.image_url," +
     "       p.units_per_bulto, p.pack_unit, COALESCE(p.expiry_alert_months, 3) AS expiry_alert_months," +
-    "       p.supplier_id" +
+    "       p.supplier_id, p.origin_category_id, oc.name AS origin_category_name" +
     "  FROM products p LEFT JOIN categories c ON c.id = p.category_id" +
+    "  LEFT JOIN categories oc ON oc.id = p.origin_category_id" +
     "  ORDER BY c.sort_order, c.name, p.name";
   res.json(db.prepare(sql).all());
 });
@@ -3895,8 +3932,8 @@ app.post("/api/admin/products/:id/duplicate", requireAdmin, (req, res) => {
   const r = db.prepare(
     "INSERT INTO products (code, category_id, name, description, image_url, cost," +
     " price_minorista, price_revendedor, price_mayorista, price_vip, price_publico," +
-    " stock, stock_min, active, units_per_bulto, pack_unit, expiry_alert_months)" +
-    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    " stock, stock_min, active, units_per_bulto, pack_unit, expiry_alert_months, origin_category_id)" +
+    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
   ).run(
     newCode, src.category_id, src.name, src.description || null, src.image_url || null,
     src.cost, src.price_minorista, src.price_revendedor, src.price_mayorista,
@@ -3905,7 +3942,8 @@ app.post("/api/admin/products/:id/duplicate", requireAdmin, (req, res) => {
     // Sin estos 3, el gemelo quedaba con units_per_bulto=1 y rompia la
     // conversion bultos<->unidades en Cotizaciones/Recepcion.
     src.units_per_bulto || 1, src.pack_unit || "bulto",
-    src.expiry_alert_months != null ? src.expiry_alert_months : 3
+    src.expiry_alert_months != null ? src.expiry_alert_months : 3,
+    src.origin_category_id || null
   );
   const created = db.prepare(
     "SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE p.id=?"
@@ -3922,6 +3960,8 @@ const PRODUCT_EDITABLE = [
   // Proveedor fijo del producto (override de la reposicion). NULL = se deduce
   // del historial de compras.
   "supplier_id",
+  // Rubro real de un producto en una categoria vitrina (OFERTAS). NULL = no aplica.
+  "origin_category_id",
 ];
 function coerceProductField(k, v) {
   if (k === "name") return String(v || "").trim().slice(0, 200);
@@ -3931,7 +3971,7 @@ function coerceProductField(k, v) {
   if (k === "pack_unit") return ["unidad", "caja", "bulto"].includes(String(v)) ? String(v) : "bulto";
   if (k === "units_per_bulto") return Math.max(1, Math.round(Number(v)) || 1);
   if (k === "expiry_alert_months") { const n = Math.round(Number(v)); return isFinite(n) && n >= 0 ? n : 3; }
-  if (k === "category_id" || k === "supplier_id") return (v == null || v === "" || Number(v) === 0) ? null : Math.round(Number(v));
+  if (k === "category_id" || k === "supplier_id" || k === "origin_category_id") return (v == null || v === "" || Number(v) === 0) ? null : Math.round(Number(v));
   let n = Number(v); if (!isFinite(n)) n = 0;
   // Precios (costo + 5 niveles): 2 decimales. Stock / stock_min: enteros >= 0
   // (sin el clamp, el PATCH aceptaba stock negativo; el POST ya clampeaba).
@@ -3967,6 +4007,12 @@ app.patch("/api/admin/products/:id", requireAdmin, (req, res) => {
     const cid = coerceProductField("category_id", body.category_id);
     if (cid != null && !db.prepare("SELECT id FROM categories WHERE id = ?").get(cid)) {
       return res.status(400).json({ error: "Categoría inexistente" });
+    }
+  }
+  if ("origin_category_id" in body) {
+    const oid = coerceProductField("origin_category_id", body.origin_category_id);
+    if (oid != null && !db.prepare("SELECT id FROM categories WHERE id = ?").get(oid)) {
+      return res.status(400).json({ error: "Categoría real inexistente" });
     }
   }
   // Control de concurrencia del stock: el panel manda el stock que vio al abrir
@@ -9558,6 +9604,7 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
     mayorista: "price_mayorista", vip: "price_vip", publico: "price_publico",
   };
   let priceCol = "price_minorista", priceLabel = "Minorista", markup = null;
+  let pdfAllowedCats = null; // categorias del cliente (para el rubro real de las ofertas)
   let chgBaseLevel = "minorista"; // base_level usado para la sección de cambios
   const lvlNames = { 1: "minorista", 2: "revendedor", 3: "mayorista", 4: "vip" };
   if (pConf.type === "client" && pConf.userId) {
@@ -9572,6 +9619,7 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
     // en el panel) para que un JS viejo en caché no le mande de más.
     onlyActiveCats = true;
     const allowed = getUserAllowedCategoryIds(cu.id, cu.level);
+    pdfAllowedCats = allowed;
     if (allowed) {
       categoryIds = categoryIds.length
         ? categoryIds.filter((id) => allowed.has(id))
@@ -9619,15 +9667,20 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
   // Productos en stock agrupados por categoría
   const catCond = categoryIds.length
     ? " AND c.id IN (" + categoryIds.map(() => "?").join(",") + ")" : "";
+  // Ofertas de un rubro que el cliente no tiene habilitado: afuera.
+  const originF = pdfAllowedCats && pdfAllowedCats.size
+    ? " AND (p.origin_category_id IS NULL OR p.origin_category_id IN (" + Array.from(pdfAllowedCats).map(() => "?").join(",") + "))"
+    : "";
+  const originParams = originF ? Array.from(pdfAllowedCats) : [];
   const rows = db.prepare(
     "SELECT p.id, p.code, p.name AS pname, p.description, p.image_url," +
     "       p." + priceCol + " AS base_price," +
     "       c.id AS cat_id, c.name AS cat_name" +
     "  FROM products p JOIN categories c ON c.id = p.category_id" +
-    "  WHERE p.stock > 0 AND p.active = 1" + catCond +
+    "  WHERE p.stock > 0 AND p.active = 1" + catCond + originF +
     (onlyActiveCats ? " AND COALESCE(c.active, 1) = 1" : "") +
     "  ORDER BY c.sort_order, c.name, p.name"
-  ).all(...categoryIds);
+  ).all(...categoryIds, ...originParams);
 
   const byCategory = [];
   const catMap = new Map();

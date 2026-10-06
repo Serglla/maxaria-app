@@ -6900,3 +6900,7 @@ label.ppv-move-item:last-child { border-bottom: none; }
 .fin-subtab:hover:not(.active) { background: #f3f4f6; }
 .fin-subtab.active { background: #1e3a5f; border-color: #1e3a5f; color: #fff; }
 .fin-subtab[hidden] { display: none; }
+
+/* Ofertas: rubro real del producto (pestana Productos) */
+.cat-origin { font-size: 11px; color: #475569; white-space: nowrap; }
+.cat-origin-missing { color: #b45309; font-weight: 700; }
