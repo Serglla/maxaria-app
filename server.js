@@ -9672,15 +9672,30 @@ app.post("/api/admin/catalog/pdf", requireAdmin, async (req, res) => {
     ? " AND (p.origin_category_id IS NULL OR p.origin_category_id IN (" + Array.from(pdfAllowedCats).map(() => "?").join(",") + "))"
     : "";
   const originParams = originF ? Array.from(pdfAllowedCats) : [];
+  // Ofertas y rubros elegidos a mano: si en el catálogo se marcan OFERTAS junto
+  // con otros rubros (ej. Analgésicos), las ofertas se limitan a esos rubros.
+  // Si se marca solo OFERTAS (sin otro rubro), van todas. Las ofertas sin rubro
+  // real cargado siempre entran.
+  let selF = "", selParams = [];
+  if (categoryIds.length) {
+    const ph = categoryIds.map(() => "?").join(",");
+    const rubros = db.prepare(
+      "SELECT id FROM categories WHERE id IN (" + ph + ") AND LOWER(name) NOT LIKE '%ofert%'"
+    ).all(...categoryIds).map((r) => r.id);
+    if (rubros.length) {
+      selF = " AND (p.origin_category_id IS NULL OR p.origin_category_id IN (" + rubros.map(() => "?").join(",") + "))";
+      selParams = rubros;
+    }
+  }
   const rows = db.prepare(
     "SELECT p.id, p.code, p.name AS pname, p.description, p.image_url," +
     "       p." + priceCol + " AS base_price," +
     "       c.id AS cat_id, c.name AS cat_name" +
     "  FROM products p JOIN categories c ON c.id = p.category_id" +
-    "  WHERE p.stock > 0 AND p.active = 1" + catCond + originF +
+    "  WHERE p.stock > 0 AND p.active = 1" + catCond + originF + selF +
     (onlyActiveCats ? " AND COALESCE(c.active, 1) = 1" : "") +
     "  ORDER BY c.sort_order, c.name, p.name"
-  ).all(...categoryIds, ...originParams);
+  ).all(...categoryIds, ...originParams, ...selParams);
 
   const byCategory = [];
   const catMap = new Map();

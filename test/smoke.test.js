@@ -645,6 +645,34 @@ test("ofertas: el cliente solo ve las ofertas de los rubros que tiene habilitado
   const bad = await c.post("/api/orders", { items: [{ id: oPerfu, qty: 1 }] });
   assert.equal(bad.status, 400, "no se puede pedir una oferta de un rubro vedado");
 
+  // Catálogo PDF armado a mano (sin cliente) con OFERTAS + LIBRERIA: solo las
+  // ofertas de LIBRERIA (y las sin rubro), no la de PERFUMERIA.
+  const pdfText = async (categoryIds) => {
+    const r = await fetch(BASE + "/api/admin/catalog/pdf", {
+      method: "POST", headers: { "Content-Type": "application/json", Cookie: admin.cookie() },
+      body: JSON.stringify({ priceConfig: { type: "level", level: "minorista" }, categoryIds, withImages: false }),
+    });
+    assert.equal(r.status, 200);
+    const raw = Buffer.from(await r.arrayBuffer()).toString("latin1");
+    const zlib = require("zlib");
+    let out = "";
+    const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let m;
+    while ((m = re.exec(raw))) {
+      let txt;
+      try { txt = zlib.inflateSync(Buffer.from(m[1], "latin1")).toString("latin1"); } catch (_) { txt = m[1]; }
+      for (const t of txt.matchAll(/<([0-9a-fA-F]+)>/g)) out += Buffer.from(t[1], "hex").toString("latin1");
+      out += "\n";
+    }
+    return out;
+  };
+  const sel = await pdfText([ofertas, libre]);
+  assert.match(sel, /Regla oferta/);
+  assert.match(sel, /Oferta sin rubro/);
+  assert.doesNotMatch(sel, /Desodorante oferta/, "oferta de un rubro no elegido no va al catálogo");
+  const soloOf = await pdfText([ofertas]);
+  assert.match(soloOf, /Desodorante oferta/, "con solo OFERTAS van todas");
+
   // Si todas sus ofertas visibles se quedan sin stock y solo queda la vedada,
   // la pestaña OFERTAS desaparece.
   const d2 = rawDb();
