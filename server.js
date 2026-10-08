@@ -1260,7 +1260,7 @@ function priceSqlExpr(config, productAlias) {
 }
 function levelName(level) {
   switch (Number(level)) {
-    case 1: return "Minorista";
+    case 1: return "KYD";
     case 2: return "Revendedor";
     case 3: return "Mayorista";
     case 4: return "VIP";
