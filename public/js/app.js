@@ -100,6 +100,7 @@
     clients: [], // lista de usuarios (level 1-4) cargada para vendedores
     // "Tu pedido habitual" + recordatorios de recompra del cliente target.
     suggestions: null,
+    volTiers: [],   // escalas de descuento por monto del cliente atendido
   };
 
   function fmtPrice(n) { return "$ " + (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -505,7 +506,72 @@
     return (lvl >= 1 && lvl <= 4) || (lvl === 5 && !!state.vendedorClient);
   }
 
+  // ===== Descuentos por monto de compra =====
+  // Escalas del cliente atendido (GET /api/my-volume-discounts). El server es el
+  // que aplica el descuento al guardar el pedido; aca solo se muestra el banner
+  // y el aviso del carrito con el mismo calculo.
+  async function loadVolumeDiscounts() {
+    try {
+      const out = await api("/api/my-volume-discounts");
+      state.volTiers = (out && Array.isArray(out.tiers)) ? out.tiers : [];
+    } catch (_) {
+      state.volTiers = [];
+    }
+    renderVolBanner();
+    if (state.cart && state.cart.size) renderCart();
+  }
+  function volTierFor(amount) {
+    let best = null;
+    (state.volTiers || []).forEach((t) => { if (amount >= Number(t.min_amount)) best = t; });
+    return best;
+  }
+  function volNextTier(amount) {
+    return (state.volTiers || []).find((t) => amount < Number(t.min_amount)) || null;
+  }
+  function round2c(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+  // { gross, pct, discount, net, next, missing } del carrito actual.
+  function cartDiscountInfo() {
+    const gross = round2c(cartTotal());
+    const tier = volTierFor(gross);
+    const pct = tier ? Number(tier.percent) : 0;
+    let net = gross;
+    if (pct) {
+      net = 0;
+      state.cart.forEach((it) => { net += round2c(it.price * it.qty * (1 - pct / 100)); });
+      net = round2c(net);
+    }
+    const next = volNextTier(gross);
+    return { gross: gross, pct: pct, discount: round2c(gross - net), net: net,
+             next: next, missing: next ? round2c(Number(next.min_amount) - gross) : 0 };
+  }
+  function fmtPct(n) { return String(Number(n)).replace(".", ",") + "%"; }
+  function renderVolBanner() {
+    const el = document.getElementById("vol-banner");
+    if (!el) return;
+    const tiers = state.volTiers || [];
+    if (!tiers.length) { el.hidden = true; el.innerHTML = ""; return; }
+    const chips = tiers.map((t) =>
+      '<span class="vol-chip">Desde <strong>' + fmtPrice(t.min_amount) + '</strong> → <strong>' +
+      fmtPct(t.percent) + ' off</strong></span>').join("");
+    let progress = "";
+    if (state.cart && state.cart.size) {
+      const d = cartDiscountInfo();
+      if (d.next) {
+        progress = '<div class="vol-progress">Te faltan <strong>' + fmtPrice(d.missing) +
+          '</strong> para el <strong>' + fmtPct(d.next.percent) + '</strong> de descuento' +
+          (d.pct ? ' (ya tenés ' + fmtPct(d.pct) + ')' : '') + '.</div>';
+      } else if (d.pct) {
+        progress = '<div class="vol-progress vol-ok">✔ Tenés el <strong>' + fmtPct(d.pct) +
+          '</strong> de descuento: ahorrás ' + fmtPrice(d.discount) + '.</div>';
+      }
+    }
+    el.innerHTML = '<div class="vol-title">🏷️ Descuentos por monto de compra</div>' +
+      '<div class="vol-chips">' + chips + '</div>' + progress;
+    el.hidden = false;
+  }
+
   async function loadSuggestions() {
+    loadVolumeDiscounts();
     const old = document.getElementById("suggestions");
     if (old) old.hidden = true;
     if (!suggAudience()) { state.suggestions = null; renderSuggestions(); return; }
@@ -991,7 +1057,9 @@
 
   function renderCart() {
     const items = Array.from(state.cart.values());
-    const total = cartTotal();
+    const disc = cartDiscountInfo();
+    const total = disc.net;
+    renderVolBanner();
     els.cartCount.textContent = cartCount();
     // Total visible en el topbar mientras se arma el pedido
     if (els.cartTotalTop) {
@@ -1024,7 +1092,18 @@
           'Pedile al administrador que cargue el WhatsApp principal de la empresa.' +
           '</div>'
         : '');
-    els.cartBody.innerHTML = aviso + items.map(cartItemHtml).join("");
+    let volBox = "";
+    if (disc.pct) {
+      volBox = '<div class="cart-vol cart-vol-ok">' +
+        '<div><span>Subtotal</span><span>' + fmtPrice(disc.gross) + '</span></div>' +
+        '<div><span>🏷️ Descuento por monto (' + fmtPct(disc.pct) + ')</span><span>− ' + fmtPrice(disc.discount) + '</span></div>' +
+        (disc.next ? '<div class="cart-vol-hint">Sumando ' + fmtPrice(disc.missing) + ' más llegás al ' + fmtPct(disc.next.percent) + '.</div>' : '') +
+        '</div>';
+    } else if (disc.next) {
+      volBox = '<div class="cart-vol">🏷️ Te faltan <strong>' + fmtPrice(disc.missing) +
+        '</strong> para el <strong>' + fmtPct(disc.next.percent) + '</strong> de descuento.</div>';
+    }
+    els.cartBody.innerHTML = aviso + items.map(cartItemHtml).join("") + volBox;
     els.cartTotal.textContent = fmtPrice(total);
     els.cartSend.disabled = sinVendedor && !tienePhone;
     els.cartSend.title = (sinVendedor && !tienePhone) ? "No hay número de WhatsApp configurado" : "";
@@ -1079,7 +1158,12 @@
       lines.push("- " + it.qty + " x " + it.name + " - " + fmtPrice(it.price) + " = " + fmtPrice(it.price * it.qty));
     });
     lines.push("");
-    lines.push("*Total: " + fmtPrice(cartTotal()) + "*");
+    const disc = cartDiscountInfo();
+    if (disc.pct) {
+      lines.push("Subtotal: " + fmtPrice(disc.gross));
+      lines.push("Descuento por monto (" + fmtPct(disc.pct) + "): -" + fmtPrice(disc.discount));
+    }
+    lines.push("*Total: " + fmtPrice(disc.net) + "*");
     if (notes) { lines.push(""); lines.push("Nota: " + notes); }
     if (isVendedorConCliente) {
       lines.push("");
@@ -1119,7 +1203,7 @@
       },
       vendedorClient: state.vendedorClient,
       phone:          phone,
-      total:          cartTotal(),
+      total:          cartDiscountInfo().net,
       message:        buildWhatsappMessage(),
     }).then(function () {
       const clearedIds = Array.from(state.cart.keys());

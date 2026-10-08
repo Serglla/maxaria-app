@@ -1665,6 +1665,7 @@
       if (tab === "price-lists") {
         if (!state.priceListsLoaded) loadPriceLists();
         else renderPriceLists();
+        loadVolumeDiscounts();
       }
       if (tab === "armado") { state.ordersLoaded = false; loadArmado(); } // recargar: refleja pedidos nuevos y avances
       if (tab === "entregas") {
@@ -3814,6 +3815,140 @@
   wireReportSort("act-dead-table",   actState.sort.dead,  renderActDead);
   wireReportSort("act-st-low-table", actState.sort.stLow, () => renderActStock(actState.stockData || {}));
   wireReportSort("act-st-out-table", actState.sort.stOut, () => renderActStock(actState.stockData || {}));
+
+  // -------- Descuentos por monto de compra --------
+  // Escalas "desde $X -> Y%" por nivel (1-4) o por lista de precios. Auto-save
+  // al cambiar cada campo (convención de las tablas del admin).
+  const VD_LEVELS = { 1: "Minorista", 2: "Revendedor", 3: "Mayorista", 4: "VIP" };
+  const vdState = { rows: [], loaded: false };
+  function vdParseNum(v) {
+    const t = String(v == null ? "" : v).trim().replace(/\./g, "").replace(",", ".");
+    if (!t) return NaN;
+    return Number(t);
+  }
+  function vdTargetValue(r) { return r.price_list_id ? "list:" + r.price_list_id : "level:" + r.level; }
+  function vdTargetOpts(selected) {
+    let h = '<optgroup label="Nivel base">';
+    [1, 2, 3, 4].forEach((lv) => {
+      const v = "level:" + lv;
+      h += '<option value="' + v + '"' + (v === selected ? " selected" : "") + '>' + VD_LEVELS[lv] + '</option>';
+    });
+    h += '</optgroup>';
+    const lists = (state.priceLists || []).filter((pl) => pl.active || ("list:" + pl.id) === selected);
+    if (lists.length) {
+      h += '<optgroup label="Listas de precios">';
+      lists.forEach((pl) => {
+        const v = "list:" + pl.id;
+        h += '<option value="' + v + '"' + (v === selected ? " selected" : "") + '>' + escapeHtml(pl.name) +
+             (pl.active ? "" : " (inactiva)") + '</option>';
+      });
+      h += '</optgroup>';
+    }
+    return h;
+  }
+  function vdTargetBody(val) {
+    const [kind, id] = String(val || "").split(":");
+    return kind === "list" ? { price_list_id: Number(id), level: null } : { level: Number(id), price_list_id: null };
+  }
+  async function loadVolumeDiscounts() {
+    const tb = document.getElementById("vd-tbody");
+    if (!tb) return;
+    try {
+      if (!state.priceListsLoaded) {
+        try { state.priceLists = await api("/api/admin/price-lists"); state.priceListsLoaded = true; } catch (_) {}
+      }
+      vdState.rows = await api("/api/admin/price-lists/volume-discounts", undefined, "los descuentos por monto");
+      vdState.loaded = true;
+      renderVolumeDiscounts();
+    } catch (e) {
+      tb.innerHTML = '<tr><td colspan="5" class="muted">No se pudieron cargar los descuentos</td></tr>';
+    }
+  }
+  function renderVolumeDiscounts() {
+    const tb = document.getElementById("vd-tbody");
+    const sel = document.getElementById("vd-new-target");
+    if (sel) { const cur = sel.value || "level:1"; sel.innerHTML = vdTargetOpts(cur); }
+    if (!tb) return;
+    if (!vdState.rows.length) {
+      tb.innerHTML = '<tr><td colspan="5" class="muted">Todavía no hay escalas. Agregá la primera arriba (ej: desde $150.000 → 2%).</td></tr>';
+      return;
+    }
+    tb.innerHTML = vdState.rows.map((r) =>
+      '<tr data-id="' + r.id + '"' + (r.active ? "" : ' class="vd-off"') + '>' +
+        '<td><select data-f="target">' + vdTargetOpts(vdTargetValue(r)) + '</select></td>' +
+        '<td class="num"><input type="text" data-f="min_amount" inputmode="numeric" value="' +
+          Number(r.min_amount).toLocaleString("es-AR") + '" /></td>' +
+        '<td class="num"><input type="text" data-f="percent" inputmode="decimal" value="' +
+          String(r.percent).replace(".", ",") + '" /></td>' +
+        '<td><input type="checkbox" data-f="active"' + (r.active ? " checked" : "") + ' /></td>' +
+        '<td><button class="btn btn-ghost btn-mini" data-act="del" type="button" title="Borrar escala">🗑</button></td>' +
+      '</tr>').join("");
+  }
+  async function vdPatch(id, body) {
+    await api("/api/admin/price-lists/volume-discounts/" + id, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+  }
+  (function wireVolumeDiscounts() {
+    const tb = document.getElementById("vd-tbody");
+    const addBtn = document.getElementById("vd-add-btn");
+    if (addBtn) addBtn.addEventListener("click", async () => {
+      const target = document.getElementById("vd-new-target").value;
+      const minEl = document.getElementById("vd-new-min");
+      const pctEl = document.getElementById("vd-new-pct");
+      const body = Object.assign(vdTargetBody(target), {
+        min_amount: vdParseNum(minEl.value), percent: vdParseNum(pctEl.value),
+      });
+      if (!(body.min_amount > 0)) { showToast("Poné el monto mínimo (ej: 150000)", "error"); return; }
+      if (!(body.percent > 0)) { showToast("Poné el % de descuento (ej: 2)", "error"); return; }
+      addBtn.disabled = true;
+      try {
+        await api("/api/admin/price-lists/volume-discounts", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        minEl.value = ""; pctEl.value = "";
+        showToast("Escala agregada", "ok");
+        await loadVolumeDiscounts();
+      } catch (e) {
+        showToast(e.message || "No se pudo agregar", "error");
+      } finally { addBtn.disabled = false; }
+    });
+    if (!tb) return;
+    tb.addEventListener("change", async (e) => {
+      const el = e.target.closest("[data-f]");
+      const tr = e.target.closest("tr[data-id]");
+      if (!el || !tr) return;
+      const id = Number(tr.dataset.id);
+      const f = el.dataset.f;
+      let body;
+      if (f === "target") body = vdTargetBody(el.value);
+      else if (f === "active") body = { active: el.checked };
+      else {
+        const n = vdParseNum(el.value);
+        if (!(n > 0)) { showToast("Valor inválido", "error"); renderVolumeDiscounts(); return; }
+        body = {}; body[f] = n;
+      }
+      try {
+        await vdPatch(id, body);
+        showToast("Guardado", "ok");
+        await loadVolumeDiscounts();
+      } catch (err) {
+        showToast(err.message || "No se pudo guardar", "error");
+        renderVolumeDiscounts();
+      }
+    });
+    tb.addEventListener("click", async (e) => {
+      const btn = e.target.closest('button[data-act="del"]');
+      if (!btn) return;
+      const id = Number(btn.closest("tr[data-id]").dataset.id);
+      const ok = await confirmModal({ message: "¿Borrar esta escala de descuento?", confirmText: "Borrar", danger: true });
+      if (!ok) return;
+      try {
+        await api("/api/admin/price-lists/volume-discounts/" + id, { method: "DELETE" });
+        await loadVolumeDiscounts();
+      } catch (err) { showToast(err.message || "No se pudo borrar", "error"); }
+    });
+  })();
 
   // -------- Listas de precios --------
   async function loadPriceLists() {

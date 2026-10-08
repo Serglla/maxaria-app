@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20261006a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20261008a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -1501,6 +1501,28 @@
           </thead>
           <tbody id="pl-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
         </table>
+      </div>
+
+      <div class="vd-card">
+        <h3 class="vd-title">🏷️ Descuentos por monto de compra</h3>
+        <p class="muted small" style="margin:4px 0 10px 0">
+          Si el pedido del cliente llega al monto, se le aplica el % a todo el pedido (catálogo y pedidos que toma el vendedor).
+          Un cliente con <strong>lista de precios</strong> usa las escalas de su lista; sin lista, las de su <strong>nivel</strong>.
+          Se compara contra el total a precio del cliente. La comisión del vendedor no cambia: el descuento lo absorbe el negocio.
+          Los clientes ven las escalas en un banner del catálogo.
+        </p>
+        <div class="vd-add">
+          <select id="vd-new-target"></select>
+          <label>Desde $ <input type="text" id="vd-new-min" inputmode="numeric" placeholder="150000" /></label>
+          <label>Descuento % <input type="text" id="vd-new-pct" inputmode="decimal" placeholder="2" /></label>
+          <button class="btn btn-primary" id="vd-add-btn" type="button">+ Agregar escala</button>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table" id="vd-table">
+            <thead><tr><th>Para</th><th class="num">Desde $</th><th class="num">Descuento %</th><th>Activa</th><th></th></tr></thead>
+            <tbody id="vd-tbody"><tr><td colspan="5" class="muted">Cargando…</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -4010,6 +4032,6 @@
   <div id="toast" class="admin-toast" hidden></div>
 
   <script src="/js/shared/pricing.js?v=20261002b"></script>
-  <script src="/js/admin.js?v=20261006a"></script>
+  <script src="/js/admin.js?v=20261008a"></script>
 </body>
 </html>

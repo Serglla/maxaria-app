@@ -1215,6 +1215,31 @@ function getEffectivePriceConfig(userId, level) {
   return { kind: "level", column: priceColumnFor(level) };
 }
 
+// ===== Descuentos por monto de compra =====
+// Escalas "comprando mas de $X, Y%". Un cliente con lista personalizada activa
+// usa las escalas de SU LISTA; sin lista, las de su NIVEL (1-4). Vendedores y
+// admins no tienen escalas. Devuelve [{id, min_amount, percent}] ordenado.
+function volumeDiscountTiers(userId, level) {
+  if (![1, 2, 3, 4].includes(Number(level))) return [];
+  const cfg = getEffectivePriceConfig(userId, level);
+  if (cfg.kind === "list") {
+    return db.prepare(
+      "SELECT id, min_amount, percent FROM volume_discounts" +
+      "  WHERE active = 1 AND price_list_id = ? ORDER BY min_amount, percent"
+    ).all(cfg.listId);
+  }
+  return db.prepare(
+    "SELECT id, min_amount, percent FROM volume_discounts" +
+    "  WHERE active = 1 AND price_list_id IS NULL AND level = ? ORDER BY min_amount, percent"
+  ).all(Number(level));
+}
+// Escala alcanzada por un monto (la de mayor minimo que se cumple) o null.
+function pickVolumeTier(tiers, amount) {
+  let best = null;
+  for (const t of tiers || []) if (Number(amount) >= Number(t.min_amount)) best = t;
+  return best;
+}
+
 // Snapshot del "costo del vendedor" (order_items.vendedor_cost_unit) para un
 // producto, dada la config de precios del cliente. Es el precio de la lista
 // PADRE (o el precio base de la raiz si la lista no esta encadenada), de modo
@@ -2697,27 +2722,47 @@ app.post("/api/orders", requireLogin, (req, res) => {
   if (!lines.length)
     return res.status(400).json({ error: "Ninguno de los productos del carrito esta disponible" });
 
+  // Descuento por monto: si el total del carrito (a precio del cliente) llega a
+  // una escala, el % se aplica a cada linea como discount_percent. El total y el
+  // debito de la cuenta ya salen con descuento. La comision del vendedor se
+  // calcula con unit_price, asi que no cambia: el descuento lo absorbe el negocio.
+  const grossTotal = round2(total);
+  const volTier = pickVolumeTier(volumeDiscountTiers(orderUserId, priceLevel), grossTotal);
+  let volDiscountAmount = 0;
+  if (volTier) {
+    const pct = Number(volTier.percent) || 0;
+    total = 0;
+    for (const l of lines) {
+      l.discount_percent = pct;
+      l.subtotal = round2(l.unit_price * l.quantity * (1 - pct / 100));
+      total += l.subtotal;
+    }
+    volDiscountAmount = round2(grossTotal - total);
+  }
+
   // El pedido descuenta el stock al ENVIARSE y lo lleva anotado en si mismo
   // (stock_discounted = 1), igual que los pedidos creados desde el admin.
   // Antes se creaba un presupuesto "sombra" que tenia el descuento anotado: si
   // el pedido se borraba, ese presupuesto quedaba reteniendo el stock.
   const insertOrder = db.prepare(
-    "INSERT INTO orders (user_id, status, total, notes, whatsapp_sent_at, assigned_vendedor_id, stock_discounted, created_at)" +
-    " VALUES (?, 'enviado', ?, ?, datetime('now'), ?, 1, datetime('now'))"
+    "INSERT INTO orders (user_id, status, total, notes, whatsapp_sent_at, assigned_vendedor_id, stock_discounted, created_at," +
+    "                    volume_discount_percent, volume_discount_amount)" +
+    " VALUES (?, 'enviado', ?, ?, datetime('now'), ?, 1, datetime('now'), ?, ?)"
   );
   const insertItem = db.prepare(
-    "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, subtotal, vendedor_cost_unit)" +
-    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO order_items (order_id, product_id, product_code, product_name, quantity, unit_price, discount_percent, subtotal, vendedor_cost_unit)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   total = round2(total);
   let orderId;
   db.transaction(() => {
-    const r = insertOrder.run(orderUserId, total, (notes || "").slice(0, 500) || null, assignedVendedorId);
+    const r = insertOrder.run(orderUserId, total, (notes || "").slice(0, 500) || null, assignedVendedorId,
+                              volTier ? Number(volTier.percent) : null, volTier ? volDiscountAmount : null);
     orderId = r.lastInsertRowid;
     for (const l of lines) {
       insertItem.run(orderId, l.product_id, l.product_code, l.product_name,
-                     l.quantity, l.unit_price, l.subtotal, l.vendedor_cost_unit);
+                     l.quantity, l.unit_price, l.discount_percent || 0, l.subtotal, l.vendedor_cost_unit);
       if (l.product_id) {
         moveStock(l.product_id, "venta", -l.quantity, orderId, "Pedido #" + orderId + " (catalogo)", orderUserId);
       }
@@ -2728,7 +2773,22 @@ app.post("/api/orders", requireLogin, (req, res) => {
   // Aviso push a los admins y al vendedor del cliente (no bloquea la respuesta).
   notifyNewOrder(orderId, req.session.userId);
   notifyStockOut(lines.map((l) => l.product_id));
-  res.json({ ok: true, order: { id: orderId, total: total, items: lines.length } });
+  res.json({ ok: true, order: {
+    id: orderId, total: total, items: lines.length, gross_total: grossTotal,
+    volume_discount_percent: volTier ? Number(volTier.percent) : null,
+    volume_discount_amount: volTier ? volDiscountAmount : 0,
+  } });
+});
+
+// Escalas de descuento por monto del cliente que se esta atendiendo (el propio
+// cliente, o el cliente que el vendedor tiene seleccionado). Para el banner del
+// catalogo y el aviso "te faltan $X" del carrito.
+app.get("/api/my-volume-discounts", requireLogin, (req, res) => {
+  const isVendedor = req.session.level === 5;
+  const uid = isVendedor ? req.session.vendedorClientId : req.session.userId;
+  const lvl = isVendedor ? req.session.vendedorClientLevel : req.session.level;
+  if (!uid) return res.json({ tiers: [] });
+  res.json({ tiers: volumeDiscountTiers(uid, lvl) });
 });
 
 // Suma a amount_paid lo que les toca de los pagos "a cuenta" (ver
@@ -4926,6 +4986,73 @@ app.post("/api/admin/import-excel", requireAdmin, excelUpload.single("file"), (r
 // con un porcentaje de markup. El precio efectivo para un cliente asignado a
 // la lista X es:  round(products.price_<base_level> * (1 + markup/100))
 // Las listas se asignan a clientes (level 1-4) via users.price_list_id.
+
+// ===== Descuentos por monto (pestaña Listas de precios) =====
+// Cada escala es de un nivel base (level 1-4, price_list_id NULL) o de una
+// lista de precios (price_list_id). min_amount en pesos enteros, percent 0..90.
+function readVolumeDiscountBody(b, partial) {
+  const out = {};
+  if (!partial || "price_list_id" in b || "level" in b) {
+    const plId = b.price_list_id === "" || b.price_list_id == null ? null : Number(b.price_list_id);
+    if (plId) {
+      if (!db.prepare("SELECT id FROM price_lists WHERE id = ?").get(plId)) throw new Error("La lista de precios no existe");
+      out.price_list_id = plId; out.level = null;
+    } else {
+      const lv = Number(b.level);
+      if (![1, 2, 3, 4].includes(lv)) throw new Error("Elegí un nivel (1 a 4) o una lista de precios");
+      out.level = lv; out.price_list_id = null;
+    }
+  }
+  if (!partial || "min_amount" in b) {
+    const m = Math.round(Number(b.min_amount));
+    if (!Number.isFinite(m) || m <= 0) throw new Error("El monto mínimo tiene que ser mayor a 0");
+    out.min_amount = m;
+  }
+  if (!partial || "percent" in b) {
+    const pc = Math.round(Number(b.percent) * 100) / 100;
+    if (!Number.isFinite(pc) || pc <= 0 || pc > 90) throw new Error("El descuento tiene que estar entre 0 y 90%");
+    out.percent = pc;
+  }
+  if ("active" in b) out.active = b.active ? 1 : 0;
+  return out;
+}
+
+app.get("/api/admin/price-lists/volume-discounts", requireAdmin, (req, res) => {
+  res.json(db.prepare(
+    "SELECT vd.id, vd.level, vd.price_list_id, vd.min_amount, vd.percent, vd.active, pl.name AS price_list_name" +
+    "  FROM volume_discounts vd LEFT JOIN price_lists pl ON pl.id = vd.price_list_id" +
+    "  ORDER BY (vd.price_list_id IS NOT NULL), vd.level, pl.name, vd.min_amount"
+  ).all());
+});
+
+app.post("/api/admin/price-lists/volume-discounts", requireAdmin, (req, res) => {
+  let v;
+  try { v = readVolumeDiscountBody(req.body || {}, false); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  const r = db.prepare(
+    "INSERT INTO volume_discounts (level, price_list_id, min_amount, percent, active) VALUES (?, ?, ?, ?, ?)"
+  ).run(v.level, v.price_list_id, v.min_amount, v.percent, "active" in v ? v.active : 1);
+  logActivity(req, "descuento_monto", "Escala nueva: desde $" + v.min_amount + " -> " + v.percent + "%");
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+
+app.patch("/api/admin/price-lists/volume-discounts/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.prepare("SELECT id FROM volume_discounts WHERE id = ?").get(id)) return res.status(404).json({ error: "No existe" });
+  let v;
+  try { v = readVolumeDiscountBody(req.body || {}, true); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  const keys = Object.keys(v);
+  if (!keys.length) return res.json({ ok: true });
+  db.prepare("UPDATE volume_discounts SET " + keys.map((k) => k + " = ?").join(", ") + " WHERE id = ?")
+    .run(...keys.map((k) => v[k]), id);
+  res.json({ ok: true });
+});
+
+app.delete("/api/admin/price-lists/volume-discounts/:id", requireAdmin, (req, res) => {
+  db.prepare("DELETE FROM volume_discounts WHERE id = ?").run(Number(req.params.id));
+  res.json({ ok: true });
+});
 
 // GET /api/admin/price-lists
 // Devuelve todas las listas + cantidad de clientes asignados a cada una.

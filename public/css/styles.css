@@ -6904,3 +6904,27 @@ label.ppv-move-item:last-child { border-bottom: none; }
 /* Ofertas: rubro real del producto (pestana Productos) */
 .cat-origin { font-size: 11px; color: #475569; white-space: nowrap; }
 .cat-origin-missing { color: #b45309; font-weight: 700; }
+
+/* ===== Descuentos por monto de compra (catalogo) ===== */
+.vol-banner { margin: 0 0 12px; padding: 12px 14px; border-radius: 12px;
+  background: linear-gradient(135deg, #fff7ed, #ffedd5); border: 1.5px solid #fdba74; color: #7c2d12; }
+.vol-banner .vol-title { font-weight: 800; font-size: 14px; margin-bottom: 6px; }
+.vol-banner .vol-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.vol-banner .vol-chip { background: #fff; border: 1px solid #fed7aa; border-radius: 999px;
+  padding: 4px 10px; font-size: 13px; }
+.vol-banner .vol-progress { margin-top: 8px; font-size: 13px; }
+.vol-banner .vol-progress.vol-ok { color: #166534; }
+.cart-vol { margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 14px;
+  background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; }
+.cart-vol.cart-vol-ok { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+.cart-vol.cart-vol-ok > div { display: flex; justify-content: space-between; gap: 8px; }
+.cart-vol .cart-vol-hint { display: block; margin-top: 4px; font-size: 12px; color: #92400e; }
+/* ===== Descuentos por monto de compra (admin) ===== */
+.vd-card { margin-top: 22px; padding: 16px; border: 1px solid #e5e7eb; border-radius: 12px; background: #fff; }
+.vd-card .vd-title { margin: 0; font-size: 16px; }
+.vd-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.vd-add label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #374151; }
+.vd-add input { width: 110px; }
+#vd-table { min-width: 0; }
+#vd-table input[type="text"] { width: 110px; text-align: right; }
+#vd-table tr.vd-off td { opacity: .55; }

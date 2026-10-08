@@ -687,3 +687,53 @@ test("ofertas: el cliente solo ve las ofertas de los rubros que tiene habilitado
   const no = await admin.patch("/api/admin/products/" + oSin, { origin_category_id: 999999 });
   assert.equal(no.status, 400);
 });
+
+test("descuento por monto: escalas por nivel se aplican al pedido del catálogo", async () => {
+  const d0 = rawDb();
+  const lvl = d0.prepare("SELECT level FROM users WHERE username = 'cliente1'").get().level;
+  const col = { 1: "price_minorista", 2: "price_revendedor", 3: "price_mayorista", 4: "price_vip" }[lvl];
+  d0.close();
+  const pid = newProduct("VD1", 100);
+  const price = rawDb().prepare("SELECT " + col + " AS p FROM products WHERE id = ?").get(pid).p;
+  const a = await admin.post("/api/admin/price-lists/volume-discounts", { level: lvl, min_amount: price * 5, percent: 2 });
+  assert.equal(a.status, 200, a.text);
+  const b = await admin.post("/api/admin/price-lists/volume-discounts", { level: lvl, min_amount: price * 10, percent: 5 });
+  assert.equal(b.status, 200, b.text);
+  const bad = await admin.post("/api/admin/price-lists/volume-discounts", { level: 7, min_amount: 10, percent: 2 });
+  assert.equal(bad.status, 400);
+
+  const cli = client();
+  assert.equal((await cli.login("cliente1", "Clave123")).status, 200);
+  const t = await cli.get("/api/my-volume-discounts");
+  assert.equal(t.json.tiers.length, 2);
+
+  // Debajo de la primera escala: sin descuento
+  let r = await cli.post("/api/orders", { items: [{ id: pid, qty: 4 }] });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.json.order.total, price * 4);
+  assert.equal(r.json.order.volume_discount_percent, null);
+
+  // Primera escala: 2%
+  r = await cli.post("/api/orders", { items: [{ id: pid, qty: 6 }] });
+  assert.equal(r.json.order.volume_discount_percent, 2);
+  assert.equal(r.json.order.total, Math.round(price * 6 * 0.98 * 100) / 100);
+
+  // Segunda escala: 5%, guardado en la línea
+  r = await cli.post("/api/orders", { items: [{ id: pid, qty: 12 }] });
+  const oid = r.json.order.id;
+  assert.equal(r.json.order.volume_discount_percent, 5);
+  assert.equal(r.json.order.total, Math.round(price * 12 * 0.95 * 100) / 100);
+  const it = (await itemsOf(oid))[0];
+  assert.equal(Number(it.discount_percent), 5);
+  assert.equal(Number(it.unit_price), price, "el precio unitario no cambia (comisión intacta)");
+
+  // Una escala desactivada deja de aplicar
+  await admin.patch("/api/admin/price-lists/volume-discounts/" + b.json.id, { active: false });
+  r = await cli.post("/api/orders", { items: [{ id: pid, qty: 12 }] });
+  assert.equal(r.json.order.volume_discount_percent, 2);
+
+  // Limpieza para no afectar otros tests
+  const list = await admin.get("/api/admin/price-lists/volume-discounts");
+  for (const row of list.json) await admin.del("/api/admin/price-lists/volume-discounts/" + row.id);
+  assert.equal((await cli.get("/api/my-volume-discounts")).json.tiers.length, 0);
+});
