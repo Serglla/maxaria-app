@@ -6928,3 +6928,194 @@ label.ppv-move-item:last-child { border-bottom: none; }
 #vd-table { min-width: 0; }
 #vd-table input[type="text"] { width: 110px; text-align: right; }
 #vd-table tr.vd-off td { opacity: .55; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Revisión de modales (12 oct 2026): nada se corta ni se tapa.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* 1. Ningún campo puede ser más ancho que la ventana. Sin min-width:0, un
+   input dentro de una grilla 1fr no se achica por debajo de su ancho natural
+   (~200px) y la columna se sale por la derecha. */
+.admin-modal-box input:not([type="checkbox"]):not([type="radio"]),
+.admin-modal-box select,
+.admin-modal-box textarea {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+/* Grillas de dos columnas: las columnas pueden achicarse (1fr = minmax(auto,1fr)) */
+.ue-grid,
+.purchase-form-top,
+.admin-modal-box [style*="grid-template-columns:1fr 1fr"],
+.admin-modal-box [style*="grid-template-columns: 1fr 1fr"] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+}
+.ue-grid > *, .purchase-form-top > * { min-width: 0; }
+@media (max-width: 600px) {
+  .purchase-form-top,
+  .admin-modal-box [style*="grid-template-columns:1fr 1fr"],
+  .admin-modal-box [style*="grid-template-columns: 1fr 1fr"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+@media (max-width: 640px) {
+  .ue-grid { grid-template-columns: minmax(0, 1fr) !important; }
+}
+
+/* 2. Editar cliente: dos columnas necesitan más que 480px */
+#user-edit-modal .admin-modal-box { max-width: 640px; }
+/* Usuario y contraseña se muestran tal cual (el login distingue mayúsculas) */
+.user-form .ue-uname-text { text-transform: none; letter-spacing: 0; overflow-wrap: anywhere; }
+#ue-password-text.ue-pass-empty { font-size: 12px; font-weight: 500; color: #64748b; padding: 2px 0; }
+/* Tabla "Dejó de comprar" en celular: cada producto es una tarjetita con
+   el nombre arriba y los tres datos abajo (antes se salía 63px) */
+@media (max-width: 640px) {
+  .ue-pattern-table thead { display: none; }
+  .ue-pattern-table, .ue-pattern-table tbody { display: block; width: 100%; }
+  .ue-pattern-table tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid #eef2f6;
+  }
+  .ue-pattern-table td { display: block; padding: 0; border: 0; }
+  .ue-pattern-table td:first-child { grid-column: 1 / -1; font-weight: 600; margin-bottom: 4px; }
+  .ue-pattern-table td.num { text-align: left; white-space: normal; }
+  .ue-pattern-table td:nth-child(2)::before,
+  .ue-pattern-table td:nth-child(3)::before,
+  .ue-pattern-table td:nth-child(4)::before {
+    display: block; font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .3px; color: #64748b;
+  }
+  .ue-pattern-table td:nth-child(2)::before { content: "Sin pedirlo"; }
+  .ue-pattern-table td:nth-child(3)::before { content: "Solía cada"; }
+  .ue-pattern-table td:nth-child(4)::before { content: "Última compra"; }
+}
+
+/* Pie fijo: tapa también el margen de abajo de la ventana, así las filas
+   que quedan detrás no se asoman por debajo de los botones */
+.admin-modal-box .admin-modal-foot {
+  box-shadow: 0 26px 0 0 #fff, 0 -8px 12px -10px rgba(15, 23, 42, .18);
+}
+
+/* 3. Filas "desplegable + campo" (descuento de la entrega, proveedor + ＋,
+   filtro del picker de cotización): se acomodan en vez de salirse */
+#delivery-admin-box label > div { flex-wrap: wrap; }
+#delivery-discount-type { flex: 1 1 140px !important; }
+#delivery-discount-value { flex: 1 1 110px !important; min-width: 0; }
+#pcot-picker-modal .admin-modal-box > div:first-of-type { flex-wrap: wrap; }
+#pcot-picker-search { min-width: 0; flex: 1 1 180px !important; }
+#pcot-picker-cat { min-width: 0 !important; flex: 1 1 140px; }
+.pur-supplier-row .btn { flex: 0 0 auto; }
+
+/* 4. Tablas dentro de ventanas: sin el mínimo de 1200px del panel */
+.admin-modal-box .admin-table { min-width: 0; }
+.admin-modal-box .admin-table-wrap { max-width: 100%; }
+
+/* En celular, las tablas de consulta de las ventanas (detalle de actividad,
+   historiales, categorías de gasto) se leen como tarjetas, igual que las de
+   las pestañas. admin.js les copia el nombre de la columna a data-label. */
+@media (max-width: 640px) {
+  .admin-modal-box table.mcard { min-width: 0 !important; width: 100%; border: 0; }
+  .admin-modal-box table.mcard thead { display: none; }
+  .admin-modal-box table.mcard tbody,
+  .admin-modal-box table.mcard tfoot { display: block; }
+  .admin-modal-box table.mcard tbody tr,
+  .admin-modal-box table.mcard tfoot tr {
+    display: block;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 6px 12px;
+    margin: 0 0 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  .admin-modal-box table.mcard tbody tr:nth-child(even) { background: #fff; }
+  .admin-modal-box table.mcard tbody td,
+  .admin-modal-box table.mcard tfoot td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 4px 0;
+    border: 0;
+    text-align: right;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .admin-modal-box table.mcard td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    max-width: 45%;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .3px;
+    color: #64748b;
+    text-align: left;
+  }
+  .admin-modal-box table.mcard td:first-child {
+    font-size: 14.5px;
+    font-weight: 700;
+    color: #111827;
+    border-bottom: 1px solid #f1f5f9;
+    padding-bottom: 6px;
+    margin-bottom: 2px;
+  }
+  .admin-modal-box table.mcard td.card-cell-empty { display: none; }
+  .admin-modal-box table.mcard tr.card-row-full td { display: block; text-align: center; }
+  .admin-modal-box table.mcard tr.card-row-full td::before { content: none; }
+}
+
+/* 5. El aviso "Tenés N pedidos pendientes" va debajo de las ventanas
+   (antes tapaba los botones Guardar/Cerrar en el celular) */
+.orders-notice { z-index: 1050; }
+
+/* 6. Botones de pie fijos abajo también en Editar/Nuevo producto, Ajuste de
+   stock y Replicar (antes había que bajar hasta el final para guardar) */
+@media (max-width: 640px) { .admin-modal-foot.modal-foot-inline { flex-wrap: wrap; } }
+.admin-modal-foot.modal-foot-inline {
+  align-items: center;
+  margin-left: -4px;
+  margin-right: -4px;
+  padding: 10px 4px 2px;
+  background: #fff;
+  z-index: 2;
+}
+
+/* 7. Celular: botones cómodos para el dedo y pie que no se desarma */
+@media (max-width: 640px) {
+  .admin-modal-box .admin-modal-foot .btn,
+  .admin-modal-box .modal-foot-inline .btn,
+  .app-confirm-box .btn { min-height: 44px; font-size: 14px; }
+  .admin-modal-box .btn:not(.admin-modal-close) { min-height: 38px; }
+  .admin-modal-box td .btn:not(.admin-modal-close),
+  .admin-modal-box th .btn { min-height: 0; }
+  .admin-modal-close { width: 36px !important; height: 36px !important; }
+  .admin-modal-foot { flex-wrap: wrap; }
+  .admin-modal-foot .btn { flex: 1 1 auto; }
+  /* Catálogo PDF y checklists de categorías: 2 columnas, el nombre entra */
+  .cats-check-list { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  /* Editar vendedor: el nombre del cliente puede ir en dos renglones */
+  .ve-client-name { white-space: normal; overflow-wrap: anywhere; }
+}
+
+/* 8. /ventas: el pie del selector de productos se acomoda en el celular */
+@media (max-width: 640px) {
+  .ventas-page .picker-foot { flex-wrap: wrap; padding: 10px 14px; }
+  .ventas-page .picker-foot > span[style*="flex:1"] { display: none; }
+  .ventas-page .picker-foot #picker-selected-count { flex: 1 1 100%; }
+  .ventas-page .picker-foot .btn { flex: 1 1 auto; min-height: 44px; }
+}
+
+/* Filtros de los historiales de stock en celular: dos por fila, búsqueda y
+   botón a todo el ancho (antes el buscador quedaba de 40px) */
+@media (max-width: 640px) {
+  #stock-adj-hist-modal .admin-modal-head + div,
+  #stock-mov-modal #stock-mov-summary + div { padding: 10px 0 !important; }
+  #stock-hist-from, #stock-hist-to, #stock-mov-from, #stock-mov-to,
+  #stock-hist-type, #stock-mov-type { flex: 1 1 calc(50% - 4px); width: auto !important; }
+  #stock-hist-search { flex: 1 1 100%; width: auto !important; }
+  #stock-hist-filter-btn, #stock-mov-filter-btn { flex: 1 1 100%; }
+}

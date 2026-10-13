@@ -993,6 +993,9 @@
     // Cualquier tabla de listado, no solo las que usan la clase .admin-table
     // (Ventas, por ejemplo, tiene la suya propia).
     scope.querySelectorAll(".admin-table-wrap table").forEach(labelTableCells);
+    // Tablas de consulta dentro de ventanas abiertas (detalle de actividad,
+    // historiales): también se ven como tarjetas en el celular.
+    document.querySelectorAll(".admin-modal:not([hidden]) table.mcard").forEach(labelTableCells);
   }
 
   function initCardTables() {
@@ -1005,6 +1008,15 @@
       if (!cardMq.matches || pending) return;
       pending = setTimeout(() => { pending = null; relabelVisibleTables(); }, 60);
     }).observe(main, { childList: true, subtree: true });
+    // Las ventanas están fuera de .admin-main: se observan aparte (filas que
+    // llegan después de abrirlas y el atributo hidden al abrirlas).
+    document.querySelectorAll(".admin-modal table.mcard").forEach((t) => {
+      const modal = t.closest(".admin-modal");
+      new MutationObserver(() => {
+        if (!cardMq.matches || pending) return;
+        pending = setTimeout(() => { pending = null; relabelVisibleTables(); }, 60);
+      }).observe(modal, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
+    });
     // Al rotar el teléfono o pasar a pantalla chica
     const onChange = () => relabelVisibleTables();
     if (cardMq.addEventListener) cardMq.addEventListener("change", onChange);
@@ -2099,6 +2111,7 @@
     els.ueUsername.value = u.username || "";
     els.uePasswordText.textContent = sessionPasswords.get(Number(u.id)) ||
       "🔒 No se guarda por seguridad (usá Reset pass para cambiarla)";
+    els.uePasswordText.classList.toggle("ue-pass-empty", !sessionPasswords.get(Number(u.id)));
     // "Revocar link" solo si ya tiene uno generado.
     if (els.ueRevokeBtn) els.ueRevokeBtn.hidden = !u.access_token;
     if (els.ueLinkInfo) {
@@ -4835,7 +4848,7 @@
         body: JSON.stringify({ password: password }),
       });
       sessionPasswords.set(Number(state.resetTargetId), String(password || ""));
-      if (state.editUserId === state.resetTargetId && els.uePasswordText) els.uePasswordText.textContent = String(password || "");
+      if (state.editUserId === state.resetTargetId && els.uePasswordText) { els.uePasswordText.textContent = String(password || ""); els.uePasswordText.classList.remove("ue-pass-empty"); }
       els.userResetModal.hidden = true;
       showToast("Contraseña actualizada");
     } catch (err) {
