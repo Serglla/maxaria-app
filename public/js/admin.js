@@ -8616,6 +8616,10 @@
     els.ventasTbody.innerHTML = list.map(ventaRowHtml).join("");
     els.ventasTbody.querySelectorAll(".ventas-row").forEach(function(tr) {
       tr.addEventListener("dblclick", function() { openOrderDetailModal(Number(tr.dataset.id)); });
+      // En celular/tablet el doble toque no dispara dblclick: un toque abre el detalle
+      tr.addEventListener("click", function() {
+        if (window.matchMedia("(max-width: 900px)").matches) openOrderDetailModal(Number(tr.dataset.id));
+      });
     });
   }
 
