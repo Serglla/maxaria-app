@@ -407,6 +407,9 @@
     purExportCancelBtn: document.getElementById("pur-export-cancel-btn"),
     purItemsEmpty: document.getElementById("pur-items-empty"),
     purItemsTotal: document.getElementById("pur-items-total"),
+    purVatMode: document.getElementById("pur-vat-mode"),
+    purVatPercent: document.getElementById("pur-vat-percent"),
+    purVatHint: document.getElementById("pur-vat-hint"),
     purSubmitBtn: document.getElementById("pur-submit-btn"),
     // Picker de múltiple selección de productos (compra)
     purAddProductsBtn: document.getElementById("pur-add-products-btn"),
@@ -10761,7 +10764,7 @@
     }
     if (els.supCount) els.supCount.textContent = list.length + (list.length === 1 ? " proveedor" : " proveedores");
     if (!list.length) {
-      els.supTbody.innerHTML = '<tr><td colspan="7" class="muted">Sin resultados</td></tr>';
+      els.supTbody.innerHTML = '<tr><td colspan="8" class="muted">Sin resultados</td></tr>';
       return;
     }
     els.supTbody.innerHTML = list.map(supplierRowHtml).join("");
@@ -10777,8 +10780,34 @@
       '<td class="num"><input class="cell-input" data-field="lead_time_days" type="number" min="1" max="120" style="width:64px;text-align:center"' +
         ' value="' + (s.lead_time_days || "") + '" placeholder="auto"' +
         ' title="Días que tarda en entregarte. Vacío = se calcula del historial de compras (lo usa Reposición)." /></td>' +
+      '<td>' + supVatSelectHtml(s) + '</td>' +
       '<td><label class="cell-toggle"><input type="checkbox" data-field="active"' + (s.active ? " checked" : "") + ' /><span></span></label></td>' +
     '</tr>';
+  }
+
+  // Cómo factura el proveedor. Un solo select combina los dos campos
+  // (default_vat_mode + default_vat_percent) para no sumar dos columnas.
+  const SUP_VAT_PRESETS = [
+    { v: "", label: "— sin definir —" },
+    { v: "incluido", label: "Con IVA incluido" },
+    { v: "neto:21", label: "Neto + IVA 21%" },
+    { v: "neto:10.5", label: "Neto + IVA 10,5%" },
+    { v: "neto:27", label: "Neto + IVA 27%" },
+  ];
+  function supVatValue(s) {
+    if (s.default_vat_mode === "neto") return "neto:" + (Number(s.default_vat_percent) || 21);
+    if (s.default_vat_mode === "incluido") return "incluido";
+    return "";
+  }
+  function supVatSelectHtml(s) {
+    const cur = supVatValue(s);
+    const opts = SUP_VAT_PRESETS.slice();
+    if (cur && !opts.some((o) => o.v === cur)) {
+      opts.push({ v: cur, label: "Neto + IVA " + cur.split(":")[1] + "%" });
+    }
+    return '<select class="cell-input" data-field="vat_preset" title="Cómo factura este proveedor. Precarga el modal de Nueva compra al elegirlo.">' +
+      opts.map((o) => '<option value="' + o.v + '"' + (o.v === cur ? " selected" : "") + '>' + escapeHtml(o.label) + '</option>').join("") +
+    '</select>';
   }
 
   if (els.supTbody) {
@@ -10790,12 +10819,22 @@
       const id = Number(tr.dataset.id);
       const field = inp.dataset.field;
       const value = inp.type === "checkbox" ? (inp.checked ? 1 : 0) : inp.value;
+      // El select de IVA guarda modo y alícuota de una.
+      let payload;
+      if (field === "vat_preset") {
+        const raw = String(inp.value || "");
+        if (!raw) payload = { default_vat_mode: null, default_vat_percent: null };
+        else if (raw === "incluido") payload = { default_vat_mode: "incluido", default_vat_percent: null };
+        else payload = { default_vat_mode: "neto", default_vat_percent: Number(raw.split(":")[1]) || 21 };
+      } else {
+        payload = { [field]: value };
+      }
       inp.classList.add("saving");
       try {
         const out = await api("/api/admin/suppliers/" + id, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ [field]: value }),
+          body: JSON.stringify(payload),
         });
         const idx = state.suppliers.findIndex((x) => x.id === id);
         if (idx >= 0) state.suppliers[idx] = out.supplier;
@@ -10811,6 +10850,7 @@
         const orig = state.suppliers.find((x) => x.id === id);
         if (orig) {
           if (inp.type === "checkbox") inp.checked = !!orig.active;
+          else if (field === "vat_preset") inp.value = supVatValue(orig);
           else inp.value = orig[field] || "";
         }
       }
@@ -10968,6 +11008,21 @@
     }
   }
 
+  // Cada proveedor tiene su forma de facturar: al elegirlo en una compra
+  // nueva, el modo y la alícuota quedan precargados (igual se pueden cambiar).
+  // Al editar no se toca: manda lo que se guardó con esa compra.
+  if (els.purFormSupplier) {
+    els.purFormSupplier.addEventListener("change", () => {
+      if (state.editingPurchaseId) return;
+      const sup = (state.suppliers || []).find((x) => String(x.id) === String(els.purFormSupplier.value));
+      if (!sup || !sup.default_vat_mode || !els.purVatMode) return;
+      els.purVatMode.value = sup.default_vat_mode === "neto" ? "neto" : "incluido";
+      if (sup.default_vat_mode === "neto") purSetVatPercent(Number(sup.default_vat_percent) || 21);
+      purSyncVatUi();
+      renderPurchaseItems();
+    });
+  }
+
   function renderPurchases() {
     if (!els.purTbody) return;
     const supFilter   = els.purSupFilter   ? els.purSupFilter.value   : "all";
@@ -11045,22 +11100,33 @@
               ? fmtTabletas(Math.round((Number(it.quantity) / upb) * 100) / 100) + ' <span class="muted" style="font-size:11px">×' + upb + '</span>'
               : '<span class="muted">—</span>') + '</td>' +
             '<td class="num">' + it.quantity + '</td>' +
-            '<td class="num">' + fmtPrice(it.unit_cost) + '</td>' +
+            '<td class="num">' + fmtPrice(it.unit_cost) +
+              (it.unit_cost_net != null && Number(it.vat_percent) > 0
+                ? '<div class="muted" style="font-size:11px">neto ' + fmtPrice(it.unit_cost_net) + ' +' + fmtTabletas(Number(it.vat_percent)) + '%</div>'
+                : '') + '</td>' +
             '<td class="num">' + fmtPrice(it.subtotal) + '</td></tr>';
           }).join("") +
           '</tbody></table>'
         : '<p class="muted">Sin items.</p>';
+      // Compra cargada en neto: se muestra el desglose como el pie de la factura.
+      const vatAmount = Number(data.vat_amount) || 0;
+      const vatLine = vatAmount > 0
+        ? '<p class="pur-detail-vat">Neto ' + fmtPrice((Number(data.total_cost) || 0) - vatAmount) +
+          ' · IVA ' + fmtPrice(vatAmount) +
+          ' · <strong>Total ' + fmtPrice(Number(data.total_cost) || 0) + '</strong></p>'
+        : '';
       const editBtn = '<div class="pur-detail-actions">' +
         '<button type="button" class="btn btn-small pur-edit-btn" data-id="' + id + '">Editar compra</button> ' +
         '<button type="button" class="btn btn-small pur-export-row-btn" data-id="' + id + '">📤 Exportar</button> ' +
         '<button type="button" class="btn btn-small btn-danger pur-del-btn" data-id="' + id + '">🗑 Eliminar compra</button>' +
         '</div>';
-      cell.innerHTML = notesHtml + tableHtml + editBtn;
+      cell.innerHTML = notesHtml + tableHtml + vatLine + editBtn;
       cell.querySelector(".pur-edit-btn").addEventListener("click", () => openPurchaseEdit(id));
       cell.querySelector(".pur-export-row-btn").addEventListener("click", () => openPurExport({
         items: items.map((it) => ({
           product_code: it.product_code, product_name: it.product_name,
-          quantity: it.quantity, unit_cost: it.unit_cost,
+          quantity: it.quantity,
+          unit_cost: it.unit_cost_net != null ? it.unit_cost_net : it.unit_cost,
           upb: Math.max(1, Math.round(Number(it.units_per_bulto) || 1)),
         })),
         supplier_name: data.supplier_name || "",
@@ -11103,17 +11169,26 @@
     try {
       const data = await api("/api/admin/purchases/" + id);
       state.editingPurchaseId = id;
-      state.purchaseItems = (data.items || []).map((it) => ({
-        product_id:   it.product_id,
-        product_code: it.product_code || "",
-        product_name: it.product_name || "",
-        quantity:     it.quantity,
-        unit_cost:    it.unit_cost,
-        subtotal:     it.subtotal,
-        // Empaque del producto para la columna BULTOS (el server lo devuelve
-        // con el JOIN a products; si el producto se borró, queda suelto).
-        upb:          Math.max(1, Math.round(Number(it.units_per_bulto) || 1)),
-      }));
+      // La compra se muestra como la factura: si se cargó en neto, el modal
+      // vuelve a mostrar los netos (el server guarda el costo con IVA).
+      const vatMode = data.vat_mode === "neto" ? "neto" : "incluido";
+      state.purchaseItems = (data.items || []).map((it) => {
+        const neto = (vatMode === "neto" && it.unit_cost_net != null)
+          ? Number(it.unit_cost_net) : Number(it.unit_cost) || 0;
+        const qty  = Number(it.quantity) || 0;
+        return {
+          product_id:   it.product_id,
+          product_code: it.product_code || "",
+          product_name: it.product_name || "",
+          quantity:     it.quantity,
+          unit_cost:    neto,
+          subtotal:     Math.round(neto * qty * 100) / 100,
+          vat:          vatMode === "neto" ? (Number(it.vat_percent) || 0) : undefined,
+          // Empaque del producto para la columna BULTOS (el server lo devuelve
+          // con el JOIN a products; si el producto se borró, queda suelto).
+          upb:          Math.max(1, Math.round(Number(it.units_per_bulto) || 1)),
+        };
+      });
       if (els.purchaseCreateForm) els.purchaseCreateForm.reset();
       if (els.purchaseCreateMsg) els.purchaseCreateMsg.textContent = "";
       // Prellenar campos del header
@@ -11132,6 +11207,12 @@
         if (notesInput) notesInput.value = data.notes || "";
         const dtInput = form.querySelector('[name="received_at"]');
         if (dtInput && data.received_at) dtInput.value = data.received_at.slice(0, 16).replace(" ", "T");
+        if (els.purVatMode) els.purVatMode.value = vatMode;
+        if (vatMode === "neto") {
+          const firstVat = (data.items || []).map((it) => Number(it.vat_percent) || 0).find((v) => v > 0);
+          purSetVatPercent(firstVat || 21);
+        }
+        purSyncVatUi();
       }
       renderPurchaseItems();
       await ensureAllProducts();
@@ -11142,6 +11223,14 @@
     } catch (err) {
       showToast("Error cargando compra: " + err.message, "err");
     }
+  }
+
+  if (els.purVatMode) {
+    els.purVatMode.addEventListener("change", () => { purSyncVatUi(); renderPurchaseItems(); });
+  }
+  if (els.purVatPercent) {
+    // El IVA general alcanza a los renglones que no tengan uno propio.
+    els.purVatPercent.addEventListener("change", renderPurchaseItems);
   }
 
   if (els.purSupFilter)   els.purSupFilter.addEventListener("change", renderPurchases);
@@ -11161,9 +11250,68 @@
     }
   }
 
+  // ---- IVA de la compra ----
+  // Dos formas de facturar: con el IVA ya incluido en cada precio (lo de
+  // siempre) o el NETO por renglón sumando el IVA al pie. En modo "neto",
+  // it.unit_cost es el neto —lo que dice la factura— y el costo que termina
+  // en el producto es neto × (1 + iva/100). it.vat pisa el IVA general en
+  // ese renglón (algunos productos van a 10,5%).
+  function purVatMode() {
+    return els.purVatMode && els.purVatMode.value === "neto" ? "neto" : "incluido";
+  }
+  function purVatDefault() {
+    const n = Number(els.purVatPercent && els.purVatPercent.value);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  function purItemVat(it) {
+    if (purVatMode() !== "neto") return 0;
+    const own = Number(it && it.vat);
+    return Number.isFinite(own) && own >= 0 ? own : purVatDefault();
+  }
+  function purItemCostWithVat(it) {
+    const base = Number(it && it.unit_cost) || 0;
+    const v = purItemVat(it);
+    return v ? Math.round(base * (1 + v / 100) * 100) / 100 : base;
+  }
+  // Deja el select de alícuota en ese valor, agregando la opción si no estaba
+  // (una compra vieja o un proveedor con una alícuota rara).
+  function purSetVatPercent(v) {
+    const sel = els.purVatPercent;
+    if (!sel) return;
+    const val = String(Number(v) || 0);
+    if (!sel.querySelector('[value="' + val + '"]')) {
+      const opt = document.createElement("option");
+      opt.value = val;
+      opt.textContent = "IVA " + fmtTabletas(Number(v) || 0) + "%";
+      sel.appendChild(opt);
+    }
+    sel.value = val;
+  }
+  // Muestra/oculta la alícuota según el modo elegido.
+  function purSyncVatUi() {
+    const neto = purVatMode() === "neto";
+    if (els.purVatPercent) els.purVatPercent.hidden = !neto;
+    if (els.purVatHint) {
+      els.purVatHint.textContent = neto
+        ? "Cargá los costos como vienen en la factura (sin IVA). El sistema le suma el IVA al costo de cada producto y al total."
+        : 'Si el proveedor factura el neto por renglón y suma el IVA al final, elegí "Sin IVA": cargás los precios tal como vienen y el sistema le suma el IVA al costo de cada producto.';
+    }
+  }
+
   function recalcPurchaseTotal() {
-    const total = state.purchaseItems.reduce((s, it) => s + it.subtotal, 0);
-    if (els.purItemsTotal) els.purItemsTotal.innerHTML = '<strong>' + fmtPrice(total) + '</strong>';
+    // Neto = lo cargado. Total = con IVA, que es lo que se le debe al
+    // proveedor y el costo que va a los productos.
+    const neto = state.purchaseItems.reduce((s, it) => s + it.subtotal, 0);
+    const total = Math.round(state.purchaseItems.reduce(
+      (s, it) => s + purItemCostWithVat(it) * (Number(it.quantity) || 0), 0) * 100) / 100;
+    const iva = Math.round((total - neto) * 100) / 100;
+    if (els.purItemsTotal) {
+      els.purItemsTotal.innerHTML = iva > 0
+        ? '<span class="pur-tot-part">Neto ' + fmtPrice(neto) + '</span>' +
+          '<span class="pur-tot-part pur-tot-iva">IVA ' + fmtPrice(iva) + '</span>' +
+          '<strong class="pur-tot-final">Total ' + fmtPrice(total) + '</strong>'
+        : '<strong class="pur-tot-final">Total ' + fmtPrice(neto) + '</strong>';
+    }
     if (els.purItemsBultosTotal) {
       const tb = state.purchaseItems.reduce((s, it) => s + purBultosOf(it), 0);
       const tu = state.purchaseItems.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
@@ -11251,6 +11399,14 @@
       const note = upb > 1
         ? '<span class="pur-blt-note" style="font-size:11px;' + purBltNoteStyle(it) + '">' + purBltNoteText(it) + '</span>'
         : '<span class="pur-blt-note" style="font-size:11px;color:#9ca3af">suelto</span>';
+      // En modo neto, cada renglón lleva su alícuota (pisable) y muestra el
+      // costo final con IVA, que es el que se guarda en el producto.
+      const vatOn = purVatMode() === "neto";
+      const vatCell = vatOn
+        ? '<span class="pc-lbl">+IVA</span>' +
+          '<input type="number" class="cell-input cell-num pur-vat pc-in pc-vat" min="0" max="100" step="0.5" value="' + purItemVat(it) + '" data-idx="' + idx + '" title="IVA de este renglón (%). Pisa el IVA general de la compra." />' +
+          '<span class="pur-ivanote">= ' + fmtPrice(purItemCostWithVat(it)) + ' c/IVA</span>'
+        : "";
       const costBulto = upb > 1
         ? '<span class="pc-lbl">$/blt</span>' +
           '<input type="number" class="cell-input cell-num pur-cost-bulto pc-in pc-cost" min="0" step="0.01" value="' + Math.round((Number(it.unit_cost) || 0) * upb) + '" data-idx="' + idx + '" title="Costo por bulto (lo que cotiza el proveedor). Recalcula el costo unitario." />'
@@ -11279,9 +11435,9 @@
             '</div>' +
             '<span class="pc-sep"></span>' +
             '<div class="pc-grp">' +
-              '<span class="pc-lbl">' + (isComp ? "$/comp" : "Costo") + '</span>' +
+              '<span class="pc-lbl">' + (isComp ? "$/comp" : "Costo") + (vatOn ? " neto" : "") + '</span>' +
               '<input type="number" class="cell-input cell-num pur-cost pc-in pc-cost" min="0" step="0.01" value="' + costVal + '" data-idx="' + idx + '" />' +
-              costBulto +
+              costBulto + vatCell +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -11331,6 +11487,8 @@
     if (qtyEl) qtyEl.style.borderColor = Number.isInteger(Number(it.quantity)) ? "" : "#dc2626";
     const sub = tr.querySelector(".pur-subtotal");
     if (sub) sub.textContent = fmtPrice(it.subtotal);
+    const iva = tr.querySelector(".pur-ivanote");
+    if (iva) iva.textContent = "= " + fmtPrice(purItemCostWithVat(it)) + " c/IVA";
   }
 
   // Recalcula quantity/unit_cost canónicos (en tabletas) de un item en modo comprimido.
@@ -11407,6 +11565,10 @@
         it.subtotal = it.quantity * it.unit_cost;
       } else if (e.target.classList.contains("pur-cpt")) {
         it.cpt = Math.max(1, Math.floor(Number(e.target.value) || 1)); purSyncComp(it);
+      } else if (e.target.classList.contains("pur-vat")) {
+        // Alícuota propia del renglón: el subtotal (neto) no cambia, sí el
+        // costo con IVA y el total de la compra.
+        it.vat = Math.max(0, Math.min(100, Number(e.target.value) || 0));
       } else return;
       purSyncRow(e.target.closest("tr"), it, e.target);
       recalcPurchaseTotal();
@@ -11702,6 +11864,7 @@
       state.purchaseFromPedido = null;
       if (els.purchaseCreateForm) els.purchaseCreateForm.reset();
       if (els.purchaseCreateMsg) els.purchaseCreateMsg.textContent = "";
+      purSyncVatUi();
       renderPurchaseItems();
       // Fecha default = ahora
       if (els.purchaseCreateForm) {
@@ -11937,13 +12100,16 @@
         notes: fd.get("notes"),
         received_at: received_at_raw ? received_at_raw.replace("T", " ") : null,
         cost_policy: fd.get("cost_policy") || "higher",
+        vat_mode: purVatMode(),
+        vat_percent: purVatDefault(),
         request_id: (!state.editingPurchaseId && state.purchaseFromPedido) ? state.purchaseFromPedido.id : null,
         items: state.purchaseItems.map((it) => ({
           product_id: it.product_id,
           product_code: it.product_code,
           product_name: it.product_name,
           quantity: it.quantity,
-          unit_cost: it.unit_cost,
+          unit_cost: it.unit_cost,          // neto si vat_mode = "neto"
+          vat_percent: purItemVat(it),
         })),
       };
       const isEditing = !!state.editingPurchaseId;
@@ -11955,7 +12121,10 @@
         await api(url, { method: method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         await purPersistUpb();
         const fromPedido = body.request_id ? state.purchaseFromPedido : null;
-        const savedItems = state.purchaseItems.slice();
+        // El reporte de diferencias del pedido compara contra el costo del
+        // producto, que es con IVA: le paso el costo ya convertido.
+        const savedItems = state.purchaseItems.map((it) =>
+          Object.assign({}, it, { unit_cost: purItemCostWithVat(it) }));
         state.purchasesLoaded = false;
         await loadPurchases();
         if (els.purchaseCreateModal) els.purchaseCreateModal.hidden = true;

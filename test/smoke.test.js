@@ -737,3 +737,90 @@ test("descuento por monto: escalas por nivel se aplican al pedido del catálogo"
   for (const row of list.json) await admin.del("/api/admin/price-lists/volume-discounts/" + row.id);
   assert.equal((await cli.get("/api/my-volume-discounts")).json.tiers.length, 0);
 });
+
+test("compra con IVA aparte: el costo del producto queda con IVA y el neto se conserva", async () => {
+  const pid1 = newProduct("IVA1", 0);
+  const pid2 = newProduct("IVA2", 0);
+  const sup = await admin.post("/api/admin/suppliers", { name: "Proveedor IVA" });
+  assert.equal(sup.status, 200, sup.text);
+  const supId = sup.json.supplier.id;
+
+  // El proveedor factura el neto por renglón y suma el IVA al pie.
+  const r = await admin.post("/api/admin/purchases", {
+    supplier_id: supId,
+    reference: "A-0001",
+    cost_policy: "always",
+    vat_mode: "neto",
+    vat_percent: 21,
+    items: [
+      { product_id: pid1, quantity: 10, unit_cost: 256 },                   // 21% (el general)
+      { product_id: pid2, quantity: 4, unit_cost: 1000, vat_percent: 10.5 },// alícuota propia
+    ],
+  });
+  assert.equal(r.status, 200, r.text);
+  const pid = r.json.purchase.id;
+
+  // 256 + 21% = 309,76 ; 1000 + 10,5% = 1105
+  const neto = 256 * 10 + 1000 * 4;             // 6560
+  const total = 309.76 * 10 + 1105 * 4;         // 7517,6
+  assert.equal(Number(r.json.purchase.total_cost), Math.round(total * 100) / 100);
+  assert.equal(Number(r.json.purchase.vat_amount), Math.round((total - neto) * 100) / 100);
+  assert.equal(r.json.purchase.vat_mode, "neto");
+
+  // El costo del producto es el de la factura CON IVA (lo que pide el negocio).
+  const d = rawDb();
+  assert.equal(d.prepare("SELECT cost FROM products WHERE id = ?").get(pid1).cost, 309.76);
+  assert.equal(d.prepare("SELECT cost FROM products WHERE id = ?").get(pid2).cost, 1105);
+  // La deuda del proveedor es el total con IVA (lo que efectivamente se paga).
+  const deuda = d.prepare(
+    "SELECT amount FROM supplier_movements WHERE purchase_order_id = ? AND type = 'debit'"
+  ).get(pid).amount;
+  assert.equal(Number(deuda), Math.round(total * 100) / 100);
+  d.close();
+
+  // Al reabrirla se ven los netos de la factura, no el bruto.
+  const det = await admin.get("/api/admin/purchases/" + pid);
+  assert.equal(det.json.vat_mode, "neto");
+  const i1 = det.json.items.find((x) => x.product_id === pid1);
+  assert.equal(Number(i1.unit_cost_net), 256);
+  assert.equal(Number(i1.vat_percent), 21);
+  assert.equal(Number(i1.unit_cost), 309.76);
+  const i2 = det.json.items.find((x) => x.product_id === pid2);
+  assert.equal(Number(i2.unit_cost_net), 1000);
+  assert.equal(Number(i2.vat_percent), 10.5);
+
+  // Editar la compra mantiene el modo y recalcula bien.
+  const put = await admin.put("/api/admin/purchases/" + pid, {
+    supplier_id: supId, cost_policy: "always", vat_mode: "neto", vat_percent: 21,
+    items: [{ product_id: pid1, quantity: 10, unit_cost: 300 }],
+  });
+  assert.equal(put.status, 200, put.text);
+  const det2 = await admin.get("/api/admin/purchases/" + pid);
+  assert.equal(Number(det2.json.total_cost), Math.round(363 * 10 * 100) / 100);
+  assert.equal(Number(det2.json.vat_amount), Math.round((363 - 300) * 10 * 100) / 100);
+  assert.equal(Number(det2.json.items[0].unit_cost_net), 300);
+
+  // Con el IVA incluido (lo de siempre) nada cambia: no se toca el costo cargado.
+  const r2 = await admin.post("/api/admin/purchases", {
+    supplier_id: supId, cost_policy: "always",
+    items: [{ product_id: pid1, quantity: 2, unit_cost: 500 }],
+  });
+  assert.equal(r2.status, 200, r2.text);
+  assert.equal(Number(r2.json.purchase.total_cost), 1000);
+  assert.equal(Number(r2.json.purchase.vat_amount), 0);
+  assert.equal(r2.json.purchase.vat_mode, "incluido");
+  const d2 = rawDb();
+  assert.equal(d2.prepare("SELECT cost FROM products WHERE id = ?").get(pid1).cost, 500);
+  assert.equal(d2.prepare("SELECT unit_cost_net FROM purchase_items WHERE purchase_order_id = ?").get(r2.json.purchase.id).unit_cost_net, null);
+  d2.close();
+
+  // IVA habitual del proveedor: se guarda y vuelve en el listado.
+  const pat = await admin.patch("/api/admin/suppliers/" + supId, { default_vat_mode: "neto", default_vat_percent: 21 });
+  assert.equal(pat.status, 200, pat.text);
+  const sups = await admin.get("/api/admin/suppliers");
+  const row = sups.json.find((x) => x.id === supId);
+  assert.equal(row.default_vat_mode, "neto");
+  assert.equal(Number(row.default_vat_percent), 21);
+  const malo = await admin.patch("/api/admin/suppliers/" + supId, { default_vat_mode: "cualquiera" });
+  assert.equal(malo.status, 400);
+});

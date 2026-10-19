@@ -6441,7 +6441,8 @@ app.get("/api/admin/deliveries", requireAdmin, (req, res) => {
 
 app.get("/api/admin/suppliers", requireAdmin, (req, res) => {
   const rows = db.prepare(
-    "SELECT id, name, contact, phone, email, notes, active, created_at, lead_time_days" +
+    "SELECT id, name, contact, phone, email, notes, active, created_at, lead_time_days," +
+    "       default_vat_mode, default_vat_percent" +
     "  FROM suppliers ORDER BY name"
   ).all();
   res.json(rows);
@@ -6466,7 +6467,8 @@ app.patch("/api/admin/suppliers/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
   const b = req.body || {};
-  const allowed = ["name", "contact", "phone", "email", "notes", "active", "lead_time_days"];
+  const allowed = ["name", "contact", "phone", "email", "notes", "active", "lead_time_days",
+                   "default_vat_mode", "default_vat_percent"];
   const sets = [];
   const vals = [];
   for (const k of allowed) {
@@ -6484,6 +6486,22 @@ app.patch("/api/admin/suppliers/:id", requireAdmin, (req, res) => {
           return res.status(400).json({ error: "La demora debe estar entre 1 y 120 días" });
         }
         sets.push("lead_time_days = ?"); vals.push(n);
+      } else if (k === "default_vat_mode") {
+        // IVA habitual del proveedor: precarga el modo al elegirlo en una
+        // compra nueva. NULL / "" = sin definir (la compra arranca con IVA
+        // incluido, como siempre).
+        const raw = String(b.default_vat_mode || "").trim();
+        if (raw && !PURCHASE_VAT_MODES.includes(raw)) {
+          return res.status(400).json({ error: "Modo de IVA invalido" });
+        }
+        sets.push("default_vat_mode = ?"); vals.push(raw || null);
+      } else if (k === "default_vat_percent") {
+        const raw = b.default_vat_percent;
+        const n = (raw == null || raw === "") ? null : Number(raw);
+        if (n != null && (!Number.isFinite(n) || n < 0 || n > 100)) {
+          return res.status(400).json({ error: "El IVA debe estar entre 0 y 100" });
+        }
+        sets.push("default_vat_percent = ?"); vals.push(n == null ? null : Math.round(n * 100) / 100);
       } else if (k === "active") {
         sets.push("active = ?"); vals.push(b.active ? 1 : 0);
       } else {
@@ -6567,6 +6585,25 @@ function applyPurchaseCostUpdate(productId, newCostRaw, policy, purchaseId) {
   }
 }
 
+// ===== IVA de las compras =====
+// 'incluido' = los costos cargados ya traen el IVA (lo de siempre).
+// 'neto'     = el proveedor factura el neto por renglon y suma el IVA al pie,
+//              asi que hay que sumarselo a cada costo.
+// En la base, purchase_items.unit_cost queda SIEMPRE con IVA (es lo que
+// alimenta products.cost, el total de la compra y la deuda del proveedor); el
+// neto y la alicuota se guardan al lado para poder mostrar la factura tal cual.
+const PURCHASE_VAT_MODES = ["incluido", "neto"];
+function normalizeVatPercent(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(100, Math.round(n * 100) / 100);
+}
+function costWithVat(cost, vatMode, vatPercent) {
+  const c = Math.max(0, Number(cost) || 0);
+  if (vatMode !== "neto" || !vatPercent) return round2(c);
+  return round2(c * (1 + vatPercent / 100));
+}
+
 app.post("/api/admin/purchases", requireAdmin, (req, res) => {
   const b = req.body || {};
   const supplier_id  = b.supplier_id ? Number(b.supplier_id) : null;
@@ -6574,6 +6611,8 @@ app.post("/api/admin/purchases", requireAdmin, (req, res) => {
   const notes        = String(b.notes || "").trim().slice(0, 500) || null;
   const received_at  = String(b.received_at || "").trim() || null;
   const cost_policy  = PURCHASE_COST_POLICIES.includes(b.cost_policy) ? b.cost_policy : "higher";
+  const vat_mode     = PURCHASE_VAT_MODES.includes(b.vat_mode) ? b.vat_mode : "incluido";
+  const vat_default  = vat_mode === "neto" ? normalizeVatPercent(b.vat_percent) : 0;
   const rawItems     = Array.isArray(b.items) ? b.items : [];
   // Factura de un pedido a proveedor: la compra queda vinculada al pedido.
   const request_id   = b.request_id ? Number(b.request_id) : null;
@@ -6590,13 +6629,23 @@ app.post("/api/admin/purchases", requireAdmin, (req, res) => {
   }
 
   const lines = [];
-  let totalCost = 0;
+  let totalCost = 0;   // CON IVA: es lo que se le debe al proveedor
+  let vatTotal  = 0;
   for (const it of rawItems) {
     const product_id  = it.product_id ? Number(it.product_id) : null;
     const quantity    = Math.max(1, Math.floor(Number(it.quantity) || 1));
-    const unit_cost   = Math.max(0, Number(it.unit_cost) || 0);
-    const subtotal    = unit_cost * quantity;
+    // El costo que llega es el de la factura: neto si vat_mode = 'neto', con
+    // IVA si no. unit_cost (el canonico, el que va a products.cost) siempre
+    // termina CON IVA.
+    const costRaw     = Math.max(0, Number(it.unit_cost) || 0);
+    const vat_percent = vat_mode === "neto"
+      ? (it.vat_percent == null || it.vat_percent === "" ? vat_default : normalizeVatPercent(it.vat_percent))
+      : 0;
+    const unit_cost_net = vat_mode === "neto" ? round2(costRaw) : null;
+    const unit_cost   = costWithVat(costRaw, vat_mode, vat_percent);
+    const subtotal    = round2(unit_cost * quantity);
     totalCost += subtotal;
+    if (unit_cost_net != null) vatTotal += round2((unit_cost - unit_cost_net) * quantity);
     let product_code = String(it.product_code || "").trim().slice(0, 50);
     let product_name = String(it.product_name || "").trim().slice(0, 200);
     if (product_id && (!product_code || !product_name)) {
@@ -6607,25 +6656,27 @@ app.post("/api/admin/purchases", requireAdmin, (req, res) => {
       }
     }
     if (!product_name) continue;
-    lines.push({ product_id, product_code, product_name, quantity, unit_cost, subtotal });
+    lines.push({ product_id, product_code, product_name, quantity, unit_cost, subtotal, unit_cost_net, vat_percent });
   }
   if (!lines.length) return res.status(400).json({ error: "Sin items validos" });
+  totalCost = round2(totalCost);
+  vatTotal  = round2(vatTotal);
 
   let purchaseId;
   db.transaction(() => {
     const r = db.prepare(
-      "INSERT INTO purchase_orders (supplier_id, reference, notes, total_cost, received_at, created_by, created_at, request_id)" +
-      " VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')), ?, datetime('now'), ?)"
-    ).run(supplier_id, reference, notes, totalCost, received_at, req.session.userId, request_id);
+      "INSERT INTO purchase_orders (supplier_id, reference, notes, total_cost, received_at, created_by, created_at, request_id, vat_mode, vat_amount)" +
+      " VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')), ?, datetime('now'), ?, ?, ?)"
+    ).run(supplier_id, reference, notes, totalCost, received_at, req.session.userId, request_id, vat_mode, vatTotal);
     purchaseId = r.lastInsertRowid;
 
     const insItem = db.prepare(
-      "INSERT INTO purchase_items (purchase_order_id, product_id, product_code, product_name, quantity, unit_cost, subtotal)" +
-      " VALUES (?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO purchase_items (purchase_order_id, product_id, product_code, product_name, quantity, unit_cost, subtotal, unit_cost_net, vat_percent)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     for (const l of lines) {
       insItem.run(purchaseId, l.product_id, l.product_code, l.product_name,
-                  l.quantity, l.unit_cost, l.subtotal);
+                  l.quantity, l.unit_cost, l.subtotal, l.unit_cost_net, l.vat_percent);
       if (l.product_id) {
         // El stock NO se suma aca: la compra queda pendiente (received=0) y el
         // stock entra recien al confirmar la recepcion. El costo y los precios
@@ -6664,7 +6715,8 @@ app.get("/api/admin/purchases/:id", requireAdmin, (req, res) => {
   // compra y la exportacion al proveedor (si el producto se borro, queda 1).
   const items = db.prepare(
     "SELECT pi.id, pi.product_id, pi.product_code, pi.product_name, pi.quantity," +
-    "       pi.unit_cost, pi.subtotal, COALESCE(p.units_per_bulto, 1) AS units_per_bulto," +
+    "       pi.unit_cost, pi.subtotal, pi.unit_cost_net, COALESCE(pi.vat_percent, 0) AS vat_percent," +
+    "       COALESCE(p.units_per_bulto, 1) AS units_per_bulto," +
     "       COALESCE(p.pack_unit, 'bulto') AS pack_unit" +
     "  FROM purchase_items pi LEFT JOIN products p ON p.id = pi.product_id" +
     " WHERE pi.purchase_order_id = ? ORDER BY pi.id"
@@ -6689,18 +6741,30 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
   const notes       = String(b.notes || "").trim().slice(0, 500) || null;
   const received_at = String(b.received_at || "").trim() || null;
   const cost_policy = PURCHASE_COST_POLICIES.includes(b.cost_policy) ? b.cost_policy : "higher";
+  const vat_mode    = PURCHASE_VAT_MODES.includes(b.vat_mode) ? b.vat_mode : "incluido";
+  const vat_default = vat_mode === "neto" ? normalizeVatPercent(b.vat_percent) : 0;
   const rawItems    = Array.isArray(b.items) ? b.items : [];
 
   if (!rawItems.length) return res.status(400).json({ error: "La compra debe tener al menos 1 item" });
 
   const lines = [];
-  let totalCost = 0;
+  let totalCost = 0;   // CON IVA: es lo que se le debe al proveedor
+  let vatTotal  = 0;
   for (const it of rawItems) {
     const product_id  = it.product_id ? Number(it.product_id) : null;
     const quantity    = Math.max(1, Math.floor(Number(it.quantity) || 1));
-    const unit_cost   = Math.max(0, Number(it.unit_cost) || 0);
-    const subtotal    = unit_cost * quantity;
+    // El costo que llega es el de la factura: neto si vat_mode = 'neto', con
+    // IVA si no. unit_cost (el canonico, el que va a products.cost) siempre
+    // termina CON IVA.
+    const costRaw     = Math.max(0, Number(it.unit_cost) || 0);
+    const vat_percent = vat_mode === "neto"
+      ? (it.vat_percent == null || it.vat_percent === "" ? vat_default : normalizeVatPercent(it.vat_percent))
+      : 0;
+    const unit_cost_net = vat_mode === "neto" ? round2(costRaw) : null;
+    const unit_cost   = costWithVat(costRaw, vat_mode, vat_percent);
+    const subtotal    = round2(unit_cost * quantity);
     totalCost += subtotal;
+    if (unit_cost_net != null) vatTotal += round2((unit_cost - unit_cost_net) * quantity);
     let product_code = String(it.product_code || "").trim().slice(0, 50);
     let product_name = String(it.product_name || "").trim().slice(0, 200);
     if (product_id && (!product_code || !product_name)) {
@@ -6711,9 +6775,11 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
       }
     }
     if (!product_name) continue;
-    lines.push({ product_id, product_code, product_name, quantity, unit_cost, subtotal });
+    lines.push({ product_id, product_code, product_name, quantity, unit_cost, subtotal, unit_cost_net, vat_percent });
   }
   if (!lines.length) return res.status(400).json({ error: "Sin items validos" });
+  totalCost = round2(totalCost);
+  vatTotal  = round2(vatTotal);
 
   db.transaction(() => {
     // Revertir stock de items anteriores SOLO si la compra ya estaba recibida.
@@ -6732,16 +6798,16 @@ app.put("/api/admin/purchases/:id", requireAdmin, (req, res) => {
     // Actualizar cabecera
     db.prepare(
       "UPDATE purchase_orders SET supplier_id = ?, reference = ?, notes = ?, total_cost = ?," +
-      "  received_at = COALESCE(?, received_at) WHERE id = ?"
-    ).run(supplier_id, reference, notes, totalCost, received_at, id);
+      "  vat_mode = ?, vat_amount = ?, received_at = COALESCE(?, received_at) WHERE id = ?"
+    ).run(supplier_id, reference, notes, totalCost, vat_mode, vatTotal, received_at, id);
 
     // Insertar nuevos items y sumar stock
     const insItem = db.prepare(
-      "INSERT INTO purchase_items (purchase_order_id, product_id, product_code, product_name, quantity, unit_cost, subtotal)" +
-      " VALUES (?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO purchase_items (purchase_order_id, product_id, product_code, product_name, quantity, unit_cost, subtotal, unit_cost_net, vat_percent)" +
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     for (const l of lines) {
-      insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_cost, l.subtotal);
+      insItem.run(id, l.product_id, l.product_code, l.product_name, l.quantity, l.unit_cost, l.subtotal, l.unit_cost_net, l.vat_percent);
       if (l.product_id) {
         // Costo/precios se actualizan siempre (como en el POST). El stock solo
         // se vuelve a sumar si la compra ya estaba recibida (sino entra en la

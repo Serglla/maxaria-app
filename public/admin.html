@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20261012a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20261019a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -1659,10 +1659,11 @@
               <th>Email</th>
               <th>Notas</th>
               <th class="num" title="Días que tarda en entregarte. Vacío = se deduce del historial de compras. Lo usa Reposición.">Demora</th>
+              <th title="Cómo factura este proveedor. Precarga el modal de Nueva compra al elegirlo.">IVA</th>
               <th>Activo</th>
             </tr>
           </thead>
-          <tbody id="sup-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
+          <tbody id="sup-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -2964,6 +2965,22 @@
           <label>Notas
             <input type="text" name="notes" maxlength="500" />
           </label>
+          <label>Precios de la factura
+            <div class="pur-vat-row">
+              <select name="vat_mode" id="pur-vat-mode">
+                <option value="incluido" selected>Con IVA incluido</option>
+                <option value="neto">Sin IVA (neto + IVA)</option>
+              </select>
+              <select name="vat_percent" id="pur-vat-percent" hidden title="Alícuota que se le suma a cada costo. Se puede cambiar por renglón.">
+                <option value="21" selected>IVA 21%</option>
+                <option value="10.5">IVA 10,5%</option>
+                <option value="27">IVA 27%</option>
+                <option value="5">IVA 5%</option>
+                <option value="2.5">IVA 2,5%</option>
+              </select>
+            </div>
+            <span class="muted small" id="pur-vat-hint" style="display:block;margin-top:3px">Si el proveedor factura el neto por renglón y suma el IVA al final, elegí "Sin IVA": cargás los precios tal como vienen y el sistema le suma el IVA al costo de cada producto.</span>
+          </label>
           <label>Actualizar costo de productos
             <select name="cost_policy" id="pur-cost-policy">
               <option value="higher" selected>Solo si el nuevo costo es mayor</option>
@@ -2996,10 +3013,8 @@
             </tbody>
             <tfoot>
               <tr>
-                <td colspan="4" class="num" id="pur-items-bultos-total"></td>
-                <td class="num"><strong>Total</strong></td>
-                <td class="num" id="pur-items-total"><strong>$0</strong></td>
-                <td></td>
+                <td colspan="3" class="num" id="pur-items-bultos-total"></td>
+                <td colspan="4" class="num" id="pur-items-total"><strong>$0</strong></td>
               </tr>
             </tfoot>
           </table>
@@ -4032,6 +4047,6 @@
   <div id="toast" class="admin-toast" hidden></div>
 
   <script src="/js/shared/pricing.js?v=20261002b"></script>
-  <script src="/js/admin.js?v=20261016a"></script>
+  <script src="/js/admin.js?v=20261019a"></script>
 </body>
 </html>

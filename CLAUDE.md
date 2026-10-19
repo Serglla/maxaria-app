@@ -2276,3 +2276,37 @@ Problema: las ofertas son productos aparte en la categoría OFERTAS y pierden su
 - Aplicado en `/api/products`, `/api/price-changes`, `/api/my-suggestions`, validación de `POST /api/orders` y catálogo PDF por cliente. `/api/categories` oculta una categoría si todos sus productos con stock tienen rubro real y ninguno es visible para el cliente.
 - Panel: en Editar producto aparece "Categoría real de la oferta" cuando la categoría se llama *ofert*; si se saca el producto de OFERTAS se limpia. La tabla de Productos muestra "→ RUBRO" o "⚠ sin rubro" en las ofertas. Duplicar producto copia el rubro.
 - Test nuevo en smoke.test.js (48/48 OK).
+
+### IVA aparte en las compras (19 octubre 2026 — `admin.js?v=20261019a`, `styles.css?v=20261019a`)
+
+Pedido de Sergio: algunos proveedores facturan el precio **sin IVA** por renglón y lo suman recién al pie, pero él necesita el costo del producto **con IVA**. Antes el costo cargado iba tal cual a `products.cost`, al total de la compra y a la deuda del proveedor → el costo quedaba 21% abajo y los márgenes/rentabilidad mentían. Decisiones (AskUserQuestion): alícuota **por compra pisable por línea**, **solo en Compras** (Cotizaciones y Pedidos a proveedor quedaron igual), e **IVA habitual recordado por proveedor**.
+
+**Decisión de modelo (importante)**: `purchase_items.unit_cost` y `subtotal` siguen siendo **CON IVA**. Es lo que alimenta `products.cost`, `purchase_orders.total_cost`, la deuda del proveedor, la recepción y `cost_changes`: nada de eso cambió, solo recibe el número correcto. El neto y la alícuota se guardan al lado, para mostrar la compra igual que la factura al reabrirla y para discriminar el IVA.
+
+**Migración 006 (`lib/db/migrations/006_iva_compras.js`)**
+- `purchase_orders.vat_mode` TEXT NOT NULL DEFAULT 'incluido' ('incluido' = lo de siempre | 'neto') y `vat_amount` REAL (IVA total en pesos; 0 en las compras con IVA incluido, no se puede saber cuánto traían).
+- `purchase_items.unit_cost_net` REAL (NULL = la compra no discrimina IVA) y `vat_percent` REAL NOT NULL DEFAULT 0.
+- `suppliers.default_vat_mode` / `default_vat_percent` (NULL = sin definir).
+
+**Server**
+- Helpers nuevos antes del POST de compras: `PURCHASE_VAT_MODES`, `normalizeVatPercent(raw)` (0..100, 2 decimales) y `costWithVat(cost, mode, pct)` = `round2(cost × (1 + pct/100))`, que en modo 'incluido' devuelve el costo tal cual.
+- POST y PUT de `/api/admin/purchases` aceptan `vat_mode` + `vat_percent` (general) y `vat_percent` por item (pisa el general). El loop de items calcula `unit_cost` CON IVA, guarda `unit_cost_net` y acumula `vatTotal`. Los subtotales y totales ahora pasan por `round2` (antes podían arrastrar decimales de punto flotante).
+- `GET /api/admin/purchases/:id` devuelve `unit_cost_net` y `vat_percent` por item (la cabecera ya traía `po.*` → `vat_mode`/`vat_amount`).
+- Proveedores: GET devuelve los dos campos nuevos; PATCH los acepta con validación (modo inválido → 400, % fuera de 0..100 → 400).
+
+**Frontend** (`admin.html` + `admin.js` + `styles.css`)
+- Cabecera del modal de compra: selector **"Precios de la factura"** (Con IVA incluido / Sin IVA (neto + IVA)) + select de alícuota (21 / 10,5 / 27 / 5 / 2,5) que aparece solo en modo neto. Helpers `purVatMode()`, `purVatDefault()`, `purItemVat(it)`, `purItemCostWithVat(it)`, `purSetVatPercent(v)` (agrega la opción si la alícuota no estaba) y `purSyncVatUi()`.
+- **En modo neto `it.unit_cost` es el NETO** (lo que dice la factura) e `it.vat` la alícuota propia del renglón. El label del costo pasa a "Costo neto", aparece un input `+IVA` por línea y la nota verde **"= $X c/IVA"** (el costo que va a quedar en el producto). `purSyncRow` la refresca sin re-renderizar (bug del teclado).
+- Pie de la tabla: **Neto · IVA · Total** (antes solo Total). El `tfoot` pasó a 2 celdas (colspan 3 + 4).
+- `openPurchaseEdit` reconstruye los netos desde `unit_cost_net` y deja el selector como se guardó; compra nueva vuelve a 'incluido'.
+- Al elegir proveedor en una compra **nueva** se precarga su IVA habitual (al editar no se toca: manda lo guardado con esa compra).
+- Detalle expandible de la compra: bajo el costo unitario, "neto $169 +21%"; al pie, "Neto · IVA · Total". El export al proveedor usa el **neto** (es el precio que el proveedor maneja).
+- Tabla de Proveedores: columna **IVA** nueva (7→8 columnas) con un solo select que combina los dos campos (`data-field="vat_preset"`, valores `""` / `incluido` / `neto:21`…); el handler de auto-save manda los dos campos cuando el field es `vat_preset`.
+
+**Redondeo**: el IVA se calcula por renglón; el proveedor suele calcularlo sobre el neto total, así que puede haber diferencia de centavos contra el pie de la factura.
+
+**Verificación**: `npm test` 50/50 (test nuevo "compra con IVA aparte": costo con IVA en el producto, total y `vat_amount`, deuda del proveedor, netos al reabrir, edición, modo incluido sin cambios, default del proveedor y validaciones). Circuito completo probado además en el navegador sobre una **copia** de `data/maxaria.db` (server local en :3999): cargar 169 neto +21% y 230 neto +10,5% → productos en 204,49 y 254,15, pie "Neto $399 · IVA $59,64 · Total $458,64", detalle y reapertura mostrando los netos, y el IVA del proveedor precargando el modal. `node --check` OK en server.js y admin.js, llaves del CSS balanceadas, colas de los archivos íntegras (sin truncamiento esta sesión).
+
+**Nota de entorno**: `npm test` fallaba con `Cannot find module 'aws4'` — la dependencia estaba en `package.json` y en el lock pero no instalada localmente; se corrió `npm install` (el lock no cambió). En Windows el launcher de Python es `py`, no `python`.
+
+**Pendiente**: `git add/commit/push` + deploy Railway + Ctrl+F5.
