@@ -7690,6 +7690,86 @@ app.put("/api/admin/products-layout/locked", requireAdmin, (req, res) => {
   res.json({ ok: true, locked });
 });
 
+// Ya pedido y todavia no recibido (compras sin recibir + lo pendiente de los
+// pedidos a proveedor): no hay que volver a comprarlo. Map pid -> unidades.
+function repoIncomingMap() {
+  const incoming = new Map();
+  for (const r of db.prepare(
+    "SELECT pi.product_id AS pid, SUM(pi.quantity) AS qty" +
+    "  FROM purchase_items pi" +
+    "  JOIN purchase_orders po ON po.id = pi.purchase_order_id" +
+    " WHERE COALESCE(po.received,0) = 0 AND pi.product_id IS NOT NULL" +
+    " GROUP BY pi.product_id"
+  ).all()) incoming.set(r.pid, Number(r.qty) || 0);
+  for (const [pid, q] of pedidosPendingByProduct()) incoming.set(pid, (incoming.get(pid) || 0) + q);
+  return incoming;
+}
+// Proveedor derivado del historial: el ultimo que vendio ese producto.
+function repoLastSupplierMap() {
+  const lastSupplier = new Map();
+  for (const r of db.prepare(
+    "SELECT pi.product_id AS pid, po.supplier_id AS sid, MAX(po.created_at) AS d" +
+    "  FROM purchase_items pi" +
+    "  JOIN purchase_orders po ON po.id = pi.purchase_order_id" +
+    " WHERE po.supplier_id IS NOT NULL AND pi.product_id IS NOT NULL" +
+    " GROUP BY pi.product_id"
+  ).all()) lastSupplier.set(r.pid, r.sid);
+  return lastSupplier;
+}
+
+// POST /api/admin/products-purchase-plan — datos para "🛒 Armar pedido" desde
+// la selección de la tabla de Productos: proveedor (fijado o deducido del
+// historial), lo que ya viene en camino y la venta promedio por día (mismo
+// cálculo que Reposición). La cantidad sugerida la arma el panel según los días
+// de cobertura que elija el usuario.
+app.post("/api/admin/products-purchase-plan", requireAdmin, (req, res) => {
+  const ids = Array.from(new Set((Array.isArray((req.body || {}).product_ids) ? req.body.product_ids : [])
+    .map(Number).filter((n) => Number.isInteger(n) && n > 0))).slice(0, 500);
+  if (!ids.length) return res.status(400).json({ error: "Elegí al menos un producto" });
+  const cfg = repoConfig();
+  const oldDays = cfg.windowDays - cfg.recentDays;
+  const dayIso = (back) => new Date(Date.now() - back * 86400000).toISOString().slice(0, 10);
+  const windowStart = localDayBoundToUtc(dayIso(cfg.windowDays), false);
+  const recentStart = localDayBoundToUtc(dayIso(cfg.recentDays), false);
+  const ph = ids.map(() => "?").join(",");
+  const sales = new Map();
+  for (const r of db.prepare(
+    "SELECT oi.product_id AS pid," +
+    "       SUM(CASE WHEN o.created_at >= ? THEN oi.quantity ELSE 0 END) AS q_recent," +
+    "       SUM(CASE WHEN o.created_at <  ? THEN oi.quantity ELSE 0 END) AS q_old" +
+    "  FROM order_items oi JOIN orders o ON o.id = oi.order_id" +
+    " WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
+    "   AND o.created_at >= ? AND oi.product_id IN (" + ph + ")" +
+    " GROUP BY oi.product_id"
+  ).all(recentStart, recentStart, windowStart, ...ids)) sales.set(r.pid, r);
+  const incoming = repoIncomingMap();
+  const lastSupplier = repoLastSupplierMap();
+  const items = db.prepare(
+    "SELECT p.id, p.code, p.name, p.stock, p.cost, p.supplier_id," +
+    "       COALESCE(p.units_per_bulto,1) AS upb, COALESCE(p.pack_unit,'bulto') AS pack_unit" +
+    "  FROM products p WHERE p.id IN (" + ph + ")"
+  ).all(...ids).map((p) => {
+    const s = sales.get(p.id);
+    const qRecent = s ? Number(s.q_recent) || 0 : 0;
+    const qOld = s ? Number(s.q_old) || 0 : 0;
+    const rateRecent = qRecent / cfg.recentDays;
+    const rateOld = oldDays > 0 ? qOld / oldDays : 0;
+    const daily = qOld > 0 ? (2 * rateRecent + rateOld) / 3 : rateRecent;
+    const sid = p.supplier_id || lastSupplier.get(p.id) || null;
+    return {
+      product_id: p.id, code: p.code, name: p.name,
+      stock: Number(p.stock) || 0, cost: Number(p.cost) || 0,
+      units_per_bulto: Math.max(1, Number(p.upb) || 1), pack_unit: p.pack_unit,
+      daily: Math.round(daily * 100) / 100,
+      en_camino: incoming.get(p.id) || 0,
+      supplier_id: sid,
+      supplier_source: p.supplier_id ? "manual" : (sid ? "historico" : "sin_datos"),
+    };
+  });
+  const suppliers = db.prepare("SELECT id, name FROM suppliers WHERE active = 1 ORDER BY name COLLATE NOCASE").all();
+  res.json({ window_days: cfg.windowDays, items, suppliers });
+});
+
 // GET /api/admin/reposicion — sugerencia de compra agrupada por proveedor.
 // Query: supplier_id (filtro), urgencia (quebrado|critico|reponer), incluir_todo.
 app.get("/api/admin/reposicion", requireAdmin, (req, res) => {
@@ -7715,27 +7795,8 @@ app.get("/api/admin/reposicion", requireAdmin, (req, res) => {
     " GROUP BY oi.product_id"
   ).all(recentStart, recentStart, windowStart)) sales.set(r.pid, r);
 
-  // Ya pedido y todavia no recibido: no hay que volver a comprarlo.
-  const incoming = new Map();
-  for (const r of db.prepare(
-    "SELECT pi.product_id AS pid, SUM(pi.quantity) AS qty" +
-    "  FROM purchase_items pi" +
-    "  JOIN purchase_orders po ON po.id = pi.purchase_order_id" +
-    " WHERE COALESCE(po.received,0) = 0 AND pi.product_id IS NOT NULL" +
-    " GROUP BY pi.product_id"
-  ).all()) incoming.set(r.pid, Number(r.qty) || 0);
-  // Lo pedido a proveedores y todavia no facturado tambien esta "en camino".
-  for (const [pid, q] of pedidosPendingByProduct()) incoming.set(pid, (incoming.get(pid) || 0) + q);
-
-  // Proveedor derivado del historial: el ultimo que vendio ese producto.
-  const lastSupplier = new Map();
-  for (const r of db.prepare(
-    "SELECT pi.product_id AS pid, po.supplier_id AS sid, MAX(po.created_at) AS d" +
-    "  FROM purchase_items pi" +
-    "  JOIN purchase_orders po ON po.id = pi.purchase_order_id" +
-    " WHERE po.supplier_id IS NOT NULL AND pi.product_id IS NOT NULL" +
-    " GROUP BY pi.product_id"
-  ).all()) lastSupplier.set(r.pid, r.sid);
+  const incoming = repoIncomingMap();
+  const lastSupplier = repoLastSupplierMap();
 
   // Desde cuando esta en cero (para estimar venta perdida). Solo aplica a los
   // que hoy estan sin stock; sale del historial de movimientos.

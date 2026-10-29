@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20261029a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20261029g" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -435,6 +435,7 @@
             <button class="btn btn-small" id="prod-sel-clear" type="button" title="Limpiar selección">Limpiar</button>
             <button class="btn btn-primary btn-small" id="prod-sel-edit" type="button" disabled>✎ Editar seleccionados</button>
             <button class="btn btn-small" id="prod-sel-costs" type="button" disabled title="Cambiar el costo de cada producto seleccionado, uno por uno">💲 Cambiar costos</button>
+            <button class="btn btn-small" id="prod-sel-buy" type="button" disabled title="Armar pedidos a proveedor con los productos seleccionados, agrupados por proveedor">🛒 Armar pedido</button>
             <button class="btn btn-small" id="prod-sel-cancel" type="button">Cancelar</button>
           </span>
         </span>
@@ -1764,6 +1765,28 @@
         <div class="admin-modal-foot">
           <button type="button" class="btn" data-close>Cancelar</button>
           <button type="button" class="btn btn-primary" id="ppv-move-confirm">Crear pedido</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Armar pedidos a proveedor con los productos seleccionados en Productos -->
+    <div class="admin-modal" id="pbuy-modal" hidden>
+      <div class="admin-modal-box" style="max-width:980px">
+        <button type="button" class="admin-modal-close" data-close aria-label="Cerrar">✕</button>
+        <h3>🛒 Armar pedido a proveedor</h3>
+        <div class="pbuy-head">
+          <label class="pbuy-cover">Cubrir
+            <input type="number" id="pbuy-cover" min="1" max="365" step="1" value="30" />
+            días de venta
+          </label>
+          <span class="muted small">Sugerido = venta/día × días − stock − lo que ya viene en camino, redondeado a bultos enteros. Podés corregir cada cantidad.</span>
+        </div>
+        <div id="pbuy-body" class="pbuy-body"><p class="muted">Cargando…</p></div>
+        <p id="pbuy-msg" class="config-msg"></p>
+        <div class="admin-modal-foot">
+          <span id="pbuy-total" class="pbuy-total"></span>
+          <button type="button" class="btn" data-close>Cancelar</button>
+          <button type="button" class="btn btn-primary" id="pbuy-create" disabled>Crear pedidos</button>
         </div>
       </div>
     </div>
@@ -4111,6 +4134,6 @@
   <div id="toast" class="admin-toast" hidden></div>
 
   <script src="/js/shared/pricing.js?v=20261002b"></script>
-  <script src="/js/admin.js?v=20261029d"></script>
+  <script src="/js/admin.js?v=20261029e"></script>
 </body>
 </html>

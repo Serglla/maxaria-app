@@ -6312,6 +6312,8 @@
     if (els.selCount) els.selCount.textContent = txt;
     if (els.selEdit) els.selEdit.disabled = n === 0;
     if (els.selCosts) els.selCosts.disabled = n === 0;
+    const buyBtn = document.getElementById("prod-sel-buy");
+    if (buyBtn) buyBtn.disabled = n === 0;
   }
   // Inserta/quita la columna de checkbox en el header y refleja el master-check
   function syncSelectHeader() {
@@ -6393,6 +6395,210 @@
     updateSelCount();
     syncSelectHeader();
   });
+
+  // --- 🛒 Armar pedido a proveedor con los productos seleccionados ---
+  // El server devuelve proveedor (fijado o deducido), venta/día y lo que viene
+  // en camino; acá se sugiere la cantidad para cubrir N días, se agrupa por
+  // proveedor y se crea un Pedido a proveedor (borrador) por cada uno.
+  const pbuy = { items: [], suppliers: [], windowDays: 60 };
+  const pbuyEls = {
+    modal: document.getElementById("pbuy-modal"),
+    body: document.getElementById("pbuy-body"),
+    cover: document.getElementById("pbuy-cover"),
+    total: document.getElementById("pbuy-total"),
+    msg: document.getElementById("pbuy-msg"),
+    create: document.getElementById("pbuy-create"),
+  };
+  function pbuyCoverDays() {
+    const v = Math.round(Number(pbuyEls.cover && pbuyEls.cover.value) || 0);
+    return Math.min(365, Math.max(1, v || 30));
+  }
+  function pbuySuggest(it) {
+    const need = it.daily * pbuyCoverDays() - it.stock - it.en_camino;
+    return need > 0 ? Math.ceil(need / it.units_per_bulto) : 0;
+  }
+  function pbuyPackMode(it) {
+    return it.units_per_bulto > 1 ? (it.pack_unit === "caja" ? "caja" : "bulto") : "unidad";
+  }
+  function pbuyUnits(it) { return it.qty * it.units_per_bulto; }
+  function pbuySupplierName(sid) {
+    const s = pbuy.suppliers.find((x) => Number(x.id) === Number(sid));
+    return s ? s.name : ("Proveedor #" + sid);
+  }
+  function pbuyRowHtml(it) {
+    const upb = it.units_per_bulto;
+    const packLbl = it.pack_unit === "caja" ? "caja" : "bulto";
+    const days = it.daily > 0 ? Math.floor(it.stock / it.daily) : null;
+    const supOpts = '<option value="">— Elegí proveedor —</option>' + pbuy.suppliers.map((s) =>
+      '<option value="' + s.id + '"' + (Number(s.id) === Number(it.supplier_id) ? " selected" : "") + '>' + escapeHtml(s.name) + '</option>'
+    ).join("");
+    return '<tr data-pid="' + it.product_id + '"' + (it.qty > 0 ? "" : ' class="pbuy-zero"') + '>' +
+      '<td class="pbuy-name"><span class="pbuy-code">' + escapeHtml(it.code || "") + '</span> ' + escapeHtml(it.name) + '</td>' +
+      '<td class="num">' + fmtNum(it.stock) + '</td>' +
+      '<td class="num">' + (it.daily > 0 ? fmtSalesDaily(it.daily) : "—") + '</td>' +
+      '<td class="num">' + (days == null ? "—" : (days > 365 ? "+1 año" : days + " d")) + '</td>' +
+      '<td class="num">' + (it.en_camino ? fmtNum(it.en_camino) : "—") + '</td>' +
+      '<td><select class="admin-select pbuy-sup">' + supOpts + '</select></td>' +
+      '<td class="pbuy-qtycell"><input type="text" inputmode="numeric" class="pbuy-qty" value="' + it.qty + '"' +
+        ' title="' + (upb > 1 ? "Cantidad en " + packLbl + "s" : "Cantidad en unidades") + '">' +
+        '<span class="pbuy-unit">' + (upb > 1 ? packLbl + "s × " + upb + ' = <b class="pbuy-units">' + fmtNum(pbuyUnits(it)) + '</b> un.' : "un.") + '</span></td>' +
+      '<td class="num pbuy-sub">$' + fmtPriceNum(pbuyUnits(it) * it.cost) + '</td>' +
+    '</tr>';
+  }
+  function renderPbuy() {
+    const groups = new Map();
+    pbuy.items.forEach((it) => {
+      const key = it.supplier_id ? String(it.supplier_id) : "none";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(it);
+    });
+    const keys = Array.from(groups.keys()).sort((a, b) =>
+      (a === "none") - (b === "none") || pbuySupplierName(a).localeCompare(pbuySupplierName(b), "es"));
+    pbuyEls.body.innerHTML = keys.map((key) => {
+      const list = groups.get(key);
+      const title = key === "none"
+        ? '<span class="pbuy-nosup">⚠ Sin proveedor — elegí a quién pedírselo</span>'
+        : escapeHtml(pbuySupplierName(key));
+      return '<div class="pbuy-group" data-key="' + key + '">' +
+        '<div class="pbuy-group-head"><strong>' + title + '</strong>' +
+          '<span class="muted small">' + list.length + (list.length === 1 ? " producto" : " productos") +
+          ' · <span class="pbuy-gtotal" data-key="' + key + '"></span></span></div>' +
+        '<div class="admin-table-wrap pbuy-table-wrap"><table class="admin-table pbuy-table"><thead><tr>' +
+          '<th>Producto</th><th class="num">Stock</th><th class="num">Venta/día</th><th class="num">Días stock</th>' +
+          '<th class="num">En camino</th><th>Proveedor</th><th>Pedir</th><th class="num">Costo est.</th>' +
+        '</tr></thead><tbody>' + list.map(pbuyRowHtml).join("") + '</tbody></table></div></div>';
+    }).join("");
+    pbuyRefreshTotals();
+  }
+  function pbuyRefreshTotals() {
+    let total = 0, units = 0, orders = new Set();
+    const byKey = {};
+    pbuy.items.forEach((it) => {
+      const key = it.supplier_id ? String(it.supplier_id) : "none";
+      const sub = pbuyUnits(it) * it.cost;
+      byKey[key] = (byKey[key] || 0) + sub;
+      if (it.qty > 0) { total += sub; units += pbuyUnits(it); if (it.supplier_id) orders.add(key); }
+    });
+    pbuyEls.body.querySelectorAll(".pbuy-gtotal").forEach((el) => {
+      el.textContent = "$" + fmtPriceNum(byKey[el.dataset.key] || 0);
+    });
+    const pending = pbuy.items.filter((it) => it.qty > 0 && !it.supplier_id).length;
+    pbuyEls.total.textContent = orders.size
+      ? (orders.size + (orders.size === 1 ? " pedido" : " pedidos") + " · " + fmtNum(units) + " un. · $" + fmtPriceNum(total))
+      : "";
+    pbuyEls.create.disabled = !orders.size || pending > 0;
+    pbuyEls.create.textContent = orders.size > 1 ? "Crear " + orders.size + " pedidos" : "Crear pedido";
+    pbuyEls.msg.textContent = pending
+      ? pending + (pending === 1 ? " producto con cantidad no tiene proveedor." : " productos con cantidad no tienen proveedor.") + " Elegilo o poné la cantidad en 0."
+      : "";
+    pbuyEls.msg.className = "config-msg" + (pending ? " err" : "");
+  }
+  async function openPurchaseFromSelection() {
+    if (!pbuyEls.modal || !state.selectedIds.size) return;
+    pbuy.items = [];
+    pbuyEls.body.innerHTML = '<p class="muted">Cargando…</p>';
+    pbuyEls.total.textContent = "";
+    pbuyEls.msg.textContent = "";
+    pbuyEls.create.disabled = true;
+    pbuyEls.modal.hidden = false;
+    try {
+      const out = await api("/api/admin/products-purchase-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product_ids: Array.from(state.selectedIds) }),
+      }, "los datos para armar el pedido");
+      pbuy.suppliers = out.suppliers || [];
+      pbuy.windowDays = out.window_days || 60;
+      pbuy.items = (out.items || []).map((it) => Object.assign({}, it, { touched: false }));
+      pbuy.items.forEach((it) => { it.qty = pbuySuggest(it); });
+      // Lo que necesita reponerse antes arriba.
+      pbuy.items.sort((a, b) => (b.qty > 0) - (a.qty > 0) ||
+        ((a.daily > 0 ? a.stock / a.daily : 1e9) - (b.daily > 0 ? b.stock / b.daily : 1e9)));
+      renderPbuy();
+    } catch (err) {
+      pbuyEls.body.innerHTML = '<p class="config-msg err">No se pudieron cargar los datos: ' + escapeHtml(err.message) + '</p>';
+    }
+  }
+  if (pbuyEls.modal) {
+    document.getElementById("prod-sel-buy").addEventListener("click", openPurchaseFromSelection);
+    pbuyEls.cover.addEventListener("change", () => {
+      pbuyEls.cover.value = pbuyCoverDays();
+      pbuy.items.forEach((it) => { if (!it.touched) it.qty = pbuySuggest(it); });
+      renderPbuy();
+    });
+    pbuyEls.body.addEventListener("change", (e) => {
+      const sel = e.target.closest(".pbuy-sup");
+      if (!sel) return;
+      const it = pbuy.items.find((x) => x.product_id === Number(sel.closest("tr").dataset.pid));
+      if (!it) return;
+      it.supplier_id = sel.value ? Number(sel.value) : null;
+      renderPbuy(); // el producto cambia de grupo
+    });
+    // La cantidad se actualiza en el lugar (sin re-dibujar) para no perder el foco.
+    pbuyEls.body.addEventListener("input", (e) => {
+      const inp = e.target.closest(".pbuy-qty");
+      if (!inp) return;
+      const tr = inp.closest("tr");
+      const it = pbuy.items.find((x) => x.product_id === Number(tr.dataset.pid));
+      if (!it) return;
+      const n = Math.round(Number(String(inp.value).replace(/\D/g, "")) || 0);
+      it.qty = Math.max(0, n);
+      it.touched = true;
+      tr.classList.toggle("pbuy-zero", it.qty <= 0);
+      const u = tr.querySelector(".pbuy-units");
+      if (u) u.textContent = fmtNum(pbuyUnits(it));
+      tr.querySelector(".pbuy-sub").textContent = "$" + fmtPriceNum(pbuyUnits(it) * it.cost);
+      pbuyRefreshTotals();
+    });
+    pbuyEls.create.addEventListener("click", async () => {
+      const groups = new Map();
+      pbuy.items.forEach((it) => {
+        if (it.qty <= 0 || !it.supplier_id) return;
+        if (!groups.has(it.supplier_id)) groups.set(it.supplier_id, []);
+        groups.get(it.supplier_id).push(it);
+      });
+      if (!groups.size) return;
+      pbuyEls.create.disabled = true;
+      const created = [];
+      try {
+        for (const [sid, list] of groups) {
+          const out = await api("/api/admin/pedidos-prov", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              supplier_id: sid,
+              notes: "Armado desde Productos (cubrir " + pbuyCoverDays() + " días)",
+              items: list.map((it) => ({
+                product_id: it.product_id, product_code: it.code, product_name: it.name,
+                quantity: pbuyUnits(it), pack_mode: pbuyPackMode(it),
+              })),
+            }),
+          }, "el pedido a proveedor");
+          created.push({ id: out.request && out.request.id, name: pbuySupplierName(sid) });
+          // Ya creado: se saca del modal, así un error en el siguiente no lo duplica.
+          pbuy.items = pbuy.items.filter((it) => !list.includes(it));
+        }
+      } catch (err) {
+        renderPbuy();
+        pbuyEls.msg.textContent = (created.length ? "Se crearon " + created.length + " pedidos, pero falló el resto: " : "No se pudo crear el pedido: ") + err.message;
+        pbuyEls.msg.className = "config-msg err";
+        return;
+      }
+      pbuyEls.modal.hidden = true;
+      setSelectMode(false);
+      const go = await confirmModal({
+        title: created.length === 1 ? "Pedido creado" : created.length + " pedidos creados",
+        message: created.map((c) => "Pedido #" + c.id + " · " + c.name).join("\n") +
+          "\n\nQuedaron en borrador en Compras → Pedidos a proveedor.",
+        confirmText: "Ir a Pedidos a proveedor",
+        cancelText: "Seguir en Productos",
+      });
+      if (go) {
+        const tabBtn = Array.from(els.tabBtns).find((b) => b.dataset.tab === "pedidos-prov");
+        if (tabBtn) tabBtn.click();
+      }
+    });
+  }
 
   // --- Modal de cambios en lote ---
   // Cada sección tiene un checkbox de activación que apaga/prende su cuerpo.

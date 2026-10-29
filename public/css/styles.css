@@ -2423,6 +2423,32 @@ button { font: inherit; cursor: pointer; }
   .prod-cols-wrap { display: none; }
 }
 
+/* ===== 🛒 Armar pedido a proveedor (desde la selección de Productos) ===== */
+.pbuy-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 0 12px; }
+.pbuy-cover { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13.5px; }
+.pbuy-cover input { width: 70px; text-align: center; font-size: 15px; font-weight: 700; padding: 5px 6px; border: 1.5px solid #cbd5e1; border-radius: 8px; }
+.pbuy-body { display: flex; flex-direction: column; gap: 14px; }
+.pbuy-group { border: 1px solid #d6dbe3; border-radius: 10px; overflow: hidden; }
+.pbuy-group-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; align-items: baseline; padding: 8px 12px; background: #f3f6fa; border-bottom: 1px solid #d6dbe3; font-size: 14px; }
+.pbuy-nosup { color: #b45309; }
+.pbuy-table-wrap { overflow-x: auto; border: 0; border-radius: 0; max-height: none; }
+#pbuy-modal .pbuy-table { min-width: 0; width: 100%; font-size: 13px; }
+@media (max-width: 900px) { #pbuy-modal .pbuy-table { min-width: 760px; } }
+#pbuy-modal .pbuy-table th { white-space: nowrap; }
+#pbuy-modal .pbuy-table td { padding: 6px 8px; vertical-align: middle; }
+.pbuy-name { min-width: 160px; }
+.pbuy-unit b { color: #1e3a5f; }
+.pbuy-code { color: #6b7280; font-size: 11.5px; font-family: ui-monospace, monospace; }
+.pbuy-sup { max-width: 170px; font-size: 12.5px; padding: 4px 6px; }
+.pbuy-qtycell { min-width: 110px; }
+.pbuy-unit { display: inline-block; }
+.pbuy-qty { width: 58px; text-align: center; font-size: 15px; font-weight: 700; padding: 4px 4px; border: 1.5px solid #cbd5e1; border-radius: 7px; background: #f8fafc; }
+.pbuy-qty:focus { border-color: #2563eb; outline: none; box-shadow: 0 0 0 3px rgba(37, 99, 235, .15); background: #fff; }
+.pbuy-unit { margin-left: 6px; font-size: 12px; color: #6b7280; }
+.pbuy-zero td { opacity: .55; }
+.pbuy-zero .pbuy-qty { opacity: 1; }
+.pbuy-total { margin-right: auto; font-weight: 700; color: #1e3a5f; font-size: 14px; }
+
 /* ===== Modo edición de la tabla de productos ("✏️ Editar tabla") ===== */
 .btn-tool.btn-tool-active { background: #1e3a5f; border-color: #1e3a5f; color: #fff; }
 .bulk-bar.edit-bar { background: #fff7ed; border-color: #fed7aa; }
