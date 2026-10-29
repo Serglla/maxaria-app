@@ -5423,8 +5423,16 @@
     const type = SORT_TYPES[field] || "text";
     const mult = dir === "desc" ? -1 : 1;
     return (a, b) => {
-      const va = field === "sales_daily" ? salesDailyOf(a) : field === "days_left" ? daysLeftSortVal(a) : a[field];
-      const vb = field === "sales_daily" ? salesDailyOf(b) : field === "days_left" ? daysLeftSortVal(b) : b[field];
+      // Días de stock: los productos sin ventas no tienen dato y van siempre al
+      // final, ordenes de menor a mayor o de mayor a menor.
+      if (field === "days_left") {
+        const da = daysLeftSortVal(a), db = daysLeftSortVal(b);
+        if ((da == null) !== (db == null)) return da == null ? 1 : -1;
+        if (da != null && da !== db) return (da - db) * mult;
+        return (a.id || 0) - (b.id || 0);
+      }
+      const va = field === "sales_daily" ? salesDailyOf(a) : a[field];
+      const vb = field === "sales_daily" ? salesDailyOf(b) : b[field];
       if (type === "number") {
         // null/undefined cuentan como 0 para que no rompan el orden numerico
         const na = (va === null || va === undefined || va === "") ? 0 : Number(va);
@@ -5609,17 +5617,18 @@
   }
   // Días que alcanza el stock al ritmo de venta promedio. null = sin datos
   // todavía, Infinity = no vendió en la ventana.
+  // Sin ventas en la ventana (tenga stock o no) no hay dato: Infinity.
   function daysLeftOf(p) {
     if (!state.salesRate) return null;
-    const stock = Number(p.stock) || 0;
-    if (stock <= 0) return 0;
     const d = salesDailyOf(p);
-    return d > 0 ? stock / d : Infinity;
+    if (d <= 0) return Infinity;
+    const stock = Number(p.stock) || 0;
+    return stock <= 0 ? 0 : stock / d;
   }
-  // Para ordenar: sin ventas va al final del orden ascendente (lo urgente arriba).
+  // Para ordenar: null = sin dato (sin ventas o todavía cargando).
   function daysLeftSortVal(p) {
     const v = daysLeftOf(p);
-    return v == null ? 1e9 : (v === Infinity ? 1e8 : v);
+    return (v == null || v === Infinity) ? null : v;
   }
   function daysLeftCell(p) {
     if (!state.salesRate) return '<td class="num cell-money cell-daysleft muted">…</td>';
