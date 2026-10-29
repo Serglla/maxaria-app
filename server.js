@@ -125,6 +125,10 @@ db.pragma("foreign_keys = ON");
 require("./lib/db/migrate").runMigrations(db);
 // Estado compartido entre procesos (intentos de login, avisos, candado de tareas).
 const Shared = require("./lib/shared-state")(db);
+// Contabilidad del cobro (credito, caja, descuento y comision del vendedor):
+// vive en lib/contabilidad.js. Va aca arriba porque la usan tareas de arranque.
+const Conta = require("./lib/contabilidad")(db);
+const { vendorCommissionForOrder, cashCollectedForOrder } = Conta;
 
 
 
@@ -497,7 +501,7 @@ function unassignedCreditAllocationsForOrders(orderRows) {
     );
     const tx = db.transaction(() => {
       for (const o of orphans) {
-        insMov.run(o.user_id, "debit", o.total, "Pedido #" + o.id + " (ajuste)", o.id);
+        insMov.run(o.user_id, "debit", Conta.orderDebitAmount(o.id), "Pedido #" + o.id + " (ajuste)", o.id);
         if (o.deliv_cobro > 0 && !hasCred.get(o.id, "Cobro entrega%")) {
           insMov.run(o.user_id, "credit", o.deliv_cobro, "Cobro entrega #" + o.id + " (ajuste)", o.id);
         }
@@ -2474,6 +2478,12 @@ app.get("/api/my-account", requireLogin, (req, res) => {
   const lvl = Number(req.session.level);
   if (lvl < 1 || lvl > 4) return res.json({ applies: false });
   const uid = req.session.userId;
+  // Cliente de un vendedor tercerizado: su cuenta la lleva el vendedor. La de
+  // aca va en neto (lo que el vendedor te rinde) y no se le muestra.
+  const tv = db.prepare(
+    "SELECT v.is_tercerizado FROM users u JOIN users v ON v.id = u.assigned_vendedor_id WHERE u.id = ?"
+  ).get(uid);
+  if (tv && Number(tv.is_tercerizado) === 1) return res.json({ applies: false });
   const r = db.prepare(
     "SELECT COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE -amount END),0) AS bal" +
     "  FROM account_movements WHERE user_id = ?"
@@ -2889,6 +2899,12 @@ app.get("/api/orders", requireLogin, requireSectionForAdmin("pedidos"), (req, re
   for (const r of rows) {
     const a = allocC.get(r.id) || 0;
     if (a) { r.balance_due = Math.round(((Number(r.balance_due) || 0) - a) * 100) / 100; r.amount_paid = (Number(r.amount_paid) || 0) + a; r.paid_on_account = a; }
+    // Pedido de un vendedor tercerizado: la cuenta va en neto (lo que el
+    // vendedor te rinde). El cliente le debe al vendedor, no a vos: no se le
+    // muestra ese saldo (dejaria ver la comision del vendedor).
+    if (Conta.tercerizadoCommissionForOrder(r.id) > 0) {
+      delete r.balance_due; delete r.amount_paid; delete r.paid_on_account;
+    }
   }
   res.json(rows);
 });
@@ -2929,8 +2945,8 @@ app.get("/api/admin/ventas", requireAdmin, (req, res) => {
     "       (SELECT COALESCE(SUM(COALESCE(p.cost,0) * oi.quantity),0) FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = o.id) AS cost_total," +
     // --- Campos para el export "Planilla" (pestaña Ventas) ---
     // El control paralelo en Drive necesita: la PLATA que entro de verdad (no
-    // los creditos de cuenta corriente, que incluyen la "Comision rendida" del
-    // tercerizado), la comision del vendedor y en que caja cayo el cobro.
+    // los creditos de cuenta corriente, que incluyen descuentos), la comision
+    // del vendedor y en que caja cayo el cobro.
     "       v.is_tercerizado AS vendedor_is_tercerizado," +
     "       (SELECT COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
     "                                 THEN (oi.unit_price - oi.vendedor_cost_unit) * oi.quantity ELSE 0 END),0)" +
@@ -3097,12 +3113,7 @@ function applyPickChangesTx(orderId, userId) {
     db.prepare("SELECT COALESCE(SUM(subtotal),0) AS t FROM order_items WHERE order_id = ?").get(orderId).t
   );
   db.prepare("UPDATE orders SET total = ? WHERE id = ?").run(total, orderId);
-  if (!order.is_unified) {
-    const deb = db.prepare(
-      "SELECT id FROM account_movements WHERE order_id = ? AND type = 'debit' LIMIT 1"
-    ).get(orderId);
-    if (deb) db.prepare("UPDATE account_movements SET amount = ? WHERE id = ?").run(total, deb.id);
-  }
+  if (!order.is_unified) Conta.syncOrderDebit(orderId);
   return {
     total: total,
     changes: changes.map((c) => ({
@@ -3253,15 +3264,24 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
         "SELECT id, full_name, username, is_tercerizado FROM users WHERE id = ?"
       ).get(order.assigned_vendedor_id);
       if (v) {
+        const vEarn = Math.max(0, Math.round(Number(vr.earning) || 0));
+        // Tercerizado: la comision es del vendedor, no tuya. Ventas = lo que el
+        // cliente te debe a vos (neto) y la rentabilidad sale de ahi.
+        if (v.is_tercerizado && vEarn > 0 && !order.is_unified) {
+          profitability.client_total = profitability.revenue;
+          profitability.vendor_commission = vEarn;
+          profitability.revenue = Math.max(0, round2(profitability.revenue - vEarn));
+          profitability.profit = round2(profitability.revenue - costTotal);
+          profitability.margin_pct = profitability.revenue > 0
+            ? round2((profitability.profit / profitability.revenue) * 100) : 0;
+        }
         profitability.vendor = {
           id: v.id,
           name: v.full_name || v.username || ("Vendedor #" + v.id),
           is_tercerizado: !!v.is_tercerizado,
           // Redondeado igual que vendorCommissionForOrder(): es el mismo numero
-          // que despues se acredita como "Comision rendida". Sin el redondeo el
-          // chip "debe rendir" mostraba medios pesos (ej. 909.816,5) que no
-          // coincidian con el credito real y parecian un descuadre.
-          earning: Math.max(0, Math.round(Number(vr.earning) || 0)),
+          // que se descuenta del debito del cliente.
+          earning: vEarn,
         };
       }
     }
@@ -3272,7 +3292,7 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
     "SELECT product_code, product_name, old_qty, new_qty, created_at" +
     "  FROM pick_changes WHERE order_id = ? ORDER BY id"
   ).all(id);
-  res.json(Object.assign({}, order, {
+  const detail = Object.assign({}, order, {
     items: items,
     items_discount_total: itemsDiscountTotal,
     balance_due: pay.balance_due,
@@ -3284,6 +3304,7 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
     cash_collected: isAdmin ? cashCollectedForOrder(id) : undefined,
     profitability: profitability,
     pick_changes: pickChanges,
+
     // Saldo del cliente en cuenta corriente SIN contar este pedido (para ver
     // al entregar si además arrastra deuda de otros pedidos). Negativo = debe.
     client_other_balance: (() => {
@@ -3294,7 +3315,13 @@ app.get("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (req
       ).get(id, id);
       return Math.round((Number(r && r.b) || 0) * 100) / 100;
     })(),
-  }));
+  });
+  // Cliente de un tercerizado: no ve el saldo neto (ver GET /api/orders).
+  if (!isAdmin && !isVendedor && Conta.tercerizadoCommissionForOrder(id) > 0) {
+    ["balance_due", "amount_paid", "paid_on_account", "prepaid_for_delivery", "client_other_balance"]
+      .forEach((k) => { delete detail[k]; });
+  }
+  res.json(detail);
 });
 
 // ----- Cambio de estado (admin o vendedor asignado) -----
@@ -3407,7 +3434,7 @@ app.patch("/api/orders/:id", requireLogin, requireSectionForAdmin("pedidos"), (r
           db.prepare(
             "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
             " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
-          ).run(order.user_id, order.total, "Pedido #" + id, id);
+          ).run(order.user_id, Conta.orderDebitAmount(id), "Pedido #" + id, id);
         }
       }
       db.prepare("UPDATE orders SET stock_discounted = 1 WHERE id = ?").run(id);
@@ -3619,7 +3646,7 @@ app.post("/api/admin/orders", requireAdmin, (req, res) => {
       db.prepare(
         "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
         " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
-      ).run(clientId, total, "Pedido #" + orderId, orderId);
+      ).run(clientId, Conta.orderDebitAmount(orderId), "Pedido #" + orderId, orderId);
     }
     return orderId;
   })();
@@ -3870,10 +3897,7 @@ app.put("/api/admin/orders/:id/items", requireAdmin, (req, res) => {
 
     // Mantener en sync el débito de cuenta corriente si ya existe (pedidos
     // entregados o presupuestos facturados generan un débito por el total).
-    if (!order.is_unified) {
-      const deb = db.prepare("SELECT id FROM account_movements WHERE order_id = ? AND type = 'debit' LIMIT 1").get(id);
-      if (deb) db.prepare("UPDATE account_movements SET amount = ? WHERE id = ?").run(total, deb.id);
-    }
+    if (!order.is_unified) Conta.syncOrderDebit(id);
   })();
 
   const backToArmado = wasListo && hadQtyChange;
@@ -4611,7 +4635,11 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
 
   if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
   vals.push(id);
-  db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+  db.transaction(() => {
+    db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
+    // Marcar/desmarcar tercerizado cambia lo que te deben sus clientes.
+    if ("is_tercerizado" in b) Conta.syncVendorDebits(id);
+  })();
   const user = db.prepare(
     "SELECT id, username, full_name, phone, whatsapp_number, email, level, active, created_at, last_login_at, assigned_vendedor_id, price_list_id, vendedor_price_level, is_tercerizado FROM users WHERE id = ?"
   ).get(id);
@@ -6079,6 +6107,8 @@ app.patch("/api/admin/vendedores/:id", requireAdmin, (req, res) => {
         vals.push(id);
         db.prepare("UPDATE users SET " + sets.join(", ") + " WHERE id = ?").run(...vals);
       }
+      // Marcar/desmarcar tercerizado cambia lo que te deben sus clientes.
+      if ("is_tercerizado" in b) Conta.syncVendorDebits(id);
       if (clientIds !== null) {
         const current = db.prepare(
           "SELECT id FROM users WHERE assigned_vendedor_id = ? AND level BETWEEN 1 AND 4"
@@ -6110,7 +6140,7 @@ app.patch("/api/admin/vendedores/:id", requireAdmin, (req, res) => {
 app.patch("/api/admin/orders/:id/assign", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "ID invalido" });
-  const order = db.prepare("SELECT id, user_id FROM orders WHERE id = ?").get(id);
+  const order = db.prepare("SELECT id, user_id, is_unified FROM orders WHERE id = ?").get(id);
   if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
 
   const body = req.body || {};
@@ -6141,14 +6171,12 @@ app.patch("/api/admin/orders/:id/assign", requireAdmin, (req, res) => {
       // cobros) siguen al nuevo cliente, sino el saldo queda en el viejo.
       db.prepare("UPDATE account_movements SET user_id = ? WHERE order_id = ?").run(userId, id);
     }
+    // Cambiar de vendedor puede cambiar si es tercerizado (debito en neto).
+    if (hasVend && !order.is_unified) Conta.syncOrderDebit(id);
   })();
   res.json({ ok: true, id, vendedor_id: hasVend ? vendedorId : null, user_id: hasUser ? userId : null });
 });
 
-// Contabilidad del cobro (credito, caja, descuento y comision del vendedor):
-// vive en lib/contabilidad.js.
-const Conta = require("./lib/contabilidad")(db);
-const { vendorCommissionForOrder, cashCollectedForOrder } = Conta;
 
 
 // Registrar entrega de un pedido (admin o vendedor asignado)
@@ -6373,9 +6401,8 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
           " VALUES (?, 'credit', ?, ?, ?, datetime('now'))"
         ).run(order.user_id, cobrado, "Cobro entrega #" + id + " (" + parts.join(" + ") + ")", id);
       }
-      // La "comisión rendida" del tercerizado se sincroniza al final de la
-      // transacción con syncRindeNetoCredit (necesita el descuento ya guardado
-      // y considera TODO lo cobrado del pedido, no solo esta entrega).
+      // Tercerizado: el debito del pedido ya esta en neto (total - comision),
+      // asi que lo que rinde el vendedor salda el pedido sin creditos extra.
     }
 
     // Descuento del pedido como CRÉDITO en cuenta corriente (baja la deuda).
@@ -6398,11 +6425,9 @@ app.post("/api/orders/:id/deliver", requireVendedorOrAdmin, requireSectionForAdm
     if (cajaTransfer && transferencia > 0) {
       Conta.cashIngreso(cajaTransfer.id, transferencia, "Cobro entrega #" + id + " (transferencia)", "entrega", deliveryId, req.session.userId);
     }
-    // Comisión del vendedor. Tercerizado (rinde neto): el vendedor ya se la
-    // quedó, no hay egreso en tu caja (limpiar cualquiera previo). Propio/admin:
-    // egreso automático (la caja queda en lo tuyo).
-    // Acredita al cliente la parte que se quedó el tercerizado (o revoca el
-    // crédito si el pedido dejó de ser "rinde neto").
+    // Comisión del vendedor. Tercerizado: el vendedor ya se la quedó y el
+    // pedido está en neto, no hay egreso en tu caja. Propio/admin: egreso
+    // automático (la caja queda en lo tuyo).
     comisionAviso = Conta.syncCommission(id, cajaEfectivo ? cajaEfectivo.id : (cajaTransfer ? cajaTransfer.id : null), req.session.userId);
   })();
 
@@ -8728,10 +8753,9 @@ app.post("/api/admin/payments", requireAdmin, (req, res) => {
       ).run(discountType, discountValue, discountAmount, orderId);
       Conta.replaceDiscountCredit(orderId, user_id, discountType, discountValue, discountAmount, paymentId);
     }
-    // Comisión del vendedor. Tercerizado (rinde neto): cobrás el pedido menos su
-    // comisión y esa parte se le acredita al cliente para saldarlo — no hay
-    // egreso de caja porque esa plata nunca entró. Propio/admin: cobrás el total
-    // y la comisión sale como egreso automático (la caja queda en lo tuyo).
+    // Comisión del vendedor. Tercerizado: el pedido ya está en neto (lo que te
+    // rinde), no hay egreso de caja. Propio/admin: cobrás el total y la comisión
+    // sale como egreso automático (la caja queda en lo tuyo).
     if (orderId) comisionAvisoPago = Conta.syncCommission(orderId, cajaId, req.session.userId);
   })();
 
@@ -8866,15 +8890,9 @@ app.get("/api/admin/accounts/:userId", requireAdmin, (req, res) => {
 
 // GET /api/admin/accounts/:userId/open-orders
 // Pedidos del cliente que todavia tienen saldo (debito - creditos > 0), con la
-// info de comision del vendedor. Lo usa el modal "Registrar pago" de Cuentas:
-// si el cliente tiene UN solo pedido con deuda de un vendedor TERCERIZADO, el
-// cobro se imputa a ese pedido, porque el tercerizado le cobra al cliente y te
-// rinde el NETO (total - comision). Cobrando "a la cuenta" (sin order_id) el
-// server nunca corre syncRindeNetoCredit y al cliente le queda una deuda
-// fantasma por el monto de la comision.
-// pending_commission = la parte de la comision que TODAVIA no se le acredito al
-// cliente (espejo exacto de syncRindeNetoCredit). El monto que fisicamente
-// entra a tu caja por ese pedido es balance_due - pending_commission.
+// info de comision del vendedor. Lo usa el modal "Registrar pago" de Cuentas.
+// Los pedidos de tercerizados ya estan en neto, asi que pending_commission es
+// siempre 0 y cash_expected = balance_due (queda por compatibilidad).
 app.get("/api/admin/accounts/:userId/open-orders", requireAdmin, (req, res) => {
   const userId = Number(req.params.userId);
   if (!userId) return res.status(400).json({ error: "ID invalido" });
@@ -8906,19 +8924,8 @@ app.get("/api/admin/accounts/:userId/open-orders", requireAdmin, (req, res) => {
       if (v && v.is_tercerizado) {
         isTerc = true;
         vendorName = v.full_name || v.username || ("Vendedor #" + v.id);
+        // El debito ya esta en neto: balance_due es lo que te rinde.
         commission = vendorCommissionForOrder(r.id);
-        if (commission > 0) {
-          // Misma formula que syncRindeNetoCredit: la parte cubierta es
-          // proporcional a lo ya cobrado sobre el neto que el vendedor rinde.
-          const netRinde = Math.max(0, (Number(r.total) || 0) - (Number(r.discount_amount) || 0) - commission);
-          const cash = cashCollectedForOrder(r.id);
-          let covered = 0;
-          if (cash > 0) {
-            const fraction = netRinde > 0 ? Math.min(1, cash / netRinde) : 1;
-            covered = Math.max(0, Math.min(Math.round(commission * fraction), commission));
-          }
-          pending = Math.max(0, commission - covered);
-        }
       }
     }
     out.push({
@@ -8940,6 +8947,93 @@ app.get("/api/admin/accounts/:userId/open-orders", requireAdmin, (req, res) => {
     });
   }
   res.json(out);
+});
+
+// ===== Comisiones de vendedores (Cuentas a pagar > Comisiones) =====
+// La comision del vendedor ya no pasa por la cuenta del cliente: se ve aca,
+// pedido por pedido, por mes de entrega (o de alta si no se entrego).
+//  - Tercerizado: se la queda al cobrarle al cliente. "retenida" cuando el
+//    pedido ya esta saldado (te rindio todo), "pendiente" si todavia debe.
+//  - Propio: se la pagas vos. "pagada" = lo que ya salio de la caja como
+//    egreso de comision; el resto queda pendiente.
+// Comision = Σ (unit_price - vendedor_cost_unit) * qty (clientes con lista).
+app.get("/api/admin/vendor-commissions", requireAdmin, (req, res) => {
+  const r = parseActivityMonth(req);
+  const vendFilter = Number(req.query.vendedor_id) || 0;
+  const dateExpr = "COALESCE(d.delivered_at, o.created_at)";
+  let sql =
+    "SELECT o.id, o.status, o.total, o.created_at, d.delivered_at, o.user_id AS client_id," +
+    "       u.full_name AS client_name, u.username AS client_username," +
+    "       v.id AS vendedor_id, v.full_name AS vendedor_name, v.username AS vendedor_username," +
+    "       COALESCE(v.is_tercerizado,0) AS is_tercerizado," +
+    "       (SELECT COALESCE(SUM(CASE WHEN oi.vendedor_cost_unit IS NOT NULL" +
+    "                                 THEN (oi.unit_price - oi.vendedor_cost_unit) * oi.quantity ELSE 0 END),0)" +
+    "          FROM order_items oi WHERE oi.order_id = o.id) AS commission," +
+    "       (SELECT COUNT(*) FROM account_movements am WHERE am.order_id = o.id AND am.type='debit') AS has_debit," +
+    "       (SELECT COALESCE(SUM(CASE WHEN am.type='debit' THEN am.amount ELSE -am.amount END),0)" +
+    "          FROM account_movements am WHERE am.order_id = o.id) AS balance_due," +
+    "       (SELECT COALESCE(SUM(cm.amount),0) FROM cash_movements cm" +
+    "         WHERE cm.source = 'comision' AND cm.related_id = o.id AND cm.type = 'egreso') AS paid_egreso" +
+    "  FROM orders o" +
+    "  JOIN users u ON u.id = o.user_id" +
+    "  JOIN users v ON v.id = o.assigned_vendedor_id" +
+    "  LEFT JOIN deliveries d ON d.order_id = o.id" +
+    " WHERE o.status != 'cancelado' AND COALESCE(o.is_unified,0) = 0" +
+    "   AND " + dateExpr + " BETWEEN ? AND ?";
+  const params = [r.from, r.to];
+  if (vendFilter) { sql += " AND v.id = ?"; params.push(vendFilter); }
+  sql += " ORDER BY " + dateExpr + " DESC";
+  const rows = db.prepare(sql).all(...params);
+  const alloc = unassignedCreditAllocations([...new Set(rows.map((x) => x.client_id).filter(Boolean))]);
+  const orders = [];
+  const byVend = new Map();
+  for (const x of rows) {
+    const c = Math.max(0, Math.round(Number(x.commission) || 0));
+    if (c <= 0) continue;
+    const terc = Number(x.is_tercerizado) === 1;
+    const due = Math.max(0, (Number(x.balance_due) || 0) - (alloc.get(x.id) || 0));
+    const delivered = x.status === "entregado";
+    let settled, pending;
+    if (terc) {
+      // La retiene al cobrar: cuenta como retenida cuando el pedido esta saldado.
+      settled = delivered && x.has_debit && due <= 0.5 ? c : 0;
+      pending = c - settled;
+    } else {
+      settled = Math.min(c, Math.round(Number(x.paid_egreso) || 0));
+      pending = c - settled;
+    }
+    const total = Number(x.total) || 0;
+    const o = {
+      id: x.id,
+      status: x.status,
+      date: x.delivered_at || x.created_at,
+      delivered: delivered,
+      client_name: x.client_name || x.client_username || "",
+      vendedor_id: x.vendedor_id,
+      vendedor_name: x.vendedor_name || x.vendedor_username || ("Vendedor #" + x.vendedor_id),
+      is_tercerizado: terc,
+      client_total: total,
+      commission: c,
+      net_total: terc ? Math.max(0, Math.round((total - c) * 100) / 100) : total,
+      balance_due: Math.round(due * 100) / 100,
+      settled: settled,
+      pending: pending,
+    };
+    orders.push(o);
+    let v = byVend.get(x.vendedor_id);
+    if (!v) {
+      v = { id: x.vendedor_id, name: o.vendedor_name, is_tercerizado: terc,
+            orders_count: 0, client_total: 0, commission: 0, settled: 0, pending: 0 };
+      byVend.set(x.vendedor_id, v);
+    }
+    v.orders_count++;
+    v.client_total += total;
+    v.commission += c;
+    v.settled += settled;
+    v.pending += pending;
+  }
+  const vendors = Array.from(byVend.values()).sort((a, b) => b.commission - a.commission);
+  res.json({ month: r.month, from: r.fromDay, to: r.toDay, vendors, orders });
 });
 
 // ===== Cuenta corriente de PROVEEDORES =====
@@ -10627,7 +10721,7 @@ app.post("/api/budgets/:id/invoice", requireVendedorOrAdmin, requireSectionForAd
         db.prepare(
           "INSERT INTO account_movements (user_id, type, amount, description, order_id, created_at)" +
           " VALUES (?, 'debit', ?, ?, ?, datetime('now'))"
-        ).run(budget.client_id, budget.total, "Presupuesto " + budget.number, orderId);
+        ).run(budget.client_id, Conta.orderDebitAmount(orderId), "Presupuesto " + budget.number, orderId);
       }
 
       db.prepare(

@@ -100,7 +100,7 @@
   {
    "user_id": 5,
    "type": "debit",
-   "amount": 5061.11,
+   "amount": 4556.11,
    "description": "Pedido #2",
    "order_id": 2,
    "has_payment": 0
@@ -110,14 +110,6 @@
    "type": "credit",
    "amount": 3400,
    "description": "Cobro entrega #2 (efectivo $3.400)",
-   "order_id": 2,
-   "has_payment": 0
-  },
-  {
-   "user_id": 5,
-   "type": "credit",
-   "amount": 377,
-   "description": "Comisión rendida vendedor #2 (vTerc)",
    "order_id": 2,
    "has_payment": 0
   },
@@ -140,7 +132,7 @@
   {
    "user_id": 5,
    "type": "debit",
-   "amount": 5061.11,
+   "amount": 4556.11,
    "description": "Pedido #4",
    "order_id": 4,
    "has_payment": 0
@@ -160,14 +152,6 @@
    "description": "Cobro pedido #4 · efectivo",
    "order_id": 4,
    "has_payment": 1
-  },
-  {
-   "user_id": 5,
-   "type": "credit",
-   "amount": 377,
-   "description": "Comisión rendida vendedor #4 (vTerc)",
-   "order_id": 4,
-   "has_payment": 0
   },
   {
    "user_id": 4,

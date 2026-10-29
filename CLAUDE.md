@@ -2310,3 +2310,16 @@ Pedido de Sergio: algunos proveedores facturan el precio **sin IVA** por rengló
 **Nota de entorno**: `npm test` fallaba con `Cannot find module 'aws4'` — la dependencia estaba en `package.json` y en el lock pero no instalada localmente; se corrió `npm install` (el lock no cambió). En Windows el launcher de Python es `py`, no `python`.
 
 **Pendiente**: `git add/commit/push` + deploy Railway + Ctrl+F5.
+
+### Tercerizados: cuenta del cliente en neto + Comisiones aparte (28 octubre 2026 — `admin.js/styles.css?v=20261028a`)
+
+Pedido de Sergio: la cuenta de los clientes de un vendedor tercerizado mezclaba lo que el cliente te debe a vos con la comisión del vendedor (débito por el total + crédito "Comisión rendida" al cobrar). Confirmó que ningún cliente le paga directo: siempre a través del vendedor.
+
+- **Modelo nuevo**: el débito del pedido de un tercerizado es **total − comisión** (lo que el vendedor te rinde). No se generan más créditos "Comisión rendida" ni egresos de caja. Vendedores propios sin cambios (cobrás el total, la comisión sale como egreso). `lib/contabilidad.js`: `tercerizadoCommissionForOrder`, `orderDebitAmount`, `syncOrderDebit`, `syncVendorDebits`; `addOrderDebit` y todos los INSERT/UPDATE de débito del server usan `orderDebitAmount`. Se resincroniza al editar items/armado, reasignar vendedor y marcar/desmarcar tercerizado. `syncRindeNetoCredit` se eliminó. `Conta` se requiere arriba en server.js (lo usa el backfill de arranque).
+- **Migración 007** (`007_tercerizado_cuenta_neta`): pasa los pedidos viejos de tercerizados a débito neto y borra los "Comisión rendida". Saldados quedan saldados; con deuda pasan a mostrarla en neto.
+- **Pantallas**: Ventas concretadas muestra total y rentabilidad en neto (`ventaTotal`); el detalle del pedido muestra "Debe $neto" con la aclaración de la comisión y la rentabilidad sobre el neto (`profitability.revenue` ya viene neta, con `client_total` y `vendor_commission`); el modal de cobro precarga el saldo tal cual. Se borraron `payPendingCommission` y `attachTercerizadoToAccountPayment`. `open-orders` devuelve `pending_commission: 0`.
+- **El pedido y el "pp" impreso NO cambian**: siguen con los precios del cliente (con la comisión adentro), confirmado por Sergio.
+- **Cliente del tercerizado**: en el catálogo ya no ve saldo (`/api/my-account` → `applies:false`; `GET /api/orders` y `/:id` le sacan `balance_due`/`amount_paid`), porque el neto dejaría ver la comisión del vendedor.
+- **Cuentas a pagar → Comisiones vendedores** (tab `comisiones`, sección nueva asignable; `GET /api/admin/vendor-commissions?month&vendedor_id`): por mes, resumen por vendedor y detalle por pedido (cliente paga / comisión / te queda / estado). Tercerizado: "retenida" cuando el pedido está saldado. Propio: "pagada" = egreso de comisión ya registrado.
+- Tests: `test/tercerizado.test.js` (circuito completo) + test de la migración 007; foto contable regenerada (solo cambian débitos −comisión y desaparecen los créditos de comisión). 52/52.
+- Aparte (no tocado): el selector Vendedor del detalle de pedido sale "Sin asignar" si no se entró antes a la pestaña Vendedores (`state.vendedores` no cargado). Y en la cuenta de Walter había un "Cobro pedido #409 · efectivo $1.153" del 28/10 que parece ser del #497.

@@ -1699,6 +1699,7 @@
       if (tab === "gastos") loadExpenses(); // siempre recargar (datos cambian)
       if (tab === "cuentas") { state.accountsLoaded = false; loadAccounts(); } // siempre recargar (refleja entregas/cobros nuevos)
       if (tab === "ctacte-prov") loadSupplierAccounts(); // siempre recargar (cambia con compras/pagos)
+      if (tab === "comisiones") loadComisiones();
       if (tab === "caja") loadCaja();
       if (tab === "administradores") loadAdmins();
       if (tab === "inflacion") loadInflacion(); // siempre recargar (cambia con compras/ediciones)
@@ -4508,10 +4509,15 @@
     var disc = deliveryDiscountAmount();
     var neto = Math.max(0, total - disc);
     var cost = deliveryOrderInfo.cost_total;
-    var rent = neto - cost;
-    var margin = neto > 0 ? (rent / neto) * 100 : 0;
+    // Tercerizado: la comisión es del vendedor; lo tuyo es neto − comisión.
+    var terc = deliveryOrderInfo.is_tercerizado && deliveryOrderInfo.commission > 0;
+    var tuyo = terc ? Math.max(0, neto - deliveryOrderInfo.commission) : neto;
+    var rent = tuyo - cost;
+    var margin = tuyo > 0 ? (rent / tuyo) * 100 : 0;
     var rentColor = rent > 0 ? "#047857" : (rent < 0 ? "#b91c1c" : "#6b7280");
-    var line1 = disc > 0
+    var line1 = terc
+      ? "El cliente paga " + fmtPrice(neto) + " · te rinde <strong>" + fmtPrice(tuyo) + "</strong>"
+      : disc > 0
       ? "Total " + fmtPrice(total) + " − Descuento " + fmtPrice(disc) + " = <strong>" + fmtPrice(neto) + "</strong> neto a cobrar"
       : "Total a cobrar: <strong>" + fmtPrice(total) + "</strong>";
     var html =
@@ -7245,30 +7251,16 @@
     var chargeableStatus = order.status === "entregado";
     var canCharge = state.isAdmin && balanceDue > 0.5 && chargeableStatus;
     if (state.isAdmin && chargeableStatus && (balanceDue > 0.5 || amountPaid > 0)) {
-      // Vendedor tercerizado: el saldo del pedido es lo que debe el CLIENTE (el
-      // bruto). Lo que entra fisicamente a tu caja es ese saldo menos la comision
-      // que el vendedor se queda; la diferencia se le acredita al cliente como
-      // "Comision rendida" al registrar el cobro. Sin esta aclaracion parece que
-      // "Debe X" y "debe rendir X - comision" se contradicen.
+      // Vendedor tercerizado: el saldo ya es lo que el cliente te debe a vos
+      // (total - comision del vendedor). Se aclara la comision para que no
+      // parezca que falta plata contra el total de la tabla.
       var tercNota = "";
       var pfB = order.profitability || {};
-      if (balanceDue > 0.5 && pfB.vendor && pfB.vendor.is_tercerizado && Number(pfB.vendor.earning) > 0) {
-        var comB = Number(pfB.vendor.earning) || 0;
-        // Comision TODAVIA no acreditada (espejo de syncRindeNetoCredit): si ya
-        // hubo un cobro parcial, parte de la comision ya se le acredito.
-        var netoB = Math.max(0, (Number(order.total) || 0) - (Number(pfB.discount) || 0) - comB);
-        var cashB = Number(order.cash_collected) || 0;
-        var cubB = cashB > 0
-          ? Math.min(comB, Math.round(comB * (netoB > 0 ? Math.min(1, cashB / netoB) : 1)))
-          : 0;
-        comB = Math.max(0, comB - cubB);
-        if (comB > 0.5) {
-          var entraB = Math.max(0, balanceDue - comB);
-          tercNota = '<div class="order-balance-note muted" style="margin-top:4px;font-size:12.5px">' +
-            "Es lo que debe el cliente. " + escapeHtml(pfB.vendor.name) + " te rinde <strong>" +
-            fmtPrice(entraB) + "</strong> (se queda " + fmtPrice(comB) +
-            "); al cobrar, esa comisión se le acredita al cliente y el pedido queda saldado.</div>";
-        }
+      if (pfB.vendor && pfB.vendor.is_tercerizado && Number(pfB.vendor.earning) > 0) {
+        tercNota = '<div class="order-balance-note muted" style="margin-top:4px;font-size:12.5px">' +
+          "Sin la comisión de " + escapeHtml(pfB.vendor.name) + " (" + fmtPrice(pfB.vendor.earning) +
+          "): el cliente paga " + fmtPrice(order.total) + " y " + escapeHtml(pfB.vendor.name) +
+          " te rinde " + fmtPrice(Math.max(0, (Number(order.total) || 0) - (Number(pfB.vendor.earning) || 0))) + ".</div>";
       }
       balanceHtml = balanceDue > 0.5
         ? '<div class="order-balance order-balance-debt">💳 Saldo del pedido: <strong>Debe ' + fmtPrice(balanceDue) +
@@ -7304,7 +7296,11 @@
       var margin = Number(pf.margin_pct) || 0;
       var color = profit > 0 ? "#047857" : (profit < 0 ? "#b91c1c" : "#6b7280");
       var discount = Number(pf.discount) || 0;
-      var detailTxt = discount > 0
+      var vCom = Number(pf.vendor_commission) || 0;
+      var detailTxt = vCom > 0
+        ? "Cliente paga " + fmtPrice(pf.client_total || 0) + " − Comisión " + fmtPrice(vCom) +
+          " = " + fmtPrice(pf.revenue || 0) + " · Costo " + fmtPrice(pf.cost_total || 0)
+        : discount > 0
         ? "Ventas " + fmtPrice(pf.revenue_gross || 0) + " − Desc. " + fmtPrice(discount) +
           " = " + fmtPrice(pf.revenue || 0) + " · Costo " + fmtPrice(pf.cost_total || 0)
         : "Ventas " + fmtPrice(pf.revenue || 0) + " · Costo " + fmtPrice(pf.cost_total || 0);
@@ -7318,14 +7314,6 @@
           '<span class="op-vendor" title="Comisión del vendedor = Σ (precio − costo del vendedor) por unidad">' +
             '👤 ' + escapeHtml(pf.vendor.name) + vTipo + ': ' +
             '<strong>' + fmtPrice(vEarn) + '</strong></span>';
-        // Vendedor tercerizado: él le cobra al cliente y te rinde el total menos
-        // su comisión. Mostramos cuánto te debe entregar a la distribuidora.
-        if (pf.vendor.is_tercerizado) {
-          var aRendir = Math.max(0, (Number(pf.revenue) || 0) - vEarn);
-          vendHtml +=
-            '<span class="op-rendir" title="Lo que el vendedor tercerizado debe entregarte: total cobrado al cliente − su comisión">' +
-              '🤝 ' + escapeHtml(pf.vendor.name) + ' debe rendir: <strong>' + fmtPrice(aRendir) + '</strong></span>';
-        }
       }
       profitHtml =
         '<div class="order-profit" title="Rentabilidad = ventas netas (con descuento) − costo actual de los productos">' +
@@ -8475,7 +8463,7 @@
       var falta = Math.max(0, debit - paid);
       return { neto: debit, cobrado: paid, saldado: falta <= 0.5, falta: falta };
     }
-    var neto = Math.max(0, (Number(o.total) || 0) - (Number(o.discount_amount) || 0));
+    var neto = Math.max(0, ventaTotal(o) - (Number(o.discount_amount) || 0));
     var cobrado = (Number(o.efectivo_amount) || 0) + (Number(o.transferencia_amount) || 0);
     var saldado = neto <= 0 ? true : cobrado + 0.5 >= neto;
     return { neto: neto, cobrado: cobrado, saldado: saldado, falta: Math.max(0, neto - cobrado) };
@@ -8522,7 +8510,9 @@
       '<td class="vt-date">' + escapeHtml(dateLabel) + "</td>" +
       '<td class="vt-vend">' + vend + "</td>" +
       '<td class="vt-cobro">' + cobroPill + "</td>" +
-      '<td class="vt-total num">' + fmtPrice(o.total || 0) + "</td>" +
+      '<td class="vt-total num"' + (o.vendedor_is_tercerizado && Number(o.vendor_commission) > 0
+        ? ' title="El cliente paga ' + fmtPrice(o.total || 0) + ' · comisión del vendedor ' + fmtPrice(Math.round(Number(o.vendor_commission) || 0)) + '"'
+        : "") + ">" + fmtPrice(ventaTotal(o)) + "</td>" +
       '<td class="vt-rent num">' + rentCell + "</td>" +
     "</tr>";
   }
@@ -8530,8 +8520,15 @@
   // Rentabilidad de una venta: neto (total - descuento) - costo actual de los
   // productos. cost_total viene del endpoint /api/admin/ventas. hasCost=false
   // cuando todos los productos tienen costo 0 (falta cargarlo) -> mostramos "—".
+  // Lo que el cliente te debe a vos por la venta: el total, o total − comisión si
+  // el vendedor es tercerizado (la comisión es del vendedor).
+  function ventaTotal(o) {
+    var t = Number(o.total) || 0;
+    if (o.vendedor_is_tercerizado) t = Math.max(0, t - Math.max(0, Math.round(Number(o.vendor_commission) || 0)));
+    return t;
+  }
   function ventaRent(o) {
-    var neto = Math.max(0, (Number(o.total) || 0) - (Number(o.discount_amount) || 0));
+    var neto = Math.max(0, ventaTotal(o) - (Number(o.discount_amount) || 0));
     var cost = Number(o.cost_total) || 0;
     var profit = neto - cost;
     var margin = neto > 0 ? Math.round((profit / neto) * 1000) / 10 : 0;
@@ -8577,7 +8574,7 @@
       } else {
         if (key === "id") { av = Number(a.id) || 0; bv = Number(b.id) || 0; }
         else if (key === "cobro") { av = ventaCobro(a).falta; bv = ventaCobro(b).falta; }
-        else if (key === "total") { av = Number(a.total) || 0; bv = Number(b.total) || 0; }
+        else if (key === "total") { av = ventaTotal(a); bv = ventaTotal(b); }
         else if (key === "rent") { av = ventaRent(a).profit; bv = ventaRent(b).profit; }
         else { av = fch(a); bv = fch(b); r = (av < bv ? -1 : (av > bv ? 1 : 0)) * dir; }
         if (key !== "date") r = (av - bv) * dir;
@@ -8606,7 +8603,7 @@
     updateVentasSortHeaders();
     var list = ventasFilteredList();
     if (els.ventasSummary) {
-      var totalVendido = list.reduce(function(s, o) { return s + (Number(o.total) || 0); }, 0);
+      var totalVendido = list.reduce(function(s, o) { return s + ventaTotal(o); }, 0);
       var totalRent = list.reduce(function(s, o) { return s + ventaRent(o).profit; }, 0);
       els.ventasSummary.textContent = list.length + (list.length === 1 ? " venta · " : " ventas · ") +
         fmtPrice(totalVendido) + " · Rentabilidad " + fmtPrice(totalRent);
@@ -14272,67 +14269,10 @@
       const amtInput = els.paymentCreateForm ? els.paymentCreateForm.querySelector('[name="amount"]') : null;
       attachMoneyInput(amtInput);
       if (amtInput && a && Number(a.balance) < 0) setMoney(amtInput, Math.abs(Number(a.balance)));
-      // Vendedor tercerizado: el cliente debe el BRUTO pero el vendedor te rinde
-      // el NETO (total - su comision). Si cobramos "a la cuenta" (sin order_id)
-      // el server no corre syncRindeNetoCredit y al cliente le queda una deuda
-      // fantasma por el monto de la comision. Por eso, si el cliente tiene UN
-      // solo pedido tercerizado con deuda, imputamos el cobro a ese pedido.
-      attachTercerizadoToAccountPayment(userId, amtInput);
     });
     fillCajaSelect(document.getElementById("pay-form-caja"), null);
     setupPayDiscountUI(null); // cobro general a la cuenta: sin descuento de pedido
     if (els.paymentCreateModal) els.paymentCreateModal.hidden = false;
-  }
-
-  // Busca los pedidos con deuda del cliente y, si hay exactamente uno con
-  // vendedor tercerizado y comision pendiente, convierte este cobro en un cobro
-  // imputado a ese pedido (mismo comportamiento que "Registrar cobro" desde el
-  // detalle): precarga el neto que entra a la caja y deja que el server acredite
-  // la "Comision rendida" para que el cliente quede saldado.
-  // Si hay VARIOS, no adivina: avisa para que se cobren desde cada pedido.
-  function attachTercerizadoToAccountPayment(userId, amtInput) {
-    api("/api/admin/accounts/" + userId + "/open-orders").then(function (rows) {
-      // El modal pudo cerrarse o cambiar de cliente mientras iba el fetch.
-      if (!els.paymentCreateModal || els.paymentCreateModal.hidden) return;
-      if (state.payForOrder) return; // ya es un cobro imputado a un pedido
-      if (els.payFormClient && String(els.payFormClient.value) !== String(userId)) return;
-      var terc = (rows || []).filter(function (o) {
-        return o.is_tercerizado && Number(o.pending_commission) > 0;
-      });
-      if (!terc.length) return;
-      if (terc.length > 1) {
-        if (els.paymentCreateMsg) {
-          els.paymentCreateMsg.textContent =
-            "⚠ Este cliente tiene " + terc.length + " pedidos con vendedor tercerizado (" +
-            terc.map(function (o) { return "#" + o.id; }).join(", ") +
-            "). Cobralos desde cada pedido para que se descuente la comisión: un pago general " +
-            "a la cuenta le deja una deuda fantasma.";
-          els.paymentCreateMsg.className = "config-msg err";
-        }
-        return;
-      }
-      var o = terc[0];
-      state.payForOrder = {
-        id: o.id, detailEl: null,
-        total: Number(o.total) || 0,
-        commission: Number(o.commission) || 0,
-        vendor_name: o.vendor_name || "",
-        is_tercerizado: true,
-        cash_other: Number(o.cash_collected) || 0,
-        discount: Number(o.discount_amount) || 0,
-      };
-      if (els.payFormClient) els.payFormClient.disabled = true; // el cobro es de este cliente
-      // Lo que fisicamente entra a tu caja = deuda del pedido - comision pendiente.
-      if (amtInput) setMoney(amtInput, Math.max(0, Number(o.cash_expected) || 0));
-      setupPayDiscountUI(Number(o.total) || 0);
-      if (els.paymentCreateMsg) {
-        els.paymentCreateMsg.textContent =
-          "Cobro imputado al pedido #" + o.id + " — " + (o.vendor_name || "el vendedor") +
-          " es tercerizado: te rinde el neto y la comisión se le acredita al cliente.";
-        els.paymentCreateMsg.className = "config-msg";
-      }
-      renderPaySplit();
-    }).catch(function () { /* sin datos: queda el cobro general de siempre */ });
   }
 
   // Cobro imputado a un pedido puntual. Reusa el modal de pago, precargando
@@ -14374,23 +14314,10 @@
 
   // Reparto del cobro actual entre vos y el vendedor ("primero lo tuyo").
   // Devuelve null si el pedido no tiene comisión de vendedor.
-  // Comisión del tercerizado que todavía NO se le acreditó al cliente. Espejo de
-  // syncRindeNetoCredit del server: la parte cubierta es proporcional a lo ya
-  // cobrado sobre el neto que el vendedor rinde.
-  function payPendingCommission() {
-    var po = state.payForOrder;
-    if (!po || !po.is_tercerizado || !(po.commission > 0)) return 0;
-    var net = Math.max(0, (po.total || 0) - (po.discount || 0) - po.commission);
-    var cash = po.cash_other || 0;
-    var covered = cash > 0
-      ? Math.min(po.commission, Math.round(po.commission * (net > 0 ? Math.min(1, cash / net) : 1)))
-      : 0;
-    return Math.max(0, po.commission - covered);
-  }
-
   function paySplit() {
     var po = state.payForOrder;
-    if (!po || !(po.commission > 0)) return null;
+    // Tercerizado: el pedido ya está en neto (lo que te rinde), no hay reparto.
+    if (!po || !(po.commission > 0) || po.is_tercerizado) return null;
     var C = po.commission;
     var loTuyo = Math.max(0, (po.total || 0) - C);
     var other = po.cash_other || 0;
@@ -14408,18 +14335,6 @@
     var sp = paySplit();
     if (!sp || sp.cobrado <= 0) { els.payFormSplit.hidden = true; els.payFormSplit.innerHTML = ""; return; }
     var vname = sp.vendor_name ? " (" + escapeHtml(sp.vendor_name) + ")" : "";
-    var po = state.payForOrder;
-    // Tercerizado: no hay reparto de lo que entra — el vendedor ya se quedó su
-    // parte y lo que cobrás es el neto. El resto se le acredita al cliente.
-    if (po && po.is_tercerizado) {
-      var pend = payPendingCommission();
-      els.payFormSplit.hidden = false;
-      els.payFormSplit.innerHTML =
-        'El vendedor' + vname + ' se queda su comisión: <strong>' + fmtPrice(pend) + '</strong> · ' +
-        'a tu caja entra <strong>' + fmtPrice(sp.cobrado) + '</strong>' +
-        ' <span class="muted">(se acredita igual en la cuenta del cliente, queda saldado)</span>';
-      return;
-    }
     els.payFormSplit.hidden = false;
     els.payFormSplit.innerHTML =
       'De este cobro → 🧑‍💼 Vendedor' + vname + ': <strong>' + fmtPrice(sp.vendorPart) + '</strong> · ' +
@@ -14454,12 +14369,8 @@
       var due = ventaCobro(Object.assign({}, order, {
         debit_total: (Number(order.balance_due) || 0) + (Number(order.amount_paid) || 0)
       })).falta;
-      // Vendedor tercerizado: él le cobra al cliente y te rinde el neto, así que
-      // lo que entra a tu caja es la deuda MENOS la comisión que todavía no se
-      // acreditó. Esa parte la acredita el server al registrar el cobro, así que
-      // el cliente igual queda saldado.
-      var pend = payPendingCommission();
-      if (amtInput && due > 0) setMoney(amtInput, Math.max(0, due - pend));
+      // Tercerizado: el saldo ya es neto (lo que te rinde el vendedor).
+      if (amtInput && due > 0) setMoney(amtInput, due);
       renderPaySplit();
     });
     fillCajaSelect(document.getElementById("pay-form-caja"), null);
@@ -17579,6 +17490,98 @@
     paySupplier: document.getElementById("sup-pay-supplier"),
   };
   const supState = { list: [], loaded: false };
+
+  // ===== Comisiones de vendedores (Cuentas a pagar > Comisiones) =====
+  // La comision del vendedor ya no pasa por la cuenta del cliente: se ve aca por
+  // mes, con el resumen por vendedor y el detalle por pedido.
+  const comEls = {
+    month: document.getElementById("com-month"),
+    prev: document.getElementById("com-month-prev"),
+    next: document.getElementById("com-month-next"),
+    vendor: document.getElementById("com-vendor"),
+    reload: document.getElementById("com-reload-btn"),
+    kpis: document.getElementById("com-kpis"),
+    vendTbody: document.getElementById("com-vend-tbody"),
+    ordTbody: document.getElementById("com-ord-tbody"),
+  };
+  function comMonthValue() {
+    if (comEls.month && /^\d{4}-\d{2}$/.test(comEls.month.value || "")) return comEls.month.value;
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  }
+  function comShiftMonth(delta) {
+    const [y, m] = comMonthValue().split("-").map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    if (comEls.month) comEls.month.value = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+    loadComisiones();
+  }
+  async function loadComisiones() {
+    if (!comEls.vendTbody) return;
+    if (comEls.month && !comEls.month.value) comEls.month.value = comMonthValue();
+    const vend = comEls.vendor ? comEls.vendor.value : "";
+    comEls.vendTbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando…</td></tr>';
+    comEls.ordTbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando…</td></tr>';
+    let data;
+    try {
+      data = await api("/api/admin/vendor-commissions?month=" + encodeURIComponent(comMonthValue()) +
+        (vend ? "&vendedor_id=" + encodeURIComponent(vend) : ""), {}, "las comisiones");
+    } catch (e) {
+      comEls.vendTbody.innerHTML = '<tr><td colspan="7" class="muted">' + escapeHtml(e.message || "Error") + "</td></tr>";
+      comEls.ordTbody.innerHTML = "";
+      return;
+    }
+    renderComisiones(data, vend);
+  }
+  function renderComisiones(data, vendSel) {
+    const vendors = data.vendors || [];
+    const orders = data.orders || [];
+    // El filtro de vendedor se arma con los vendedores del mes (sin filtrar).
+    if (comEls.vendor && !vendSel) {
+      comEls.vendor.innerHTML = '<option value="">Todos</option>' + vendors.map(function (v) {
+        return '<option value="' + v.id + '">' + escapeHtml(v.name) + "</option>";
+      }).join("");
+    }
+    const tot = vendors.reduce(function (a, v) {
+      a.c += v.commission; a.s += v.settled; a.p += v.pending; a.n += v.orders_count; return a;
+    }, { c: 0, s: 0, p: 0, n: 0 });
+    if (comEls.kpis) {
+      comEls.kpis.innerHTML =
+        '<div class="dash-kpi dash-kpi-accent"><div class="dash-kpi-label">Comisiones del mes</div><div class="dash-kpi-value">' + fmtPrice(tot.c) + '</div><div class="dash-kpi-sub">' + tot.n + " pedidos</div></div>" +
+        '<div class="dash-kpi dash-kpi-good"><div class="dash-kpi-label">Retenidas / pagadas</div><div class="dash-kpi-value">' + fmtPrice(tot.s) + "</div></div>" +
+        '<div class="dash-kpi dash-kpi-warn"><div class="dash-kpi-label">Pendientes</div><div class="dash-kpi-value">' + fmtPrice(tot.p) + '</div><div class="dash-kpi-sub">pedidos sin saldar</div></div>';
+    }
+    const tipo = function (t) {
+      return t ? '<span class="vt-vend-badge">Tercerizado</span>' : '<span class="muted">Propio</span>';
+    };
+    comEls.vendTbody.innerHTML = vendors.length ? vendors.map(function (v) {
+      return "<tr><td><strong>" + escapeHtml(v.name) + "</strong></td><td>" + tipo(v.is_tercerizado) + "</td>" +
+        '<td class="num">' + v.orders_count + '</td><td class="num">' + fmtPrice(v.client_total) + "</td>" +
+        '<td class="num"><strong>' + fmtPrice(v.commission) + '</strong></td><td class="num">' + fmtPrice(v.settled) + "</td>" +
+        '<td class="num">' + (v.pending > 0.5 ? fmtPrice(v.pending) : "—") + "</td></tr>";
+    }).join("") : '<tr><td colspan="7" class="muted">Sin comisiones en ' + escapeHtml(fmtMonthLabelLong(data.month)) + ".</td></tr>";
+    comEls.ordTbody.innerHTML = orders.length ? orders.map(function (o) {
+      let st;
+      if (o.pending <= 0.5) st = '<span class="vt-pill vt-paid">' + (o.is_tercerizado ? "✔ Retenida" : "✔ Pagada") + "</span>";
+      else if (!o.delivered) st = '<span class="muted">Sin entregar</span>';
+      else st = '<span class="vt-pill vt-unpaid">' + (o.is_tercerizado ? "Cliente debe " + fmtPrice(o.balance_due) : "Falta pagar " + fmtPrice(o.pending)) + "</span>";
+      return '<tr class="com-row" data-id="' + o.id + '" title="Doble click para ver el pedido">' +
+        "<td>#" + o.id + "</td><td>" + escapeHtml(formatDate(o.date)) + "</td>" +
+        "<td>" + escapeHtml(o.client_name) + "</td><td>" + escapeHtml(o.vendedor_name) + "</td>" +
+        '<td class="num">' + fmtPrice(o.client_total) + '</td><td class="num"><strong>' + fmtPrice(o.commission) + "</strong></td>" +
+        '<td class="num">' + fmtPrice(o.net_total) + "</td><td>" + st + "</td></tr>";
+    }).join("") : '<tr><td colspan="8" class="muted">—</td></tr>';
+    comEls.ordTbody.querySelectorAll(".com-row").forEach(function (tr) {
+      tr.addEventListener("dblclick", function () { openOrderDetailModal(Number(tr.dataset.id)); });
+    });
+  }
+  if (comEls.prev) comEls.prev.addEventListener("click", function () { comShiftMonth(-1); });
+  if (comEls.next) comEls.next.addEventListener("click", function () { comShiftMonth(1); });
+  if (comEls.month) comEls.month.addEventListener("change", function () {
+    if (comEls.vendor) comEls.vendor.value = "";
+    loadComisiones();
+  });
+  if (comEls.vendor) comEls.vendor.addEventListener("change", loadComisiones);
+  if (comEls.reload) comEls.reload.addEventListener("click", loadComisiones);
 
   async function loadSupplierAccounts() {
     if (!supEls.tbody) return;

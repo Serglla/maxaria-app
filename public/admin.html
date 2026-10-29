@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20261019a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20261028a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -145,12 +145,13 @@
           <button class="tab-btn admin-sidebar-item admin-only" data-tab="cuentas" data-group="pagos" type="button" title="Lo que te deben los clientes y los cobros">
             <span class="admin-sidebar-item-icon">👥</span>Cuentas a cobrar
           </button>
-          <button class="tab-btn admin-sidebar-item admin-only" data-tab="ctacte-prov" type="button" title="Lo que le debés a los proveedores y los pagos">
+          <button class="tab-btn admin-sidebar-item admin-only" data-tab="ctacte-prov" data-group="comisiones" type="button" title="Lo que le debés a los proveedores y las comisiones de los vendedores">
             <span class="admin-sidebar-item-icon">🏭</span>Cuentas a pagar
           </button>
           <!-- Secciones que viven como pestaña dentro de otra (no se ven en el menú) -->
           <button class="tab-btn admin-sidebar-item admin-only sidebar-sub" data-tab="gastos" data-parent="caja" type="button">Gastos</button>
           <button class="tab-btn admin-sidebar-item admin-only sidebar-sub" data-tab="pagos" data-parent="cuentas" type="button">Cobros</button>
+          <button class="tab-btn admin-sidebar-item admin-only sidebar-sub" data-tab="comisiones" data-parent="ctacte-prov" type="button">Comisiones</button>
         </div>
 
         <div class="admin-sidebar-group">
@@ -2244,6 +2245,7 @@
 
     <!-- ===== TAB CUENTA CORRIENTE PROVEEDORES ===== -->
     <section class="tab-panel" id="tab-ctacte-prov" hidden>
+      <div class="fin-subtabs" data-group="ctacte-prov"><button type="button" class="fin-subtab" data-go="ctacte-prov">🏭 Proveedores</button><button type="button" class="fin-subtab" data-go="comisiones">🧑‍💼 Comisiones vendedores</button></div>
       <div class="dash-kpi-row" id="supacc-kpis" style="margin-bottom:14px"></div>
       <div class="admin-toolbar">
         <input type="search" id="supacc-search" class="admin-search" placeholder="Buscar proveedor..." autocomplete="off" />
@@ -2266,6 +2268,63 @@
             </tr>
           </thead>
           <tbody id="supacc-tbody"><tr><td colspan="6" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== TAB COMISIONES DE VENDEDORES (dentro de Cuentas a pagar) ===== -->
+    <!-- La comision ya no pasa por la cuenta del cliente: se ve aca, por mes. -->
+    <section class="tab-panel" id="tab-comisiones" hidden>
+      <div class="fin-subtabs" data-group="ctacte-prov"><button type="button" class="fin-subtab" data-go="ctacte-prov">🏭 Proveedores</button><button type="button" class="fin-subtab" data-go="comisiones">🧑‍💼 Comisiones vendedores</button></div>
+      <div class="dash-kpi-row" id="com-kpis" style="margin-bottom:14px"></div>
+      <div class="admin-toolbar">
+        <div class="act-month-nav">
+          <button type="button" class="btn btn-small" id="com-month-prev" title="Mes anterior">‹</button>
+          <input type="month" id="com-month" class="admin-input" />
+          <button type="button" class="btn btn-small" id="com-month-next" title="Mes siguiente">›</button>
+        </div>
+        <label class="admin-filter">Vendedor
+          <select id="com-vendor" class="admin-input" style="width:190px"><option value="">Todos</option></select>
+        </label>
+        <span class="admin-spacer"></span>
+        <button class="btn" id="com-reload-btn" type="button">↻ Actualizar</button>
+      </div>
+      <p class="muted small" style="margin:0 0 10px">
+        Tercerizado: se queda la comisión al cobrarle al cliente (retenida cuando el pedido quedó saldado).
+        Propio: la comisión se la pagás vos y sale de la caja al cobrar.
+      </p>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="com-vend-table">
+          <thead>
+            <tr>
+              <th>Vendedor</th>
+              <th>Tipo</th>
+              <th class="num">Pedidos</th>
+              <th class="num" title="Lo que pagan sus clientes">Vendido</th>
+              <th class="num">Comisión</th>
+              <th class="num" title="Tercerizado: ya retenida (pedido saldado). Propio: ya pagada por caja.">Retenida / pagada</th>
+              <th class="num">Pendiente</th>
+            </tr>
+          </thead>
+          <tbody id="com-vend-tbody"><tr><td colspan="7" class="muted">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+      <h4 style="margin:18px 0 8px">Detalle por pedido</h4>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="com-ord-table">
+          <thead>
+            <tr>
+              <th>Pedido</th>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Vendedor</th>
+              <th class="num" title="Lo que paga el cliente">Cliente paga</th>
+              <th class="num">Comisión</th>
+              <th class="num" title="Lo que el cliente te debe a vos">Te queda</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="com-ord-tbody"><tr><td colspan="8" class="muted">Cargando…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -4047,6 +4106,6 @@
   <div id="toast" class="admin-toast" hidden></div>
 
   <script src="/js/shared/pricing.js?v=20261002b"></script>
-  <script src="/js/admin.js?v=20261019a"></script>
+  <script src="/js/admin.js?v=20261028a"></script>
 </body>
 </html>
