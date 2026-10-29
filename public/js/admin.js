@@ -5550,6 +5550,7 @@
     // Venta/día y Días de stock necesitan la venta promedio (un solo pedido al
     // server). La tarjeta del celular la usa con el filtro Precio en Costo.
     if (prodColVisible("salesrate") || prodColVisible("daysleft") || state.priceView === "costo") ensureSalesRate();
+    applyProdLayout(); // el filtro Precio muestra/oculta columnas de precio
     const list = (state.selectMode && state.showOnlySelected)
       ? state.productsFiltered.filter((p) => state.selectedIds.has(p.id))
       : state.productsFiltered;
@@ -5894,12 +5895,22 @@
   function prodLayoutLsKey() { return "maxaria_prod_layout_" + ((state.me && state.me.id) || "0"); }
   function prodColLockedForMe(k) { return !prodCanLock && prodColsLocked.indexOf(k) >= 0; }
   function prodColVisible(k) { return prodLayout.hidden.indexOf(k) < 0 && !prodColLockedForMe(k); }
+  // El filtro "Precio" también decide qué columnas de precio se ven: "Todos"
+  // muestra los 5 niveles; un nivel muestra solo ese; Costo o una lista
+  // personalizada ocultan los 5 niveles (la lista tiene su propia columna).
+  var PRICE_LEVEL_COLS = ["vip", "revendedor", "mayorista", "minorista", "publico"];
+  function prodColHiddenByPriceView(k) {
+    if (PRICE_LEVEL_COLS.indexOf(k) < 0) return false;
+    const pv = String(state.priceView || "todos");
+    if (pv === "todos") return false;
+    return pv !== k;
+  }
 
   function applyProdLayout() {
     let css = "";
     PROD_COLS.forEach((c) => {
       const sel = "#prod-table th[data-col=\"" + c.k + "\"], #prod-table " + c.td;
-      if (!prodColVisible(c.k)) css += sel + "{display:none !important}";
+      if (!prodColVisible(c.k) || prodColHiddenByPriceView(c.k)) css += sel + "{display:none !important}";
       const w = prodLayout.widths[c.k];
       if (w) css += sel + "{width:" + w + "px;min-width:" + w + "px;max-width:" + w + "px}";
     });
