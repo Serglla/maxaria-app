@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title id="page-title">Admin</title>
-  <link rel="stylesheet" href="/css/styles.css?v=20261028a" />
+  <link rel="stylesheet" href="/css/styles.css?v=20261029a" />
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -419,6 +419,10 @@
             <input type="file" id="excel-file" accept=".xlsx,.xls" hidden />
           </label>
           <button class="btn btn-tool" id="catalog-btn" type="button" title="Generar catálogo en PDF con lista de precios a elección">📄 Catálogo PDF</button>
+          <span class="prod-cols-wrap" id="prod-cols-wrap">
+            <button class="btn btn-tool" id="prod-cols-btn" type="button" aria-expanded="false" title="Elegir qué columnas ver, el alto de las filas y restablecer los anchos">▦ Columnas</button>
+            <div class="prod-cols-panel" id="prod-cols-panel" hidden></div>
+          </span>
           <button class="btn btn-tool" id="stock-adj-history-btn" type="button" title="Ver historial completo de movimientos de stock (compras, ventas, ajustes...)">🕒 Historial de stock</button>
         </div>
 
@@ -450,22 +454,23 @@
         <table class="admin-table" id="prod-table">
           <thead>
             <tr>
-              <th class="col-img">Foto</th>
-              <th class="sortable" data-sort="code">Código<span class="sort-arrow"></span></th>
-              <th class="sortable" data-sort="name">Nombre<span class="sort-arrow"></span></th>
-              <th class="sortable" data-sort="category_name">Categoría<span class="sort-arrow"></span></th>
-              <th class="sortable num" data-sort="stock">Stock<span class="sort-arrow"></span></th>
-              <th class="sortable num" data-sort="cost">Costo<span class="sort-arrow"></span></th>
-              <th class="sortable num col-salesrate" data-sort="sales_daily" id="th-salesrate" title="Venta promedio por día (unidades), últimos 60 días; las últimas 2 semanas pesan el doble" hidden>Venta/día<span class="sort-arrow"></span></th>
-              <th class="sortable num" data-sort="price_vip">VIP<span class="sort-arrow"></span></th>
-              <th class="sortable num" data-sort="price_revendedor">Revendedor<span class="sort-arrow"></span></th>
-              <th class="sortable num" data-sort="price_mayorista">Mayorista<span class="sort-arrow"></span></th>
-              <th class="sortable num" data-sort="price_minorista">Minorista<span class="sort-arrow"></span></th>
-              <th class="sortable num" data-sort="price_publico">Público<span class="sort-arrow"></span></th>
-              <th class="num col-listprice" id="th-listprice" title="Precio calculado de la lista elegida en el filtro Precio" hidden>Lista</th>
-              <th class="sortable" data-sort="active">Activo<span class="sort-arrow"></span></th>
-              <th class="num" title="Unidades por empaque de compra (caja/bulto)">Empaque</th>
-              <th></th>
+              <th class="col-img" data-col="img">Foto</th>
+              <th class="sortable" data-sort="code" data-col="code">Código<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="name" data-col="name">Nombre<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="category_name" data-col="cat">Categoría<span class="sort-arrow"></span></th>
+              <th class="sortable num" data-sort="stock" data-col="stock">Stock<span class="sort-arrow"></span></th>
+              <th class="sortable num" data-sort="cost" data-col="cost">Costo<span class="sort-arrow"></span></th>
+              <th class="sortable num col-salesrate" data-sort="sales_daily" data-col="salesrate" id="th-salesrate" title="Venta promedio por día (unidades), últimos 60 días; las últimas 2 semanas pesan el doble">Venta/día<span class="sort-arrow"></span></th>
+              <th class="sortable num col-daysleft" data-sort="days_left" data-col="daysleft" title="Cuántos días alcanza el stock al ritmo de venta promedio (stock ÷ venta por día)">Días stock<span class="sort-arrow"></span></th>
+              <th class="sortable num" data-sort="price_vip" data-col="vip">VIP<span class="sort-arrow"></span></th>
+              <th class="sortable num" data-sort="price_revendedor" data-col="revendedor">Revendedor<span class="sort-arrow"></span></th>
+              <th class="sortable num" data-sort="price_mayorista" data-col="mayorista">Mayorista<span class="sort-arrow"></span></th>
+              <th class="sortable num" data-sort="price_minorista" data-col="minorista">Minorista<span class="sort-arrow"></span></th>
+              <th class="sortable num" data-sort="price_publico" data-col="publico">Público<span class="sort-arrow"></span></th>
+              <th class="num col-listprice" data-col="listprice" id="th-listprice" title="Precio calculado de la lista elegida en el filtro Precio" hidden>Lista</th>
+              <th class="sortable" data-sort="active" data-col="active">Activo<span class="sort-arrow"></span></th>
+              <th class="num" data-col="bulto" title="Unidades por empaque de compra (caja/bulto)">Empaque</th>
+              <th data-col="adj"></th>
               <th class="cell-cardprice" aria-hidden="true"></th>
             </tr>
           </thead>
@@ -4106,6 +4111,6 @@
   <div id="toast" class="admin-toast" hidden></div>
 
   <script src="/js/shared/pricing.js?v=20261002b"></script>
-  <script src="/js/admin.js?v=20261028a"></script>
+  <script src="/js/admin.js?v=20261029b"></script>
 </body>
 </html>

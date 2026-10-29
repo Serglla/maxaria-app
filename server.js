@@ -7642,6 +7642,54 @@ app.get("/api/admin/products-sales-rate", requireAdmin, (req, res) => {
   res.json({ window_days: cfg.windowDays, recent_days: cfg.recentDays, rates });
 });
 
+// Diseño de la tabla de Productos (vista de PC): columnas visibles, anchos y
+// alto de filas. Se guarda por usuario en settings (sigue al usuario entre
+// computadoras). "locked" es global: columnas que el superadmin reservó para
+// él; a los demás admins no se les muestran (es solo la vista, los datos
+// siguen viajando para el modal de edición).
+const PROD_LAYOUT_COLS = new Set([
+  "img", "code", "name", "cat", "stock", "cost", "salesrate", "daysleft",
+  "vip", "revendedor", "mayorista", "minorista", "publico", "listprice",
+  "active", "bulto", "adj",
+]);
+function readJsonSetting(key, fallback) {
+  try { const v = JSON.parse(getSetting(key, "") || "null"); return v == null ? fallback : v; }
+  catch (_) { return fallback; }
+}
+app.get("/api/admin/products-layout", requireAdmin, (req, res) => {
+  const isSuper = !!getAdminPerms(req.session.userId).isSuperadmin;
+  const locked = readJsonSetting("prod_cols_locked", []);
+  res.json({
+    layout: readJsonSetting("prod_layout_u" + req.session.userId, null),
+    locked: Array.isArray(locked) ? locked : [],
+    can_lock: isSuper,
+  });
+});
+app.put("/api/admin/products-layout", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const out = { hidden: [], widths: {}, row: "normal" };
+  if (Array.isArray(b.hidden)) out.hidden = b.hidden.filter((k) => PROD_LAYOUT_COLS.has(k));
+  if (b.widths && typeof b.widths === "object") {
+    for (const [k, v] of Object.entries(b.widths)) {
+      const w = Math.round(Number(v));
+      if (PROD_LAYOUT_COLS.has(k) && w >= 40 && w <= 800) out.widths[k] = w;
+    }
+  }
+  if (["compacto", "normal", "amplio"].includes(b.row)) out.row = b.row;
+  setSetting("prod_layout_u" + req.session.userId, JSON.stringify(out));
+  res.json({ ok: true, layout: out });
+});
+app.put("/api/admin/products-layout/locked", requireAdmin, (req, res) => {
+  if (!getAdminPerms(req.session.userId).isSuperadmin) {
+    return res.status(403).json({ error: "Solo el superadmin puede reservar columnas" });
+  }
+  const locked = Array.isArray((req.body || {}).locked)
+    ? req.body.locked.filter((k) => PROD_LAYOUT_COLS.has(k) && k !== "name")
+    : [];
+  setSetting("prod_cols_locked", JSON.stringify(locked));
+  res.json({ ok: true, locked });
+});
+
 // GET /api/admin/reposicion — sugerencia de compra agrupada por proveedor.
 // Query: supplier_id (filtro), urgencia (quebrado|critico|reponer), incluir_todo.
 app.get("/api/admin/reposicion", requireAdmin, (req, res) => {

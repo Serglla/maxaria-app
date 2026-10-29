@@ -39,6 +39,7 @@
     price_publico: "number",
     active: "number",
     sales_daily: "number",
+    days_left: "number",
   };
 
   // Claves recién creadas/reseteadas en ESTA sesión del panel (solo en memoria):
@@ -832,6 +833,8 @@
       state.isAdmin = (me.level === 99);
       state.products = prods;
       populateCategoryFilter(prods);
+      // Columnas visibles, anchos y alto de filas de la tabla (vista de PC).
+      initProdLayout();
       // El filtro "Precio" también ofrece las listas personalizadas. Se cargan
       // aparte (async), por eso el select se completa después de las prefs.
       if (state.isAdmin) fillPriceViewSelect();
@@ -5420,8 +5423,8 @@
     const type = SORT_TYPES[field] || "text";
     const mult = dir === "desc" ? -1 : 1;
     return (a, b) => {
-      const va = field === "sales_daily" ? salesDailyOf(a) : a[field];
-      const vb = field === "sales_daily" ? salesDailyOf(b) : b[field];
+      const va = field === "sales_daily" ? salesDailyOf(a) : field === "days_left" ? daysLeftSortVal(a) : a[field];
+      const vb = field === "sales_daily" ? salesDailyOf(b) : field === "days_left" ? daysLeftSortVal(b) : b[field];
       if (type === "number") {
         // null/undefined cuentan como 0 para que no rompan el orden numerico
         const na = (va === null || va === undefined || va === "") ? 0 : Number(va);
@@ -5514,6 +5517,8 @@
     th.addEventListener("click", () => {
       const field = th.dataset.sort;
       if (!field) return;
+      // El click que cierra un arrastre del borde de la columna no ordena.
+      if (Date.now() < prodColResizeUntil) return;
       if (state.sortField === field) {
         state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
       } else {
@@ -5542,17 +5547,15 @@
       thList.hidden = !curListCfg;
       if (curListCfg) thList.textContent = curListCfg.name;
     }
-    // Columna "Venta/día": solo con el filtro Precio en Costo.
-    showSalesRate = (state.priceView === "costo");
-    const thRate = document.getElementById("th-salesrate");
-    if (thRate) thRate.hidden = !showSalesRate;
-    if (showSalesRate) ensureSalesRate();
+    // Venta/día y Días de stock necesitan la venta promedio (un solo pedido al
+    // server). La tarjeta del celular la usa con el filtro Precio en Costo.
+    if (prodColVisible("salesrate") || prodColVisible("daysleft") || state.priceView === "costo") ensureSalesRate();
     const list = (state.selectMode && state.showOnlySelected)
       ? state.productsFiltered.filter((p) => state.selectedIds.has(p.id))
       : state.productsFiltered;
     els.prodCount.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     if (!list.length) {
-      els.prodTbody.innerHTML = '<tr><td colspan="' + ((state.selectMode ? 16 : 15) + (curListCfg ? 1 : 0) + (showSalesRate ? 1 : 0)) + '" class="muted">Sin resultados</td></tr>';
+      els.prodTbody.innerHTML = '<tr><td colspan="30" class="muted">Sin resultados</td></tr>';
       els.pageInfo.textContent = "Página 0 / 0";
       els.pagePrev.disabled = true;
       els.pageNext.disabled = true;
@@ -5590,10 +5593,10 @@
   // explícitamente).
   var curListCfg = null; // lista elegida en el filtro Precio (la usa rowHtml)
 
-  // ---------- Venta promedio por día (columna visible con Precio = Costo) ----------
+  // ---------- Venta promedio por día y días de stock ----------
   // Se pide una sola vez por carga de página a /api/admin/products-sales-rate
   // (mismo cálculo que Reposición). state.salesRate = { pid: {daily, units} }.
-  var showSalesRate = false;
+  var DAYS_LEFT_RED = 7, DAYS_LEFT_WARN = 15;
   function salesDailyOf(p) {
     var r = state.salesRate && state.salesRate[p.id];
     return r ? Number(r.daily) || 0 : 0;
@@ -5603,8 +5606,35 @@
     if (n < 0.1) return "<0,1";
     return n.toLocaleString("es-AR", { maximumFractionDigits: n >= 10 ? 0 : 1 });
   }
+  // Días que alcanza el stock al ritmo de venta promedio. null = sin datos
+  // todavía, Infinity = no vendió en la ventana.
+  function daysLeftOf(p) {
+    if (!state.salesRate) return null;
+    const stock = Number(p.stock) || 0;
+    if (stock <= 0) return 0;
+    const d = salesDailyOf(p);
+    return d > 0 ? stock / d : Infinity;
+  }
+  // Para ordenar: sin ventas va al final del orden ascendente (lo urgente arriba).
+  function daysLeftSortVal(p) {
+    const v = daysLeftOf(p);
+    return v == null ? 1e9 : (v === Infinity ? 1e8 : v);
+  }
+  function daysLeftCell(p) {
+    if (!state.salesRate) return '<td class="num cell-money cell-daysleft muted">…</td>';
+    const v = daysLeftOf(p);
+    if (v === Infinity) {
+      return '<td class="num cell-money cell-daysleft muted" title="Sin ventas en los últimos ' +
+        state.salesRateWindow + ' días">—</td>';
+    }
+    if (v === 0) return '<td class="num cell-money cell-daysleft dl-red" title="Sin stock"><strong>0</strong></td>';
+    const days = Math.floor(v);
+    const cls = days < DAYS_LEFT_RED ? " dl-red" : (days < DAYS_LEFT_WARN ? " dl-warn" : "");
+    const txt = days > 365 ? "+1 año" : (days + " d");
+    const tip = "Stock " + fmtNum(p.stock) + " ÷ " + fmtSalesDaily(salesDailyOf(p)) + " u/día ≈ " + days + " días";
+    return '<td class="num cell-money cell-daysleft' + cls + '" title="' + escapeHtml(tip) + '"><strong>' + txt + '</strong></td>';
+  }
   function salesRateCell(p) {
-    if (!showSalesRate) return "";
     if (!state.salesRate) return '<td class="num cell-money cell-salesrate muted">…</td>';
     var r = state.salesRate[p.id];
     var d = r ? Number(r.daily) || 0 : 0;
@@ -5776,6 +5806,7 @@
       '<td class="num cell-stock' + stockCls + '"' + stockTitle + '>' + fmtNum(p.stock) + (stockLow ? " ⚠" : "") + '</td>' +
       moneyCell(p, "cost", "muted") +
       salesRateCell(p) +
+      daysLeftCell(p) +
       moneyCell(p, "price_vip") +
       moneyCell(p, "price_revendedor") +
       moneyCell(p, "price_mayorista") +
@@ -5810,8 +5841,9 @@
       editCellName(p) +
       editCellCat(p) +
       editCellNum(p, "stock", "cell-stock") +
-      editCellNum(p, "cost", "cell-money") +
+      editCellNum(p, "cost", "cell-money cell-money-cost") +
       salesRateCell(p) +
+      daysLeftCell(p) +
       moneyCell(p, "price_vip") +
       moneyCell(p, "price_revendedor") +
       moneyCell(p, "price_mayorista") +
@@ -5827,6 +5859,244 @@
       '<td class="cell-cardprice">' + cardPriceHtml(p) + '</td>' +
     '</tr>';
   }
+
+  // ---------- Diseño de la tabla en PC: columnas, anchos y alto de filas ----------
+  // Cada columna se identifica por data-col en el <th> y por una clase en el
+  // <td>. La visibilidad y los anchos se aplican con una hoja de estilo
+  // generada (solo pantallas > 640px: el celular usa la vista de tarjetas).
+  // Se guarda por usuario en el server (sigue al usuario entre computadoras) y
+  // se cachea en localStorage para aplicarlo sin esperar al server.
+  var PROD_COLS = [
+    { k: "img",        label: "Foto",            td: "td.col-img" },
+    { k: "code",       label: "Código",          td: "td.cell-code" },
+    { k: "name",       label: "Nombre",          td: "td.cell-name", fixed: true },
+    { k: "cat",        label: "Categoría",       td: "td.cell-cat" },
+    { k: "stock",      label: "Stock",           td: "td.cell-stock" },
+    { k: "cost",       label: "Costo",           td: "td.cell-money-cost" },
+    { k: "salesrate",  label: "Venta/día",       td: "td.cell-salesrate" },
+    { k: "daysleft",   label: "Días de stock",   td: "td.cell-daysleft" },
+    { k: "vip",        label: "VIP",             td: "td.cell-money-vip" },
+    { k: "revendedor", label: "Revendedor",      td: "td.cell-money-revendedor" },
+    { k: "mayorista",  label: "Mayorista",       td: "td.cell-money-mayorista" },
+    { k: "minorista",  label: "Minorista",       td: "td.cell-money-minorista" },
+    { k: "publico",    label: "Público",         td: "td.cell-money-publico" },
+    { k: "listprice",  label: "Lista elegida en Precio", td: "td.cell-listprice" },
+    { k: "active",     label: "Activo",          td: "td.cell-activo" },
+    { k: "bulto",      label: "Empaque",         td: "td.cell-bulto" },
+    { k: "adj",        label: "Botones ± / historial", td: "td.cell-adj" },
+  ];
+  var prodLayout = { hidden: [], widths: {}, row: "normal" };
+  var prodColsLocked = [];
+  var prodCanLock = false;
+  var prodColResizeUntil = 0;
+  var prodLayoutSaveTimer = null;
+
+  function prodLayoutLsKey() { return "maxaria_prod_layout_" + ((state.me && state.me.id) || "0"); }
+  function prodColLockedForMe(k) { return !prodCanLock && prodColsLocked.indexOf(k) >= 0; }
+  function prodColVisible(k) { return prodLayout.hidden.indexOf(k) < 0 && !prodColLockedForMe(k); }
+
+  function applyProdLayout() {
+    let css = "";
+    PROD_COLS.forEach((c) => {
+      const sel = "#prod-table th[data-col=\"" + c.k + "\"], #prod-table " + c.td;
+      if (!prodColVisible(c.k)) css += sel + "{display:none !important}";
+      const w = prodLayout.widths[c.k];
+      if (w) css += sel + "{width:" + w + "px;min-width:" + w + "px;max-width:" + w + "px}";
+    });
+    let st = document.getElementById("prod-layout-style");
+    if (!st) {
+      st = document.createElement("style");
+      st.id = "prod-layout-style";
+      document.head.appendChild(st);
+    }
+    st.textContent = "@media (min-width: 641px){" + css + "}";
+    if (els.prodTable) {
+      els.prodTable.classList.remove("rh-compacto", "rh-amplio");
+      if (prodLayout.row !== "normal") els.prodTable.classList.add("rh-" + prodLayout.row);
+    }
+  }
+
+  function saveProdLayout() {
+    try { localStorage.setItem(prodLayoutLsKey(), JSON.stringify(prodLayout)); } catch (_) {}
+    clearTimeout(prodLayoutSaveTimer);
+    prodLayoutSaveTimer = setTimeout(() => {
+      api("/api/admin/products-layout", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(prodLayout),
+      }, "el diseño de la tabla").catch((err) => warnLoadFail("el diseño de la tabla", err));
+    }, 600);
+  }
+
+  function setProdLayout(next) {
+    prodLayout = {
+      hidden: Array.isArray(next && next.hidden) ? next.hidden.slice() : [],
+      widths: (next && next.widths && typeof next.widths === "object") ? Object.assign({}, next.widths) : {},
+      row: (next && ["compacto", "normal", "amplio"].indexOf(next.row) >= 0) ? next.row : "normal",
+    };
+  }
+
+  async function initProdLayout() {
+    if (!state.isAdmin || !els.prodTable) return;
+    try {
+      const cached = JSON.parse(localStorage.getItem(prodLayoutLsKey()) || "null");
+      if (cached) { setProdLayout(cached); applyProdLayout(); }
+    } catch (_) {}
+    addProdColGrips();
+    try {
+      const out = await api("/api/admin/products-layout", {}, "el diseño de la tabla");
+      prodColsLocked = Array.isArray(out.locked) ? out.locked : [];
+      prodCanLock = !!out.can_lock;
+      if (out.layout) {
+        setProdLayout(out.layout);
+        try { localStorage.setItem(prodLayoutLsKey(), JSON.stringify(prodLayout)); } catch (_) {}
+      }
+    } catch (_) { /* queda lo cacheado o el diseño por defecto */ }
+    applyProdLayout();
+    renderProducts(); // por si ahora hay que pedir la venta promedio
+  }
+
+  // Manija para arrastrar el borde derecho de cada encabezado. Doble click en
+  // la manija devuelve la columna a su ancho automático.
+  function addProdColGrips() {
+    els.prodTable.querySelectorAll("thead th[data-col]").forEach((th) => {
+      if (th.querySelector(".col-grip")) return;
+      const k = th.dataset.col;
+      const grip = document.createElement("span");
+      grip.className = "col-grip";
+      grip.title = "Arrastrá para cambiar el ancho · doble click para volver al automático";
+      grip.addEventListener("click", (e) => e.stopPropagation());
+      grip.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        delete prodLayout.widths[k];
+        applyProdLayout();
+        saveProdLayout();
+      });
+      grip.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startW = th.getBoundingClientRect().width;
+        grip.setPointerCapture(e.pointerId);
+        th.classList.add("col-resizing");
+        const move = (ev) => {
+          prodLayout.widths[k] = Math.max(40, Math.min(800, Math.round(startW + ev.clientX - startX)));
+          applyProdLayout();
+        };
+        const up = () => {
+          grip.removeEventListener("pointermove", move);
+          grip.removeEventListener("pointerup", up);
+          grip.removeEventListener("pointercancel", up);
+          th.classList.remove("col-resizing");
+          prodColResizeUntil = Date.now() + 300;
+          saveProdLayout();
+        };
+        grip.addEventListener("pointermove", move);
+        grip.addEventListener("pointerup", up);
+        grip.addEventListener("pointercancel", up);
+      });
+      th.appendChild(grip);
+    });
+  }
+
+  // Menú "▦ Columnas": qué columnas ver, alto de filas y restablecer. El
+  // superadmin además puede reservar columnas para él (🔒): a los demás
+  // administradores no se les muestran.
+  function renderProdColsPanel() {
+    const panel = document.getElementById("prod-cols-panel");
+    if (!panel) return;
+    const rows = PROD_COLS.filter((c) => !prodColLockedForMe(c.k)).map((c) => {
+      const locked = prodColsLocked.indexOf(c.k) >= 0;
+      const lockBtn = (prodCanLock && !c.fixed)
+        ? '<button type="button" class="pcp-lock' + (locked ? " on" : "") + '" data-lock="' + c.k + '" title="' +
+          (locked ? "Reservada para el superadmin: los demás administradores no la ven. Click para liberarla."
+                  : "Reservar para el superadmin (los demás administradores no la ven)") + '">' + (locked ? "🔒" : "🔓") + '</button>'
+        : "";
+      return '<div class="pcp-row"><label class="pcp-chk"><input type="checkbox" data-col="' + c.k + '"' +
+        (prodLayout.hidden.indexOf(c.k) < 0 ? " checked" : "") + (c.fixed ? " disabled" : "") + '> ' +
+        escapeHtml(c.label) + '</label>' + lockBtn + '</div>';
+    }).join("");
+    const rowBtn = (v, lbl) => '<button type="button" class="pcp-seg' + (prodLayout.row === v ? " on" : "") + '" data-row="' + v + '">' + lbl + '</button>';
+    panel.innerHTML =
+      '<div class="pcp-title">Columnas visibles</div>' +
+      '<div class="pcp-list">' + rows + '</div>' +
+      (prodCanLock ? '<div class="pcp-hint">🔒 = solo la ves vos. Los demás administradores no la tienen.</div>' : "") +
+      '<div class="pcp-title">Alto de filas</div>' +
+      '<div class="pcp-segs">' + rowBtn("compacto", "Compacto") + rowBtn("normal", "Normal") + rowBtn("amplio", "Amplio") + '</div>' +
+      '<div class="pcp-hint">Para cambiar el ancho de una columna, arrastrá el borde derecho de su encabezado.</div>' +
+      '<div class="pcp-foot">' +
+        '<button type="button" class="btn btn-small" data-reset="widths">Restablecer anchos</button>' +
+        '<button type="button" class="btn btn-small" data-reset="all">Restablecer todo</button>' +
+      '</div>';
+  }
+
+  (function wireProdColsMenu() {
+    const btn = document.getElementById("prod-cols-btn");
+    const panel = document.getElementById("prod-cols-panel");
+    const wrap = document.getElementById("prod-cols-wrap");
+    if (!btn || !panel) return;
+    const close = () => { panel.hidden = true; btn.setAttribute("aria-expanded", "false"); };
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!panel.hidden) return close();
+      renderProdColsPanel();
+      panel.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+    });
+    // composedPath: el panel se re-dibuja al tocar un botón y el target queda
+    // fuera del DOM; con contains() se cerraba solo.
+    document.addEventListener("click", (e) => { if (!panel.hidden && e.composedPath().indexOf(wrap) < 0) close(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !panel.hidden) close(); });
+    panel.addEventListener("change", (e) => {
+      const cb = e.target.closest("input[data-col]");
+      if (!cb) return;
+      const k = cb.dataset.col;
+      prodLayout.hidden = prodLayout.hidden.filter((x) => x !== k);
+      if (!cb.checked) prodLayout.hidden.push(k);
+      applyProdLayout();
+      saveProdLayout();
+      renderProducts();
+    });
+    panel.addEventListener("click", async (e) => {
+      const seg = e.target.closest("[data-row]");
+      if (seg) {
+        prodLayout.row = seg.dataset.row;
+        applyProdLayout();
+        saveProdLayout();
+        renderProdColsPanel();
+        return;
+      }
+      const rs = e.target.closest("[data-reset]");
+      if (rs) {
+        if (rs.dataset.reset === "all") setProdLayout(null);
+        else prodLayout.widths = {};
+        applyProdLayout();
+        saveProdLayout();
+        renderProdColsPanel();
+        renderProducts();
+        return;
+      }
+      const lk = e.target.closest("[data-lock]");
+      if (lk) {
+        const k = lk.dataset.lock;
+        const next = prodColsLocked.indexOf(k) >= 0
+          ? prodColsLocked.filter((x) => x !== k)
+          : prodColsLocked.concat([k]);
+        try {
+          const out = await api("/api/admin/products-layout/locked", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ locked: next }),
+          }, "las columnas reservadas");
+          prodColsLocked = out.locked || next;
+          renderProdColsPanel();
+        } catch (err) {
+          showToast("No se pudo guardar: " + err.message, "error");
+        }
+      }
+    });
+  })();
 
   // Doble click en fila (desktop) → abrir modal de edición
   els.prodTbody.addEventListener("dblclick", (e) => {
